@@ -294,7 +294,7 @@ mod tests {
     }
 
     /// The staged routine declines on CPU, so offering it would spend half the catalogue on one
-    /// refusal.
+    /// decline.
     #[test]
     fn the_cpu_geometries_stage_nothing() {
         for tier in TIERS {

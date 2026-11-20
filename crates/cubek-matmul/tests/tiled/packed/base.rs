@@ -6,14 +6,14 @@ use cubecl::ir::ElemType;
 use cubecl::prelude::Scalar;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::zspace::Shape;
 use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::K;
+use cubek_std::matmul_dimensions::K;
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
 
 use crate::tiled::upload;
@@ -54,7 +54,7 @@ impl PackedFormat {
     }
 }
 
-/// `slabs` matrices of `rows` rows of `k` values, laid one after the other along the axis of
+/// `slabs` matrices of `rows` rows of `k` values, laid one after the other along the dimension of
 /// `operand` beside `K`, packed along `k` in `format`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedSlabsSpec {
@@ -67,7 +67,7 @@ pub(crate) struct PackedSlabsSpec {
 }
 
 /// A packed matrix of slabs with the dequantized values it holds. Its words run along `k`, a row
-/// each, as a checkpoint stores them whichever axis the rows are.
+/// each, as a checkpoint stores them whichever dimension the rows are.
 pub(crate) struct PackedSlabs {
     spec: PackedSlabsSpec,
     tensor: PackedTensor,
@@ -239,13 +239,13 @@ pub(crate) fn block_of(scheme: &QuantScheme) -> usize {
         .to_dim_vec(1)[0] as usize
 }
 
-/// The axis of `operand` beside `K`, which a packed matrix's rows run along.
-fn across(operand: MatmulOperand) -> Axis {
+/// The dimension of `operand` beside `K`, which a packed matrix's rows run along.
+fn across(operand: MatmulOperand) -> Dimension {
     operand
-        .axes()
+        .dimensions()
         .into_iter()
-        .find(|&axis| axis != K)
-        .expect("an operand has an axis beside K")
+        .find(|&dimension| dimension != K)
+        .expect("an operand has a dimension beside K")
 }
 
 /// `scheme` as the reference quantizer takes it, which has no per-tensor level and no `ue4m3`:

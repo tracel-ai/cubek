@@ -1,17 +1,18 @@
 //! An operand of a contraction, as a launch derives its reads.
 //!
-//! Two numbers per axis answer every question a launch asks of a tensor: the microtile one read of
-//! it brings, and the microtile one scale covers. Both are read off the tensor, so a float operand
-//! reads one value and is constant inside nothing, and the same reads serve it without asking
-//! whether anything is quantized at all.
+//! Two numbers per dimension answer every question a launch asks of a tensor: the microtile one
+//! read of it brings, and the microtile one scale covers. Both are read off the tensor, so a float
+//! operand reads one value and is constant inside nothing, and the same reads serve it without
+//! asking whether anything is quantized at all.
 
-use crate::layout::tile_order::{TileOrder, TileWords, scales_axes, values_axes};
-use crate::matmul_axes::{K, blocked};
+use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
+use crate::matmul_dimensions::{K, blocked};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::{Axis, MicroTile, OperandReads, Space, kind::Field};
+use cubecl::tile::launch::Decline;
+use cubecl::tile::layout::{Run, VectorTile};
+use cubecl::tile::{Dimension, MicroTile, OperandReads, Space, kind::Field};
 
-/// How an operand is read and how it is scaled, as tiles of its own axes.
+/// How an operand is read and how it is scaled, as tiles of its own dimensions.
 ///
 /// Both are the same kind of statement — the smallest piece something is true
 /// of — so nothing here records which side of a product is quantized, or which
@@ -35,9 +36,9 @@ impl Operand {
         }
     }
 
-    /// This operand with its axis `from` named `to`: the same reads and scales, over a matrix whose
-    /// axes another reader names otherwise.
-    pub fn renamed(self, from: Axis, to: Axis) -> Self {
+    /// This operand with its dimension `from` named `to`: the same reads and scales, over a matrix
+    /// whose dimensions another reader names otherwise.
+    pub fn renamed(self, from: Dimension, to: Dimension) -> Self {
         Operand {
             reads: self.reads.renamed(from, to),
             tiles: self.tiles,
@@ -55,19 +56,23 @@ impl Operand {
         self.tiles
     }
 
-    /// The operand `scheme` describes when its words run along `axis`.
+    /// The operand `scheme` describes when its words run along `dimension`.
     ///
-    /// **The axis is the caller's**: a buffer's strides say which dim its words
+    /// **The dimension is the caller's**: a buffer's strides say which dim its words
     /// run along, and nothing here re-derives it. What a scheme states is the
     /// two lengths — how many values share a word, and how many share a scale.
-    /// `axes` names the tensor's dims in the order the scheme's block shape
+    /// `dimensions` names the tensor's dims in the order the scheme's block shape
     /// counts them.
     ///
-    /// `None` where the block spans both axes, or where a read would straddle
+    /// `None` where the block spans both dimensions, or where a read would straddle
     /// two scales: neither is a form this kernel streams.
-    pub fn of_scheme(scheme: &QuantScheme, axis: Axis, axes: [Axis; 2]) -> Option<Self> {
+    pub fn of_scheme(
+        scheme: &QuantScheme,
+        dimension: Dimension,
+        dimensions: [Dimension; 2],
+    ) -> Option<Self> {
         let dims = scheme.block_size()?.to_dim_vec(2);
-        let position = axes.iter().position(|&a| a == axis)?;
+        let position = dimensions.iter().position(|&a| a == dimension)?;
         if dims[1 - position] != 1 {
             return None;
         }
@@ -76,29 +81,29 @@ impl Operand {
         let scales_per_word = Field::of_scale(scheme.block_scale()?.dtype).per_word();
         scale
             .is_multiple_of(read)
-            .then(|| Operand::packed(axis, read, axis, scale, scales_per_word))
+            .then(|| Operand::packed(dimension, read, dimension, scale, scales_per_word))
     }
 
     /// This operand read a scale block at a time: one read the whole block of one row, its scale
-    /// read alone. In rows, a block is a run of whole reads down its axis; in tile order, a
+    /// read alone. In rows, a block is a run of whole reads down its dimension; in tile order, a
     /// block's words of one row lie together in either word order ([`TileOrder::values_storage`]),
     /// so the read is one block of one row however many rows a load of the order holds. `None`
-    /// without scales, across several axes in rows, or where a block is no whole number of reads.
-    /// Whether its scales can be read one apiece is the scheme's ([`Packing::by_block`]).
+    /// without scales, across several dimensions in rows, or where a block is no whole number of
+    /// reads. Whether its scales can be read one apiece is the scheme's ([`Packing::by_block`]).
     fn by_block(self) -> Option<Self> {
-        let axis = self.scaled_along()?;
-        let block = self.reads.scale?.extent(axis);
+        let dimension = self.scaled_along()?;
+        let block = self.reads.scale?.extent(dimension);
         let lined = match self.tiles {
             None => {
-                self.reads.read.axis() == Some(axis)
-                    && block.is_multiple_of(self.reads.read.extent(axis))
+                self.reads.read.dimension() == Some(dimension)
+                    && block.is_multiple_of(self.reads.read.extent(dimension))
             }
-            Some(order) => axis == K && order.block() == block,
+            Some(order) => dimension == K && order.block() == block,
         };
         lined.then(|| Operand {
             reads: OperandReads {
-                read: MicroTile::along(axis, block),
-                scale_read: MicroTile::along(axis, 1),
+                read: MicroTile::along(dimension, block),
+                scale_read: MicroTile::along(dimension, 1),
                 ..self.reads
             },
             ..self
@@ -108,33 +113,33 @@ impl Operand {
     /// Whether one read takes a single scale on its own, not a word of them.
     fn reads_scales_alone(&self) -> bool {
         self.scaled_along()
-            .is_some_and(|axis| self.reads.scale_read.extent(axis) == 1)
+            .is_some_and(|dimension| self.reads.scale_read.extent(dimension) == 1)
     }
 
-    /// The axis a scheme's own block shape implies.
+    /// The dimension a scheme's own block shape implies.
     ///
     /// For the two callers holding no tensor — a tuning row, and the rule asked
     /// before a launch — where the strides that decide it everywhere else are
     /// not in hand. `PackedU32(0)` counts from the innermost dim, so it is the
-    /// second of `axes`.
-    pub fn axis_of(scheme: &QuantScheme, axes: [Axis; 2]) -> Option<Axis> {
+    /// second of `dimensions`.
+    pub fn dimension_of(scheme: &QuantScheme, dimensions: [Dimension; 2]) -> Option<Dimension> {
         match scheme.store {
-            QuantStore::PackedU32(0) => Some(axes[1]),
-            QuantStore::PackedU32(1) => Some(axes[0]),
+            QuantStore::PackedU32(0) => Some(dimensions[1]),
+            QuantStore::PackedU32(1) => Some(dimensions[0]),
             _ => None,
         }
     }
 
-    /// What one read brings along `axis`.
-    pub fn read(&self, axis: Axis) -> usize {
-        self.reads.read.extent(axis)
+    /// What one read brings along `dimension`.
+    pub fn read(&self, dimension: Dimension) -> usize {
+        self.reads.read.extent(dimension)
     }
 
     /// Scales one read of them brings: as many as share a word, one where this
     /// operand carries none. The blocks a read of scales covers are one worker's.
     pub fn scales_per_word(&self) -> usize {
         self.scaled_along()
-            .map_or(1, |axis| self.reads.scale_read.extent(axis))
+            .map_or(1, |dimension| self.reads.scale_read.extent(dimension))
     }
 
     /// The box one read of this operand covers.
@@ -148,17 +153,17 @@ impl Operand {
         self.reads.scale_read_space()
     }
 
-    /// What one read of the scales brings along `axis`, in scales.
-    pub fn scale_read(&self, axis: Axis) -> usize {
-        self.reads.scale_read.extent(axis)
+    /// What one read of the scales brings along `dimension`, in scales.
+    pub fn scale_read(&self, dimension: Dimension) -> usize {
+        self.reads.scale_read.extent(dimension)
     }
 
-    /// Values one read brings, every axis it spans.
+    /// Values one read brings, every dimension it spans.
     pub fn read_values(&self) -> usize {
         self.reads.read.values()
     }
 
-    /// Scales one read of them brings, every axis it spans.
+    /// Scales one read of them brings, every dimension it spans.
     pub fn scale_read_values(&self) -> usize {
         self.reads.scale_read.values()
     }
@@ -177,20 +182,21 @@ impl Operand {
     /// that read needs and no other reader's.
     ///
     /// `None` for an order this operand is not read in: one that does not start with the word
-    /// this operand's scheme reads, along its own axis or along `across`, so no read of it is
-    /// whole words; or one whose load would step along an axis that is neither, or come back to
+    /// this operand's scheme reads, along its own dimension or along `across`, so no read of it is
+    /// whole words; or one whose load would step along a dimension that is neither, or come back to
     /// one after the other, which is no longer one run along each.
-    pub fn in_tile_order(self, order: TileOrder, across: Axis, words: usize) -> Option<Self> {
+    pub fn in_tile_order(self, order: TileOrder, across: Dimension, words: usize) -> Option<Self> {
         let values = order.values_storage(across, words);
         let scales = order.scales_storage(across, order.rows_a_load(across, words));
-        let (values_axes, scales_axes) = (values_axes(across), scales_axes(across));
+        let (values_dimensions, scales_dimensions) =
+            (values_dimensions(across), scales_dimensions(across));
         let stored = self.stored(
             across,
             words,
-            Some((&values_axes, values.tiles())),
+            Some((&values_dimensions, values.tiles())),
             scales
                 .as_ref()
-                .map(|scales| (scales_axes.as_slice(), scales.tiles())),
+                .map(|scales| (scales_dimensions.as_slice(), scales.tiles())),
         )?;
         Some(Operand {
             tiles: Some(order),
@@ -204,7 +210,7 @@ impl Operand {
     /// in rows (`None`) keeps the read the scheme states.
     fn stored(
         self,
-        across: Axis,
+        across: Dimension,
         words: usize,
         values: Option<Stored<'_>>,
         scales: Option<Stored<'_>>,
@@ -219,9 +225,9 @@ impl Operand {
             None => words,
         };
         let scale_read = match self.scaled_along() {
-            Some(axis) => read_off(
+            Some(dimension) => read_off(
                 self.reads.scale_read,
-                axis,
+                dimension,
                 across,
                 scale_words,
                 &unit,
@@ -239,49 +245,54 @@ impl Operand {
         })
     }
 
-    /// What one scale covers along `axis`, where this operand carries scales.
-    pub fn scale(&self, axis: Axis) -> Option<usize> {
-        self.reads.scale.as_ref().map(|tile| tile.extent(axis))
+    /// What one scale covers along `dimension`, where this operand carries scales.
+    pub fn scale(&self, dimension: Dimension) -> Option<usize> {
+        self.reads.scale.as_ref().map(|tile| tile.extent(dimension))
     }
 
-    /// The axis this operand's scales are grouped along, where they group one.
+    /// The dimension this operand's scales are grouped along, where they group one.
     ///
-    /// A scales operand asks, because the groups it counts are that axis's.
-    pub fn scaled_along(&self) -> Option<Axis> {
+    /// A scales operand asks, because the groups it counts are that dimension's.
+    pub fn scaled_along(&self) -> Option<Dimension> {
         self.reads.scaled_along()
     }
 
-    /// The axis this operand's words run along, and `K` where its reads are one
+    /// The dimension this operand's words run along, and `K` where its reads are one
     /// value wide.
     ///
     /// A binding asks, because a buffer's dims are named in the order it steps
     /// them and this is the one it steps first.
-    pub fn lined(&self) -> Axis {
-        self.reads.read.axis().unwrap_or(K)
+    pub fn lined(&self) -> Dimension {
+        self.reads.read.dimension().unwrap_or(K)
     }
 
-    /// The length a scale groups `axis` into, where it groups it at all.
+    /// The length a scale groups `dimension` into, where it groups it at all.
     ///
     /// **A scale covering one value groups nothing**, and neither does one
-    /// covering the whole axis: a grouping is what makes a walk read the same
+    /// covering the whole dimension: a grouping is what makes a walk read the same
     /// scale twice, and both of those make it read a new one every step or
     /// never. This is the one rule the cuts and the space share.
-    pub fn grouping(&self, axis: Axis, extent: usize) -> Option<usize> {
-        self.scale(axis)
+    pub fn grouping(&self, dimension: Dimension, extent: usize) -> Option<usize> {
+        self.scale(dimension)
             .filter(|&scale| scale > 1 && scale < extent)
     }
 
-    /// Which of the axes `axis` is split into a `width`-wide cut goes on, and how wide it is on
-    /// each: the groups where a scale groups the axis, the position inside one
-    /// where it does not — and **both** where the width is narrower than a
-    /// group, which is one group and part of it.
+    /// Which of the dimensions `dimension` is split into a `width`-wide cut goes on, and how wide
+    /// it is on each: the groups where a scale groups the dimension, the position inside one where
+    /// it does not — and **both** where the width is narrower than a group, which is one group and
+    /// part of it.
     ///
     /// A cut wider than a group but not a whole number of them is none of the
     /// three and states nothing; a caller reading an empty answer is holding a
     /// width this operand's scales do not admit.
-    pub fn cut(&self, axis: Axis, extent: usize, width: usize) -> Vec<(Axis, usize)> {
-        let (groups, inside) = blocked(axis);
-        let Some(scale) = self.grouping(axis, extent) else {
+    pub fn cut(
+        &self,
+        dimension: Dimension,
+        extent: usize,
+        width: usize,
+    ) -> Vec<(Dimension, usize)> {
+        let (groups, inside) = blocked(dimension);
+        let Some(scale) = self.grouping(dimension, extent) else {
             return vec![(inside, width)];
         };
         match (width.is_multiple_of(scale), scale.is_multiple_of(width)) {
@@ -291,15 +302,21 @@ impl Operand {
         }
     }
 
-    /// The axes `axis` is split into that a `width`-wide box spans, each with its extent: whole groups and the
-    /// whole of each where `width` covers whole groups a scale makes of the axis, the position
-    /// inside one where it does not, and the position alone where no scale groups the axis.
+    /// The dimensions `dimension` is split into that a `width`-wide box spans, each with its
+    /// extent: whole groups and the whole of each where `width` covers whole groups a scale makes
+    /// of the dimension, the position inside one where it does not, and the position alone where no
+    /// scale groups the dimension.
     ///
     /// Where a [`cut`](Self::cut) states what a level counts, the groups alone, a box states
-    /// every split axis it covers, so whole groups bring the position inside each with them.
-    pub fn span(&self, axis: Axis, extent: usize, width: usize) -> Vec<(Axis, usize)> {
-        let (groups, inside) = blocked(axis);
-        match self.grouping(axis, extent) {
+    /// every split dimension it covers, so whole groups bring the position inside each with them.
+    pub fn span(
+        &self,
+        dimension: Dimension,
+        extent: usize,
+        width: usize,
+    ) -> Vec<(Dimension, usize)> {
+        let (groups, inside) = blocked(dimension);
+        match self.grouping(dimension, extent) {
             Some(scale) if width.is_multiple_of(scale) => {
                 vec![(groups, width / scale), (inside, scale)]
             }
@@ -308,19 +325,25 @@ impl Operand {
         }
     }
 
-    /// How many `tile`-wide tiles of `axis` one `span`-wide tile holds, per
-    /// split axis: the counts a level states, the level below it covering `tile`
+    /// How many `tile`-wide tiles of `dimension` one `span`-wide tile holds, per
+    /// split dimension: the counts a level states, the level below it covering `tile`
     /// and this one `span`.
     ///
     /// Both widths are ones this operand's scales admit ([`cut`](Self::cut)).
-    /// A split axis that multiplies by one is left out, a level stating only what
+    /// A split dimension that multiplies by one is left out, a level stating only what
     /// it multiplies.
-    pub fn tiles(&self, axis: Axis, extent: usize, tile: usize, span: usize) -> Vec<(Axis, usize)> {
-        let (groups, inside) = blocked(axis);
-        let Some(scale) = self.grouping(axis, extent) else {
+    pub fn tiles(
+        &self,
+        dimension: Dimension,
+        extent: usize,
+        tile: usize,
+        span: usize,
+    ) -> Vec<(Dimension, usize)> {
+        let (groups, inside) = blocked(dimension);
+        let Some(scale) = self.grouping(dimension, extent) else {
             return vec![(inside, span / tile)];
         };
-        // Whole blocks of the axis, or part of one block: the two split axes any
+        // Whole blocks of the dimension, or part of one block: the two split dimensions any
         // width this operand admits covers.
         let covered = |width: usize| match width >= scale {
             true => (width / scale, scale),
@@ -337,34 +360,34 @@ impl Operand {
         .collect()
     }
 
-    /// The two axes `axis` becomes in a space at `extent`: the groups a scale
-    /// makes of it, and the position inside one. An axis no scale groups is one
+    /// The two dimensions `dimension` becomes in a space at `extent`: the groups a scale
+    /// makes of it, and the position inside one. A dimension no scale groups is one
     /// group over the whole of it.
-    pub fn axes(&self, axis: Axis, extent: usize) -> [(Axis, usize); 2] {
-        let (groups, inside) = blocked(axis);
-        let scale = self.grouping(axis, extent).unwrap_or(extent);
+    pub fn dimensions(&self, dimension: Dimension, extent: usize) -> [(Dimension, usize); 2] {
+        let (groups, inside) = blocked(dimension);
+        let scale = self.grouping(dimension, extent).unwrap_or(extent);
         // The one division that declares a tiling, and it is exact: a space a scale does not
         // tile would be a space short of the extent, and nothing downstream could tell.
         assert!(
             extent.is_multiple_of(scale),
-            "{extent} along {axis:?} is not whole scale tiles of {scale}"
+            "{extent} along {dimension:?} is not whole scale tiles of {scale}"
         );
         [(groups, extent / scale), (inside, scale)]
     }
 
-    /// The widest group of at most `units` units that distributes `axis` evenly, and
+    /// The widest group of at most `units` units that distributes `dimension` evenly, and
     /// that tiles the `units` it came from.
     ///
-    /// A grouped axis is distributed a word of scales a unit per turn
+    /// A grouped dimension is distributed a word of scales a unit per turn
     /// ([`spread_across`](Self::spread_across)), so a group distributes it evenly
-    /// where its width divides the axis's words of scales. `units` as they are
-    /// where they already do, where no scale groups the axis, and where its
+    /// where its width divides the dimension's words of scales. `units` as they are
+    /// where they already do, where no scale groups the dimension, and where its
     /// blocks are not whole words, which no group distributes.
-    pub fn units_distributing(&self, axis: Axis, extent: usize, units: usize) -> usize {
-        if self.grouping(axis, extent).is_none() {
+    pub fn units_distributing(&self, dimension: Dimension, extent: usize, units: usize) -> usize {
+        if self.grouping(dimension, extent).is_none() {
             return units;
         }
-        let [(_, blocks), _] = self.axes(axis, extent);
+        let [(_, blocks), _] = self.dimensions(dimension, extent);
         if !blocks.is_multiple_of(self.scales_per_word()) {
             return units;
         }
@@ -375,39 +398,75 @@ impl Operand {
             .unwrap_or(1)
     }
 
-    /// Reads of neighbouring rows, those `across` the axis its words run along, that lie side by
-    /// side in memory at the same place along that axis: a tile's rows a read's width apart, where
-    /// tile order lays a block's words of every row of its tile together
-    /// ([`TileWords::BlockByBlock`]); one otherwise, each row's reads its own run.
-    pub fn rows_side_by_side(&self, across: Axis) -> usize {
-        match self.tiles {
-            Some(order) if order.words() == TileWords::BlockByBlock => {
-                (order.tile().1 / self.reads.read.extent(across).max(1)).max(1)
-            }
-            Some(_) | None => 1,
-        }
+    /// Reads down `K` that one `run` of a `[k, rows]` matrix read as this operand holds, its
+    /// values `value_bits` wide and its rows `across` that axis: the stored pieces above one read,
+    /// in the order the matrix lays them, multiplied until the run is whole
+    /// ([`VectorTile::run_loads`]). In tile order a transaction takes the rows a tile lays side by
+    /// side before going down `K`, and a stored tile all of its reads; in rows, a transaction is
+    /// the reads down a column where its words run down `K`, and one where they run across it.
+    /// `None` for a stored tile of a matrix in rows, which stores none.
+    pub fn reads_down_k(
+        &self,
+        run: Run,
+        across: Dimension,
+        (k, rows): (usize, usize),
+        value_bits: usize,
+        transaction_bytes: usize,
+    ) -> Option<usize> {
+        let (read, matrix) = match self.tiles {
+            Some(order) => self.read_in_tiles(order, across, (k, rows))?,
+            None => self.read_in_rows(across, (k, rows)),
+        };
+        let (blocks, in_block) = blocked(K);
+        let reads = read
+            .run_loads(run, &matrix, value_bits, transaction_bytes)?
+            .into_iter()
+            .filter(|&(dimension, _)| [K, blocks, in_block].contains(&dimension))
+            .map(|(_, reads)| reads)
+            .product();
+        Some(reads)
     }
 
-    /// Reads down `K` that one stored tile holds of a row. Tile order lays each tile as one run,
-    /// its words block by block or row by row: as many units along `K` as this, the rest of a
-    /// plane across the tile's rows, read the tile whole. One in rows, where no tile is stored.
-    pub fn reads_down_a_tile(&self, axis: Axis) -> usize {
-        match self.tiles {
-            Some(order) if axis == K => {
-                (order.tile().0 / self.reads.read.extent(axis).max(1)).max(1)
-            }
-            Some(_) | None => 1,
-        }
+    /// One read of a `[k, rows]` matrix stored in `order`, its rows `across` that axis, as the
+    /// tile of stored pieces it covers, and the matrix over the dimensions the order names
+    /// ([`values_dimensions`]). `None` where the read cuts a stored piece.
+    fn read_in_tiles(
+        &self,
+        order: TileOrder,
+        across: Dimension,
+        (k, rows): (usize, usize),
+    ) -> Option<(VectorTile, Space)> {
+        let values = self.read_values();
+        let [rows_dimension, blocks, in_block] = values_dimensions(across);
+        let storage = order.values_storage(across, values / order.values_per_word());
+        let read = VectorTile::new(storage.tiles(), in_block, values).ok()?;
+        let matrix = Space::new(&[
+            (rows_dimension, rows),
+            (blocks, k / order.block()),
+            (in_block, order.block()),
+        ]);
+        Some((read, matrix))
     }
 
-    /// How `units` spread `axis` between them, stated from the leaf up.
+    /// One read of a `[k, rows]` matrix in rows, its rows `across` that axis, as a run along the
+    /// dimension its words run along, and the matrix with that dimension innermost.
+    fn read_in_rows(&self, across: Dimension, (k, rows): (usize, usize)) -> (VectorTile, Space) {
+        let lined = self.lined();
+        let matrix = match lined == K {
+            true => Space::new(&[(across, rows), (K, k)]),
+            false => Space::new(&[(K, k), (lined, rows)]),
+        };
+        (VectorTile::run(lined, self.read_values()), matrix)
+    }
+
+    /// How `units` spread `dimension` between them, stated from the leaf up.
     ///
-    /// A grouped axis is distributed by the scales: each unit takes the blocks one
+    /// A grouped dimension is distributed by the scales: each unit takes the blocks one
     /// read of them covers — as many as share a word — and the units take
     /// turns, so neighbouring units hold neighbouring words of scales. The
     /// position inside a block is never cut: whoever holds a block's scale
     /// holds the whole block, so the walk over what the units do not span sits
-    /// *above* them and counts blocks alone. An ungrouped axis is a contiguous
+    /// *above* them and counts blocks alone. An ungrouped dimension is a contiguous
     /// run each, walked *below* the units — and no unit cut at all where they
     /// do not divide it, every unit then walking the whole of it and computing
     /// the same sum.
@@ -417,13 +476,13 @@ impl Operand {
     /// Units that do not distribute the scales' words evenly.
     pub fn spread_across(
         &self,
-        axis: Axis,
+        dimension: Dimension,
         extent: usize,
         units: usize,
-    ) -> Result<Spread, Refusal> {
-        let (groups, inside) = blocked(axis);
-        let read = self.read(axis);
-        let Some(scale) = self.grouping(axis, extent) else {
+    ) -> Result<Spread, Decline> {
+        let (groups, inside) = blocked(dimension);
+        let read = self.read(dimension);
+        let Some(scale) = self.grouping(dimension, extent) else {
             let per_unit = match extent.is_multiple_of(units) {
                 true => extent / units,
                 false => extent,
@@ -438,12 +497,13 @@ impl Operand {
                 walk: Walked::Below(inside, per_unit / read),
             });
         };
-        let [(_, blocks), _] = self.axes(axis, extent);
+        let [(_, blocks), _] = self.dimensions(dimension, extent);
         let word = self.scales_per_word();
         // Each unit takes a word of scales a turn, so a turn is `units` words: the floor a
-        // contraction has to reach for this many units, and the unit a longer one is distributed in.
+        // contraction has to reach for this many units, and the unit a longer one is distributed
+        // in.
         if !blocks.is_multiple_of(word * units) {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the units do not distribute the scales' words evenly: a turn is a word of \
                           scales a unit, and the blocks are not whole turns",
             });
@@ -463,9 +523,9 @@ impl Operand {
     /// each cover `scale` along `tiled`, and whose scales come `scales_per_word`
     /// to a word ([`OperandReads::packed`]).
     pub fn packed(
-        lined: Axis,
+        lined: Dimension,
         read: usize,
-        tiled: Axis,
+        tiled: Dimension,
         scale: usize,
         scales_per_word: usize,
     ) -> Self {
@@ -478,71 +538,74 @@ impl Operand {
 
 /// This tile, a word along `along`, as a buffer `stored` so reads it `words` words a load: the
 /// word, along `along` or along `across`, and the tiles stored right above it, whole, while they
-/// fit one load and stay inside `inside` along each axis it names. The tiles past the load are the
-/// buffer's to step, not the read's.
+/// fit one load and stay inside `inside` along each dimension it names. The tiles past the load are
+/// the buffer's to step, not the read's.
 ///
 /// `None` where the buffer does not start with that word, or where a tile inside the load lies
-/// along neither axis or comes back to one after the other.
+/// along neither dimension or comes back to one after the other.
 fn read_off(
     tile: MicroTile,
-    along: Axis,
-    across: Axis,
+    along: Dimension,
+    across: Dimension,
     words: usize,
     inside: &MicroTile,
     stored: Option<Stored<'_>>,
 ) -> Option<MicroTile> {
-    let Some((axes, tiles)) = stored else {
+    let Some((dimensions, tiles)) = stored else {
         return Some(tile);
     };
     let per_word = tile.extent(along);
-    // The word starts at the finer of the axes an axis is split into; a tile above it continues
-    // the run along an axis on that same split axis, or on the blocks once `read` holds a whole
-    // one of `inside`: before then the next block's values are not the next ones along the axis.
-    let axis_of = |tile_axis: Axis, read: &MicroTile| {
-        [along, across].into_iter().find(|&axis| {
-            let (groups, within) = blocked(axis);
-            let block = inside.extent(axis);
-            finest_axis(axes, axis) == Some(tile_axis)
-                || (tile_axis == groups
-                    && axes.contains(&within)
+    // The word starts at the finer of the dimensions a dimension is split into; a tile above it
+    // continues the run along a dimension on that same split dimension, or on the blocks once
+    // `read` holds a whole one of `inside`: before then the next block's values are not the next
+    // ones along the dimension.
+    let dimension_of = |tile_dimension: Dimension, read: &MicroTile| {
+        [along, across].into_iter().find(|&dimension| {
+            let (groups, within) = blocked(dimension);
+            let block = inside.extent(dimension);
+            finest_dimension(dimensions, dimension) == Some(tile_dimension)
+                || (tile_dimension == groups
+                    && dimensions.contains(&within)
                     && block > 1
-                    && read.extent(axis) == block)
+                    && read.extent(dimension) == block)
         })
     };
-    let (&(tile_axis, first), above) = tiles.split_first()?;
-    let word_along = axis_of(tile_axis, &MicroTile::unit()).filter(|_| first == per_word)?;
+    let (&(tile_dimension, first), above) = tiles.split_first()?;
+    let word_along =
+        dimension_of(tile_dimension, &MicroTile::unit()).filter(|_| first == per_word)?;
     let mut read = MicroTile::along(word_along, per_word);
     let mut taken = 1;
     let mut last = word_along;
-    for &(tile_axis, count) in above.iter().filter(|&&(_, count)| count > 1) {
+    for &(tile_dimension, count) in above.iter().filter(|&&(_, count)| count > 1) {
         if taken * count > words {
             break;
         }
-        let axis = axis_of(tile_axis, &read)?;
-        let bound = inside.extent(axis);
-        if bound > 1 && read.extent(axis) * count > bound {
+        let dimension = dimension_of(tile_dimension, &read)?;
+        let bound = inside.extent(dimension);
+        if bound > 1 && read.extent(dimension) * count > bound {
             break;
         }
-        if axis != last && read.extent(axis) > 1 {
+        if dimension != last && read.extent(dimension) > 1 {
             return None;
         }
-        read = read.times(axis, count);
-        (taken, last) = (taken * count, axis);
+        read = read.times(dimension, count);
+        (taken, last) = (taken * count, dimension);
     }
     Some(read)
 }
 
-/// The finer of the two axes `axis` is split into ([`blocked`]) a buffer over `axes` carries:
-/// the position inside a block where it has it, the blocks where it omits it (as scales do).
-fn finest_axis(axes: &[Axis], axis: Axis) -> Option<Axis> {
-    let (groups, within) = blocked(axis);
+/// The finer of the two dimensions `dimension` is split into ([`blocked`]) a buffer over
+/// `dimensions` carries: the position inside a block where it has it, the blocks where it omits it
+/// (as scales do).
+fn finest_dimension(dimensions: &[Dimension], dimension: Dimension) -> Option<Dimension> {
+    let (groups, within) = blocked(dimension);
     [within, groups]
         .into_iter()
-        .find(|split| axes.contains(split))
+        .find(|split| dimensions.contains(split))
 }
 
-/// A buffer stored in tiles: the axes its dims carry, and its stored tiles, finest first.
-type Stored<'a> = (&'a [Axis], &'a [(Axis, usize)]);
+/// A buffer stored in tiles: the dimensions its dims carry, and its stored tiles, finest first.
+type Stored<'a> = (&'a [Dimension], &'a [(Dimension, usize)]);
 
 /// How a kernel reads a packed matrix's block scales, which they are bound as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -556,7 +619,7 @@ pub enum BlockScales {
 }
 
 /// How a matrix is packed: what one read of its words brings and how far one block scale covers,
-/// over its two axes, and the scheme that stores them.
+/// over its two dimensions, and the scheme that stores them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Packing {
     pub operand: Operand,
@@ -589,6 +652,11 @@ impl Packing {
             .is_some_and(|block| block.dtype == ScaleDtype::UE4M3)
     }
 
+    /// Bits one value holds, packed.
+    pub fn value_bits(&self) -> usize {
+        self.scheme.size_bits_stored() / self.scheme.num_quants()
+    }
+
     /// Bytes the words of a matrix of `values` values hold, packed.
     pub fn values_bytes(&self, values: usize) -> usize {
         values * self.scheme.size_bits_stored() / self.scheme.num_quants() / 8
@@ -598,8 +666,8 @@ impl Packing {
     /// scale is one word and left out.
     pub fn bytes(&self, values: usize) -> usize {
         let scales = match (self.operand.scaled_along(), self.scheme.block_scale()) {
-            (Some(axis), Some(block)) => {
-                let covered = self.operand.scale(axis).unwrap_or(1);
+            (Some(dimension), Some(block)) => {
+                let covered = self.operand.scale(dimension).unwrap_or(1);
                 (values / covered) * 4 / Field::of_scale(block.dtype).per_word()
             }
             _ => 0,
@@ -608,43 +676,44 @@ impl Packing {
     }
 }
 
-/// One axis of an operand, stated from the leaf up for the units that spread
-/// it: what one unit holds at the bottom, how many of it each split axis distributes
-/// to the units, which split axes they take in turns, and the walk over what they do
+/// One dimension of an operand, stated from the leaf up for the units that spread
+/// it: what one unit holds at the bottom, how many of it each split dimension distributes
+/// to the units, which split dimensions they take in turns, and the walk over what they do
 /// not cover between them.
 ///
-/// The two split axes are the axis's own ([`blocked`]): the scale groups, and the
-/// position inside one. An axis no scale groups names only the second.
+/// The two split dimensions are the dimension's own ([`blocked`]): the scale groups, and the
+/// position inside one. A dimension no scale groups names only the second.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Spread {
-    /// The tile one unit holds at the bottom, per split axis.
-    pub leaf: Vec<(Axis, usize)>,
-    /// How many of the thing below each split axis distributes to the units. Empty where
-    /// the units take none of this axis and every one of them walks it whole.
-    pub units: Vec<(Axis, usize)>,
-    /// Split axes the units take in turns rather than in runs.
-    pub interleaved: Vec<Axis>,
+    /// The tile one unit holds at the bottom, per split dimension.
+    pub leaf: Vec<(Dimension, usize)>,
+    /// How many of the thing below each split dimension distributes to the units. Empty where
+    /// the units take none of this dimension and every one of them walks it whole.
+    pub units: Vec<(Dimension, usize)>,
+    /// Split dimensions the units take in turns rather than in runs.
+    pub interleaved: Vec<Dimension>,
     /// The walk over what the units do not hold between them.
     pub walk: Walked,
 }
 
-/// Where the walk over an axis sits, relative to the units that spread it.
+/// Where the walk over a dimension sits, relative to the units that spread it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Walked {
-    /// Above the units, taking every tile of these split axes the level over it
-    /// hands down: a grouped axis, whose scales and reads the units take in
+    /// Above the units, taking every tile of these split dimensions the level over it
+    /// hands down: a grouped dimension, whose scales and reads the units take in
     /// turns.
-    Above(Vec<Axis>),
+    Above(Vec<Dimension>),
     /// Below the units, one unit stepping this many of the leaf: a contiguous
     /// run each.
-    Below(Axis, usize),
+    Below(Dimension, usize),
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::layout::stored::Operand;
+    use crate::layout::stored::{Operand, Packing};
     use crate::layout::tile_order::{self, TileOrder, TileWords};
-    use crate::matmul_axes::{K, KB, KI, N, NI};
+    use crate::matmul_dimensions::{K, KB, KI, N, NI};
+    use cubecl::tile::layout::Run;
 
     /// Words one 128-bit load holds.
     const WORDS: usize = 4;
@@ -726,7 +795,7 @@ mod tests {
             .stored(
                 N,
                 WORDS,
-                Some((&tile_order::values_axes(N), &one_level)),
+                Some((&tile_order::values_dimensions(N), &one_level)),
                 None,
             )
             .expect("tile order is read");
@@ -735,7 +804,12 @@ mod tests {
         for (columns, read) in [(1, 1), (2, 2), (4, 4), (8, 1)] {
             let tiles = [(KI, 8), (NI, columns)];
             let stored = nvfp4()
-                .stored(N, WORDS, Some((&tile_order::values_axes(N), &tiles)), None)
+                .stored(
+                    N,
+                    WORDS,
+                    Some((&tile_order::values_dimensions(N), &tiles)),
+                    None,
+                )
                 .expect("columns beside a word are read");
             assert_eq!((stored.read(K), stored.read(N)), (8, read), "{columns}");
         }
@@ -751,7 +825,10 @@ mod tests {
             nvfp4().stored(
                 N,
                 WORDS,
-                Some((&tile_order::values_axes(N), &half_a_block_then_the_next)),
+                Some((
+                    &tile_order::values_dimensions(N),
+                    &half_a_block_then_the_next
+                )),
                 None
             ),
             None
@@ -759,17 +836,82 @@ mod tests {
     }
 
     /// A buffer that does not start with the scheme's word, or whose load would come back to
-    /// `k` after the columns, is no run along each axis: refused rather than misread.
+    /// `k` after the columns, is no run along each dimension: refused rather than misread.
     #[test]
     fn a_read_that_is_not_whole_words_in_one_run_each_is_refused() {
         let half_word = [(KI, 4), (KI, 4)];
         let interleaved = [(KI, 8), (NI, 2), (KI, 2)];
         for tiles in [&half_word[..], &interleaved[..]] {
             assert_eq!(
-                nvfp4().stored(N, WORDS, Some((&tile_order::values_axes(N), tiles)), None),
+                nvfp4().stored(
+                    N,
+                    WORDS,
+                    Some((&tile_order::values_dimensions(N), tiles)),
+                    None
+                ),
                 None,
                 "{tiles:?}"
             );
         }
+    }
+
+    /// The packing of [`nvfp4`] laid out in `tile` as `words` asks, or in rows where `None`.
+    fn packing(tile: Option<(TileWords, (usize, usize))>) -> Packing {
+        let operand = match tile {
+            Some((words, tile)) => nvfp4()
+                .in_tile_order(laid(words, tile), N, WORDS)
+                .expect("tile order is read"),
+            None => nvfp4(),
+        };
+        Packing {
+            operand,
+            scheme: tile_order::nvfp4_scheme(),
+        }
+    }
+
+    /// A transaction of 128 bytes over NVFP4 64 deep by 8 rows a tile, its words block by block:
+    /// a read is one block of two rows, 16 bytes; the transaction takes the tile's four pairs of
+    /// rows, then two of its blocks down `K`. A stored tile is its four blocks down `K`.
+    #[test]
+    fn block_by_block_runs_go_across_the_rows_then_down_k() {
+        let packing = packing(Some((TileWords::BlockByBlock, (64, 8))));
+        let reads = |run| {
+            packing
+                .operand
+                .reads_down_k(run, N, (1024, 64), packing.value_bits(), 128)
+        };
+        assert_eq!(reads(Run::Load), Some(1));
+        assert_eq!(reads(Run::Transaction), Some(2));
+        assert_eq!(reads(Run::StoredTile), Some(4));
+    }
+
+    /// Row by row, a read is one block of one row, 8 bytes, and a row's four blocks lie together:
+    /// a transaction is a row's four reads down `K` and four rows beside them, the 128 bytes that
+    /// lie together, rather than sixteen reads down one row, which would cross four tiles.
+    #[test]
+    fn row_by_row_runs_go_down_a_row_then_across_the_rows() {
+        let packing = packing(Some((TileWords::RowByRow, (64, 8))));
+        let reads = |run| {
+            packing
+                .operand
+                .reads_down_k(run, N, (1024, 64), packing.value_bits(), 128)
+        };
+        assert_eq!(reads(Run::Transaction), Some(4));
+        assert_eq!(reads(Run::StoredTile), Some(4));
+    }
+
+    /// In rows a column's words run down `K`: a transaction is as many reads down it as fill one,
+    /// and no tile is stored.
+    #[test]
+    fn rows_run_down_a_column() {
+        let packing = packing(None);
+        let read_bytes = packing.values_bytes(packing.operand.read_values());
+        let reads = |run| {
+            packing
+                .operand
+                .reads_down_k(run, N, (1024, 64), packing.value_bits(), 128)
+        };
+        assert_eq!(reads(Run::Transaction), Some(128 / read_bytes));
+        assert_eq!(reads(Run::StoredTile), None);
     }
 }

@@ -1,7 +1,7 @@
 //! An RMS-norm launch's compile-time decisions.
 
 use crate::kernels::RmsNormRoutineProblem;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::rms_norm::{RmsNormOperand, RmsNormPartitioning};
@@ -10,7 +10,7 @@ use cubek_std::Hardware;
 
 /// What a routine declines with where a blueprint binds its operands at a width other than the
 /// one its microkernel sized its registers at: the operands were not bound as dense rows.
-pub const RMS_NORM_WIDTH_UNPLANNED: Refusal = Refusal::Declined {
+pub const RMS_NORM_WIDTH_UNPLANNED: Decline = Decline::Unserved {
     why: "the RMS norm binds its operands at the width its microkernel is sized at, a dense row's",
 };
 
@@ -76,7 +76,7 @@ impl<M> RmsNormBlueprint<M> {
     /// # Errors
     ///
     /// [`RMS_NORM_WIDTH_UNPLANNED`].
-    pub fn planned_at(self, width: usize) -> Result<Self, Refusal> {
+    pub fn planned_at(self, width: usize) -> Result<Self, Decline> {
         match self.width == width {
             true => Ok(self),
             false => Err(RMS_NORM_WIDTH_UNPLANNED),
@@ -116,8 +116,9 @@ mod tests {
         ] {
             for (rows, dim) in [(1, 96), (1, 1003), (7, 2560), (3, 4097), (1, 11008)] {
                 let problem = RmsNormRoutineProblem::dense(rows, dim, element);
-                for settings in CubeRmsNormRoutine.settings(&hw) {
-                    if let Ok((blueprint, _)) = CubeRmsNormRoutine.prepare(&hw, &problem, &settings)
+                for settings in CubeRmsNormRoutine::settings(&hw) {
+                    if let Ok((blueprint, _)) =
+                        CubeRmsNormRoutine::prepare(&hw, &problem, &settings)
                     {
                         assert!(
                             !overhangs(&blueprint.partitioning),
@@ -126,9 +127,9 @@ mod tests {
                         prepared[0] += 1;
                     }
                 }
-                for settings in CubeGroupsRmsNormRoutine.settings(&hw) {
+                for settings in CubeGroupsRmsNormRoutine::settings(&hw) {
                     if let Ok((blueprint, _)) =
-                        CubeGroupsRmsNormRoutine.prepare(&hw, &problem, &settings)
+                        CubeGroupsRmsNormRoutine::prepare(&hw, &problem, &settings)
                     {
                         assert!(
                             !overhangs(&blueprint.partitioning),
@@ -137,9 +138,9 @@ mod tests {
                         prepared[1] += 1;
                     }
                 }
-                for settings in PlaneRmsNormRoutine.settings(&hw) {
+                for settings in PlaneRmsNormRoutine::settings(&hw) {
                     if let Ok((blueprint, _)) =
-                        PlaneRmsNormRoutine.prepare(&hw, &problem, &settings)
+                        PlaneRmsNormRoutine::prepare(&hw, &problem, &settings)
                     {
                         assert!(
                             !overhangs(&blueprint.partitioning),

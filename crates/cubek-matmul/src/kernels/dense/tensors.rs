@@ -10,9 +10,9 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapArg, TensorMapSwizzle};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Arg, Labelled, Refusal, TmaCoordinates, TmaTerm};
+use cubecl::tile::launch::{Arg, Decline, Labelled, TmaCoordinates, TmaTerm};
 use cubecl::tile::{
-    Axis, Geometry, Launcher, Space, StageStorage, TileSpec, TileTensorLaunch, launch::Bound,
+    Dimension, Geometry, Launcher, Space, StageStorage, TileSpec, TileTensorLaunch, launch::Bound,
     launch::TmaBox, launch::Unbound,
 };
 use cubecl::zspace::metadata::Metadata;
@@ -28,59 +28,60 @@ use cubek_std::launch::tma::{swizzle_span_bytes, tma_meta_tiled, tma_operand, tm
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
 use cubek_std::layout::{contiguous, tile_order};
-use cubek_std::matmul_axes::{K, KB, KI, M, N};
+use cubek_std::matmul_dimensions::{K, KB, KI, M, N};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
 /// What a launch writing into its caller's output declines: an output of another shape than the
 /// product's, of an element the routines do not write, stored in tiles, or, beside a packed input,
 /// other than row-major.
-pub const MATMUL_OUTPUT_UNREAD: Refusal = Refusal::Declined {
+pub const MATMUL_OUTPUT_UNREAD: Decline = Decline::Unserved {
     why: "the output handed in is not the product's shape, in an element the routines write, laid in rows",
 };
 
 /// What a launch beside a packed input declines before preparing anything: a float operand of an
 /// element it is not verified at.
-pub const MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the packed routines are verified at f32, f16 or bf16 float operands",
 };
 
 /// What a routine streaming the `[k, n]` input packed declines: a float one. A packed `[m, k]`
 /// input against it is decoded first.
-pub const MATMUL_STREAMED_INPUT_FLOAT: Refusal = Refusal::Declined {
+pub const MATMUL_STREAMED_INPUT_FLOAT: Decline = Decline::Unserved {
     why: "the packed placement walks the block-split space of the [k, n] input it streams, and this one is float",
 };
 
 /// What a launch declines before preparing anything: operands of two elements, or of one the
 /// routines do not take.
-pub const MATMUL_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const MATMUL_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the microkernel matmul takes f32, f16, bf16 and i32 operands of one element",
 };
 
 /// What a routed or grouped product declines before preparing anything: an operand stored in
 /// tiles that its routines would read in rows, a slab at a time. That is either grouped operand,
 /// and the routed product's stack; a routed lhs is laid back in rows instead.
-pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Refusal = Refusal::Declined {
+pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Decline = Decline::Unserved {
     why: "the routed and grouped products read their operands in rows, slab by slab; store \
               them untiled",
 };
 
 /// An operand stored in tiles that each step down a column first
 /// ([`PlainTensor::is_tiled_column_first`]), which a tile read by its columns cannot walk.
-pub const MATMUL_COLUMN_FIRST_TILES: Refusal = Refusal::Declined {
+pub const MATMUL_COLUMN_FIRST_TILES: Decline = Decline::Unserved {
     why: "the matmul kernels read storage tiles stored a row at a time; this operand's are \
               stored a column at a time",
 };
 
 /// What a launch tiling the rows declines before preparing anything: operands of two ranks, which
 /// the routines do not broadcast.
-pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Refusal = Refusal::Declined {
+pub const MATMUL_TILED_ROWS_RANKS_DIFFER: Decline = Decline::Unserved {
     why: "a matmul tiling its rows reads operands of one rank",
 };
 
 /// What a launch holding every row whole declines before preparing anything: an rhs contiguous
-/// along neither of its axes, or one stored in tiles, which no routine holding every row whole reads in vectors.
-pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Refusal = Refusal::Declined {
+/// along neither of its dimensions, or one stored in tiles, which no routine holding every row
+/// whole reads in vectors.
+pub const MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED: Decline = Decline::Unserved {
     why: "a matmul holding every row whole reads one rhs matrix contiguous along `k` or `n`",
 };
 
@@ -159,7 +160,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 Self::float(client, lhs, rhs, rows_kind)
@@ -182,7 +183,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
         out: ElemType,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         Self::packed(client, lhs, rhs, out)
     }
 
@@ -206,7 +207,7 @@ impl MatmulTensors {
         rhs: StoredTensor,
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (lhs, rhs) = match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => (lhs, rhs),
             (lhs, rhs) => return Self::packed_into(client, lhs, rhs, out),
@@ -233,12 +234,13 @@ impl MatmulTensors {
         })
     }
 
-    /// The float `lhs` against `rhs`, every batch reading its entry of `table`, as a launch
-    /// holding its rows as `rows_kind` says reads them, written into `out`, `[batches.., rows, n]` in a float input's element, which
-    /// the caller allocated as its product lies: a grouped one's slabs side by side, say. The
-    /// lhs's batch dims broadcast against the table's. Under [`MatmulIndex::Slab`] the rhs
-    /// is the stack: a float one `[slabs, k, n]`, read where it lies; a packed one read as its
-    /// slabs ([`PackedTensor::stacked`]), every row of a batch then held whole.
+    /// The float `lhs` against `rhs`, every batch reading its entry of `table`, as a launch holding
+    /// its rows as `rows_kind` says reads them, written into `out`, `[batches.., rows, n]` in a
+    /// float input's element, which the caller allocated as its product lies: a grouped one's slabs
+    /// side by side, say. The lhs's batch dims broadcast against the table's. Under
+    /// [`MatmulIndex::Slab`] the rhs is the stack: a float one `[slabs, k, n]`, read where it lies;
+    /// a packed one read as its slabs ([`PackedTensor::stacked`]), every row of a batch then held
+    /// whole.
     ///
     /// # Errors
     ///
@@ -258,7 +260,7 @@ impl MatmulTensors {
         table: MatmulIndexTable,
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         assert_eq!(
             table.entries.elem,
             ElemType::UInt(UIntKind::U32),
@@ -280,7 +282,7 @@ impl MatmulTensors {
         table: MatmulIndexTable,
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?
             .addressable(client)
             .into_parts();
@@ -305,7 +307,7 @@ impl MatmulTensors {
         rhs: PackedTensor,
         table: MatmulIndexTable,
         out: PlainTensor,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let MatmulIndex::Slab { slabs } = table.index else {
             return Err(PACKED_STACK_UNREAD);
         };
@@ -344,7 +346,7 @@ impl MatmulTensors {
         n: usize,
         table: &MatmulIndexTable,
         out: PlainTensor,
-    ) -> Result<MatmulOutputBuffer, Refusal> {
+    ) -> Result<MatmulOutputBuffer, Decline> {
         let shape = lhs.shape();
         let rank = shape.rank();
         assert_eq!(shape[rank - 1], k, "the contraction dims must agree");
@@ -380,8 +382,8 @@ impl MatmulTensors {
         }
     }
 
-    /// `tensor`, a float operand over `axes`, as a product beside a packed input reads it: dense
-    /// rows of an element the packed routines are verified at, a copy where it is not dense.
+    /// `tensor`, a float operand over `dimensions`, as a product beside a packed input reads it:
+    /// dense rows of an element the packed routines are verified at, a copy where it is not dense.
     ///
     /// # Errors
     ///
@@ -393,17 +395,17 @@ impl MatmulTensors {
     pub fn beside_packed(
         client: &Client,
         tensor: PlainTensor,
-        axes: [Axis; 2],
+        dimensions: [Dimension; 2],
         k: usize,
-    ) -> Result<PlainTensor, Refusal> {
+    ) -> Result<PlainTensor, Decline> {
         if !MatmulInputs::FLOATS.contains(&tensor.elem) {
             return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
         }
         let tensor = tensor.into_contiguous(client);
         let shape = tensor.shape();
-        let contracted = axes
+        let contracted = dimensions
             .iter()
-            .position(|&axis| axis == K)
+            .position(|&dimension| dimension == K)
             .expect("a product's input spans its contraction");
         assert_eq!(
             shape[shape.rank() - 2 + contracted],
@@ -413,8 +415,8 @@ impl MatmulTensors {
         Ok(tensor)
     }
 
-    /// `operand` as a product beside a packed input reads it, along `axes` and `k` deep: a float
-    /// one [`beside_packed`](Self::beside_packed), a packed one as it is stored.
+    /// `operand` as a product beside a packed input reads it, along `dimensions` and `k` deep: a
+    /// float one [`beside_packed`](Self::beside_packed), a packed one as it is stored.
     ///
     /// # Errors
     ///
@@ -422,12 +424,12 @@ impl MatmulTensors {
     fn stored_beside_packed(
         client: &Client,
         operand: StoredTensor,
-        axes: [Axis; 2],
+        dimensions: [Dimension; 2],
         k: usize,
-    ) -> Result<StoredTensor, Refusal> {
+    ) -> Result<StoredTensor, Decline> {
         match operand {
             StoredTensor::Plain(tensor) => {
-                Self::beside_packed(client, tensor, axes, k).map(StoredTensor::Plain)
+                Self::beside_packed(client, tensor, dimensions, k).map(StoredTensor::Plain)
             }
             StoredTensor::Packed(_) => Ok(operand),
         }
@@ -458,7 +460,7 @@ impl MatmulTensors {
         lhs: PlainTensor,
         rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let operands = Operands::read(client, lhs, rhs, rows_kind)?;
         let (tensor, out) =
             PlainTensor::empty(client, operands.out_shape.clone().into(), operands.lhs.elem);
@@ -481,7 +483,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
         out: ElemType,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (lhs, rhs, shape) = Self::beside_packed_inputs(client, lhs, rhs)?;
         let (tensor, bound) = PlainTensor::empty(client, shape.into(), out);
         let tensor = Some(tensor);
@@ -508,7 +510,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
         out: PlainTensor,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (lhs, rhs, shape) = Self::beside_packed_inputs(client, lhs, rhs)?;
         if out.shape().as_slice() != shape.as_slice()
             || !MatmulInputs::VERIFIED.contains(&out.elem)
@@ -537,7 +539,7 @@ impl MatmulTensors {
         client: &Client,
         lhs: StoredTensor,
         rhs: StoredTensor,
-    ) -> Result<(StoredTensor, StoredTensor, Vec<usize>), Refusal> {
+    ) -> Result<(StoredTensor, StoredTensor, Vec<usize>), Decline> {
         let k = rhs.extent([K, N], K);
         let lhs = Self::stored_beside_packed(client, lhs, [M, K], k)?;
         let rhs = Self::stored_beside_packed(client, rhs, [K, N], k)?;
@@ -555,7 +557,7 @@ impl MatmulTensors {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 self.bind_float(lhs, rhs, blueprint, grid)
@@ -571,12 +573,12 @@ impl MatmulTensors {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+    ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid)?;
         let out = launcher
             .arg(self.out.bound.binding.clone(), self.out.bound.elem)
-            .axes(&[M, N])
-            .batches(&self.batch_axes())
+            .dimensions(&[M, N])
+            .batches(&self.batch_dimensions())
             .vectorize(blueprint.widths.out)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -600,10 +602,10 @@ impl MatmulTensors {
     ) -> MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch> {
         let launcher = self.packed_launcher(blueprint, grid);
         let batches = self.table_batches();
-        let (out, out_axes) = self.out.bound.restated(&self.blocks(), M, N, &batches);
+        let (out, out_dimensions) = self.out.bound.restated(&self.blocks(), M, N, &batches);
         let out = launcher
             .arg(out.binding, out.elem)
-            .axes(&out_axes)
+            .dimensions(&out_dimensions)
             .batches(&batches)
             .vectorize(blueprint.widths.out)
             .build()
@@ -629,7 +631,7 @@ impl MatmulTensors<Geometry> {
         lhs: StoredTensor,
         rhs: StoredTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         match (lhs, rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 Self::float(client, lhs, rhs, rows_kind)
@@ -644,7 +646,7 @@ impl MatmulTensors<Geometry> {
         lhs: PlainTensor,
         rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let operands = Operands::read(client, lhs, rhs, rows_kind)?;
         let out = Geometry::row_major(&operands.sink_shape());
         Ok(Self {
@@ -659,7 +661,7 @@ impl MatmulTensors<Geometry> {
     }
 
     /// `lhs` against `rhs`, either packed, the output laid out as dense rows.
-    fn packed(client: &Client, lhs: StoredTensor, rhs: StoredTensor) -> Result<Self, Refusal> {
+    fn packed(client: &Client, lhs: StoredTensor, rhs: StoredTensor) -> Result<Self, Decline> {
         let k = rhs.extent([K, N], K);
         let lhs = MatmulTensors::stored_beside_packed(client, lhs, [M, K], k)?;
         let rhs = MatmulTensors::stored_beside_packed(client, rhs, [K, N], k)?;
@@ -682,7 +684,7 @@ impl MatmulTensors<Geometry> {
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         match (&self.lhs, &self.rhs) {
             (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
                 self.bind_float(lhs, rhs, blueprint, grid)
@@ -698,12 +700,12 @@ impl MatmulTensors<Geometry> {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Refusal> {
+    ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         let (launcher, [lhs, rhs]) = self.bind_operands(lhs, rhs, blueprint, grid)?;
         let out = launcher
             .unbound(&self.out)
-            .axes(&[M, N])
-            .batches(&self.batch_axes())
+            .dimensions(&[M, N])
+            .batches(&self.batch_dimensions())
             .vectorize(blueprint.widths.out)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
@@ -719,8 +721,8 @@ impl MatmulTensors<Geometry> {
     }
 
     /// The operands bound where either input is packed, the output stated as a buffer output is
-    /// ([`MatmulBlocks::restated`]): a dim for each axis of the block-split space, each at its own
-    /// stride over the sink's dense rows.
+    /// ([`MatmulBlocks::restated`]): a dim for each dimension of the block-split space, each at its
+    /// own stride over the sink's dense rows.
     fn bind_packed<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
@@ -734,10 +736,10 @@ impl MatmulTensors<Geometry> {
             .iter()
             .map(|&(_, extent, stride)| (extent, stride))
             .collect();
-        let axes: Vec<_> = dims.iter().map(|&(axis, _, _)| axis).collect();
+        let dimensions: Vec<_> = dims.iter().map(|&(dimension, _, _)| dimension).collect();
         let out = launcher
             .unbound(&Geometry::new(&geometry))
-            .axes(&axes)
+            .dimensions(&dimensions)
             .vectorize(blueprint.widths.out)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
@@ -757,9 +759,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// refused all three.
     pub fn tma_output(&self, stage: &MatmulStage) -> TileTensorLaunch {
         // A packed product states its output over the block-split space, its rows and columns
-        // one block each where the store took it (`CubeStagedTmaStoreRefusal::BlockSplit`): the
+        // one block each where the store took it (`CubeStagedTmaStoreDecline::BlockSplit`): the
         // positions inside them, which the descriptor's rows and columns are.
-        let output: [Axis; 2] = match self.read(|view| view.blocks()) {
+        let output: [Dimension; 2] = match self.read(|view| view.blocks()) {
             None => {
                 self.assert_tiled();
                 [M, N]
@@ -772,7 +774,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 ),
             },
         };
-        let axes = stage.axes();
+        let dimensions = stage.dimensions();
         let out = self
             .out
             .addressed()
@@ -781,7 +783,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             out.binding.clone(),
             1,
             MatrixLayout::RowMajor,
-            (stage.extent(axes.m), stage.extent(axes.n)),
+            (stage.extent(dimensions.m), stage.extent(dimensions.n)),
             out.elem,
             TensorMapSwizzle::None,
         );
@@ -951,8 +953,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         }
     }
 
-    /// How `slab`, one `[k, n]` slab of a stack, lies where it is one wide along an axis: along
-    /// that axis where its stride there is the unit one. A dim of extent one addresses nothing
+    /// How `slab`, one `[k, n]` slab of a stack, lies where it is one wide along a dimension: along
+    /// that dimension where its stride there is the unit one. A dim of extent one addresses nothing
     /// in a matrix of its own, but a slab's is cut from its stack, whose lines run along it.
     fn stacked_layout(slab: &PlainTensor) -> MatmulLayout {
         let (shape, strides) = (&slab.binding.shape, &slab.binding.strides);
@@ -965,7 +967,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// The launcher over the blueprint's partitioning, as its kernel compiles it: the blocks in,
     /// and the rows inside the one block along `M` read at launch where they are tiled and no
-    /// packed input's scales vary along them ([`MatmulBlocks::scaled_axes`]).
+    /// packed input's scales vary along them ([`MatmulBlocks::scaled_dimensions`]).
     fn packed_launcher<Mk, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
@@ -975,7 +977,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             (
                 blueprint
                     .partitioning
-                    .kernel_compiling(&self.blocks().scaled_axes()),
+                    .kernel_compiling(&self.blocks().scaled_dimensions()),
                 blueprint.partitioning.as_tile().space().clone(),
             )
         })
@@ -1003,33 +1005,34 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ) -> MatmulBinding<O, TileTensorLaunch, TileTensorLaunch> {
         let blocks = self.blocks();
         let batches = self.table_batches();
-        let bind = |operand: &StoredTensor, [rows, columns]: [Axis; 2], width: usize| match operand
-        {
-            StoredTensor::Plain(tensor) => {
-                let (tensor, axes) = tensor.restated(&blocks, rows, columns, &batches);
-                launcher
-                    .arg(tensor.binding, tensor.elem)
-                    .axes(&axes)
-                    .batches(&batches)
-                    .vectorize(width)
-                    .delivery(blueprint.microkernel.delivery())
-                    .build()
-                    .expect(ADMITTED_PLAN_RUNS)
-                    .arg()
-            }
-            // A launch the TMA engine fills binds its packed inputs again through descriptors
-            // (`tma_packed_operands`), scales and all, so the launcher states their scales as a
-            // reader of fields takes them, which reads them where they lie, in tiles or in rows.
-            StoredTensor::Packed(tensor) => tensor.bind(
-                &launcher,
-                width,
-                match blueprint.microkernel.fills_by_tma() {
-                    true => BlockScales::Fields,
-                    false => blueprint.microkernel.block_scales(),
-                },
-                blueprint.microkernel.words_delivery(),
-            ),
-        };
+        let bind =
+            |operand: &StoredTensor, [rows, columns]: [Dimension; 2], width: usize| match operand {
+                StoredTensor::Plain(tensor) => {
+                    let (tensor, dimensions) = tensor.restated(&blocks, rows, columns, &batches);
+                    launcher
+                        .arg(tensor.binding, tensor.elem)
+                        .dimensions(&dimensions)
+                        .batches(&batches)
+                        .vectorize(width)
+                        .delivery(blueprint.microkernel.delivery())
+                        .build()
+                        .expect(ADMITTED_PLAN_RUNS)
+                        .arg()
+                }
+                // A launch the TMA engine fills binds its packed inputs again through descriptors
+                // (`tma_packed_operands`), scales and all, so the launcher states their scales as a
+                // reader of fields takes them, which reads them where they lie, in tiles or in
+                // rows.
+                StoredTensor::Packed(tensor) => tensor.bind(
+                    &launcher,
+                    width,
+                    match blueprint.microkernel.fills_by_tma() {
+                        true => BlockScales::Fields,
+                        false => blueprint.microkernel.block_scales(),
+                    },
+                    blueprint.microkernel.words_delivery(),
+                ),
+            };
         let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
         // A microkernel reading the rhs a block at a time planned on the rhs read so.
         let by_block = match (&self.rhs, blueprint.microkernel.reads_rhs_by_block()) {
@@ -1073,21 +1076,21 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         self.read(|view| view.work_item())
     }
 
-    /// The axes the problem's batch dims are labelled with, read off the operands' rank without
-    /// stating the whole problem ([`MatmulRoutineProblem::batch_axes`]): the lhs's, or a
-    /// table's dims, which are the batches.
-    fn batch_axes(&self) -> Vec<Axis> {
+    /// The dimensions the problem's batch dims are labelled with, read off the operands' rank
+    /// without stating the whole problem ([`MatmulRoutineProblem::batch_dimensions`]): the lhs's,
+    /// or a table's dims, which are the batches.
+    fn batch_dimensions(&self) -> Vec<Dimension> {
         let dims = match &self.table {
             Some(table) => table.entries.shape().rank(),
             None => self.lhs.values().shape().rank() - 2,
         };
-        MatmulRoutineProblem::batch_axes_of(dims)
+        MatmulRoutineProblem::batch_dimensions_of(dims)
     }
 
     /// The batches a table's dims are, which a packed product keeps apart; none without a table.
-    fn table_batches(&self) -> Vec<Axis> {
+    fn table_batches(&self) -> Vec<Dimension> {
         self.table.as_ref().map_or_else(Vec::new, |table| {
-            MatmulRoutineProblem::batch_axes_of(table.entries.shape().rank())
+            MatmulRoutineProblem::batch_dimensions_of(table.entries.shape().rank())
         })
     }
 
@@ -1154,7 +1157,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// words through one over the rows or the tiles they are stored in
     /// ([`PackedTensor::bind_by_tma`]), its scales bound under `launcher` as `scales` says, for
     /// the copy engine to keep beside them. What a fill
-    /// [`CubeStagedTmaRefusal`](cubek_microkernel::matmul::cube::CubeStagedTmaRefusal) admits.
+    /// [`CubeStagedTmaDecline`](cubek_microkernel::matmul::cube::CubeStagedTmaDecline) admits.
     ///
     /// # Panics
     ///
@@ -1173,8 +1176,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         };
         // A packed input `operand` across `across`, its words landing a word a cell.
         let packed = |tensor: &PackedTensor, operand: MatmulOperand, across, width| {
-            let values_axes = tile_order::values_axes(across);
-            let landed = stage.landed_space(operand, orders, &values_axes);
+            let values_dimensions = tile_order::values_dimensions(across);
+            let landed = stage.landed_space(operand, orders, &values_dimensions);
             let values_per_word = tensor.scheme().num_quants();
             let swizzle = storage
                 .tma_swizzle(
@@ -1186,7 +1189,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             tensor.bind_by_tma(
                 launcher,
                 width,
-                landed.extent(values_axes[0]),
+                landed.extent(values_dimensions[0]),
                 landed.extent(KB) * landed.extent(KI),
                 swizzle,
                 scales,
@@ -1213,8 +1216,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ) -> TileTensorLaunch {
         let blocks = self.blocks();
         let batches = self.table_batches();
-        let (lhs, axes) = lhs.restated(&blocks, M, K, &batches);
-        let lhs_stage = stage.landed_space(MatmulOperand::Lhs, orders, &axes);
+        let (lhs, dimensions) = lhs.restated(&blocks, M, K, &batches);
+        let lhs_stage = stage.landed_space(MatmulOperand::Lhs, orders, &dimensions);
         let swizzle = storage
             .tma_swizzle(&lhs_stage, 1, lhs.elem.size_bits())
             .expect("the fill delivers by TMA only a stage a box lands");
@@ -1232,7 +1235,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             tensor: lhs.binding.clone().into_tensor_arg(),
             metadata: tma_meta_tiled(
                 metadata,
-                Shape::new([lhs_stage.extent(axes[0]), depth / row, row]),
+                Shape::new([lhs_stage.extent(dimensions[0]), depth / row, row]),
                 lhs.elem,
                 swizzle,
             ),
@@ -1240,10 +1243,10 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         };
         // A box starts on a stage's first block of `K`, a whole number of rows in.
         let coordinates = TmaCoordinates {
-            dims: vec![
-                vec![TmaTerm::axis(0)],
+            axes: vec![
+                vec![TmaTerm::dimension(0)],
                 vec![
-                    TmaTerm::axis(1)
+                    TmaTerm::dimension(1)
                         .times(lhs_stage.extent(KI) as u32)
                         .over(row as u32),
                 ],
@@ -1251,11 +1254,12 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             ],
         };
         let extents: Vec<u32> = lhs.binding.shape.iter().map(|&e| e as u32).collect();
-        TileTensorLaunch::tensor_map_folded(map, &axes, &extents, coordinates).served_wide(width)
+        TileTensorLaunch::tensor_map_folded(map, &dimensions, &extents, coordinates)
+            .served_wide(width)
     }
 
-    /// The slots the cubes sharing a box park their parts in, over the output's axes in the sum's
-    /// element, two cube boxes a cube
+    /// The slots the cubes sharing a box park their parts in, over the output's dimensions in the
+    /// sum's element, two cube boxes a cube
     /// ([`Partitioning::arrival_slots`](cubecl::tile::Partitioning::arrival_slots)), beside one
     /// arrival counter a box, holding zero.
     ///
@@ -1269,11 +1273,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         launcher: &Launcher,
     ) -> MatmulLastArrivalBinding {
         let partitioning = blueprint.partitioning.as_tile();
-        // The output's axes in its order: the batches the cube level hands out, then its rows and
-        // columns, against packed inputs as the block-split space restates them
-        // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch axis one box long stays
-        // a dim of the slots.
-        let output: Vec<Axis> = match self.read(|view| view.blocks()) {
+        // The output's dimensions in its order: the batches the cube level hands out, then its rows
+        // and columns, against packed inputs as the block-split space restates them
+        // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch dimension one box long
+        // stays a dim of the slots.
+        let output: Vec<Dimension> = match self.read(|view| view.blocks()) {
             None => {
                 self.assert_tiled();
                 vec![M, N]
@@ -1281,22 +1285,23 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             Some(blocks) => blocks
                 .restated_dims(M, N, 1)
                 .into_iter()
-                .map(|(axis, _, _)| axis)
+                .map(|(dimension, _, _)| dimension)
                 .collect(),
         };
-        let axes: Vec<Axis> = blueprint
+        let dimensions: Vec<Dimension> = blueprint
             .partitioning
-            .batch_axes()
+            .batch_dimensions()
             .iter()
             .copied()
             .chain(output)
             .collect();
         let sum = self.problem().sum();
-        let (_, slots) = PlainTensor::empty(&self.client, partitioning.arrival_slots(&axes), sum);
+        let (_, slots) =
+            PlainTensor::empty(&self.client, partitioning.arrival_slots(&dimensions), sum);
         MatmulLastArrivalBinding {
             slots: launcher
                 .arg(slots.binding, sum)
-                .axes(&axes)
+                .dimensions(&dimensions)
                 .vectorize(blueprint.widths.out)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS),
@@ -1322,7 +1327,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         rhs: &PlainTensor,
         blueprint: &MatmulBlueprint<Mk, SM>,
         grid: &Grid,
-    ) -> Result<(Launcher, [TileTensorLaunch; 2]), Refusal> {
+    ) -> Result<(Launcher, [TileTensorLaunch; 2]), Decline> {
         let partitioning = blueprint.partitioning.as_tile();
         let launcher = grid.launcher(self.client(), || {
             (
@@ -1330,23 +1335,25 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 partitioning.space().clone(),
             )
         });
-        let (batch_axes, widths) = (self.batch_axes(), blueprint.widths);
+        let (batch_dimensions, widths) = (self.batch_dimensions(), blueprint.widths);
         let delivery = blueprint.microkernel.delivery();
         let decoded = blueprint.microkernel.decoded_stage();
-        let source = |tensor: &PlainTensor, axes: &'static [Axis]| {
-            Self::float_arg(&launcher, tensor, axes, decoded)
-                .batches(&batch_axes)
+        let source = |tensor: &PlainTensor, dimensions: &'static [Dimension]| {
+            Self::float_arg(&launcher, tensor, dimensions, decoded)
+                .batches(&batch_dimensions)
                 .delivery(delivery)
         };
         let orders = blueprint.microkernel.orders();
-        // A stack is labelled, not batched: its slabs are the axis an entry picks along.
-        let stack_axes = self
+        // A stack is labelled, not batched: its slabs are the dimension an entry picks along.
+        let stack_dimensions = self
             .table
             .as_ref()
-            .and_then(|table| table.index.axis())
+            .and_then(|table| table.index.dimension())
             .map(|(stacked, _)| [stacked, K, N]);
-        let rhs_source = match &stack_axes {
-            Some(axes) => Self::float_arg(&launcher, rhs, axes, decoded).delivery(delivery),
+        let rhs_source = match &stack_dimensions {
+            Some(dimensions) => {
+                Self::float_arg(&launcher, rhs, dimensions, decoded).delivery(delivery)
+            }
             None => source(rhs, &[K, N]),
         };
         let lhs = orders
@@ -1370,15 +1377,17 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     fn float_arg<'a>(
         launcher: &'a Launcher,
         tensor: &PlainTensor,
-        axes: &'a [Axis],
+        dimensions: &'a [Dimension],
         decoded: Option<ElemType>,
     ) -> Arg<'a, Labelled> {
         match (tensor.elem, decoded) {
             (ElemType::Float(kind), Some(decoded)) if decoded != tensor.elem => launcher
                 .arg(tensor.binding.clone(), ElemType::UInt(UIntKind::U32))
-                .axes(axes)
+                .dimensions(dimensions)
                 .packed(kind),
-            _ => launcher.arg(tensor.binding.clone(), tensor.elem).axes(axes),
+            _ => launcher
+                .arg(tensor.binding.clone(), tensor.elem)
+                .dimensions(dimensions),
         }
     }
 
@@ -1405,11 +1414,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         }
     }
 
-    /// `tensor`'s tensor map, a row-major matrix of `rows × columns` (each an axis and its extent),
-    /// its descriptor moving `landing`'s box of it.
+    /// `tensor`'s tensor map, a row-major matrix of `rows × columns` (each a dimension and its
+    /// extent), its descriptor moving `landing`'s box of it.
     fn tma_matrix(
         tensor: &PlainTensor,
-        [(rows, row_count), (columns, column_count)]: [(Axis, usize); 2],
+        [(rows, row_count), (columns, column_count)]: [(Dimension, usize); 2],
         landing: TmaLanding,
     ) -> TileTensorLaunch {
         let matrices = 1;
@@ -1467,7 +1476,7 @@ impl Operands {
         lhs: PlainTensor,
         rhs: PlainTensor,
         rows_kind: MatmulRowsKind,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         match rows_kind {
             MatmulRowsKind::Tiled => Self::tiled(client, lhs, rhs),
             MatmulRowsKind::Whole => Self::whole(client, lhs, rhs),
@@ -1476,7 +1485,7 @@ impl Operands {
 
     /// Both operands where they lie unless they alias themselves, the output their product's
     /// shape.
-    fn tiled(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
+    fn tiled(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Decline> {
         let out_shape = Self::product_shape(&lhs, &rhs)?;
         if lhs.is_tiled_column_first() || rhs.is_tiled_column_first() {
             return Err(MATMUL_COLUMN_FIRST_TILES);
@@ -1494,7 +1503,7 @@ impl Operands {
 
     /// The lhs merged into `[m, k]` rows, the rhs its one `[k, n]` matrix, the output
     /// allocated as `[.., n]` and bound as `[m, n]` rows.
-    fn whole(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
+    fn whole(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Decline> {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?.into_parts();
         let rhs_shape = rhs.shape();
         if rhs_shape.as_slice()[..rhs_shape.rank().saturating_sub(2)]
@@ -1553,9 +1562,9 @@ impl Operands {
         }
     }
 
-    /// `rhs` as the one `[k, n]` matrix it holds, in rows or in tiles, contiguous along the axis
-    /// the tuning key reads ([`contiguous`]), so a key and its tensors state one layout; `None`
-    /// where it holds several matrices or is contiguous along neither axis.
+    /// `rhs` as the one `[k, n]` matrix it holds, in rows or in tiles, contiguous along the
+    /// dimension the tuning key reads ([`contiguous`]), so a key and its tensors state one layout;
+    /// `None` where it holds several matrices or is contiguous along neither dimension.
     fn one_weight_matrix(rhs: &PlainTensor) -> Option<PlainTensor> {
         rhs.as_one_matrix()
             .filter(|matrix| contiguous(&matrix.meta(), [K, N]).is_some())
@@ -1585,7 +1594,7 @@ impl Operands {
     /// # Panics
     ///
     /// Operands of a rank under two, or whose contraction or batch dims do not agree.
-    fn product_shape(lhs: &PlainTensor, rhs: &PlainTensor) -> Result<Vec<usize>, Refusal> {
+    fn product_shape(lhs: &PlainTensor, rhs: &PlainTensor) -> Result<Vec<usize>, Decline> {
         let (lhs_shape, rhs_shape) = (lhs.shape(), rhs.shape());
         let rank = lhs_shape.num_dims();
         if rank != rhs_shape.num_dims() {
@@ -1614,8 +1623,8 @@ impl Operands {
     }
 }
 
-/// Where a descriptor lands its box: the stage of the operand, its axes in the order the operand
-/// is bound in, and the swizzle that lays the box's rows as the stage keeps them.
+/// Where a descriptor lands its box: the stage of the operand, its dimensions in the order the
+/// operand is bound in, and the swizzle that lays the box's rows as the stage keeps them.
 struct TmaLanding {
     stage: Space,
     swizzle: TensorMapSwizzle,

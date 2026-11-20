@@ -1,5 +1,5 @@
-use crate::matmul::{MatmulAxes, MatmulDim};
-use cubecl::tile::{Axis, Tile};
+use crate::matmul::{MatmulDim, MatmulDimensions};
+use cubecl::tile::{Dimension, Tile};
 use cubecl::{self as cubecl, cube, ir::ElemType, prelude::*};
 use cubek_std::layout::BindingOrder;
 
@@ -39,9 +39,9 @@ impl MatmulOperand {
         }
     }
 
-    /// The axes the product names it by, in that order.
-    pub fn axes(self) -> [Axis; 2] {
-        self.dims().map(|dim| MatmulAxes::MNK.of(dim))
+    /// The dimensions the product names it by, in that order.
+    pub fn dimensions(self) -> [Dimension; 2] {
+        self.dims().map(|dim| MatmulDimensions::MNK.of(dim))
     }
 }
 

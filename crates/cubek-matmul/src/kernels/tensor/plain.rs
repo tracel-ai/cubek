@@ -4,9 +4,9 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::std::tensor::is_contiguous;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Geometry, Projection};
+use cubecl::tile::{Dimension, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Strides, Tiling};
@@ -271,10 +271,10 @@ impl PlainTensor {
     pub fn restated(
         &self,
         blocks: &MatmulBlocks,
-        rows: Axis,
-        columns: Axis,
-        batches: &[Axis],
-    ) -> (Self, Vec<Axis>) {
+        rows: Dimension,
+        columns: Dimension,
+        batches: &[Dimension],
+    ) -> (Self, Vec<Dimension>) {
         let (shape, strides) = (&self.binding.shape, &self.binding.strides);
         let kept = batches.len();
         let dense = match kept {
@@ -310,7 +310,7 @@ impl PlainTensor {
     /// On a view the two-dim projection cannot address.
     pub fn in_buffer_order(self) -> Self {
         let (shape, strides) = (&self.binding.shape, &self.binding.strides);
-        let projection = Projection::direct(&[Axis(0), Axis(1)]);
+        let projection = Projection::direct(&[Dimension(0), Dimension(1)]);
         let dims = Geometry::new(&[(shape[0], strides[0]), (shape[1], strides[1])]);
         assert!(
             shape.rank() == 2 && projection.is_addressable(&dims),
@@ -498,6 +498,6 @@ impl From<&PlainTensor> for Placement {
 
 /// What a launch declines on a device whose runtime does not compute in the operands' element and
 /// store it in a buffer, as WGSL does not bf16: the kernel would fail to compile there.
-pub const ELEMENT_NOT_ON_DEVICE: Refusal = Refusal::Declined {
+pub const ELEMENT_NOT_ON_DEVICE: Decline = Decline::Unserved {
     why: "the device's runtime does not compute in this element and store it in a buffer",
 };

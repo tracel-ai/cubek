@@ -1,10 +1,10 @@
 use crate::attention::{AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S};
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulDestination, MatmulDimensions, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulWorkItem,
 };
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::{Axis, FragmentSource, Space};
+use cubecl::tile::{Dimension, FragmentSource, Space};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StagedOperand;
 
@@ -202,7 +202,7 @@ impl AttentionWorkItem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes { m: Q, n: S, k: D },
+            dimensions: MatmulDimensions { m: Q, n: S, k: D },
             reading: MatmulReading::AsStored,
         }
     }
@@ -225,15 +225,15 @@ impl AttentionWorkItem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes { m: Q, n: DV, k: S },
+            dimensions: MatmulDimensions { m: Q, n: DV, k: S },
             reading: MatmulReading::AsStored,
         }
     }
 
-    /// One stage of `keys` keys and their values, each over its own axes and bound innermost
-    /// along the axis its lines run along, the keys in `key_order`.
+    /// One stage of `keys` keys and their values, each over its own dimensions and bound innermost
+    /// along the dimension its lines run along, the keys in `key_order`.
     pub fn stage(&self, keys: usize, key_order: BindingOrder) -> [StagedOperand; 2] {
-        let operand = |operand: AttentionOperand, row: Axis, extent: usize| {
+        let operand = |operand: AttentionOperand, row: Dimension, extent: usize| {
             StagedOperand::new(
                 self.elements.get(operand),
                 Space::new(&[(S, keys), (row, extent)]),

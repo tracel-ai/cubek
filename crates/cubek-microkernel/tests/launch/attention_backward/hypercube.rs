@@ -5,7 +5,7 @@
 use cubecl::features::AtomicUsage;
 use cubecl::ir::Type;
 use cubecl::prelude::*;
-use cubecl::tile::launch::{AccumulateArgLaunch, Output, OutputArgs, Refusal};
+use cubecl::tile::launch::{AccumulateArgLaunch, Decline, Output, OutputArgs};
 use cubecl::tile::{Partitioning, TileSpec, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::attention::{AttentionVisibility, B, KV, Q, S, VisibleKeys};
@@ -43,13 +43,13 @@ impl HypercubeKeyGradientLaunch {
         item: AttentionBackwardWorkItem,
         settings: &HypercubeKeyGradientMicrokernelSettings,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if !hw
             .properties
             .atomic_type_usage(Type::atomic(item.sum))
             .contains(AtomicUsage::Add)
         {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the hypercube sums the query's gradient with atomic adds the device lacks",
             });
         }
@@ -89,7 +89,7 @@ impl AttentionBackwardLaunch for HypercubeKeyGradientLaunch {
         args: AttentionBackwardOperandArgs,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         use AttentionBackwardOperand as Operand;
         let sequence = OneSequence {
             item: self.item,
@@ -107,7 +107,7 @@ impl AttentionBackwardLaunch for HypercubeKeyGradientLaunch {
         let query_sum = OutputArgs::Atomic(AccumulateArgLaunch::new(
             args.query_gradient,
             1,
-            TileSpec::direct(Operand::QueryGradient.axes()),
+            TileSpec::direct(Operand::QueryGradient.dimensions()),
         ));
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
         // the kernel indexes no buffer but through its tiles; it only adds into the query's sum,

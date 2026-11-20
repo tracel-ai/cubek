@@ -2,7 +2,7 @@
 
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use cubek_swiglu::kernels::{CubeSwigluRoutine, SwigluRoutineCandidate};
 use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, Written};
@@ -38,7 +38,7 @@ impl ScopeUnderTest for CubeSwiglu {
     /// # Panics
     ///
     /// Where the routine refuses a case: it is the floor, which serves every one.
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let out = case
             .candidate
             .launch(&case.rows.call(client, case.element))

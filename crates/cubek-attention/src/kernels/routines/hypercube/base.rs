@@ -4,7 +4,7 @@ use crate::kernels::{
     HypercubeShufflePartialAttentionRoutine, SplitKeysAttention,
 };
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_std::Hardware;
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,7 @@ pub enum HypercubeMerge {
 
 /// What a merge on the last arrival declines on a device where one cube's stores do not reach
 /// another within a launch: the last cube of a box reads what the others stored.
-pub const HYPERCUBE_CUBES_UNMET: Refusal = Refusal::Declined {
+pub const HYPERCUBE_CUBES_UNMET: Decline = Decline::Unserved {
     why: "merging on the last arrival needs a device where one cube's stores reach another \
               within a launch",
 };
@@ -90,7 +90,7 @@ impl HypercubeAttentionKernel {
         &self,
         hw: &Hardware,
         tensors: AttentionTensors,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         match self {
             Self::LastArrivalShuffle => {
                 DirectAttention(HypercubeLastArrivalShuffleAttentionRoutine::new())
@@ -115,7 +115,7 @@ impl HypercubeMerge {
     ///
     /// [`HYPERCUBE_CUBES_UNMET`] for the last arrival where one cube's stores do not reach another
     /// within a launch.
-    pub fn admits(&self, hw: &Hardware) -> Result<(), Refusal> {
+    pub fn admits(&self, hw: &Hardware) -> Result<(), Decline> {
         match self {
             Self::LastArrival if !hw.properties.features.device_memory_scope => {
                 Err(HYPERCUBE_CUBES_UNMET)

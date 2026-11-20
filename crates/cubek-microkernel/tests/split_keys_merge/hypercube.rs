@@ -5,7 +5,7 @@ use crate::launch::split_keys_merge::{HypercubeMergeLaunch, HypercubeMergeTensor
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_microkernel::split_keys_merge::SlotShape;
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
@@ -37,9 +37,9 @@ struct HypercubeMergeCase {
 impl ScopeUnderTest for HypercubeMerge {
     type Case = HypercubeMergeCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         if !self.hw.properties.features.device_memory_scope {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the last arrival reads what other cubes stored within the launch",
             });
         }

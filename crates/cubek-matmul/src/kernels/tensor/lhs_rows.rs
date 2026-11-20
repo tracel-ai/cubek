@@ -1,15 +1,15 @@
 use crate::kernels::tensor::{PackedTensor, Placement, PlainTensor};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Bound, Delivery, Refusal};
+use cubecl::tile::launch::{Bound, Decline, Delivery};
 use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::row_store::{ROWS, RowStore, WIDTH};
 use cubek_std::layout::stored::BlockScales;
-use cubek_std::matmul_axes::{K, M};
+use cubek_std::matmul_dimensions::{K, M};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// What a tiled launch declines before preparing anything: an output that is not a float matrix
 /// of the producer's rows stored in tiles, at the producer's element.
-pub const TILED_ROWS_UNSERVED: Refusal = Refusal::Declined {
+pub const TILED_ROWS_UNSERVED: Decline = Decline::Unserved {
     why: "a tiled output is a float matrix of the producer's rows, stored in tiles, at its element",
 };
 
@@ -49,7 +49,7 @@ impl TiledRows {
         rows: usize,
         width: usize,
         element: ElemType,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let fits = out.is_tiled() && out.elem == element && out.shape().as_slice() == [rows, width];
         match fits {
             true => Ok(Self { tensor: out }),
@@ -61,7 +61,7 @@ impl TiledRows {
     pub fn bind(&self, launcher: &Launcher, width: usize) -> Bound {
         launcher
             .arg(self.tensor.binding.clone(), self.tensor.elem)
-            .axes(&[ROWS, WIDTH])
+            .dimensions(&[ROWS, WIDTH])
             .vectorize(width)
             .build()
             .expect(ADMITTED_PLAN_RUNS)
@@ -86,7 +86,7 @@ pub struct PackedRows {
 }
 
 impl PackedRows {
-    /// `out`, a packed matrix of `rows` rows of `width` elements over the product's lhs axes
+    /// `out`, a packed matrix of `rows` rows of `width` elements over the product's lhs dimensions
     /// (`[M, K]`).
     ///
     /// # Errors
@@ -97,8 +97,12 @@ impl PackedRows {
     /// # Panics
     ///
     /// On an `out` not over `[M, K]` or not `rows` by `width`.
-    pub fn new(out: PackedTensor, rows: usize, width: usize) -> Result<Self, Refusal> {
-        assert_eq!(out.axes(), [M, K], "a packed output is a product's lhs");
+    pub fn new(out: PackedTensor, rows: usize, width: usize) -> Result<Self, Decline> {
+        assert_eq!(
+            out.dimensions(),
+            [M, K],
+            "a packed output is a product's lhs"
+        );
         assert_eq!(
             [out.extent(M), out.extent(K)],
             [rows, width],

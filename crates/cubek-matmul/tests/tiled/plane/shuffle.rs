@@ -36,7 +36,7 @@ fn every_plane_shuffle_setting_sums_i32_exactly() {
 fn every_plane_shuffle_setting_matches_the_host_on_a_projection_narrower_than_a_cube() {
     use cubek_matmul::tiled::storage::{StoredValues, stored_tile};
     use cubek_microkernel::matmul::MatmulOperand;
-    use cubek_std::matmul_axes::{K, N};
+    use cubek_std::matmul_dimensions::{K, N};
     use cubek_test_utils::{TestOutcome, ValidationResult};
 
     use crate::matmul::{F16, RhsTiles};

@@ -3,7 +3,7 @@
 //! straight into a plain output.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::{Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::row_store::{CubeStage, RowStore};
@@ -36,7 +36,7 @@ impl SwigluLaunch {
         element: ElemType,
         batch: RowBatch,
         settings: &CubeSwigluMicrokernelSettings,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let RowBatch { rows, dim } = batch;
         let item = SwigluWorkItem {
             element,
@@ -57,19 +57,19 @@ impl SwigluLaunch {
     /// # Errors
     ///
     /// Why the tile DSL cannot bind the launch.
-    pub fn launch(&self, client: &Client, input: TensorArg, out: TensorArg) -> Result<(), Refusal> {
+    pub fn launch(&self, client: &Client, input: TensorArg, out: TensorArg) -> Result<(), Decline> {
         let store = self.item.store;
         let space = Space::new(
             &[
-                store.rows_axes(self.rows),
+                store.rows_dimensions(self.rows),
                 vec![(H, 2)],
-                store.width_axes(self.item.dim),
+                store.width_dimensions(self.item.dim),
             ]
             .concat(),
         );
         let run_box = [
             vec![(R, 1), (H, 2)],
-            store.width_axes(self.microkernel.run()),
+            store.width_dimensions(self.microkernel.run()),
         ]
         .concat();
         let partitioning = SwigluPartitioning::new(

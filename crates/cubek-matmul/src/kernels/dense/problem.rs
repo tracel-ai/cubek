@@ -3,9 +3,9 @@ use std::borrow::Cow;
 
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Geometry;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Indexing};
+use cubecl::tile::{Dimension, Indexing};
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{
@@ -15,7 +15,7 @@ use cubek_microkernel::matmul::{
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{BlockScales, Packing};
 use cubek_std::layout::tile_order::TileOrder;
-use cubek_std::matmul_axes::{EXPERT, K, batch_axis};
+use cubek_std::matmul_dimensions::{EXPERT, K, batch_dimension};
 use cubek_std::routine::EstimatedProblem;
 
 /// `out[b] = lhs[b] · rhs[b]` for every batch `b`, as the host describes it, each input float or
@@ -38,8 +38,8 @@ pub struct MatmulRoutineProblem {
     pub elements: MatmulOperands<ElemType>,
     /// Batches each operand holds: the output's, or fewer where an operand is broadcast.
     pub batches_held: MatmulOperands<usize>,
-    /// The alignment of each operand's buffer in elements, over the axes the product names: the
-    /// line widths a launch may bind it at, before the device or any component narrows them.
+    /// The alignment of each operand's buffer in elements, over the dimensions the product names:
+    /// the line widths a launch may bind it at, before the device or any component narrows them.
     pub elem_alignments: MatmulOperands<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start: a slice of a larger tensor
     /// starts partway into it.
@@ -101,9 +101,9 @@ impl MatmulIndex {
         }
     }
 
-    /// The axis the index adds to the product's space, with its extent: the stack's slabs, which
-    /// an entry picks one of.
-    pub fn axis(self) -> Option<(Axis, usize)> {
+    /// The dimension the index adds to the product's space, with its extent: the stack's slabs,
+    /// which an entry picks one of.
+    pub fn dimension(self) -> Option<(Dimension, usize)> {
         match self {
             Self::Slab { slabs } => Some((EXPERT, slabs)),
             Self::RunOfK => None,
@@ -118,7 +118,7 @@ impl MatmulRoutineProblem {
     /// # Errors
     ///
     /// [`MATMUL_PACKED_UNREAD`], for a packed operand.
-    pub fn check_plain(&self) -> Result<(), Refusal> {
+    pub fn check_plain(&self) -> Result<(), Decline> {
         match self.packings == MatmulOperands::all(None) {
             true => Ok(()),
             false => Err(MATMUL_PACKED_UNREAD),
@@ -128,7 +128,7 @@ impl MatmulRoutineProblem {
     /// What a setting reading the rhs a scale block at a time declines where it reads none so
     /// ([`Packing::by_block`]): no packed rhs, block scales that are not `ue4m3`, blocks that are
     /// no whole number of reads in rows, or tiles whose block is not the scheme's.
-    pub const RHS_UNREAD_BY_BLOCK: Refusal = Refusal::Declined {
+    pub const RHS_UNREAD_BY_BLOCK: Decline = Decline::Unserved {
         why: "reading the rhs a block at a time needs a packed rhs with ue4m3 block scales, in \
               blocks that are whole reads in rows or the tiles' own block in tile order",
     };
@@ -139,7 +139,7 @@ impl MatmulRoutineProblem {
     /// # Errors
     ///
     /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where its rhs reads none so.
-    pub fn rhs_by_block(&self) -> Result<Self, Refusal> {
+    pub fn rhs_by_block(&self) -> Result<Self, Decline> {
         let mut by_block = self.clone();
         let rhs = by_block
             .packings
@@ -157,7 +157,7 @@ impl MatmulRoutineProblem {
     ///
     /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where it reads by block and its rhs
     /// reads none so.
-    pub fn rhs_read(&self, by_block: bool) -> Result<Cow<'_, Self>, Refusal> {
+    pub fn rhs_read(&self, by_block: bool) -> Result<Cow<'_, Self>, Decline> {
         match by_block {
             true => self.rhs_by_block().map(Cow::Owned),
             false => Ok(Cow::Borrowed(self)),
@@ -170,15 +170,15 @@ impl MatmulRoutineProblem {
     /// # Errors
     ///
     /// [`MATMUL_INDEX_UNREAD`], for a product with a table.
-    pub fn check_unindexed(&self) -> Result<(), Refusal> {
+    pub fn check_unindexed(&self) -> Result<(), Decline> {
         match self.index {
             None => Ok(()),
             Some(_) => Err(MATMUL_INDEX_UNREAD),
         }
     }
 
-    /// Checks every packed input's block scales lie where a launch binding them as
-    /// `block_scales`, its stages filled by the TMA engine where `by_tma`, reads them: what a routine whose
+    /// Checks every packed input's block scales lie where a launch binding them as `block_scales`,
+    /// its stages filled by the TMA engine where `by_tma`, reads them: what a routine whose
     /// microkernel may take them as words declines. Words copied by the units are bound from rows,
     /// through a gather that cannot address scales kept in tiles of their own; the TMA engine lands
     /// those tiles whole ([`TileOrder::scale_words_in_tiles`]).
@@ -191,7 +191,7 @@ impl MatmulRoutineProblem {
         &self,
         block_scales: BlockScales,
         by_tma: bool,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let scales_in_tiles = [self.packings.lhs, self.packings.rhs]
             .into_iter()
             .flatten()
@@ -489,19 +489,19 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// Every batch axis, one per leading dim: what an operand's leading dims bind to.
-    pub fn batch_axes(&self) -> Vec<Axis> {
-        Self::batch_axes_of(self.batches.len())
+    /// Every batch dimension, one per leading dim: what an operand's leading dims bind to.
+    pub fn batch_dimensions(&self) -> Vec<Dimension> {
+        Self::batch_dimensions_of(self.batches.len())
     }
 
-    /// The axes `dims` batch dims are labelled with, outermost first: past `M`, `N` and `K`.
-    pub fn batch_axes_of(dims: usize) -> Vec<Axis> {
-        (0..dims).map(batch_axis).collect()
+    /// The dimensions `dims` batch dims are labelled with, outermost first: past `M`, `N` and `K`.
+    pub fn batch_dimensions_of(dims: usize) -> Vec<Dimension> {
+        (0..dims).map(batch_dimension).collect()
     }
 }
 
-/// What a problem reads of its output: the layout over the product's axes, the element, where its
-/// view starts, and where it goes.
+/// What a problem reads of its output: the layout over the product's dimensions, the element, where
+/// its view starts, and where it goes.
 struct OutputLayout<'a> {
     shape: &'a [usize],
     strides: &'a [usize],
@@ -536,27 +536,27 @@ impl EstimatedProblem for MatmulRoutineProblem {
 
 /// What a routine whose kernel reads no packed operand declines: a packed one, which the packed
 /// routines read.
-pub const MATMUL_PACKED_UNREAD: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "this routine reads float operands; a packed one runs on the packed routines",
 };
 
 /// What a routine whose kernel walks no indexed input declines: a product whose inputs read a
 /// table, which the routines walking within their inputs serve.
-pub const MATMUL_INDEX_UNREAD: Refusal = Refusal::Declined {
+pub const MATMUL_INDEX_UNREAD: Decline = Decline::Unserved {
     why: "this routine's kernel walks no indexed input; a routed or grouped product runs on the \
           routines that walk within it",
 };
 
 /// What a fill the TMA engine delivers declines: a product whose inputs read a table, which a
 /// tensor map, addressing its tensor whole, does not.
-pub const MATMUL_INDEX_UNREAD_BY_TMA: Refusal = Refusal::Declined {
+pub const MATMUL_INDEX_UNREAD_BY_TMA: Decline = Decline::Unserved {
     why: "a tensor map reads no table; an indexed input is staged by the cube's units",
 };
 
 /// What a launch taking its block scales as words copied by the units declines: scales kept in
 /// tiles of their own ([`TileOrder::scales_in_tiles`]). The units bind the words from the rows a
 /// matrix in rows keeps them in; only the TMA engine lands the tiles whole.
-pub const MATMUL_SCALE_WORDS_IN_TILES: Refusal = Refusal::Declined {
+pub const MATMUL_SCALE_WORDS_IN_TILES: Decline = Decline::Unserved {
     why: "this launch's units copy its block scales as words of their rows, and this matrix keeps \
           them in tiles of their own, which only the TMA engine lands",
 };
@@ -564,14 +564,14 @@ pub const MATMUL_SCALE_WORDS_IN_TILES: Refusal = Refusal::Declined {
 /// What a fill or a store the TMA engine moves declines: an operand of rows one element wide
 /// ([`rows_one_element_wide`](MatmulRoutineProblem::rows_one_element_wide)), whose rows a tensor
 /// map cannot step between, so the cube's units move them.
-pub const MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA: Refusal = Refusal::Declined {
+pub const MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA: Decline = Decline::Unserved {
     why: "a tensor map steps between rows by whole 16-byte lines, and this operand's rows are one \
           element wide; the cube's units move them",
 };
 
 /// What a launch over a packed input declines where its levels reach past the end of `K`: the
 /// input is bound a whole read wide along `K`, and no mask checks a vector line of its words.
-pub const MATMUL_PACKED_WALK_PAST_K: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_WALK_PAST_K: Decline = Decline::Unserved {
     why: "a packed input is read a whole read wide along k, which no mask checks, and this \
           launch's levels reach past the end of k",
 };
@@ -579,7 +579,7 @@ pub const MATMUL_PACKED_WALK_PAST_K: Refusal = Refusal::Declined {
 /// What the hypercube routines decline: a packed lhs. They read a packed rhs beside a float lhs;
 /// two packed inputs contract on the block-scaled instruction, whose operands only the cube
 /// staged routine binds, so a hypercube launch over them would fail to expand.
-pub const MATMUL_HYPERCUBE_PACKED_LHS: Refusal = Refusal::Declined {
+pub const MATMUL_HYPERCUBE_PACKED_LHS: Decline = Decline::Unserved {
     why: "the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed",
 };
 
@@ -589,7 +589,7 @@ mod tests {
     use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
     use cubecl::ir::FloatKind;
     use cubecl::zspace::metadata::Metadata;
-    use cubek_std::matmul_axes::{K, N};
+    use cubek_std::matmul_dimensions::{K, N};
 
     /// The problem a key describes states the layout and alignments of the tensors that key was
     /// made from.
@@ -605,19 +605,19 @@ mod tests {
             lhs: OperandKey::float(Some(K), MatmulBatching::Batched),
             rhs: OperandKey::float(rhs, MatmulBatching::Shared),
         };
-        let cases: [(Option<Axis>, [usize; 2]); 3] =
+        let cases: [(Option<Dimension>, [usize; 2]); 3] =
             [(Some(K), [1, k]), (Some(N), [n, 1]), (None, [2, 2 * k])];
-        for (axis, strides) in cases {
-            let problem = MatmulRoutineProblem::from(&shape(axis));
+        for (dimension, strides) in cases {
+            let problem = MatmulRoutineProblem::from(&shape(dimension));
             assert_eq!(
                 problem.layouts.rhs,
                 MatmulLayout::new(&Metadata::new([k, n], strides), MatmulOperand::Rhs),
-                "{axis:?}"
+                "{dimension:?}"
             );
             assert_eq!(
                 problem.elem_alignments.rhs,
                 ElemAlignment::new(&[k, n], &strides),
-                "{axis:?}"
+                "{dimension:?}"
             );
         }
     }
@@ -672,7 +672,7 @@ mod tests {
     }
 
     /// Where the lines lie is read off the strides, so an rhs with no single
-    /// lined axis has no problem at all — it is not a col rhs and not a row
+    /// lined dimension has no problem at all — it is not a col rhs and not a row
     /// rhs, and there is no third tiling to sort it into.
     ///
     /// Neither stride one: an rhs narrowed along both dims, which no line walks.
@@ -681,7 +681,7 @@ mod tests {
     /// the row it steps over is a narrowed or aliasing view this binding cannot
     /// describe.
     #[test]
-    fn an_rhs_with_no_single_lined_axis_has_no_problem() {
+    fn an_rhs_with_no_single_lined_dimension_has_no_problem() {
         for strides in [[2, 8192], [1, 1], [1, 4092]] {
             assert!(
                 MatmulLayout::lines([K, N], [4096, 4096], strides).is_none(),

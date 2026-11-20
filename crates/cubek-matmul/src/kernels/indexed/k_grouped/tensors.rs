@@ -5,7 +5,7 @@ use crate::kernels::{
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
@@ -48,7 +48,7 @@ impl KGroupedMatmulTensors {
         lhs: PlainTensor,
         rhs: PlainTensor,
         ends: PlainTensor,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if lhs.is_tiled() || rhs.is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
@@ -104,7 +104,7 @@ impl KGroupedMatmulTensors {
         hw: &Hardware,
         routine: &R,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,

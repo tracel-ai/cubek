@@ -1,7 +1,7 @@
-use crate::matmul::{MatmulAxes, MatmulDim, MatmulOperand, MatmulOperands, MatmulRead};
+use crate::matmul::{MatmulDim, MatmulDimensions, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Space, StageStorage};
+use cubecl::tile::{Dimension, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StagedOperand;
@@ -10,14 +10,14 @@ use cubek_std::microkernel::StagedOperand;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulStage {
     space: Space,
-    /// The axes the product's dimensions lie along in `space`.
-    axes: MatmulAxes,
+    /// The dimensions the product's dimensions lie along in `space`.
+    dimensions: MatmulDimensions,
 }
 
 impl MatmulStage {
-    /// The box `space`, the product's dimensions along `axes`.
-    pub fn new(space: Space, axes: MatmulAxes) -> Self {
-        Self { space, axes }
+    /// The box `space`, the product's dimensions along `dimensions`.
+    pub fn new(space: Space, dimensions: MatmulDimensions) -> Self {
+        Self { space, dimensions }
     }
 
     /// The box as a space, for what the tile engine reads of it.
@@ -25,11 +25,11 @@ impl MatmulStage {
         &self.space
     }
 
-    pub fn extent(&self, axis: Axis) -> usize {
-        self.space.extent(axis)
+    pub fn extent(&self, dimension: Dimension) -> usize {
+        self.space.extent(dimension)
     }
 
-    /// The part of the box `operand` stages, its axes in the order `orders` binds it in.
+    /// The part of the box `operand` stages, its dimensions in the order `orders` binds it in.
     pub fn operand_space(
         &self,
         operand: MatmulOperand,
@@ -40,18 +40,19 @@ impl MatmulStage {
             BindingOrder::Stated => [outer, inner],
             BindingOrder::InBufferOrder => [inner, outer],
         };
-        self.space.subspace(&dims.map(|dim| self.axes.of(dim)))
+        self.space
+            .subspace(&dims.map(|dim| self.dimensions.of(dim)))
     }
 
     /// Elements of `operand` a stage holds consecutively, bound in the order `orders` says: the
-    /// stage's extent along the axis the operand is bound innermost along.
+    /// stage's extent along the dimension the operand is bound innermost along.
     pub fn run(&self, operand: MatmulOperand, orders: MatmulOperands<BindingOrder>) -> usize {
-        self.extent(self.axes.of(orders.innermost(operand)))
+        self.extent(self.dimensions.of(orders.innermost(operand)))
     }
 
     /// Require of `vectorization` the reads a ring makes of both operands' tiles a stage at a
     /// time, bound in the order `orders` says: stretches of the stage's extent along each one's
-    /// contiguous axis.
+    /// contiguous dimension.
     pub fn require_runs(
         &self,
         orders: MatmulOperands<BindingOrder>,
@@ -76,8 +77,8 @@ impl MatmulStage {
         orders: MatmulOperands<BindingOrder>,
     ) -> usize {
         match orders.innermost(operand) {
-            MatmulDim::K => cube_space.extent(self.axes.k),
-            dim => self.extent(self.axes.of(dim)),
+            MatmulDim::K => cube_space.extent(self.dimensions.k),
+            dim => self.extent(self.dimensions.of(dim)),
         }
     }
 
@@ -94,8 +95,8 @@ impl MatmulStage {
             let staged = StagedOperand::new(
                 elements.get(operand),
                 self.space
-                    .subspace(&operand.dims().map(|dim| self.axes.of(dim))),
-                self.axes.of(orders.innermost(operand)),
+                    .subspace(&operand.dims().map(|dim| self.dimensions.of(dim))),
+                self.dimensions.of(orders.innermost(operand)),
             );
             match reads.get(operand).staged() {
                 Some(_) => staged.converted_by_fill(),
@@ -106,7 +107,7 @@ impl MatmulStage {
 
     /// Bytes one stage holds of both operands on `hw`, each stored in its own element of
     /// `elements`, laid out as `storage` and bound in the order `orders` says: every block it
-    /// holds, each laid out alike over the axes inside one.
+    /// holds, each laid out alike over the dimensions inside one.
     pub fn bytes(
         &self,
         hw: &Hardware,
@@ -122,43 +123,47 @@ impl MatmulStage {
         block * self.blocks()
     }
 
-    /// Blocks the stage holds: its extent along every axis it lies [`beside`](Self::beside).
+    /// Blocks the stage holds: its extent along every dimension it lies [`beside`](Self::beside).
     fn blocks(&self) -> usize {
-        self.beside().map(|axis| self.space.extent(axis)).product()
+        self.beside()
+            .map(|dimension| self.space.extent(dimension))
+            .product()
     }
 
-    /// The axes of the box the stage does not lie along: a batch's, or a block-split space's
+    /// The dimensions of the box the stage does not lie along: a batch's, or a block-split space's
     /// blocks, each laid out one deep.
-    pub fn beside(&self) -> impl Iterator<Item = Axis> + '_ {
-        let inside = [self.axes.m, self.axes.n, self.axes.k];
-        self.space.axes().filter(move |axis| !inside.contains(axis))
+    pub fn beside(&self) -> impl Iterator<Item = Dimension> + '_ {
+        let inside = [self.dimensions.m, self.dimensions.n, self.dimensions.k];
+        self.space
+            .dimensions()
+            .filter(move |dimension| !inside.contains(dimension))
     }
 
-    /// The axes the stage lies along.
-    pub fn axes(&self) -> MatmulAxes {
-        self.axes
+    /// The dimensions the stage lies along.
+    pub fn dimensions(&self) -> MatmulDimensions {
+        self.dimensions
     }
 
-    /// The box `operand`'s stage lands over `axes`, bound in the order `orders` says: its part's
-    /// extent along each axis it names, the whole box's along one it lies beside (a block-split
-    /// space's blocks of `K`), and one along an axis the box does not hold. What one bulk copy
-    /// moves of the operand a stage.
+    /// The box `operand`'s stage lands over `dimensions`, bound in the order `orders` says: its
+    /// part's extent along each dimension it names, the whole box's along one it lies beside (a
+    /// block-split space's blocks of `K`), and one along a dimension the box does not hold. What
+    /// one bulk copy moves of the operand a stage.
     pub fn landed_space(
         &self,
         operand: MatmulOperand,
         orders: MatmulOperands<BindingOrder>,
-        axes: &[Axis],
+        dimensions: &[Dimension],
     ) -> Space {
         let own = self.operand_space(operand, orders);
-        let extents: Vec<_> = axes
+        let extents: Vec<_> = dimensions
             .iter()
-            .map(|&axis| {
-                let extent = match (own.contains(axis), self.space.contains(axis)) {
-                    (true, _) => own.extent(axis),
-                    (false, true) => self.space.extent(axis),
+            .map(|&dimension| {
+                let extent = match (own.contains(dimension), self.space.contains(dimension)) {
+                    (true, _) => own.extent(dimension),
+                    (false, true) => self.space.extent(dimension),
                     (false, false) => 1,
                 };
-                (axis, extent)
+                (dimension, extent)
             })
             .collect();
         Space::new(&extents)

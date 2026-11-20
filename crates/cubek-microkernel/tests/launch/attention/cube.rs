@@ -3,7 +3,7 @@
 //! stages the cube fills.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{
     Launcher, Partitioning, Space, StageStorage, Tile, TileTensor, TileTensorLaunch,
@@ -51,7 +51,7 @@ impl CubeAttentionLaunch {
         settings: &CubeAttentionMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item(dims);
         let microkernel = CubeAttentionMicrokernel::best(hw, &item, settings)?;
         let step_keys = match microkernel.plane {
@@ -70,12 +70,11 @@ impl CubeAttentionLaunch {
             (DV, val_dim),
         ]);
         let storage = microkernel.stage_storage(&stage);
-        microkernel.plane.reads_stage(settings.layout)?;
         if settings.planes_along_keys.get() > 1 {
             microkernel.plane.merges_rows()?;
         }
         if microkernel.shared_memory(hw, &item, &storage) > hw.shared_memory_budget() {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the cube's stages hold more shared memory than the device has",
             });
         }
@@ -110,7 +109,7 @@ impl AttentionLaunch for CubeAttentionLaunch {
         lengths: TensorArg,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [queries, keys] = self.seq;
         let item = &self.item;
         let microkernel = self.microkernel;
@@ -147,8 +146,11 @@ impl AttentionLaunch for CubeAttentionLaunch {
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let served = microkernel.served(item);
         let delivery = microkernel.delivery(&widths, item);
-        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(width)
+        let bound = |tensor: TensorBinding, element, width, dimensions: &'static [_]| {
+            launcher
+                .arg(tensor, element)
+                .dimensions(dimensions)
+                .vectorize(width)
         };
         let query = bound(
             query,

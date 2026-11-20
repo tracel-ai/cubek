@@ -2,10 +2,10 @@
 //! interleaved, each value drawn into a contiguous output.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::space::{CubeOrder, PlaneOrder, UnitCube};
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
+    Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::random::plane::{
@@ -18,8 +18,8 @@ use cubek_microkernel::random::{Distribution, DistributionArgs, Seeds, SeedsLaun
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
-/// The output's one axis.
-const VALUES: Axis = Axis(0);
+/// The output's one dimension.
+const VALUES: Dimension = Dimension(0);
 
 /// Which random microkernel draws the work item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +53,7 @@ impl RandomLaunch {
     /// # Errors
     ///
     /// Why the device runs no unit random microkernel.
-    pub fn unit(hw: &Hardware, run: UnitRun) -> Result<Self, Refusal> {
+    pub fn unit(hw: &Hardware, run: UnitRun) -> Result<Self, Decline> {
         let UnitRun { lines, width } = run;
         let microkernel = UnitRandomMicrokernel::best(hw, &(), &UnitRandomMicrokernelSettings)?;
         Ok(Self {
@@ -73,7 +73,7 @@ impl RandomLaunch {
         hw: &Hardware,
         settings: &PlaneRandomMicrokernelSettings,
         width: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = PlaneRandomMicrokernel::best(hw, &(), settings)?;
         let plane_width = hw.dispatch_plane_size() as usize;
         Ok(Self {
@@ -96,7 +96,7 @@ impl RandomLaunch {
         element: ElemType,
         args: <<D as DistributionArgs>::Args as LaunchArg>::RuntimeArg,
         seeds: SeedsLaunch,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let space = Space::new(&[(VALUES, self.values)]);
         let run = Levels::leaf(&[(VALUES, self.values)]);
         let levels = match self.microkernel {

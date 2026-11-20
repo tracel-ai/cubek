@@ -3,7 +3,7 @@
 use crate::launch::split_keys_merge::PlaneMergeLaunch;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::split_keys_merge::SlotShape;
 use cubek_std::Hardware;
@@ -28,7 +28,7 @@ struct PlaneMergeCase {
 impl ScopeUnderTest for PlaneMerge {
     type Case = PlaneMergeCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let PlaneMergeCase {
             out: out_element,
             queries,

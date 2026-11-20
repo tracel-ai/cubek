@@ -5,7 +5,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Launcher, launch::Bound};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{
@@ -17,7 +17,7 @@ use cubek_std::Hardware;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 /// What a launch of this kind declines before preparing anything: rows that are not floats.
-pub const SWIGLU_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const SWIGLU_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the microkernel SwiGLU gates float rows",
 };
 
@@ -81,7 +81,7 @@ impl SwigluTensors {
     /// # Panics
     ///
     /// On an odd last dim: no fused row of two halves.
-    pub fn new(client: &Client, both: PlainTensor) -> Result<Self, Refusal> {
+    pub fn new(client: &Client, both: PlainTensor) -> Result<Self, Decline> {
         let input = SwigluInput::new(client, both)?;
         let (handle, tensor) =
             PlainTensor::empty_contiguous(client, input.shape.clone().into(), input.fused.elem);
@@ -105,7 +105,7 @@ impl SwigluTensors {
         let (launcher, input) = self.bind_input(blueprint, grid);
         let out = launcher
             .arg(self.out.rows.binding.clone(), self.problem.element)
-            .axes(&[R, D])
+            .dimensions(&[R, D])
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -119,8 +119,8 @@ impl SwigluTensors {
 
 impl SwigluTensors<PackedRows> {
     /// The gate of `both`, encoded into `out`, a packed `[rows, d]` matrix over a product's lhs
-    /// axes the caller allocated under one level of block scales along each row. The gated rows are
-    /// staged in each cube's shared memory, dense, and encoded from there.
+    /// dimensions the caller allocated under one level of block scales along each row. The gated
+    /// rows are staged in each cube's shared memory, dense, and encoded from there.
     ///
     /// # Errors
     ///
@@ -129,7 +129,7 @@ impl SwigluTensors<PackedRows> {
     /// # Panics
     ///
     /// As [`SwigluTensors::new`], and on an `out` not shaped `[rows, d]`.
-    pub fn packed(client: &Client, both: PlainTensor, out: PackedTensor) -> Result<Self, Refusal> {
+    pub fn packed(client: &Client, both: PlainTensor, out: PackedTensor) -> Result<Self, Decline> {
         let input = SwigluInput::new(client, both)?;
         let out = PackedRows::new(out, input.rows, input.dim)?;
         let (placement, store) = (Placement::dense_rows(input.dim), out.store());
@@ -165,7 +165,7 @@ impl SwigluTensors<TiledRows> {
     /// # Panics
     ///
     /// As [`SwigluTensors::new`].
-    pub fn tiled(client: &Client, both: PlainTensor, out: PlainTensor) -> Result<Self, Refusal> {
+    pub fn tiled(client: &Client, both: PlainTensor, out: PlainTensor) -> Result<Self, Decline> {
         let input = SwigluInput::new(client, both)?;
         let element = input.fused.elem;
         let out = TiledRows::new(out, input.rows, input.dim, element)?;
@@ -208,10 +208,10 @@ impl<Out> SwigluTensors<Out> {
                 partitioning.as_tile().space().clone(),
             )
         });
-        let (meta, axes) = self.problem.store.restated(&self.input.meta(), &[R, H]);
+        let (meta, dimensions) = self.problem.store.restated(&self.input.meta(), &[R, H]);
         let input = launcher
             .arg(self.input.bound_as(meta), self.problem.element)
-            .axes(&axes)
+            .dimensions(&dimensions)
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -248,7 +248,7 @@ impl SwigluInput {
     /// # Errors
     ///
     /// As [`SwigluTensors::new`].
-    fn new(client: &Client, both: PlainTensor) -> Result<Self, Refusal> {
+    fn new(client: &Client, both: PlainTensor) -> Result<Self, Decline> {
         if !matches!(both.elem, ElemType::Float(_)) {
             return Err(SWIGLU_ELEMENT_UNVERIFIED);
         }

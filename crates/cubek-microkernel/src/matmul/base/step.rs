@@ -1,30 +1,30 @@
 use crate::matmul::{MatmulOperand, MatmulOperands};
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::launch::Decline;
+use cubecl::tile::{Dimension, Space};
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::{Hardware, Instructions, TMA_ROW_BYTES, block_scaled_mma};
 
 /// What a launch of this kind declines whatever the routine: a packed input a read of which
 /// straddles two scale tiles, or an `n` or a `k` that is not a whole number of
 /// [steps](MatmulStep).
-pub const MATMUL_STEPS_UNCLOSED: Refusal = Refusal::Declined {
+pub const MATMUL_STEPS_UNCLOSED: Decline = Decline::Unserved {
     why: "the packed routines read packed inputs whose reads sit inside one scale tile, and whose n and k are whole steps: the least box every load of the inputs' values and of their scales fills whole",
 };
 
 /// What a product of two packed inputs declines where a read of one along `K` splits a word of
 /// the other: the two are contracted a read at a time.
-pub const MATMUL_PACKED_READS_SPLIT: Refusal = Refusal::Declined {
+pub const MATMUL_PACKED_READS_SPLIT: Decline = Decline::Unserved {
     why: "two packed inputs are contracted a read along k at a time, and a read of one splits a word of the other",
 };
 
 /// The step of a product of packed inputs: the smallest box over `M`, `N` and `K` that every load
-/// it makes, and the instruction contracting it, fill whole. On each axis it is the least common
-/// multiple of what they cover, stated as a product: the instruction's extent times the fewest
-/// calls of it that every load fills, so a box made of whole steps loads whole: a float input at
-/// the device's width, a packed one a whole read of its values and a whole read of its scales at a
-/// time.
+/// it makes, and the instruction contracting it, fill whole. On each dimension it is the least
+/// common multiple of what they cover, stated as a product: the instruction's extent times the
+/// fewest calls of it that every load fills, so a box made of whole steps loads whole: a float
+/// input at the device's width, a packed one a whole read of its values and a whole read of its
+/// scales at a time.
 ///
 /// Every routine of this kind cuts its boxes as whole steps, whether a packed input is in rows or
 /// in the tiles it is stored in: [`Operand::stored`] states what a read of a stored input brings,
@@ -39,7 +39,7 @@ pub const MATMUL_PACKED_READS_SPLIT: Refusal = Refusal::Declined {
 /// device takes, so a stored tile is whole steps by construction.
 ///
 /// A stage the TMA engine fills is one more load ([`filled_by_tma`](Self::filled_by_tma)): a box
-/// moves rows of [`TMA_ROW_BYTES`] along the axis a packed input's words run along, the row it
+/// moves rows of [`TMA_ROW_BYTES`] along the dimension a packed input's words run along, the row it
 /// copies at full speed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulStep {
@@ -48,7 +48,7 @@ pub struct MatmulStep {
     loads: Vec<Space>,
     /// What one move of the fill brings: a TMA box's row, one value where the units fill.
     fill: Space,
-    /// What one call of the instruction contracts; one value along every axis where nothing
+    /// What one call of the instruction contracts; one value along every dimension where nothing
     /// contracts but the loads.
     instruction: Space,
     /// Calls of the instruction one step makes along `M`, `N` and `K`: the fewest whose extent
@@ -59,8 +59,8 @@ pub struct MatmulStep {
 impl MatmulStep {
     /// The step of a product of inputs read as `operands` and loaded at `elements` on `hw`,
     /// contracted one value at a time: each packed input's read and its scales' as its operand
-    /// states them, and each float input one of the device's loads along the axis the other
-    /// input's reads run along where it has that axis, one value where it does not and each of
+    /// states them, and each float input one of the device's loads along the dimension the other
+    /// input's reads run along where it has that dimension, one value where it does not and each of
     /// its values meets a whole line of the other.
     pub fn new(
         hw: &Hardware,
@@ -78,7 +78,7 @@ impl MatmulStep {
                         .into_iter()
                         .chain(operand.scale_read_space()),
                 ),
-                None if input.axes().contains(&lined) => {
+                None if input.dimensions().contains(&lined) => {
                     loads.push(Space::new(&[(lined, hw.load_values(elements.get(input)))]))
                 }
                 None => {}
@@ -102,8 +102,8 @@ impl MatmulStep {
     }
 
     /// This step where the TMA engine fills the stages of an input read as `operand`, its values
-    /// `element`: a box moves rows of [`TMA_ROW_BYTES`] along the axis the words run along, so the
-    /// step is that many bytes of values deep along it. NVFP4's `e2m1` rows are a hundred and
+    /// `element`: a box moves rows of [`TMA_ROW_BYTES`] along the dimension the words run along, so
+    /// the step is that many bytes of values deep along it. NVFP4's `e2m1` rows are a hundred and
     /// twenty-eight values of `k`.
     pub fn filled_by_tma(self, operand: &Operand, element: ElemType) -> Self {
         let row = (TMA_ROW_BYTES * 8 / element.size_bits().max(1)).max(1);
@@ -167,19 +167,19 @@ impl MatmulStep {
         ])))
     }
 
-    /// `step` with its calls the fewest along each axis whose extent every load fills whole.
+    /// `step` with its calls the fewest along each dimension whose extent every load fills whole.
     fn covering(step: Self) -> Self {
-        let calls = [M, N, K].map(|axis| {
-            let call = Self::reach(&step.instruction, axis);
+        let calls = [M, N, K].map(|dimension| {
+            let call = Self::reach(&step.instruction, dimension);
             let calls = (1..)
                 .find(|&calls| {
                     step.loads
                         .iter()
                         .chain([&step.fill])
-                        .all(|load| (call * calls).is_multiple_of(Self::reach(load, axis)))
+                        .all(|load| (call * calls).is_multiple_of(Self::reach(load, dimension)))
                 })
                 .expect("some count of calls fills every load");
-            (axis, calls)
+            (dimension, calls)
         });
         Self {
             calls: Space::new(&calls),
@@ -187,22 +187,22 @@ impl MatmulStep {
         }
     }
 
-    /// How far `space` reaches along `axis`: one where it does not name it.
-    fn reach(space: &Space, axis: Axis) -> usize {
-        match space.contains(axis) {
-            true => space.extent(axis),
+    /// How far `space` reaches along `dimension`: one where it does not name it.
+    fn reach(space: &Space, dimension: Dimension) -> usize {
+        match space.contains(dimension) {
+            true => space.extent(dimension),
             false => 1,
         }
     }
 
-    /// The step's extent along `axis`: the instruction's times its calls.
-    pub fn along(&self, axis: Axis) -> usize {
-        Self::reach(&self.instruction, axis) * self.calls.extent(axis)
+    /// The step's extent along `dimension`: the instruction's times its calls.
+    pub fn along(&self, dimension: Dimension) -> usize {
+        Self::reach(&self.instruction, dimension) * self.calls.extent(dimension)
     }
 
-    /// Calls of the instruction one step makes along `axis`.
-    pub fn calls(&self, axis: Axis) -> usize {
-        self.calls.extent(axis)
+    /// Calls of the instruction one step makes along `dimension`.
+    pub fn calls(&self, dimension: Dimension) -> usize {
+        self.calls.extent(dimension)
     }
 
     /// Whether a product of `n` columns and `k` deep, its inputs read as `operands`, is a whole
@@ -217,7 +217,7 @@ impl MatmulStep {
         operands: MatmulOperands<Operand>,
         n: usize,
         k: usize,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let straddles = MatmulOperand::INPUTS.into_iter().any(|input| {
             let operand = operands.get(input);
             let lined = operand.lined();
@@ -270,7 +270,7 @@ mod tests {
     /// How many of each load one step takes, in the order the inputs take them (the float input's,
     /// then the packed one's values and its scales), and how many calls of the instruction.
     fn counts(step: &MatmulStep) -> Vec<usize> {
-        let box_ = Space::new(&[M, N, K].map(|axis| (axis, step.along(axis))));
+        let box_ = Space::new(&[M, N, K].map(|dimension| (dimension, step.along(dimension))));
         step.loads
             .iter()
             .chain([&step.instruction])
@@ -294,9 +294,9 @@ mod tests {
             .expect("tile order is read")
     }
 
-    /// `value` packed along `axis` of a `[k, n]` rhs under `f16` scales of 32 along it.
-    fn in_rows(value: QuantValue, axis: Axis) -> Operand {
-        let (block, store) = match axis {
+    /// `value` packed along `dimension` of a `[k, n]` rhs under `f16` scales of 32 along it.
+    fn in_rows(value: QuantValue, dimension: Dimension) -> Operand {
+        let (block, store) = match dimension {
             K => (vec![32, 1], QuantStore::PackedU32(1)),
             _ => (vec![1, 32], QuantStore::PackedU32(0)),
         };
@@ -304,7 +304,7 @@ mod tests {
             .with_value(value)
             .per_block(block, ScaleDtype::F16)
             .with_store(store);
-        Operand::of_scheme(&scheme, axis, [K, N]).expect("one axis a block")
+        Operand::of_scheme(&scheme, dimension, [K, N]).expect("one dimension a block")
     }
 
     /// The `16 × 8 × 64` block-scaled instruction over NVFP4.
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn an_nvfp4_step_is_one_word_of_scales_deep() {
         let step = step_against(&devices::m2_pro(), &tile_order(), F16);
-        assert_eq!([M, N, K].map(|axis| step.along(axis)), [1, 1, 64]);
+        assert_eq!([M, N, K].map(|dimension| step.along(dimension)), [1, 1, 64]);
         assert_eq!(counts(&step), [8, 4, 1, 1]);
     }
 
@@ -342,9 +342,9 @@ mod tests {
             (N, 8),
             (K, 8),
         ]));
-        assert_eq!([M, N, K].map(|axis| step.along(axis)), [8, 8, 64]);
+        assert_eq!([M, N, K].map(|dimension| step.along(dimension)), [8, 8, 64]);
         assert_eq!(counts(&step), [8, 4, 1, 8]);
-        assert_eq!([M, N, K].map(|axis| step.calls(axis)), [1, 1, 8]);
+        assert_eq!([M, N, K].map(|dimension| step.calls(dimension)), [1, 1, 8]);
     }
 
     /// A stage the TMA engine fills moves rows of sixty-four bytes: a hundred and twenty-eight
@@ -416,7 +416,7 @@ mod tests {
         assert_eq!(step.check(split, 64, 1536), Err(MATMUL_PACKED_READS_SPLIT));
     }
 
-    /// An rhs in rows steps a word of scales along the axis its words run along, and one read
+    /// An rhs in rows steps a word of scales along the dimension its words run along, and one read
     /// across it: `q4` under `f16` scales of 32, two to a word, steps sixty-four of `k` or of `n`.
     #[test]
     fn an_rhs_in_rows_steps_a_word_of_scales_along_its_words() {
@@ -512,7 +512,7 @@ mod tests {
                     (128, 8),
                     "{load_width}-bit loads, {rhs:?}"
                 );
-                assert_eq!([M, N, K].map(|axis| step.calls(axis)), [1, 1, 2]);
+                assert_eq!([M, N, K].map(|dimension| step.calls(dimension)), [1, 1, 2]);
             }
         }
     }

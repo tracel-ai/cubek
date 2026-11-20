@@ -5,9 +5,9 @@ use cubecl::bytes::Bytes;
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_matmul::kernels::indexed::routed::{RoutedMatmulTensors, launch_tuned};
-use cubek_matmul::kernels::indexed::stack::SlabAxis;
+use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine};
 use cubek_std::Hardware;
@@ -40,7 +40,7 @@ fn every_packed_plane_shuffle_setting_reads_each_route_s_packed_slab() {
         .into_iter()
         .flat_map(|format| [Routed::MOE.packed(format), Routed::NARROW.packed(format)])
         .collect();
-    shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine.packed_settings(), &products));
+    shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine::packed_settings(), &products));
 }
 
 /// The routed autotune, against a stack laid either way it takes: a col float stack, its buffer
@@ -85,8 +85,8 @@ impl ScopeUnderTest for TunedRouted {
     ///
     /// # Panics
     ///
-    /// On any other refusal: the autotune always reaches a floor that answers.
-    fn launch(&self, client: &Client, routed: &Routed) -> Result<Vec<Written>, Refusal> {
+    /// On any other decline: the autotune always reaches a floor that answers.
+    fn launch(&self, client: &Client, routed: &Routed) -> Result<Vec<Written>, Decline> {
         let Routed {
             tokens,
             picks,
@@ -117,7 +117,7 @@ impl ScopeUnderTest for TunedRouted {
             stored,
             upload(client, &[tokens, picks], &routed.routes()),
             slabs,
-            SlabAxis::Output,
+            SlabDimension::Output,
         )
         .expect("a stack of whole slabs derives a routed launch");
         let hw = Hardware::from_client(client);
@@ -128,7 +128,7 @@ impl ScopeUnderTest for TunedRouted {
                 tensor: out,
                 host: HostDataType::F32,
             }]),
-            Err(why @ Refusal::CubePastDevice { .. }) => Err(why),
+            Err(why @ Decline::CubePastDevice { .. }) => Err(why),
             Err(why) if stack != Stack::Float && no_matrix_instruction => Err(why),
             Err(why) => panic!("{routed:?} refused: {why:?}"),
         }

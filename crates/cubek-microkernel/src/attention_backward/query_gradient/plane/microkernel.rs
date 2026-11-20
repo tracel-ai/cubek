@@ -108,7 +108,7 @@ impl PlaneQueryGradientMicrokernel {
         #[comptime] microkernel: Self,
     ) -> Tile {
         let mut sum = query_gradient
-            .accumulator::<EA>(gradient, key, Semiring::SUM_PROD)
+            .accumulator::<EA>(gradient, key, Semiring::SumProd)
             .with_scratch(microkernel.sum_scratch());
         sum.zero();
         sum

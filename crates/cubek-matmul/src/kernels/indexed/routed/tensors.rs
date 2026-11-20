@@ -1,5 +1,5 @@
 use crate::kernels::indexed::routed::RoutedMatmulKey;
-use crate::kernels::indexed::stack::{SlabAxis, SlabView};
+use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
@@ -11,7 +11,7 @@ use crate::kernels::{
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::Work;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
@@ -19,7 +19,7 @@ use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::Roofline;
 use cubek_std::layout::contiguous;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 
 /// The operands of one routed product: the rows, the stack of `experts` slabs laid `along`, and
 /// each row's routes, `out[r, s] = lhs[r] · rhs[routes[r, s]]`.
@@ -35,7 +35,7 @@ pub struct RoutedMatmulTensors {
     routes: PlainTensor,
     experts: usize,
     slots: usize,
-    along: SlabAxis,
+    along: SlabDimension,
 }
 
 impl core::fmt::Debug for RoutedMatmulTensors {
@@ -59,7 +59,7 @@ impl RoutedMatmulTensors {
     /// `lhs[rows, k]` against the stack `rhs` of `experts` slabs laid `along`, float or packed,
     /// each row routed to the slabs its row of `routes[rows, slots]` names, on `client`'s device.
     /// The rows and the routes are made dense, and a float stack is copied only where it is
-    /// contiguous along neither axis.
+    /// contiguous along neither dimension.
     ///
     /// # Errors
     ///
@@ -76,8 +76,8 @@ impl RoutedMatmulTensors {
         rhs: StoredTensor,
         routes: PlainTensor,
         experts: usize,
-        along: SlabAxis,
-    ) -> Result<Self, Refusal> {
+        along: SlabDimension,
+    ) -> Result<Self, Decline> {
         if rhs.values().is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
@@ -179,7 +179,7 @@ impl RoutedMatmulTensors {
         hw: &Hardware,
         routine: &R,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -201,7 +201,7 @@ impl RoutedMatmulTensors {
         routine: &R,
         settings: &R::Settings,
         out: &TensorHandle,
-    ) -> Result<(), Refusal>
+    ) -> Result<(), Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -214,17 +214,12 @@ impl RoutedMatmulTensors {
         routine.launch_indexed_into(hw, &self.client, lhs, stack, table, bound, settings)
     }
 
-    /// Whether `routine` at `settings` prepares the product on `hw`, of a row at least.
+    /// Whether `R` at `settings` prepares the product on `hw`, of a row at least.
     ///
     /// # Errors
     ///
     /// As [`launch`](Self::launch).
-    pub fn served_by<Mk, SM, R>(
-        &self,
-        hw: &Hardware,
-        routine: &R,
-        settings: &R::Settings,
-    ) -> Result<(), Refusal>
+    pub fn served_by<Mk, SM, R>(&self, hw: &Hardware, settings: &R::Settings) -> Result<(), Decline>
     where
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
@@ -233,9 +228,7 @@ impl RoutedMatmulTensors {
         // Left unwritten: preparing a launch reads only how its output lies.
         let out = self.batched(&self.output());
         let tensors = MatmulTensors::indexed(&self.client, lhs, stack, table, out, R::ROWS_KIND)?;
-        routine
-            .prepare(hw, &tensors.problem(), settings)
-            .map(|_| ())
+        R::prepare(hw, &tensors.problem(), settings).map(|_| ())
     }
 
     /// The same product with `routes` in place of the call's.
@@ -291,7 +284,7 @@ impl RoutedMatmulTensors {
     /// The product as the dense routines read it: each row's slot a batch of one row, the rows
     /// the first batch dim, read again for each of a row's slots; the stack; and the routes, one
     /// entry a batch.
-    fn operands(&self) -> Result<(PlainTensor, StoredTensor, MatmulIndexTable), Refusal> {
+    fn operands(&self) -> Result<(PlainTensor, StoredTensor, MatmulIndexTable), Decline> {
         let [rows, slots, _] = self.output_shape();
         let [k, _] = self.slab_shape();
         let lhs = self

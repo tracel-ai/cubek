@@ -35,7 +35,8 @@
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
 
 use cubecl::tile::{
-    Axis, Launcher, Levels, Partitioning, Semiring, SoftwareMatmul, Space, TileTensor, launch::Grid,
+    Dimension, Launcher, Levels, Partitioning, Semiring, SoftwareMatmul, Space, TileTensor,
+    launch::Grid,
 };
 use cubecl::{
     CubeCount, CubeDim,
@@ -44,7 +45,7 @@ use cubecl::{
     future,
     prelude::*,
 };
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
@@ -69,7 +70,7 @@ fn split_k_matmul_one_level(
     for region in space {
         let mut c_cube = c
             .at(&region)
-            .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
+            .accumulating(SOFTWARE_MATMUL, Semiring::SumProd);
         c_cube.mma(&a.at(&region), &b.at(&region));
     }
 }
@@ -93,7 +94,7 @@ fn split_k_matmul_two_levels(
         for region in cube {
             let mut c_unit = c_cube
                 .at(&region)
-                .accumulating(SOFTWARE_MATMUL, Semiring::SUM_PROD);
+                .accumulating(SOFTWARE_MATMUL, Semiring::SumProd);
             c_unit.mma(&a_cube.at(&region), &b_cube.at(&region));
         }
     }
@@ -121,7 +122,7 @@ pub enum Mapping {
     SplitKT { cols: usize },
 }
 
-/// Which rhs axis is contiguous in the buffer. The *nest* is `[K, N]` either way: layout
+/// Which rhs dimension is contiguous in the buffer. The *nest* is `[K, N]` either way: layout
 /// lives in the tensor's strides, never in the nest.
 #[derive(Clone, Copy)]
 enum RhsLayout {
@@ -159,7 +160,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
-                    .unwrap_or_else(|refusal| panic!("{refusal}"))
+                    .unwrap_or_else(|decline| panic!("{decline}"))
             }
             // `plane_size · cols` columns per cube, then `cols` per unit, whole K each.
             Mapping::NSpread { cols } => {
@@ -172,7 +173,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
-                    .unwrap_or_else(|refusal| panic!("{refusal}"))
+                    .unwrap_or_else(|decline| panic!("{decline}"))
             }
             // `cols` columns per cube shared by the whole plane, K cut into one slice per unit.
             // The transposed variant is the same *nest*: only the rhs strides differ.
@@ -186,7 +187,7 @@ impl Mapping {
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
-                    .unwrap_or_else(|refusal| panic!("{refusal}"))
+                    .unwrap_or_else(|decline| panic!("{decline}"))
             }
         }
     }
@@ -248,11 +249,11 @@ fn rhs_input(
     launcher: &Launcher,
     fill: impl FnOnce(TileInputBuilder) -> TileInput,
 ) -> TileInput {
-    let axes: &[Axis] = match mapping.rhs_layout() {
+    let dimensions: &[Dimension] = match mapping.rhs_layout() {
         RhsLayout::NContiguous => &[K, N],
         RhsLayout::KContiguous => &[N, K],
     };
-    fill(TileInput::builder(client, launcher.space().subspace(axes)).untiled())
+    fill(TileInput::builder(client, launcher.space().subspace(dimensions)).untiled())
 }
 
 /// One launch of `mapping` over `problem`, into a freshly zeroed accumulator.
@@ -298,7 +299,7 @@ struct SplitKBench {
     cube_dim: CubeDim,
     a: TileInput,
     b: TileInput,
-    /// The one kernel space, which binds each operand over the axes it spans.
+    /// The one kernel space, which binds each operand over the dimensions it spans.
     launcher: Launcher,
     c: TileInput,
 }

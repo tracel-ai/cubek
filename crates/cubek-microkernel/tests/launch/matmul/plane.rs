@@ -1,23 +1,24 @@
 //! The plane matmul microkernels on one work item.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, Grid, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{
     Launcher, Partitioning, Region, Scratch, Semiring, SoftwareMatmul, Space, StageStorage, Stages,
     Tile, TileTensor,
 };
 use cubecl::{self as cubecl, cube};
+use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
     PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_shuffle_microkernel,
 };
 use cubek_microkernel::matmul::{
-    MatmulAxes, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
+    MatmulDimensions, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
     MatmulStage,
 };
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{Microkernel, StageRing};
 
 use super::{MatmulElements, MatmulLaunch, OneCube, WholeRows};
@@ -51,11 +52,11 @@ impl PlaneFragmentLaunch {
         settings: &PlaneFragmentMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item();
         let microkernel = PlaneFragmentMicrokernel::best(hw, &item, settings)?;
-        let [m, n, k] = [M, N, K].map(|axis| microkernel.tile_extent(axis));
-        let stage = MatmulStage::new(Space::new(&[(M, m), (N, n), (K, k)]), MatmulAxes::MNK);
+        let [m, n, k] = [M, N, K].map(|dimension| microkernel.tile_extent(dimension));
+        let stage = MatmulStage::new(Space::new(&[(M, m), (N, n), (K, k)]), MatmulDimensions::MNK);
         let plane_width = microkernel.instruction.units(hw)?;
         // The launch stages the plane's operands itself, as a cube staged fill would.
         let mut vectorization = Vectorization::new();
@@ -70,13 +71,10 @@ impl PlaneFragmentLaunch {
             ),
             plane_width as usize,
         );
-        let storage = microkernel.instruction.stage_layout(None)?.storage(
-            stage.space(),
-            microkernel.instruction.stage_tile(
-                &[],
-                MatmulAxes::MNK,
-                microkernel.settings.rows_along,
-            ),
+        let storage = microkernel.stage_storage(
+            CubeStagedMicrokernelSettings::SWIZZLED,
+            Delivery::SyncPerUnit,
+            &stage,
         );
         Ok(Self {
             microkernel,
@@ -105,7 +103,7 @@ impl MatmulLaunch for PlaneFragmentLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [m, n, k] = self.shape;
         let space = Space::new(&[(M, m), (N, n), (K, k)]);
         let partitioning = Partitioning::new(
@@ -172,7 +170,7 @@ fn plane_fragment_kernel<EA: Numeric, EL: Numeric>(
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
 
         let mut sum = c
-            .accumulator::<EA>(&a, &b, Semiring::SUM_PROD)
+            .accumulator::<EA>(&a, &b, Semiring::SumProd)
             .with_scratch(Scratch::None);
         sum.zero();
 
@@ -242,7 +240,7 @@ impl PlaneShuffleLaunch {
         rows: WholeRows,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = PlaneShuffleMicrokernel::best(hw, &item, settings)?;
         let mut vectorization = Vectorization::new();
@@ -275,7 +273,7 @@ impl MatmulLaunch for PlaneShuffleLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self
             .one_cube
             .launcher(client, self.microkernel.plane_width() as u32)?;
@@ -320,7 +318,7 @@ fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
     let c = out.tile_mut(&partitioning);
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
-        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SUM_PROD);
+        let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SumProd);
         sum.zero();
         for k_step in plane.walk_within(&b) {
             plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);

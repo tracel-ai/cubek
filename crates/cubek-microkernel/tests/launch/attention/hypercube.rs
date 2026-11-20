@@ -5,7 +5,7 @@
 use core::num::NonZeroUsize;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Launcher, Partitioning, Space, StageStorage, TileTensor};
 use cubecl::{self as cubecl, cube};
@@ -61,16 +61,16 @@ impl HypercubeAttentionLaunch {
         settings: &HypercubeAttentionMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if !hw.properties.features.device_memory_scope {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the last arrival reads what other cubes stored within the launch",
             });
         }
         let item = elements.work_item(dims);
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, settings)?;
         if let CubeAttentionPlane::Fragment(_) = microkernel.cube.plane {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "planes of fragments leave slots a second launch merges, not the last arrival",
             });
         }
@@ -88,7 +88,7 @@ impl HypercubeAttentionLaunch {
         // The word a cube learns it came last in, beside its walk's.
         let shared_memory = microkernel.shared_memory(hw, &item, &storage) + size_of::<u32>();
         if shared_memory > hw.shared_memory_budget() {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the cube's walk holds more shared memory than the device has",
             });
         }
@@ -114,7 +114,7 @@ impl HypercubeAttentionLaunch {
             &step
                 .extents()
                 .into_iter()
-                .map(|(axis, extent)| (axis, if axis == S { run } else { extent }))
+                .map(|(dimension, extent)| (dimension, if dimension == S { run } else { extent }))
                 .collect::<Vec<_>>(),
         )
     }
@@ -149,7 +149,7 @@ impl AttentionLaunch for HypercubeAttentionLaunch {
         lengths: TensorArg,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [queries, keys] = self.seq;
         let item = &self.item;
         let arrivals = TensorHandle::zeros(
@@ -208,7 +208,7 @@ impl HypercubeAttentionLaunch {
         scale: f32,
         visibility: AttentionVisibility,
         arrivals: &TensorHandle,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let AttentionBindings {
             query,
             key,
@@ -251,8 +251,11 @@ impl HypercubeAttentionLaunch {
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let served = microkernel.served(item);
         let delivery = microkernel.delivery(&widths, item);
-        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(width)
+        let bound = |tensor: TensorBinding, element, width, dimensions: &'static [_]| {
+            launcher
+                .arg(tensor, element)
+                .dimensions(dimensions)
+                .vectorize(width)
         };
         let query = bound(
             query,

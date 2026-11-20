@@ -9,7 +9,7 @@ use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
@@ -166,7 +166,7 @@ pub(crate) trait AttentionSettings: Debug + Copy {
         elements: AttentionElements,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self::Launch, Refusal>;
+    ) -> Result<Self::Launch, Decline>;
 }
 
 /// An attention of `elements` at `settings`, `steps` of the microkernel's step of keys long, its
@@ -238,7 +238,7 @@ impl<S: AttentionSettings> Attention<S> {
 impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
     type Case = AttentionCase<S>;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = case
             .settings
             .launch(&self.hw, case.elements, case.lines, case.steps)?;
@@ -246,7 +246,7 @@ impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
         let [head, val] = DIMS;
         let attention = HostAttention::new(launch.seq(), DIMS);
         if HostAttention::hides_every_key_from_a_query(launch.seq(), case.visibility) {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "a query sees no key, so no attention defines its output",
             });
         }

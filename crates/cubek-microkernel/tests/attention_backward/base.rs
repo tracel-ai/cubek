@@ -13,7 +13,7 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::attention::AttentionVisibility;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
@@ -244,7 +244,7 @@ pub(crate) trait BackwardSettings: Debug + Copy {
         hw: &Hardware,
         item: AttentionBackwardWorkItem,
         steps: usize,
-    ) -> Result<Self::Launch, Refusal>;
+    ) -> Result<Self::Launch, Decline>;
 }
 
 /// A backward of `element` at `settings`, `steps` of the microkernel's walk long, `group` query
@@ -320,7 +320,7 @@ impl<S: BackwardSettings> Backward<S> {
                                 launch.seq(),
                                 case.visibility,
                             ),
-                            // The refusal shows when the case runs.
+                            // The decline shows when the case runs.
                             Err(_) => true,
                         },
                     );
@@ -340,7 +340,7 @@ impl<S: BackwardSettings> Backward<S> {
 impl<S: BackwardSettings> ScopeUnderTest for Backward<S> {
     type Case = BackwardCase<S>;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = case.settings.launch(&self.hw, case.item(), case.steps)?;
         let [queries, keys] = launch.seq();
         let [head, val] = DIMS;

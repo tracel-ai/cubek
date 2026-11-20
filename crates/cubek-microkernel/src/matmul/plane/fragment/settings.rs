@@ -28,14 +28,14 @@ pub struct PlaneFragmentMicrokernelSettings {
     pub holder: ComputeScope,
     /// How deep along `K` each of its fragments is ([`PlaneFragmentDepth`]).
     pub fragment_depth: PlaneFragmentDepth,
-    /// The axis the instruction's rows, and its accumulator's, lie along
+    /// The dimension the instruction's rows, and its accumulator's, lie along
     /// ([`PlaneFragmentRowsAlong`]).
     pub rows_along: PlaneFragmentRowsAlong,
 }
 
-/// The axis a plane's instruction lays its rows along: which factor fills its `A`, the other its
-/// `B`. Along `m`, the lhs is `A`, as the product names it. Along `n`, the rhs is: a packed weight
-/// decoded into `A` writes each value straight into the register `A` reads it from, and the
+/// The dimension a plane's instruction lays its rows along: which factor fills its `A`, the other
+/// its `B`. Along `m`, the lhs is `A`, as the product names it. Along `n`, the rhs is: a packed
+/// weight decoded into `A` writes each value straight into the register `A` reads it from, and the
 /// activation in `B` loads a lane's run of `k` as one row's run, where an `A` takes two rows
 /// interleaved a register at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,8 +51,8 @@ pub enum PlaneFragmentDepth {
     /// each a grid of fragments loaded and contracted.
     Instruction,
     /// Every step of a stage: one grid of fragments as deep as the plane's steps, which the
-    /// instruction contracts one step after another into the same sum, each step's registers
-    /// loaded out of the stage as an instruction-deep fragment's are. A packed operand decodes in
+    /// instruction contracts one step after another into the same sum, each step's registers loaded
+    /// out of the stage as an instruction-deep fragment's are. A packed operand decodes in
     /// registers as each fragment loads, which is what lets an NVFP4 input be staged as it is
     /// stored under a 16-bit instruction, or read straight from memory a window of `K` at a time.
     /// Only the manual-mma instruction over plain operands offers it

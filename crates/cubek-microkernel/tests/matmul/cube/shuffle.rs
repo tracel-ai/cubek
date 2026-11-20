@@ -2,7 +2,7 @@
 
 use crate::launch::Lines;
 use crate::launch::matmul::{CubeShuffleLaunch, MatmulElements, WholeRows};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::cube::{CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
@@ -22,7 +22,7 @@ impl MatmulSettings for CubeShuffleMicrokernelSettings {
         elements: MatmulElements,
         lines: Lines,
         steps: usize,
-    ) -> Result<CubeShuffleLaunch, Refusal> {
+    ) -> Result<CubeShuffleLaunch, Decline> {
         CubeShuffleLaunch::new(hw, elements, self, ROWS, lines, steps)
     }
 }

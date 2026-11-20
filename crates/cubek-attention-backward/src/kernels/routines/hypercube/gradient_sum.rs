@@ -7,7 +7,7 @@ use crate::kernels::routines::heads_apart::cubes_with_heads_apart;
 use crate::kernels::{
     AttentionBackwardProblem, AttentionBackwardTensors, KeyGradientSums, QueryGradientSum,
 };
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 use cubek_std::Hardware;
 
@@ -31,7 +31,7 @@ impl HypercubeGradientSumRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &HypercubeKeyWalkSettings,
-    ) -> Result<HypercubeKeyWalkBlueprint, Refusal> {
+    ) -> Result<HypercubeKeyWalkBlueprint, Decline> {
         key_walk(hw, problem, settings, |tiling| {
             cubes_with_heads_apart(tiling, problem.group)
         })

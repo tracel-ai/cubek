@@ -1,10 +1,10 @@
-//! What the hypercube walks share: their refusal of a device without atomic adds, their settings,
+//! What the hypercube walks share: their decline of a device without atomic adds, their settings,
 //! their blueprint, and how they place their cubes.
 
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardWalk, WalkStages};
 use cubecl::features::AtomicUsage;
 use cubecl::ir::Type;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Levels, Partitioning};
 use cubek_microkernel::attention::{B, KV, Q};
 use cubek_microkernel::attention_backward::key_gradient::hypercube::{
@@ -15,7 +15,7 @@ use cubek_std::microkernel::{Microkernel, StageRing};
 
 /// What the hypercube routines decline on a device that cannot add `f32` atomically: the query's
 /// gradient is summed across the cubes that own its keys.
-pub const ATTENTION_BACKWARD_NO_ATOMIC_ADD: Refusal = Refusal::Declined {
+pub const ATTENTION_BACKWARD_NO_ATOMIC_ADD: Decline = Decline::Unserved {
     why: "the hypercube backward pass sums the query's gradient with f32 atomic adds, which this \
           device does not have",
 };
@@ -45,8 +45,8 @@ pub(super) fn key_walk(
     hw: &Hardware,
     problem: &AttentionBackwardProblem,
     settings: &HypercubeKeyWalkSettings,
-    cubes: impl FnOnce(Levels) -> Result<Levels, Refusal>,
-) -> Result<HypercubeKeyWalkBlueprint, Refusal> {
+    cubes: impl FnOnce(Levels) -> Result<Levels, Decline>,
+) -> Result<HypercubeKeyWalkBlueprint, Decline> {
     let atomic_sum = Type::atomic(AttentionBackwardProblem::SUM);
     if !hw
         .properties

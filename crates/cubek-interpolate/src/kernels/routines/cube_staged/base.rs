@@ -7,7 +7,7 @@ use crate::kernels::{
     InterpolateTensors,
 };
 use cubecl::tile::Partitioning;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::interpolate::InterpolateOperand;
 use cubek_microkernel::interpolate::cube::CubeInterpolateMicrokernel;
 use cubek_std::Hardware;
@@ -16,7 +16,7 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// What [`CubeStagedInterpolateRoutine`] declines with on a CPU, which has no shared memory to
 /// stage a window in.
-pub const STAGED_INTERPOLATE_ON_CPU: Refusal = Refusal::Declined {
+pub const STAGED_INTERPOLATE_ON_CPU: Decline = Decline::Unserved {
     why: "a CPU has no shared memory to stage the tap window in",
 };
 
@@ -50,7 +50,7 @@ impl Routine for CubeStagedInterpolateRoutine {
     type Partitioning = Partitioning;
 
     /// Four planes of two rows a cube by default, then one and two planes.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeInterpolateMicrokernel::settings(hw)
             .into_iter()
             .flat_map(|microkernel| {
@@ -64,7 +64,6 @@ impl Routine for CubeStagedInterpolateRoutine {
 
     /// Its blocks hand the microkernel a unit's channel run: the operands' lines divide it.
     fn vectorize(
-        &self,
         microkernel: &CubeInterpolateMicrokernel,
         partitioning: &Partitioning,
         vectorization: &mut Vectorization<InterpolateOperand>,
@@ -75,11 +74,10 @@ impl Routine for CubeStagedInterpolateRoutine {
     }
 
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &InterpolateRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if hw.properties.hardware.num_cpu_cores.is_some() {
             return Err(STAGED_INTERPOLATE_ON_CPU);
         }
@@ -92,7 +90,7 @@ impl Routine for CubeStagedInterpolateRoutine {
             &settings.microkernel,
         )?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let width = problem.width(hw, &partitioning, vectorization);
         let run = geometry.channel_block;
         let padded =
@@ -123,7 +121,6 @@ impl Routine for CubeStagedInterpolateRoutine {
     }
 
     fn estimate(
-        &self,
         _problem: &InterpolateRoutineProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

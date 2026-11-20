@@ -12,7 +12,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal};
+use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch};
 use cubecl::tune::{AutotuneOutput, LocalTuner, TunableSet, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeDim, CubeTuneId};
 use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
@@ -27,7 +27,7 @@ use std::sync::Arc;
 /// What makes two gated activations want the same kernel.
 ///
 /// The width of a half is **exact**: it is a `d_ff`, fixed by the model config, and the kernel
-/// compiles it. The row count is anchored, being the axis a caller varies.
+/// compiles it. The row count is anchored, being the dimension a caller varies.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct SwigluKey {
     elem: ElemType,
@@ -158,8 +158,7 @@ impl SwigluRoutineCandidate<CubeSwigluRoutine> {
 impl<R: Routine + Copy> SwigluRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, as candidates of the autotune, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self::new(routine, settings, hw))
             .collect()
@@ -176,7 +175,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot run the gate at this setting.
-    pub fn launch(&self, call: &SwigluCall) -> Result<TensorHandle, Refusal> {
+    pub fn launch(&self, call: &SwigluCall) -> Result<TensorHandle, Decline> {
         let tensors = SwigluTensors::new(&call.client, call.both.clone())?;
         self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
             tensors
@@ -193,7 +192,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot run the gate at this setting, or why `out` cannot hold it.
-    pub fn launch_tiled(&self, call: &SwigluCall, out: PlainTensor) -> Result<(), Refusal> {
+    pub fn launch_tiled(&self, call: &SwigluCall, out: PlainTensor) -> Result<(), Decline> {
         let tensors = SwigluTensors::tiled(&call.client, call.both.clone(), out)?;
         self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
             tensors
@@ -210,7 +209,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot encode the gate at this setting, or why `out` cannot hold it.
-    pub fn launch_packed(&self, call: &SwigluCall, out: PackedTensor) -> Result<(), Refusal> {
+    pub fn launch_packed(&self, call: &SwigluCall, out: PackedTensor) -> Result<(), Decline> {
         let tensors = SwigluTensors::packed(&call.client, call.both.clone(), out)?;
         self.launch_on::<Encoded, _>(&tensors, |blueprint, grid| tensors.bind(blueprint, grid))
     }
@@ -221,7 +220,7 @@ where
     /// # Errors
     ///
     /// Those of the launch `out` names.
-    pub fn launch_into(&self, call: &SwigluCall, out: LhsOutput) -> Result<(), Refusal> {
+    pub fn launch_into(&self, call: &SwigluCall, out: LhsOutput) -> Result<(), Decline> {
         match out {
             LhsOutput::Packed(out) => self.launch_packed(call, out),
             LhsOutput::Tiled(out) => self.launch_tiled(call, out),
@@ -234,7 +233,7 @@ where
         &self,
         tensors: &SwigluTensors<Out>,
         bind: impl FnOnce(&SwigluBlueprint<M>, &Grid) -> SwigluBinding<O::Operand>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         if tensors.problem().is_empty() {
             return Ok(());
         }
@@ -249,18 +248,15 @@ where
     fn prepare(
         &self,
         problem: &SwigluRoutineProblem,
-    ) -> Result<(SwigluBlueprint<M>, Grid), Refusal> {
-        self.prepared
-            .prepare(&self.routine, &self.hw, problem, &self.settings)
+    ) -> Result<(SwigluBlueprint<M>, Grid), Decline> {
+        self.prepared.prepare(&self.hw, problem, &self.settings)
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device. Not held: a key's problem places the candidate in a
     /// round, and may never be launched.
     fn prepared(&self, key: &SwigluKey) -> Option<(SwigluBlueprint<M>, Grid)> {
-        self.routine
-            .prepare(&self.hw, &SwigluRoutineProblem::from(key), &self.settings)
-            .ok()
+        R::prepare(&self.hw, &SwigluRoutineProblem::from(key), &self.settings).ok()
     }
 
     /// The gate of `call` at this candidate's setting.
@@ -334,7 +330,7 @@ pub fn launch_tuned(call: SwigluCall, device: &Device, tile: GroupPriority) -> T
 /// ([`SwigluRoutineCandidate::launch_into`]): at the setting the autotune elected for the rows, so
 /// the output inherits the kernel the unfused round chose, or at the default, the floor, where no
 /// round has settled or the elected setting cannot write it — a stage that outgrows the device. A
-/// refusal is a launch's before it dispatches, so the floor writes into the same `out`.
+/// decline is a launch's before it dispatches, so the floor writes into the same `out`.
 ///
 /// # Errors
 ///
@@ -345,7 +341,7 @@ pub fn launch_into_tuned(
     device: &Device,
     tile: GroupPriority,
     out: LhsOutput,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     if let Some(elected) = fastest_swiglu_routine(call, device, tile)
         && elected.launch_into(call, out.clone()).is_ok()
     {

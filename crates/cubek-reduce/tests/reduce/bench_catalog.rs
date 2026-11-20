@@ -2,11 +2,11 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubek_reduce::ReduceStrategy;
 use cubek_reduce::eval::benchmarks::{
     ReduceBenchPrecision, ReduceCorrectness, ReduceProblem, precisions, problems, strategies,
 };
 use cubek_reduce::eval::cpu_reference::comparison_epsilon;
+use cubek_reduce::kernels::ReduceOpStrategy;
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];
@@ -20,7 +20,7 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
 }
 
 fn run(strategy_id: &str, problem_id: &str) {
-    let strategy: ReduceStrategy = lookup(strategies(), strategy_id);
+    let strategy: ReduceOpStrategy = lookup(strategies(), strategy_id);
     let problem: ReduceProblem = lookup(problems(), problem_id);
 
     let actual = match ReduceCorrectness.kernel_result(&strategy, &problem, &SEEDS) {
@@ -31,7 +31,7 @@ fn run(strategy_id: &str, problem_id: &str) {
         .reference_result(&problem, &SEEDS, None)
         .unwrap_or_else(|e| panic!("reference failed for {problem_id}: {e}"));
 
-    assert_equals_approx(&actual, &expected, comparison_epsilon(problem.config))
+    assert_equals_approx(&actual, &expected, comparison_epsilon(problem.operation))
         .as_test_outcome()
         .enforce();
 }
@@ -82,25 +82,25 @@ macro_rules! bench_catalog {
 bench_catalog! {
     axis2_32x512x4095;
 
-    sum: [unit_parallel, plane_parallel],
-    arg_topk1: [unit_parallel],
-    arg_topk2: [unit_parallel],
-    arg_topk3: [unit_parallel],
+    sum: [unit, plane_shuffle],
+    arg_topk1: [unit],
+    arg_topk2: [unit],
+    arg_topk3: [unit],
 
     // The fused entries get timed against the two-launch ones, so they have to be
     // correct at the benchmark's own shape and strategy, not only at the small
     // shapes the integration tests cover.
-    topk2_fused: [cube_serial],
-    topk3_fused: [unit_parallel, cube_serial],
-    topk3_two_launch: [cube_serial],
-    max_fused: [unit_parallel, cube_serial],
-    min_fused: [unit_parallel, cube_serial],
+    topk2_fused: [cube_staged],
+    topk3_fused: [unit, cube_staged],
+    topk3_two_launch: [cube_staged],
+    max_fused: [unit, cube_staged],
+    min_fused: [unit, cube_staged],
 }
 
 bench_catalog! {
     sampler_1x151936;
 
-    // The cube scope is the one that splits a long row across cubes on the tile routines.
-    arg_topk1: [cube_parallel],
-    topk20: [cube_parallel],
+    // The rule splits this one long row across cubes, on the hypercube.
+    arg_topk1: [tile],
+    topk20: [tile],
 }

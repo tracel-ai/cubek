@@ -4,18 +4,18 @@
 use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Dimension, Space};
 use cubek_microkernel::matmul::{MatmulOperands, MatmulStep};
 use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
-use cubek_std::matmul_axes::{K, M, N, blocked};
+use cubek_std::matmul_dimensions::{K, M, N, blocked};
 use cubek_std::{Hardware, devices};
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-/// `value` packed along `axis` of a `[k, n]` rhs, `block` values a scale of `scale`.
-fn scheme(value: QuantValue, axis: Axis, block: u8, scale: ScaleDtype) -> QuantScheme {
-    let (block, store) = match axis {
+/// `value` packed along `dimension` of a `[k, n]` rhs, `block` values a scale of `scale`.
+fn scheme(value: QuantValue, dimension: Dimension, block: u8, scale: ScaleDtype) -> QuantScheme {
+    let (block, store) = match dimension {
         K => (vec![block, 1], QuantStore::PackedU32(1)),
         _ => (vec![1, block], QuantStore::PackedU32(0)),
     };
@@ -41,10 +41,11 @@ fn problem(m: usize, scheme: QuantScheme, operand: Operand) -> MatmulRoutineProb
 }
 
 /// Every scheme the packed routines serve at `m` rows, named: NVFP4 in rows and in tile order,
-/// MXFP4, MXFP8, and `q4` and `q8` along either axis.
+/// MXFP4, MXFP8, and `q4` and `q8` along either dimension.
 fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
-    let in_rows = |scheme: QuantScheme, axis: Axis| {
-        let operand = Operand::of_scheme(&scheme, axis, [K, N]).expect("one axis a block");
+    let in_rows = |scheme: QuantScheme, dimension: Dimension| {
+        let operand =
+            Operand::of_scheme(&scheme, dimension, [K, N]).expect("one dimension a block");
         problem(m, scheme, operand)
     };
     let nvfp4 = tile_order::nvfp4_scheme();
@@ -52,7 +53,7 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
     let in_tiles = |words_laid: TileWords| {
         let order = TileOrder::laid(&nvfp4, words_laid, (128, 8)).expect("NVFP4 is tile order");
         let operand = Operand::of_scheme(&nvfp4, K, [K, N])
-            .expect("one axis a block")
+            .expect("one dimension a block")
             .in_tile_order(order, N, words)
             .expect("tile order is read");
         problem(m, nvfp4, operand)
@@ -100,16 +101,16 @@ fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
 }
 
 /// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block
-/// axis and the inside axis it is split into.
+/// dimension and the inside dimension it is split into.
 fn whole_steps(step: &MatmulStep, space: &Space) -> bool {
-    [M, N, K].into_iter().all(|axis| {
-        let (blocks, inside) = blocked(axis);
+    [M, N, K].into_iter().all(|dimension| {
+        let (blocks, inside) = blocked(dimension);
         let extent = [blocks, inside]
             .into_iter()
             .filter(|&part| space.contains(part))
             .map(|part| space.extent(part))
             .product::<usize>();
-        extent.is_multiple_of(step.along(axis))
+        extent.is_multiple_of(step.along(dimension))
     })
 }
 
@@ -125,8 +126,8 @@ mod plane_shuffle {
         let hw = devices::m2_pro();
         for m in [1, 8] {
             for (name, problem) in problems(m) {
-                for settings in PlaneShuffleMatmulRoutine.indexed_packed_settings() {
-                    let prepared = PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
+                for settings in PlaneShuffleMatmulRoutine::indexed_packed_settings() {
+                    let prepared = PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings);
                     if !PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem) {
                         assert!(prepared.is_err(), "{name} at {settings} sized a plane");
                         continue;
@@ -165,9 +166,10 @@ mod cube_shuffle {
         let mut prepared = 0;
         for m in [1, 8] {
             for (name, problem) in problems(m) {
-                let routine = CubeShuffleMatmulRoutine;
-                for settings in routine.packed_settings(&hw) {
-                    let Ok((blueprint, _)) = routine.prepare(&hw, &problem, &settings) else {
+                for settings in CubeShuffleMatmulRoutine::packed_settings(&hw) {
+                    let Ok((blueprint, _)) =
+                        CubeShuffleMatmulRoutine::prepare(&hw, &problem, &settings)
+                    else {
                         continue;
                     };
                     prepared += 1;
@@ -197,7 +199,7 @@ mod cube_shuffle {
         let hw = devices::m2_pro();
         let settings = crate::kernels::LoadingSchedule::SPLIT_K.settings();
         for (name, problem) in problems(1) {
-            let prepared = CubeShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
+            let prepared = CubeShuffleMatmulRoutine::prepare(&hw, &problem, &settings);
             assert_eq!(
                 prepared.is_ok(),
                 name.starts_with("nvfp4"),
@@ -212,7 +214,7 @@ mod cube_staged {
     use crate::kernels::CubeStagedMatmulRoutine;
     use cubecl::features::MmaConfig;
     use cubecl::tile::StageStorage;
-    use cubecl::tile::launch::Refusal;
+    use cubecl::tile::launch::Decline;
     use cubecl::tile::stage::RowChunks;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
     use cubek_microkernel::matmul::{MatmulDim, MatmulMicrokernel};
@@ -240,10 +242,10 @@ mod cube_staged {
         let mut tile_order_prepared = 0;
         for (name, problem) in problems(512) {
             for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
-                let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings);
+                let prepared = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings);
                 let blueprint = match prepared {
                     Ok((blueprint, _)) => blueprint,
-                    Err(Refusal::SharedMemoryPastDevice { .. }) => continue,
+                    Err(Decline::SharedMemoryPastDevice { .. }) => continue,
                     Err(error) if name.ends_with("along n") => {
                         assert_eq!(error, CubeStagedMicrokernel::UNGROUPED_K, "{name}");
                         continue;
@@ -294,7 +296,7 @@ mod cube_staged {
         let mut laid = Vec::new();
         for hw in [both, mma_alone] {
             for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
-                let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+                let Ok((blueprint, _)) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
                 else {
                     continue;
                 };
@@ -339,7 +341,7 @@ mod packed_lhs {
     fn packed_lhs(m: usize) -> MatmulRoutineProblem {
         let scheme = nvfp4_scheme();
         let packing = Packing {
-            operand: Operand::of_scheme(&scheme, K, [M, K]).expect("one axis a block"),
+            operand: Operand::of_scheme(&scheme, K, [M, K]).expect("one dimension a block"),
             scheme,
         };
         MatmulRoutineProblem::packed(
@@ -373,29 +375,24 @@ mod packed_lhs {
         );
         for m in [1, 8] {
             let problem = packed_lhs(m);
-            for settings in PlaneShuffleMatmulRoutine
-                .settings(&hw)
+            for settings in PlaneShuffleMatmulRoutine::settings(&hw)
                 .into_iter()
-                .chain(PlaneShuffleMatmulRoutine.packed_settings())
+                .chain(PlaneShuffleMatmulRoutine::packed_settings())
             {
                 assert!(
-                    PlaneShuffleMatmulRoutine
-                        .prepare(&hw, &problem, &settings)
-                        .is_err(),
+                    PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings).is_err(),
                     "plane shuffle at {settings}, {m} rows"
                 );
             }
-            for settings in CubeShuffleMatmulRoutine.packed_settings(&hw) {
+            for settings in CubeShuffleMatmulRoutine::packed_settings(&hw) {
                 assert!(
-                    CubeShuffleMatmulRoutine
-                        .prepare(&hw, &problem, &settings)
-                        .is_err(),
+                    CubeShuffleMatmulRoutine::prepare(&hw, &problem, &settings).is_err(),
                     "cube shuffle at {settings}, {m} rows"
                 );
             }
         }
-        // The decode names a packed matrix's axes `K` and `N`: the `[m, k]` input's `m` is its `N`,
-        // in a product whose own `m` is one.
+        // The decode names a packed matrix's dimensions `K` and `N`: the `[m, k]` input's `m` is
+        // its `N`, in a product whose own `m` is one.
         let m = 512;
         let decode = MatmulRoutineProblem::packed(
             1,
@@ -408,19 +405,19 @@ mod packed_lhs {
             },
         );
         assert!(
-            PlaneDequantizeMatmulRoutine
-                .prepare(&hw, &decode, &PlaneDequantizeMatmulRoutine::SETTINGS)
-                .is_ok(),
+            PlaneDequantizeMatmulRoutine::prepare(
+                &hw,
+                &decode,
+                &PlaneDequantizeMatmulRoutine::SETTINGS
+            )
+            .is_ok(),
             "the decode declines the packed lhs"
         );
         let dense = MatmulRoutineProblem::dense(m, 2048, 4096, F16);
         assert!(
-            CubeStagedMatmulRoutine
-                .settings(&hw)
+            CubeStagedMatmulRoutine::settings(&hw)
                 .iter()
-                .any(|settings| CubeStagedMatmulRoutine
-                    .prepare(&hw, &dense, settings)
-                    .is_ok()),
+                .any(|settings| CubeStagedMatmulRoutine::prepare(&hw, &dense, settings).is_ok()),
             "no setting of the float product runs on the decoded lhs"
         );
     }
@@ -451,12 +448,12 @@ mod hypercube_last_arrival {
             }],
         );
         let lhs = Packing {
-            operand: Operand::of_scheme(&nvfp4_scheme(), K, [M, K]).expect("one axis a block"),
+            operand: Operand::of_scheme(&nvfp4_scheme(), K, [M, K]).expect("one dimension a block"),
             scheme: nvfp4_scheme(),
         };
         let rhs = Packing {
             operand: Operand::of_scheme(&tile_order::nvfp4_scheme(), K, [K, N])
-                .expect("one axis a block"),
+                .expect("one dimension a block"),
             scheme: tile_order::nvfp4_scheme(),
         };
         let problem = MatmulRoutineProblem::packed(
@@ -470,16 +467,14 @@ mod hypercube_last_arrival {
                 out: None,
             },
         );
-        let last_arrival = HypercubeLastArrivalMatmulRoutine.settings(&hw);
+        let last_arrival = HypercubeLastArrivalMatmulRoutine::settings(&hw);
         assert!(
             !last_arrival.is_empty(),
             "a device whose cubes meet lists hypercube settings"
         );
         for settings in last_arrival {
             assert_eq!(
-                HypercubeLastArrivalMatmulRoutine
-                    .prepare(&hw, &problem, &settings)
-                    .err(),
+                HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings).err(),
                 Some(MATMUL_HYPERCUBE_PACKED_LHS),
                 "last arrival at {settings}"
             );
@@ -518,7 +513,7 @@ mod hypercube_last_arrival {
                 let mut prepared = 0;
                 for settings in HypercubeLastArrivalMatmulRoutine.packed_settings(&hw) {
                     let Ok((blueprint, _)) =
-                        HypercubeLastArrivalMatmulRoutine.prepare(&hw, &problem, &settings)
+                        HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings)
                     else {
                         continue;
                     };

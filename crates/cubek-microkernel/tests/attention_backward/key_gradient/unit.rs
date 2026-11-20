@@ -1,7 +1,7 @@
 //! The unit key gradient microkernel alone: one unit's keys, their gradient and their values' over every query.
 
 use crate::launch::attention_backward::UnitKeyGradientLaunch;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_microkernel::attention_backward::key_gradient::unit::{
     UnitKeyGradientMicrokernel, UnitKeyGradientMicrokernelSettings,
@@ -20,7 +20,7 @@ impl BackwardSettings for UnitKeyGradientMicrokernelSettings {
         hw: &Hardware,
         item: AttentionBackwardWorkItem,
         steps: usize,
-    ) -> Result<UnitKeyGradientLaunch, Refusal> {
+    ) -> Result<UnitKeyGradientLaunch, Decline> {
         UnitKeyGradientLaunch::new(hw, item, self, steps)
     }
 }

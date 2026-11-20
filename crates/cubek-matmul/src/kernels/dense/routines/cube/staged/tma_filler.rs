@@ -4,7 +4,7 @@ use crate::kernels::{
     MatmulTensors, cube_order_name,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -26,10 +26,10 @@ use cubek_std::routine::{Grid, Routine};
 /// rest walk them contracting, then each stores its own fragments. The two meet only on each
 /// slot's barriers.
 ///
-/// Refused where the TMA engine cannot land the stages, as the TMA routine is, and where planes
+/// Declined where the TMA engine cannot land the stages, as the TMA routine is, and where planes
 /// cannot be set aside: one stage in flight, a fragment that can bounce through a scratch, or
 /// planes splitting `K`
-/// ([`CubeStagedFillingRefusal`](cubek_microkernel::matmul::cube::CubeStagedFillingRefusal)).
+/// ([`CubeStagedFillingDecline`](cubek_microkernel::matmul::cube::CubeStagedFillingDecline)).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CubeStagedTmaFillerMatmulRoutine;
 
@@ -109,7 +109,7 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
     /// projections of Qwen3-8B want: its output projection takes 73.7 µs against the deep box's
     /// 86.0, its down projection 184.3 against 227.3. One plane filling. None without a bulk
     /// tensor copy.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.bulk_tensor_copy() {
             return Vec::new();
         }
@@ -132,7 +132,6 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -141,7 +140,6 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -153,11 +151,10 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
     /// As [`CubeStagedTmaMatmulRoutine`](crate::kernels::CubeStagedTmaMatmulRoutine)'s, its planes
     /// set aside where resolving admits them, launched beside the rest.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let fill = CubeStagedFill {
             delivery: CubeStagedDelivery::Tma,
             filling_planes: settings.filling_planes.get(),

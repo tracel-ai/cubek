@@ -10,26 +10,26 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// A packed input decoded into a float one, in dense rows of the axis its words do not run along:
-/// the first launch of a product that then runs the float routine. It places the plane shuffle
-/// routine's microkernel over the packed input alone, as the `[k, n]` input of a product of one
-/// row, so each unit holds whole reads of the words and whole words of the scales, and each unit
-/// copies its reads into the float input as it decodes them. Unlike that routine, it walks cubes: a
-/// copy is filled by every unit of its cube, so each cube copies its planes' box.
+/// A packed input decoded into a float one, in dense rows of the dimension its words do not run
+/// along: the first launch of a product that then runs the float routine. It places the plane
+/// shuffle routine's microkernel over the packed input alone, as the `[k, n]` input of a product of
+/// one row, so each unit holds whole reads of the words and whole words of the scales, and each
+/// unit copies its reads into the float input as it decodes them. Unlike that routine, it walks
+/// cubes: a copy is filled by every unit of its cube, so each cube copies its planes' box.
 ///
-/// Which input of a product it decodes does not matter: it names a packed matrix's axes `K` and
-/// `N`, and a packed `[m, k]` input is bound with its rows as `N`.
+/// Which input of a product it decodes does not matter: it names a packed matrix's dimensions `K`
+/// and `N`, and a packed `[m, k]` input is bound with its rows as `N`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaneDequantizeMatmulRoutine;
 
@@ -52,8 +52,8 @@ impl PlaneDequantizeMatmulRoutine {
 
     /// `packed`, a packed matrix over `K` and `N` in rows or in the tiles it is stored in, decoded
     /// into a float matrix of `element` on `client`'s device, prepared for `hw`: `[k, n]` in dense
-    /// rows of the axis its words do not run along. The first launch of every product that then
-    /// runs a float routine on it.
+    /// rows of the dimension its words do not run along. The first launch of every product that
+    /// then runs a float routine on it.
     ///
     /// # Errors
     ///
@@ -66,7 +66,7 @@ impl PlaneDequantizeMatmulRoutine {
         packed: PackedTensor,
         element: ElemType,
         settings: &PlaneShuffleMatmulRoutineSettings,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         if !MatmulInputs::FLOATS.contains(&element) {
             return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
         }
@@ -80,10 +80,11 @@ impl PlaneDequantizeMatmulRoutine {
                 ..MatmulOperands::all(None)
             },
         );
-        let (blueprint, grid) = self.prepare(hw, problem, settings)?;
+        let (blueprint, grid) = PlaneDequantizeMatmulRoutine::prepare(hw, problem, settings)?;
         let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
         let lined = packing.operand.lined();
-        // Rows of the axis the words do not run along, a line of the axis they do in each.
+        // Rows of the dimension the words do not run along, a line of the dimension they do in
+        // each.
         let rows = match lined == K {
             true => [problem.n, problem.k],
             false => [problem.k, problem.n],
@@ -119,7 +120,7 @@ impl PlaneDequantizeMatmulRoutine {
                 element,
             );
         }
-        // A `[n, k]` buffer read as the `[k, n]` matrix it holds, `k` its contiguous axis.
+        // A `[n, k]` buffer read as the `[k, n]` matrix it holds, `k` its contiguous dimension.
         if lined == K {
             let step = into.strides()[0];
             into.metadata = Box::new(Metadata::new(vec![problem.k, problem.n], vec![1, step]));
@@ -136,13 +137,12 @@ impl Routine for PlaneDequantizeMatmulRoutine {
     type Partitioning = MatmulPartitioning;
 
     /// [`SETTINGS`](Self::SETTINGS) alone.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         vec![Self::SETTINGS]
     }
 
     /// Nothing of its own: it walks cubes and planes, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &PlaneShuffleMicrokernel,
         _: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -153,7 +153,6 @@ impl Routine for PlaneDequantizeMatmulRoutine {
     /// Each cube reads the words and scales of its columns once, and writes them decoded, a
     /// value of the decoded element each. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &PlaneDequantizeMatmulRoutineBlueprint,
         grid: &Grid,
@@ -191,11 +190,10 @@ impl Routine for PlaneDequantizeMatmulRoutine {
     /// (`PlaneShufflePackedPlacement`): the same microkernel and planes over the same space, one
     /// row, the planes in cubes.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let alone = Self::alone(problem);
         let PlaneShufflePackedPlacement {
             microkernel,

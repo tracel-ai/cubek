@@ -1,4 +1,4 @@
-//! Tests for the staged cube matmul routine: its settings, what each prepares, and the refusals.
+//! Tests for the staged cube matmul routine: its settings, what each prepares, and the declines.
 
 mod base {
     use super::super::*;
@@ -9,16 +9,16 @@ mod base {
     use core::num::NonZeroUsize;
     use cubecl::features::{MmaConfig, WgmmaConfig, WgmmaElems};
     use cubecl::ir::{ElemType, FloatKind};
-    use cubecl::tile::launch::{Delivery, Refusal};
+    use cubecl::tile::launch::{Decline, Delivery};
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::space::{ComputeScope, CubeOrder};
     use cubecl::tile::stage::RowChunks;
     use cubecl::tile::{Scratch, StageStorage};
     use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
-        CubeStagedDelivery, CubeStagedFillingRefusal, CubeStagedMicrokernel,
-        CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaRefusal,
-        CubeStagedTmaStoreRefusal,
+        CubeStagedDelivery, CubeStagedFillingDecline, CubeStagedMicrokernel,
+        CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaDecline,
+        CubeStagedTmaStoreDecline,
     };
     use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
@@ -30,7 +30,7 @@ mod base {
     use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::tile_order::{TileOrder, TileWords};
     use cubek_std::layout::{BindingOrder, tile_order};
-    use cubek_std::matmul_axes::{K, M, N};
+    use cubek_std::matmul_dimensions::{K, M, N};
     use cubek_std::microkernel::{Microkernel, StageLayout, StageRing};
     use cubek_std::routine::{Grid, Routine};
     use cubek_std::{Hardware, devices};
@@ -38,14 +38,13 @@ mod base {
     /// A routine's preparation of a problem at one of its settings, named by the setting.
     type Prepared = (
         String,
-        Result<(CubeStagedMatmulRoutineBlueprint, Grid), Refusal>,
+        Result<(CubeStagedMatmulRoutineBlueprint, Grid), Decline>,
     );
 
-    /// `routine` at each of `settings`, prepared on `problem`.
+    /// `R` at each of `settings`, prepared on `problem`.
     fn prepared_by<R>(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
-        routine: R,
         settings: Vec<R::Settings>,
     ) -> Vec<Prepared>
     where
@@ -53,7 +52,7 @@ mod base {
     {
         settings
             .iter()
-            .map(|settings| (settings.to_string(), routine.prepare(hw, problem, settings)))
+            .map(|settings| (settings.to_string(), R::prepare(hw, problem, settings)))
             .collect()
     }
 
@@ -62,28 +61,24 @@ mod base {
     /// its floor.
     fn block_scaled_prepared(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<Prepared> {
         let mut prepared = Vec::new();
-        prepared.extend(prepared_by(
+        prepared.extend(prepared_by::<CubeStagedTmaMatmulRoutine>(
             hw,
             problem,
-            CubeStagedTmaMatmulRoutine,
             CubeStagedTmaMatmulRoutine.block_scaled_settings(hw),
         ));
-        prepared.extend(prepared_by(
+        prepared.extend(prepared_by::<CubeStagedTmaStoredMatmulRoutine>(
             hw,
             problem,
-            CubeStagedTmaStoredMatmulRoutine,
             CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(hw),
         ));
-        prepared.extend(prepared_by(
+        prepared.extend(prepared_by::<CubeStagedAsyncCopyMatmulRoutine>(
             hw,
             problem,
-            CubeStagedAsyncCopyMatmulRoutine,
             CubeStagedAsyncCopyMatmulRoutine.block_scaled_settings(hw),
         ));
-        prepared.extend(prepared_by(
+        prepared.extend(prepared_by::<CubeStagedMatmulRoutine>(
             hw,
             problem,
-            CubeStagedMatmulRoutine,
             vec![CubeStagedMatmulRoutineSettings::DEFAULT],
         ));
         prepared
@@ -93,28 +88,24 @@ mod base {
     /// one-step and block-scaled), each prepared on `problem` by its routine.
     fn packed_prepared(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<Prepared> {
         let mut prepared = Vec::new();
-        prepared.extend(prepared_by(
+        prepared.extend(prepared_by::<CubeStagedMatmulRoutine>(
             hw,
             problem,
-            CubeStagedMatmulRoutine,
             CubeStagedMatmulRoutine.packed_settings(hw),
         ));
-        prepared.extend(prepared_by(
+        prepared.extend(prepared_by::<CubeStagedMatmulRoutine>(
             hw,
             problem,
-            CubeStagedMatmulRoutine,
             CubeStagedMatmulRoutine.packed_one_step_settings(),
         ));
-        prepared.extend(prepared_by(
+        prepared.extend(prepared_by::<CubeStagedAsyncCopyMatmulRoutine>(
             hw,
             problem,
-            CubeStagedAsyncCopyMatmulRoutine,
             CubeStagedAsyncCopyMatmulRoutine.packed_settings(hw),
         ));
-        prepared.extend(prepared_by(
+        prepared.extend(prepared_by::<CubeStagedTmaFillerMatmulRoutine>(
             hw,
             problem,
-            CubeStagedTmaFillerMatmulRoutine,
             CubeStagedTmaFillerMatmulRoutine.packed_settings(hw),
         ));
         prepared.extend(block_scaled_prepared(hw, problem));
@@ -169,9 +160,9 @@ mod base {
     fn every_setting_prepares_where_the_instruction_is_offered() {
         let hw = offering(devices::strix_halo());
         for problem in [problem(), col_rhs()] {
-            for (position, settings) in CubeStagedMatmulRoutine.settings(&hw).iter().enumerate() {
-                let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem, settings);
-                let outgrown = matches!(prepared, Err(Refusal::SharedMemoryPastDevice { .. }));
+            for (position, settings) in CubeStagedMatmulRoutine::settings(&hw).iter().enumerate() {
+                let prepared = CubeStagedMatmulRoutine::prepare(&hw, &problem, settings);
+                let outgrown = matches!(prepared, Err(Decline::SharedMemoryPastDevice { .. }));
                 assert!(
                     prepared.is_ok() || (position > 0 && outgrown),
                     "{settings}: {prepared:?}"
@@ -214,11 +205,11 @@ mod base {
             hw
         };
         let prepared =
-            |hw: &Hardware, settings| CubeStagedMatmulRoutine.prepare(hw, &col_rhs(), &settings);
+            |hw: &Hardware, settings| CubeStagedMatmulRoutine::prepare(hw, &col_rhs(), &settings);
         assert!(prepared(&small, one_stage).is_ok());
         assert!(matches!(
             prepared(&small, two_stages),
-            Err(Refusal::SharedMemoryPastDevice { .. })
+            Err(Decline::SharedMemoryPastDevice { .. })
         ));
         assert!(prepared(&large, one_stage).is_ok());
         assert!(prepared(&large, two_stages).is_ok());
@@ -227,7 +218,7 @@ mod base {
     /// A setting settles to one launch at an anchored row count and at a row count the key
     /// anchors to it: the tuner ranks a candidate on the first and launches it on the second, so
     /// what one cube holds, its shape, its ring and its fill are the same for both, and so is a
-    /// refusal. A box sixteen fragments high cuts a tile of 244 rows short and none of 256, and a
+    /// decline. A box sixteen fragments high cuts a tile of 244 rows short and none of 256, and a
     /// tile cut short is where its fragments bounce through a window.
     #[test]
     fn a_setting_settles_alike_at_the_rows_a_key_anchors() {
@@ -244,8 +235,7 @@ mod base {
         };
         let ranked = |problem: &MatmulRoutineProblem,
                       settings: &CubeStagedMatmulRoutineSettings| {
-            CubeStagedMatmulRoutine
-                .prepare(&hw, problem, settings)
+            CubeStagedMatmulRoutine::prepare(&hw, problem, settings)
                 .map(|(blueprint, grid)| {
                     (
                         grid.shared_memory,
@@ -255,7 +245,7 @@ mod base {
                         blueprint.microkernel.fill,
                     )
                 })
-                .map_err(|refusal| format!("{refusal:?}"))
+                .map_err(|decline| format!("{decline:?}"))
         };
         for (n, k, rhs) in [(4096, 1024, N), (1024, 3072, K)] {
             let anchored = MatmulRoutineProblem::from(&shape(256, n, k, rhs));
@@ -265,7 +255,7 @@ mod base {
                 ranked(&short, &default).is_ok(),
                 "the default on n {n}, k {k}"
             );
-            for settings in CubeStagedMatmulRoutine.settings(&hw) {
+            for settings in CubeStagedMatmulRoutine::settings(&hw) {
                 assert_eq!(
                     ranked(&anchored, &settings),
                     ranked(&short, &settings),
@@ -288,8 +278,7 @@ mod base {
     /// The instruction the default elects on `hw` for `problem`, and the width its planes launch.
     fn elected(hw: Hardware, problem: &MatmulRoutineProblem) -> (PlaneFragmentInstruction, usize) {
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
-        let (blueprint, grid) = CubeStagedMatmulRoutine
-            .prepare(&hw, problem, &settings)
+        let (blueprint, grid) = CubeStagedMatmulRoutine::prepare(&hw, problem, &settings)
             .expect("the plane routine prepares everywhere");
         (blueprint.microkernel.plane.instruction, grid.planes().width)
     }
@@ -345,35 +334,30 @@ mod base {
                 col_rhs(),
             ] {
                 let mut prepared = Vec::new();
-                prepared.extend(prepared_by(
+                prepared.extend(prepared_by::<CubeStagedMatmulRoutine>(
                     &hw,
                     &problem,
-                    CubeStagedMatmulRoutine,
-                    CubeStagedMatmulRoutine.settings(&hw),
+                    CubeStagedMatmulRoutine::settings(&hw),
                 ));
-                prepared.extend(prepared_by(
+                prepared.extend(prepared_by::<CubeStagedAsyncCopyMatmulRoutine>(
                     &hw,
                     &problem,
-                    CubeStagedAsyncCopyMatmulRoutine,
-                    CubeStagedAsyncCopyMatmulRoutine.settings(&hw),
+                    CubeStagedAsyncCopyMatmulRoutine::settings(&hw),
                 ));
-                prepared.extend(prepared_by(
+                prepared.extend(prepared_by::<CubeStagedTmaMatmulRoutine>(
                     &hw,
                     &problem,
-                    CubeStagedTmaMatmulRoutine,
-                    CubeStagedTmaMatmulRoutine.settings(&hw),
+                    CubeStagedTmaMatmulRoutine::settings(&hw),
                 ));
-                prepared.extend(prepared_by(
+                prepared.extend(prepared_by::<CubeStagedTmaFillerMatmulRoutine>(
                     &hw,
                     &problem,
-                    CubeStagedTmaFillerMatmulRoutine,
-                    CubeStagedTmaFillerMatmulRoutine.settings(&hw),
+                    CubeStagedTmaFillerMatmulRoutine::settings(&hw),
                 ));
-                prepared.extend(prepared_by(
+                prepared.extend(prepared_by::<CubeStagedTmaStoredMatmulRoutine>(
                     &hw,
                     &problem,
-                    CubeStagedTmaStoredMatmulRoutine,
-                    CubeStagedTmaStoredMatmulRoutine.settings(&hw),
+                    CubeStagedTmaStoredMatmulRoutine::settings(&hw),
                 ));
                 let built: Vec<_> = prepared
                     .into_iter()
@@ -428,26 +412,25 @@ mod base {
     #[test]
     fn only_the_setting_that_asks_for_it_runs_the_plane_group_mma() {
         let hw = hopper();
-        let wgmma = CubeStagedWgmmaMatmulRoutine.settings(&hw);
+        let wgmma = CubeStagedWgmmaMatmulRoutine::settings(&hw);
         assert_eq!(wgmma.len(), 1);
         assert!(
-            CubeStagedMatmulRoutine
-                .settings(&hw)
+            CubeStagedMatmulRoutine::settings(&hw)
                 .iter()
                 .all(|settings| settings.microkernel.plane.holder == ComputeScope::Plane)
         );
         for (problem, col) in [(problem(), false), (col_rhs(), true)] {
-            let prepared = CubeStagedWgmmaMatmulRoutine.prepare(&hw, &problem, &wgmma[0]);
+            let prepared = CubeStagedWgmmaMatmulRoutine::prepare(&hw, &problem, &wgmma[0]);
             match (col, prepared) {
                 (true, Ok((blueprint, _))) => assert!(matches!(
                     blueprint.microkernel.plane.instruction,
                     PlaneFragmentInstruction::Wgmma { n: 128, .. }
                 )),
-                (false, Err(Refusal::Declined { .. })) => {}
+                (false, Err(Decline::Unserved { .. })) => {}
                 (_, prepared) => panic!("on a col rhs {col}: {prepared:?}"),
             }
-            for (position, settings) in CubeStagedMatmulRoutine.settings(&hw).iter().enumerate() {
-                match CubeStagedMatmulRoutine.prepare(&hw, &problem, settings) {
+            for (position, settings) in CubeStagedMatmulRoutine::settings(&hw).iter().enumerate() {
+                match CubeStagedMatmulRoutine::prepare(&hw, &problem, settings) {
                     Ok((blueprint, _)) => assert!(
                         !matches!(
                             blueprint.microkernel.plane.instruction,
@@ -455,7 +438,7 @@ mod base {
                         ),
                         "{settings}"
                     ),
-                    Err(Refusal::SharedMemoryPastDevice { .. }) if position > 0 => {}
+                    Err(Decline::SharedMemoryPastDevice { .. }) if position > 0 => {}
                     prepared => panic!("{settings} on a col rhs {col}: {prepared:?}"),
                 }
             }
@@ -489,8 +472,7 @@ mod base {
     fn the_matrix_transports_bind_a_col_rhs_in_its_buffers_order() {
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
         let prepared = |hw: Hardware| {
-            CubeStagedMatmulRoutine
-                .prepare(&hw, &col_rhs(), &settings)
+            CubeStagedMatmulRoutine::prepare(&hw, &col_rhs(), &settings)
                 .expect("the routine runs here")
                 .0
         };
@@ -512,9 +494,12 @@ mod base {
     fn a_row_rhs_is_bound_as_the_product_names_it() {
         let problem = MatmulRoutineProblem::dense(128, 256, 512, F16);
         let hw = offering(devices::strix_halo());
-        let (blueprint, _) = CubeStagedMatmulRoutine
-            .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
-            .expect("the routine runs here");
+        let (blueprint, _) = CubeStagedMatmulRoutine::prepare(
+            &hw,
+            &problem,
+            &CubeStagedMatmulRoutineSettings::DEFAULT,
+        )
+        .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.plane.orders.rhs, BindingOrder::Stated);
     }
 
@@ -529,7 +514,7 @@ mod base {
             offering(devices::rdna_range()),
             offering(devices::wgpu_no_subgroups()),
         ] {
-            let prepared = CubeStagedMatmulRoutine.prepare(&hw, &problem(), &settings);
+            let prepared = CubeStagedMatmulRoutine::prepare(&hw, &problem(), &settings);
             assert!(prepared.is_err(), "{hw:?}");
         }
     }
@@ -537,7 +522,7 @@ mod base {
     /// engine runs, which elsewhere it would refuse.
     #[test]
     fn the_engine_twins_are_listed_only_where_the_copy_engine_runs() {
-        let engine_twins = |hw: Hardware| CubeStagedAsyncCopyMatmulRoutine.settings(&hw).len();
+        let engine_twins = |hw: Hardware| CubeStagedAsyncCopyMatmulRoutine::settings(&hw).len();
         assert!(engine_twins(devices::h100()) > 0);
         for hw in [devices::strix_halo(), devices::wgpu_no_subgroups()] {
             assert_eq!(engine_twins(hw.clone()), 0, "{hw:?}");
@@ -548,7 +533,7 @@ mod base {
     #[test]
     fn declines_a_cube_past_the_units_a_cpu_holds() {
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
-        let declined = CubeStagedMatmulRoutine.prepare(&devices::cpu_12(), &problem(), &settings);
+        let declined = CubeStagedMatmulRoutine::prepare(&devices::cpu_12(), &problem(), &settings);
         assert!(declined.is_err(), "{declined:?}");
     }
     /// A second stage in flight holds a second stage of shared memory, and the blueprint carries
@@ -559,8 +544,7 @@ mod base {
         let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
         let prepared = |ring| {
             let settings = default_with(|microkernel| microkernel.ring = ring);
-            CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the routine runs here")
         };
         let (single, single_grid) = prepared(StageRing::SINGLE);
@@ -583,9 +567,12 @@ mod base {
     fn a_register_prefetch_resolves_to_the_slots_past_a_units_registers() {
         let hw = offering(devices::strix_halo());
         let problem = MatmulRoutineProblem::dense(256, 512, 64, F16);
-        let (blueprint, grid) = CubeStagedMatmulRoutine
-            .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
-            .expect("the routine runs here");
+        let (blueprint, grid) = CubeStagedMatmulRoutine::prepare(
+            &hw,
+            &problem,
+            &CubeStagedMatmulRoutineSettings::DEFAULT,
+        )
+        .expect("the routine runs here");
         let registers = StageRing::DOUBLE_THROUGH_REGISTERS;
         let partitioning = &blueprint.partitioning;
         let planes = grid.planes();
@@ -612,7 +599,7 @@ mod base {
 
     /// Every listed setting prefetching into registers, where its ring keeps that prefetch, holds
     /// no more of both operands a unit than the tile DSL fetches, at the widths the blueprint
-    /// settled: what the tile DSL checks at expansion, where a refusal is a launch that writes
+    /// settled: what the tile DSL checks at expansion, where a decline is a launch that writes
     /// nothing. On devices of three plane widths, over a row rhs, a col rhs and a ragged
     /// problem.
     #[test]
@@ -624,8 +611,7 @@ mod base {
             offering(devices::rdna_range()),
             offering(devices::cdna_wave64()),
         ] {
-            let prefetching = CubeStagedMatmulRoutine
-                .settings(&hw)
+            let prefetching = CubeStagedMatmulRoutine::settings(&hw)
                 .into_iter()
                 .filter(|settings| settings.microkernel.ring.prefetch == Prefetch::InRegisters);
             for settings in prefetching {
@@ -635,7 +621,7 @@ mod base {
                     problem(),
                 ] {
                     let Ok((blueprint, grid)) =
-                        CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+                        CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
                     else {
                         continue;
                     };
@@ -681,13 +667,12 @@ mod base {
             out: None,
         };
         let problem = MatmulRoutineProblem::packed(256, 512, 256, F16, packings);
-        let prefetching = CubeStagedMatmulRoutine
-            .settings(&hw)
+        let prefetching = CubeStagedMatmulRoutine::settings(&hw)
             .into_iter()
             .filter(|settings| settings.microkernel.ring.prefetch == Prefetch::InRegisters);
         let mut prepared = 0;
         for settings in prefetching {
-            let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+            let Ok((blueprint, _)) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
             else {
                 continue;
             };
@@ -702,7 +687,7 @@ mod base {
     }
 
     /// The TMA engine stores a box wherever a descriptor addresses the output, each cube writing
-    /// its own box once, and its routine refuses the problem everywhere else, under the refusal
+    /// its own box once, and its routine refuses the problem everywhere else, under the decline
     /// that names why. A box the engine stores is drained whole into shared memory and clipped by
     /// the descriptor, so its fragments never bounce at the output's edge.
     #[test]
@@ -720,7 +705,7 @@ mod base {
             |hw: Hardware,
              problem: &MatmulRoutineProblem,
              settings: &CubeStagedTmaStoredMatmulRoutineSettings| {
-                CubeStagedTmaStoredMatmulRoutine.prepare(&hw, problem, settings)
+                CubeStagedTmaStoredMatmulRoutine::prepare(&hw, problem, settings)
             };
         let aligned = col_rhs_of(256, 512, 64);
         let (blueprint, _) = prepared(
@@ -748,26 +733,26 @@ mod base {
             batches: vec![2],
             ..aligned.clone()
         };
-        for (hw, problem, refusal) in [
+        for (hw, problem, decline) in [
             (
                 devices::offering_mma(devices::strix_halo(), [MmaConfig { n: 8, ..SHAPE }]),
                 &aligned,
-                CubeStagedTmaStoreRefusal::NoBulkTensorCopy,
+                CubeStagedTmaStoreDecline::NoBulkTensorCopy,
             ),
             (
                 devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
                 &misaligned,
-                CubeStagedTmaStoreRefusal::Misaligned,
+                CubeStagedTmaStoreDecline::Misaligned,
             ),
             (
                 devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
                 &batched,
-                CubeStagedTmaStoreRefusal::Batched,
+                CubeStagedTmaStoreDecline::Batched,
             ),
         ] {
             assert_eq!(
                 prepared(hw, problem, &settings).err(),
-                Some(refusal.into()),
+                Some(decline.into()),
                 "{problem:?}"
             );
         }
@@ -778,7 +763,7 @@ mod base {
         );
         assert_eq!(
             split.err(),
-            Some(CubeStagedTmaStoreRefusal::SplitAlongK.into())
+            Some(CubeStagedTmaStoreDecline::SplitAlongK.into())
         );
     }
 
@@ -822,22 +807,18 @@ mod base {
             };
             let hw = devices::h100();
             assert!(
-                CubeStagedTmaMatmulRoutine
-                    .prepare(&hw, &problem, &filled)
-                    .is_err(),
+                CubeStagedTmaMatmulRoutine::prepare(&hw, &problem, &filled).is_err(),
                 "m = {m}, rhs {rhs_layout:?}"
             );
             assert!(
-                CubeStagedTmaStoredMatmulRoutine
-                    .prepare(&hw, &problem, &stored)
-                    .is_err(),
+                CubeStagedTmaStoredMatmulRoutine::prepare(&hw, &problem, &stored).is_err(),
                 "m = {m}, rhs {rhs_layout:?}"
             );
         }
     }
 
     /// The TMA engine fills a stage where nothing refuses it, and both operands are read one
-    /// element wide there; its routine refuses the problem everywhere else, under the refusal that
+    /// element wide there; its routine refuses the problem everywhere else, under the decline that
     /// names why, where the units' routine at the same numbers runs.
     #[test]
     fn a_tma_fill_is_delivered_where_nothing_refuses_it() {
@@ -848,13 +829,12 @@ mod base {
             cube_order: by_units.cube_order,
         };
         let aligned = col_rhs_of(256, 512, 64);
-        let (blueprint, _) = CubeStagedTmaMatmulRoutine
-            .prepare(&hw, &aligned, &settings)
+        let (blueprint, _) = CubeStagedTmaMatmulRoutine::prepare(&hw, &aligned, &settings)
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
         assert_eq!((blueprint.widths.lhs, blueprint.widths.rhs), (1, 1));
         // A ring that holds its next stage in registers, and a device with no bulk tensor copy,
-        // are the delivery's own refusals.
+        // are the delivery's own declines.
         let through_registers =
             default_with(|microkernel| microkernel.ring = StageRing::DOUBLE_THROUGH_REGISTERS);
         let through_registers = CubeStagedTmaMatmulRoutineSettings {
@@ -862,17 +842,13 @@ mod base {
             cube_order: through_registers.cube_order,
         };
         assert_eq!(
-            CubeStagedTmaMatmulRoutine
-                .prepare(&hw, &aligned, &through_registers)
-                .err(),
-            Some(Refusal::PrefetchPastDelivery(Delivery::Tma))
+            CubeStagedTmaMatmulRoutine::prepare(&hw, &aligned, &through_registers).err(),
+            Some(Decline::PrefetchPastDelivery(Delivery::Tma))
         );
         let no_engine = devices::offering_mma(devices::strix_halo(), [MmaConfig { n: 8, ..SHAPE }]);
         assert_eq!(
-            CubeStagedTmaMatmulRoutine
-                .prepare(&no_engine, &aligned, &settings)
-                .err(),
-            Some(Refusal::DeliveryNotOnDevice(Delivery::Tma))
+            CubeStagedTmaMatmulRoutine::prepare(&no_engine, &aligned, &settings).err(),
+            Some(Decline::DeliveryNotOnDevice(Delivery::Tma))
         );
         let batched = MatmulRoutineProblem {
             batches: vec![2],
@@ -902,41 +878,37 @@ mod base {
         };
         let row_rhs = MatmulRoutineProblem::dense(256, 512, 64, F16);
         for (hw, problem, why) in [
-            (hw.clone(), &batched, CubeStagedTmaRefusal::Batched),
+            (hw.clone(), &batched, CubeStagedTmaDecline::Batched),
             (
                 hw.clone(),
                 &unaligned,
-                CubeStagedTmaRefusal::Misaligned(MatmulOperand::Lhs),
+                CubeStagedTmaDecline::Misaligned(MatmulOperand::Lhs),
             ),
             (
                 hw.clone(),
                 &sliced,
-                CubeStagedTmaRefusal::UnalignedStart(MatmulOperand::Lhs),
+                CubeStagedTmaDecline::UnalignedStart(MatmulOperand::Lhs),
             ),
             (
                 hw.clone(),
                 &stored,
-                CubeStagedTmaRefusal::StoredInTiles(MatmulOperand::Rhs),
+                CubeStagedTmaDecline::StoredInTiles(MatmulOperand::Rhs),
             ),
             // A fragment reads a row rhs's stage in blocks of its tile along `n`, which split
             // the rows a box lands whole.
             (
                 devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
                 &row_rhs,
-                CubeStagedTmaRefusal::Unlanded(MatmulOperand::Rhs),
+                CubeStagedTmaDecline::Unlanded(MatmulOperand::Rhs),
             ),
         ] {
             assert_eq!(
-                CubeStagedTmaMatmulRoutine
-                    .prepare(&hw, problem, &settings)
-                    .err(),
+                CubeStagedTmaMatmulRoutine::prepare(&hw, problem, &settings).err(),
                 Some(why.into()),
                 "{problem:?}"
             );
             assert!(
-                CubeStagedMatmulRoutine
-                    .prepare(&hw, problem, &by_units)
-                    .is_ok(),
+                CubeStagedMatmulRoutine::prepare(&hw, problem, &by_units).is_ok(),
                 "{problem:?}"
             );
         }
@@ -957,8 +929,7 @@ mod base {
             (offering(devices::h100()), RowChunks::InOrder),
             (through_mma, RowChunks::Swizzled),
         ] {
-            let (blueprint, _) = CubeStagedTmaMatmulRoutine
-                .prepare(&hw, &col_rhs(), &settings)
+            let (blueprint, _) = CubeStagedTmaMatmulRoutine::prepare(&hw, &col_rhs(), &settings)
                 .expect("the routine runs here");
             assert_eq!(blueprint.microkernel.fill.delivery, CubeStagedDelivery::Tma);
             assert_eq!(
@@ -1020,9 +991,7 @@ mod base {
             by_tma
                 .iter()
                 .filter(|settings| {
-                    CubeStagedTmaFillerMatmulRoutine
-                        .prepare(&hw, problem, settings)
-                        .is_ok()
+                    CubeStagedTmaFillerMatmulRoutine::prepare(&hw, problem, settings).is_ok()
                 })
                 .count()
         };
@@ -1034,9 +1003,7 @@ mod base {
         assert!(
             by_tma.iter().all(|settings| {
                 let by_units = CubeStagedMatmulRoutineSettings::on_grid(settings.microkernel);
-                CubeStagedMatmulRoutine
-                    .prepare(&hw, &in_rows, &by_units)
-                    .is_ok()
+                CubeStagedMatmulRoutine::prepare(&hw, &in_rows, &by_units).is_ok()
             }),
             "the units copy an rhs in rows"
         );
@@ -1053,13 +1020,12 @@ mod base {
             cube_order: by_units.cube_order,
         };
         let problem = col_rhs_of(256, 512, 64);
-        let (blueprint, _) = CubeStagedTmaFillerMatmulRoutine
-            .prepare(
-                &devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
-                &problem,
-                &settings,
-            )
-            .expect("the routine runs here");
+        let (blueprint, _) = CubeStagedTmaFillerMatmulRoutine::prepare(
+            &devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
+            &problem,
+            &settings,
+        )
+        .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.fill.filling_planes, 1);
         let placed = MatmulView::new(&problem, CubeStagedMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
@@ -1091,14 +1057,14 @@ mod base {
                 filling_planes: NonZeroUsize::MIN,
                 cube_order: by_units.cube_order,
             };
-            CubeStagedTmaFillerMatmulRoutine
-                .prepare(&hw, problem, &settings)
-                .map(|(blueprint, grid)| {
+            CubeStagedTmaFillerMatmulRoutine::prepare(&hw, problem, &settings).map(
+                |(blueprint, grid)| {
                     (
                         blueprint.microkernel.fill.filling_planes,
                         grid.planes().count,
                     )
-                })
+                },
+            )
         };
         let covered = col_rhs_of(256, 512, 64);
         let computing = CubeStagedMatmulRoutineSettings::DEFAULT
@@ -1119,23 +1085,23 @@ mod base {
                 devices::offering_mma(devices::h100(), [MmaConfig { n: 8, ..SHAPE }]),
                 &covered
             ),
-            Err(CubeStagedFillingRefusal::OneStage.into())
+            Err(CubeStagedFillingDecline::OneStage.into())
         );
         assert!(set_aside(StageRing::DOUBLE, devices::strix_halo(), &covered).is_err());
         assert_eq!(
-            CubeStagedFillingRefusal::new(
+            CubeStagedFillingDecline::new(
                 CubeStagedDelivery::Tma,
                 &StageRing::DOUBLE,
                 Scratch::OneTile,
                 NonZeroUsize::MIN
             ),
-            Some(CubeStagedFillingRefusal::Bounces)
+            Some(CubeStagedFillingDecline::Bounces)
         );
     }
 
     /// The units hand a stage to the copy engine where the device has one, the ring fills its
     /// slots and the lines are ones the engine copies whole; its routine refuses the problem
-    /// everywhere else, under the refusal that names why.
+    /// everywhere else, under the decline that names why.
     #[test]
     fn a_stage_is_handed_to_the_copy_engine_only_where_it_can_be() {
         let prepared = |ring: StageRing, hw: Hardware, problem: &MatmulRoutineProblem| {
@@ -1144,8 +1110,7 @@ mod base {
                 microkernel: by_units.microkernel,
                 cube_order: by_units.cube_order,
             };
-            CubeStagedAsyncCopyMatmulRoutine
-                .prepare(&offering(hw), problem, &settings)
+            CubeStagedAsyncCopyMatmulRoutine::prepare(&offering(hw), problem, &settings)
                 .map(|(blueprint, _)| blueprint.microkernel.fill.delivery)
         };
         let covered = MatmulRoutineProblem::dense(256, 512, 64, F16);
@@ -1162,20 +1127,20 @@ mod base {
                 StageRing::DOUBLE_THROUGH_REGISTERS,
                 devices::h100(),
                 &covered,
-                Refusal::PrefetchPastDelivery(Delivery::AsyncPerUnit),
+                Decline::PrefetchPastDelivery(Delivery::AsyncPerUnit),
             ),
             (
                 StageRing::DOUBLE,
                 devices::strix_halo(),
                 &covered,
-                Refusal::DeliveryNotOnDevice(Delivery::AsyncPerUnit),
+                Decline::DeliveryNotOnDevice(Delivery::AsyncPerUnit),
             ),
             // `k = 19` binds the lhs one `f16` wide: two bytes, which the engine does not copy.
             (
                 StageRing::DOUBLE,
                 devices::h100(),
                 &problem(),
-                Refusal::LineNotCopied { bits: 16 },
+                Decline::LineNotCopied { bits: 16 },
             ),
         ] {
             assert_eq!(
@@ -1187,13 +1152,13 @@ mod base {
         // Every unit fills, so none may be set aside; the operands state the engine's delivery
         // and a descriptor's state the loads, since tensor maps fill its stages.
         assert_eq!(
-            CubeStagedFillingRefusal::new(
+            CubeStagedFillingDecline::new(
                 CubeStagedDelivery::AsyncCopy,
                 &StageRing::DOUBLE,
                 Scratch::None,
                 NonZeroUsize::MIN
             ),
-            Some(CubeStagedFillingRefusal::CopiedByUnits)
+            Some(CubeStagedFillingDecline::CopiedByUnits)
         );
         assert_eq!(
             CubeStagedDelivery::AsyncCopy.bound(),
@@ -1202,7 +1167,7 @@ mod base {
         assert_eq!(CubeStagedDelivery::Tma.bound(), Delivery::SyncPerUnit);
     }
 
-    /// A strip keeps the width its setting asks for whatever the cubes along its axis: the
+    /// A strip keeps the width its setting asks for whatever the cubes along its dimension: the
     /// default's cube box is `128 × 256`, so `512 × 768` is four cubes along `m` and three along
     /// `n`, the strips along `n` one ragged strip.
     #[test]
@@ -1214,8 +1179,7 @@ mod base {
                 ..CubeStagedMatmulRoutineSettings::DEFAULT
             };
             let problem = MatmulRoutineProblem::dense(512, 768, 64, F16);
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the routine runs here");
             assert_eq!(blueprint.partitioning.cubes(), (4, 3));
             blueprint.partitioning.cube_order()
@@ -1233,9 +1197,9 @@ mod base {
             hw
         };
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
-        let declined = CubeStagedMatmulRoutine.prepare(&hw, &problem(), &settings);
+        let declined = CubeStagedMatmulRoutine::prepare(&hw, &problem(), &settings);
         assert!(
-            matches!(declined, Err(Refusal::SharedMemoryPastDevice { .. })),
+            matches!(declined, Err(Decline::SharedMemoryPastDevice { .. })),
             "{declined:?}"
         );
     }
@@ -1248,8 +1212,7 @@ mod base {
         let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
         let scratch = |m, n, k| {
             let problem = MatmulRoutineProblem::dense(m, n, k, F16);
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the default prepares here");
             blueprint.microkernel.scratch
         };
@@ -1267,9 +1230,12 @@ mod base {
             destination: MatmulDestination::Sink,
             ..MatmulRoutineProblem::dense(256, 512, 64, F16)
         };
-        let (blueprint, _) = CubeStagedMatmulRoutine
-            .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
-            .expect("the default prepares here");
+        let (blueprint, _) = CubeStagedMatmulRoutine::prepare(
+            &hw,
+            &problem,
+            &CubeStagedMatmulRoutineSettings::DEFAULT,
+        )
+        .expect("the default prepares here");
         assert!(matches!(
             blueprint.microkernel.plane.instruction,
             PlaneFragmentInstruction::Cmma { .. } | PlaneFragmentInstruction::Mma { .. }
@@ -1288,15 +1254,14 @@ mod base {
         let widths = |m, n, k| {
             let problem = MatmulRoutineProblem::dense(m, n, k, F16);
             let settings = CubeStagedMatmulRoutineSettings::DEFAULT;
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the default prepares here");
             let widths = blueprint.widths;
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (widest, widest, widest));
-        // A `k` the stages overhang masks the lhs, whose contiguous axis it is, at a width that
-        // divides it.
+        // A `k` the stages overhang masks the lhs, whose contiguous dimension it is, at a width
+        // that divides it.
         assert_eq!(widths(256, 512, 24), (widest, widest, widest));
         assert_eq!(widths(256, 512, 20), (4, widest, widest));
         // An `n` the cubes overhang masks the rhs and the output, likewise.
@@ -1313,9 +1278,12 @@ mod base {
     fn a_stage_counts_a_chunk_after_every_block_row_only_when_padded() {
         let hw = offering(devices::strix_halo());
         for problem in [problem(), col_rhs()] {
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
-                .expect("the default prepares");
+            let (blueprint, _) = CubeStagedMatmulRoutine::prepare(
+                &hw,
+                &problem,
+                &CubeStagedMatmulRoutineSettings::DEFAULT,
+            )
+            .expect("the default prepares");
             let StageStorage::Tiled { block, .. } = blueprint.shared_memory.clone() else {
                 panic!("a matrix instruction stages in tiles");
             };
@@ -1347,14 +1315,13 @@ mod base {
     fn rows_in_order_lay_a_matrix_instructions_stage() {
         let in_order = CubeStagedMatmulRoutineSettings {
             microkernel: CubeStagedMicrokernelSettings {
-                stage_layout: Some(StageLayout::Blocks),
+                stage_layout: StageLayout::Blocks,
                 ..CubeStagedMatmulRoutineSettings::DEFAULT.microkernel
             },
             ..CubeStagedMatmulRoutineSettings::DEFAULT
         };
         let prepared = |hw: &Hardware, problem: &MatmulRoutineProblem, settings| {
-            CubeStagedMatmulRoutine
-                .prepare(hw, problem, settings)
+            CubeStagedMatmulRoutine::prepare(hw, problem, settings)
                 .expect("the default's box prepares")
                 .0
         };
@@ -1376,6 +1343,34 @@ mod base {
         assert_eq!(bytes, 12288);
     }
 
+    /// A swizzled stage is one `cmma` cannot read, which takes its tiles off a pointer and a
+    /// stride: the tile pads its rows instead, the other arrangement that keeps them on distinct
+    /// banks, so the setting prepares and lays the default's stage rather than declining.
+    #[test]
+    fn a_swizzled_stage_is_padded_under_cmma() {
+        let swizzled = CubeStagedMatmulRoutineSettings {
+            microkernel: CubeStagedMicrokernelSettings {
+                stage_layout: StageLayout::SwizzledBlocks,
+                ..CubeStagedMatmulRoutineSettings::DEFAULT.microkernel
+            },
+            ..CubeStagedMatmulRoutineSettings::DEFAULT
+        };
+        let hw = offering(devices::strix_halo());
+        let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem(), &swizzled)
+            .expect("a swizzled stage prepares under cmma");
+        assert!(matches!(
+            blueprint.microkernel.plane.instruction,
+            PlaneFragmentInstruction::Cmma { .. }
+        ));
+        assert!(matches!(
+            blueprint.shared_memory,
+            StageStorage::Tiled {
+                chunks: RowChunks::Padded,
+                ..
+            }
+        ));
+    }
+
     /// The planes meet in shared memory, so a device that cannot add an `f32` there declines,
     /// whatever instruction it offers.
     #[test]
@@ -1384,10 +1379,8 @@ mod base {
         devices::features(&mut hw).types.shared_atomic.clear();
         let settings = CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K;
         assert_eq!(
-            CubeStagedMatmulRoutine
-                .prepare(&hw, &problem(), &settings)
-                .err(),
-            Some(Refusal::Declined {
+            CubeStagedMatmulRoutine::prepare(&hw, &problem(), &settings).err(),
+            Some(Decline::Unserved {
                 why: CubeStagedMicrokernel::DECLINE
             })
         );
@@ -1399,8 +1392,7 @@ mod base {
     fn a_fragment_always_bounces_into_the_accumulator() {
         let hw = offering(devices::strix_halo());
         let settings = split_with(|microkernel| microkernel.scratch = Scratch::None);
-        let (blueprint, _) = CubeStagedMatmulRoutine
-            .prepare(&hw, &problem(), &settings)
+        let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem(), &settings)
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.scratch, Scratch::OneTile);
     }
@@ -1413,15 +1405,14 @@ mod base {
         let widths = |m, n, k| {
             let problem = MatmulRoutineProblem::dense(m, n, k, F16);
             let settings = CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K;
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the default prepares here");
             let widths = blueprint.widths;
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (widest, widest, 1));
-        // A `k` the stages overhang masks the lhs, whose contiguous axis it is, at a width that
-        // divides it.
+        // A `k` the stages overhang masks the lhs, whose contiguous dimension it is, at a width
+        // that divides it.
         assert_eq!(widths(256, 512, 72), (widest, widest, 1));
     }
 
@@ -1438,8 +1429,9 @@ mod base {
         use cubek_std::microkernel::KernelEstimate;
 
         let hw = devices::offering_nvfp4(devices::h100());
-        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
-            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, dimensions| Packing {
+            operand: Operand::of_scheme(&scheme, K, dimensions)
+                .expect("NVFP4 is one block along k"),
             scheme,
         };
         let problem = MatmulRoutineProblem::packed(
@@ -1453,15 +1445,18 @@ mod base {
                 out: None,
             },
         );
-        let (blueprint, grid) = CubeStagedMatmulRoutine
-            .prepare(&hw, &problem, &CubeStagedMatmulRoutineSettings::DEFAULT)
-            .expect("the default box prepares an NVFP4 product read as stored");
+        let (blueprint, grid) = CubeStagedMatmulRoutine::prepare(
+            &hw,
+            &problem,
+            &CubeStagedMatmulRoutineSettings::DEFAULT,
+        )
+        .expect("the default box prepares an NVFP4 product read as stored");
         assert!(matches!(
             blueprint.microkernel.depth,
             CubeStagedDepth::Steps
         ));
         let mut estimate = KernelEstimate::from(&grid);
-        CubeStagedMatmulRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
+        CubeStagedMatmulRoutine::estimate(&problem, &blueprint, &grid, &mut estimate);
         assert!(estimate.work.is_some());
     }
 
@@ -1562,15 +1557,15 @@ mod base {
             problem.check_block_scales(BlockScales::Fields, false),
             Ok(())
         );
-        let refusals: Vec<_> = block_scaled_prepared(&hw, &problem)
+        let declines: Vec<_> = block_scaled_prepared(&hw, &problem)
             .into_iter()
             .map(|(_, prepared)| prepared)
             .collect();
-        assert!(refusals.iter().all(Result::is_err));
+        assert!(declines.iter().all(Result::is_err));
         assert!(
-            refusals
+            declines
                 .iter()
-                .any(|refusal| refusal.as_ref().err() == Some(&MATMUL_SCALE_WORDS_IN_TILES)),
+                .any(|decline| decline.as_ref().err() == Some(&MATMUL_SCALE_WORDS_IN_TILES)),
             "a setting taking scale words declines them in tiles"
         );
     }
@@ -1583,7 +1578,7 @@ mod base {
         use cubek_microkernel::matmul::cube::CubeStagedDepth;
         use cubek_std::layout::stored::{Operand, Packing};
         use cubek_std::layout::tile_order;
-        use cubek_std::matmul_axes::KI;
+        use cubek_std::matmul_dimensions::KI;
         use cubek_std::microkernel::KernelEstimate;
 
         // The M2 as Metal reports it: its simdgroup matrix, `8 × 8 × 8` over `f16` into `f32`.
@@ -1617,7 +1612,7 @@ mod base {
         );
         let mut estimated = 0;
         for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
-            let Ok((blueprint, grid)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings)
+            let Ok((blueprint, grid)) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
             else {
                 continue;
             };
@@ -1627,7 +1622,7 @@ mod base {
             let block = blueprint.partitioning.cube_space().extent(KI);
             let planes_along_k = blueprint.microkernel.planes_along_k.get();
             let mut estimate = KernelEstimate::from(&grid);
-            CubeStagedMatmulRoutine.estimate(&problem, &blueprint, &grid, &mut estimate);
+            CubeStagedMatmulRoutine::estimate(&problem, &blueprint, &grid, &mut estimate);
             let staging = estimate.staging.expect("a staged estimate");
             assert_eq!(
                 staging.stages,
@@ -1680,8 +1675,7 @@ mod base {
         };
         let hw = devices::offering_mma(devices::h100(), [mma]);
         let settings = on_engine(&hw).expect("a device with a copy engine lists the setting");
-        let (blueprint, _) = CubeStagedAsyncCopyMatmulRoutine
-            .prepare(&hw, &problem, &settings)
+        let (blueprint, _) = CubeStagedAsyncCopyMatmulRoutine::prepare(&hw, &problem, &settings)
             .expect("the setting prepares against an NVFP4 weight");
         let microkernel = &blueprint.microkernel;
         assert!(
@@ -1707,7 +1701,7 @@ mod base {
     fn a_packed_input_prepares_no_walk_past_k() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
         use cubek_std::layout::stored::{Operand, Packing};
-        use cubek_std::matmul_axes::{KB, KI};
+        use cubek_std::matmul_dimensions::{KB, KI};
 
         let f16 = ElemType::Float(FloatKind::F16);
         // An L4's instruction: `16 × 8 × 16` over `f16` into `f32`, on 32-unit planes.
@@ -1738,14 +1732,14 @@ mod base {
             for element in [f16, ElemType::Float(FloatKind::F32)] {
                 let problem = MatmulRoutineProblem::packed(1, 64, k, element, packings);
                 for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
-                    match CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings) {
+                    match CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings) {
                         Ok((blueprint, _)) => {
-                            let reaches_past = [KB, KI]
-                                .into_iter()
-                                .any(|axis| blueprint.partitioning.as_tile().overhangs(axis));
+                            let reaches_past = [KB, KI].into_iter().any(|dimension| {
+                                blueprint.partitioning.as_tile().overhangs(dimension)
+                            });
                             assert!(!reaches_past, "{settings} at k = {k} walks past k");
                         }
-                        Err(refusal) if refusal == MATMUL_PACKED_WALK_PAST_K => {
+                        Err(decline) if decline == MATMUL_PACKED_WALK_PAST_K => {
                             assert_eq!(k, 256, "{settings}: no stage reaches past a k of {k}");
                             past_k += 1;
                         }
@@ -1770,8 +1764,9 @@ mod base {
         use cubek_microkernel::matmul::MatmulDim;
 
         let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
-        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
-            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, dimensions| Packing {
+            operand: Operand::of_scheme(&scheme, K, dimensions)
+                .expect("NVFP4 is one block along k"),
             scheme,
         };
         let problem = MatmulRoutineProblem::packed(
@@ -1818,8 +1813,9 @@ mod base {
         use crate::kernels::select::packed::nvfp4_scheme;
 
         let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
-        let packing = |scheme: cubecl::quant::scheme::QuantScheme, axes| Packing {
-            operand: Operand::of_scheme(&scheme, K, axes).expect("NVFP4 is one block along k"),
+        let packing = |scheme: cubecl::quant::scheme::QuantScheme, dimensions| Packing {
+            operand: Operand::of_scheme(&scheme, K, dimensions)
+                .expect("NVFP4 is one block along k"),
             scheme,
         };
         let problem = MatmulRoutineProblem {
@@ -1845,11 +1841,7 @@ mod base {
         let by_tma = CubeStagedTmaMatmulRoutine.block_scaled_settings(&hw);
         let landed = by_tma
             .iter()
-            .filter(|settings| {
-                CubeStagedTmaMatmulRoutine
-                    .prepare(&hw, &problem, settings)
-                    .is_ok()
-            })
+            .filter(|settings| CubeStagedTmaMatmulRoutine::prepare(&hw, &problem, settings).is_ok())
             .count();
         assert!(
             landed > 0,
@@ -1871,10 +1863,10 @@ mod base {
             .filter(|settings| settings.microkernel.planes_along_k == NonZeroUsize::MIN)
         {
             let two_tiles = deeper(settings);
-            if let Err(refusal) = CubeStagedTmaMatmulRoutine.prepare(&hw, &problem, &two_tiles) {
+            if let Err(decline) = CubeStagedTmaMatmulRoutine::prepare(&hw, &problem, &two_tiles) {
                 assert_eq!(
-                    refusal,
-                    CubeStagedTmaRefusal::TileRowsUnderSwizzle(MatmulOperand::Rhs).into(),
+                    decline,
+                    CubeStagedTmaDecline::TileRowsUnderSwizzle(MatmulOperand::Rhs).into(),
                     "{two_tiles}"
                 );
             } else {
@@ -1895,13 +1887,13 @@ mod base {
         let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
         let order = TileOrder::laid(&tile_order::nvfp4_scheme(), TileWords::RowByRow, (128, 8))
             .expect("NVFP4 lays a 128 x 8 tile");
-        // Each input read in tile order across its rows' axis, as a reader reads it off the
-        // matrix, under its scheme as stated over its own axes: the activation packed down its
-        // last, the weight down its first.
+        // Each input read in tile order across its rows' dimension, as a reader reads it off the
+        // matrix, under its scheme as stated over its own dimensions: the activation packed down
+        // its last, the weight down its first.
         let packing = |scheme: cubecl::quant::scheme::QuantScheme,
-                       axes: [cubecl::tile::Axis; 2],
+                       dimensions: [cubecl::tile::Dimension; 2],
                        across| Packing {
-            operand: Operand::of_scheme(&scheme, K, axes)
+            operand: Operand::of_scheme(&scheme, K, dimensions)
                 .and_then(|operand| {
                     operand.in_tile_order(
                         order,
@@ -1938,9 +1930,7 @@ mod base {
         let landed: Vec<_> = by_tma
             .iter()
             .filter(|settings| {
-                CubeStagedTmaStoredMatmulRoutine
-                    .prepare(&hw, &problem, settings)
-                    .is_ok()
+                CubeStagedTmaStoredMatmulRoutine::prepare(&hw, &problem, settings).is_ok()
             })
             .collect();
         assert!(
@@ -1952,10 +1942,10 @@ mod base {
             let mut two_tiles = *settings;
             two_tiles.microkernel.plane.depth =
                 two_tiles.microkernel.plane.depth.saturating_mul(TWO);
-            match CubeStagedTmaStoredMatmulRoutine.prepare(&hw, &problem, &two_tiles) {
-                Err(refusal) => assert_eq!(
-                    refusal,
-                    CubeStagedTmaRefusal::TileRowsUnderSwizzle(MatmulOperand::Lhs).into(),
+            match CubeStagedTmaStoredMatmulRoutine::prepare(&hw, &problem, &two_tiles) {
+                Err(decline) => assert_eq!(
+                    decline,
+                    CubeStagedTmaDecline::TileRowsUnderSwizzle(MatmulOperand::Lhs).into(),
                     "{two_tiles}"
                 ),
                 Ok(_) => panic!("{two_tiles} lands a stage two tiles deep by TMA"),
@@ -1973,7 +1963,7 @@ mod base {
     #[test]
     fn a_float_weight_beside_a_packed_activation_binds_past_its_columns_at_a_dividing_width() {
         use crate::kernels::select::packed::nvfp4_scheme;
-        use cubek_std::matmul_axes::NI;
+        use cubek_std::matmul_dimensions::NI;
 
         let bf16 = ElemType::Float(FloatKind::BF16);
         let hw = devices::offering_nvfp4(devices::offering_mma(
@@ -2011,7 +2001,8 @@ mod base {
                 .into_iter()
                 .chain(routine.packed_one_step_settings())
             {
-                let Ok((blueprint, _)) = routine.prepare(&hw, &problem, &settings) else {
+                let Ok((blueprint, _)) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
+                else {
                     continue;
                 };
                 if blueprint.partitioning.overhangs(NI) {

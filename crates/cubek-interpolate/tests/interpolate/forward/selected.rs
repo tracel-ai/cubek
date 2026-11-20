@@ -2,7 +2,7 @@
 //! this device, which has to land on the reference, or a build that states nothing runs a kernel
 //! nothing validates.
 
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_interpolate::definition::{
     InterpolateForwardProblem, InterpolateMode, InterpolateOptions,
 };
@@ -28,7 +28,7 @@ fn test_interpolate_kernel_selected_strategies() {
 /// in place instead and still lands on the reference, while the staged routine named outright is
 /// refused.
 ///
-/// The refusal is half the test. An autotune key buckets the extents this window is sized from, so
+/// The decline is half the test. An autotune key buckets the extents this window is sized from, so
 /// a strategy that refused here would abort on a problem the tuner cached under a shape that fit.
 #[test]
 fn test_interpolate_kernel_staged_strategy_reads_in_place_when_the_stage_cannot_fit() {
@@ -53,7 +53,7 @@ fn test_interpolate_kernel_staged_strategy_reads_in_place_when_the_stage_cannot_
         )[0];
         let refused = Forward.launch(&client, &ForwardCase::specific(staged, resampling));
         assert!(
-            matches!(refused, Err(Refusal::SharedMemoryPastDevice { .. })),
+            matches!(refused, Err(Decline::SharedMemoryPastDevice { .. })),
             "the stage fits after all, so this shape no longer exercises the fallback: {:?}",
             refused.err()
         );

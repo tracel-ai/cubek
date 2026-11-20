@@ -46,7 +46,7 @@ use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlane
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStep};
 use cubek_std::layout::stored::{Operand, Packing};
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::StageRing;
 use cubek_std::routine::{Grid, Routine};
 use cubek_std::{Hardware, UNIT_REGISTERS, block_scaled_for, block_scaled_mma};
@@ -72,8 +72,7 @@ pub(crate) const QUAD: StageRing = StageRing {
 /// Registers the compiler adds around a plane's lower bound
 /// ([`registers_per_unit`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel::registers_per_unit)):
 /// addressing, loop state and the scale registers. A margin rather than a derivation, since the
-/// compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on
-/// `sm_120`.
+/// compiler decides it: the four by eight box's bound of 160 compiled to 182 to 246 on `sm_120`.
 const ADDRESSING_REGISTERS: u32 = 64;
 
 /// The settings of `shapes` `routine` races against a block-scaled product read as stored on `hw`,
@@ -87,7 +86,6 @@ const ADDRESSING_REGISTERS: u32 = 64;
 /// block-scaled instruction has no step, and lists none.
 pub(crate) fn block_scaled_settings<R>(
     hw: &Hardware,
-    routine: R,
     shapes: &[StagedShape],
     settings: impl Fn(CubeStagedMicrokernelSettings) -> R::Settings,
 ) -> Vec<R::Settings>
@@ -110,9 +108,8 @@ where
             let by_units = CubeStagedMatmulRoutineSettings::on_grid(microkernel);
             if !listed.contains(&setting)
                 && fits(&step, &inputs, &microkernel, |problem| {
-                    routine
-                        .prepare(hw, problem, &setting)
-                        .or_else(|_| CubeStagedMatmulRoutine.prepare(hw, problem, &by_units))
+                    R::prepare(hw, problem, &setting)
+                        .or_else(|_| CubeStagedMatmulRoutine::prepare(hw, problem, &by_units))
                         .ok()
                 })
             {
@@ -190,7 +187,7 @@ impl CubeStagedMatmulRoutine {
         };
         let packing = |input: MatmulOperand, scheme: QuantScheme| {
             Some(Packing {
-                operand: Operand::of_scheme(&scheme, K, input.axes())?,
+                operand: Operand::of_scheme(&scheme, K, input.dimensions())?,
                 scheme,
             })
         };
@@ -222,8 +219,8 @@ fn block_scaled_problem(
 /// A setting of `shape`, its planes reaching their stages through the tile DSL's transport, which
 /// reads the rows a box lands swizzled.
 fn in_steps(step: &MatmulStep, shape: StagedShape) -> CubeStagedMicrokernelSettings {
-    let calls = |count: usize, axis| {
-        NonZeroUsize::new(count * step.calls(axis)).expect("a step is at least one call")
+    let calls = |count: usize, dimension| {
+        NonZeroUsize::new(count * step.calls(dimension)).expect("a step is at least one call")
     };
     let (rows, columns, depth) = shape.steps;
     CubeStagedMicrokernelSettings {
@@ -249,8 +246,8 @@ fn fits(
     prepare: impl FnOnce(&MatmulRoutineProblem) -> Option<(CubeStagedMatmulRoutineBlueprint, Grid)>,
 ) -> bool {
     let (plane, planes) = (&microkernel.plane, &microkernel.planes);
-    let extent = |axis, fragments: NonZeroUsize, count: NonZeroUsize| {
-        fragments.get() / step.calls(axis) * step.along(axis) * count.get()
+    let extent = |dimension, fragments: NonZeroUsize, count: NonZeroUsize| {
+        fragments.get() / step.calls(dimension) * step.along(dimension) * count.get()
     };
     let problem = block_scaled_problem(
         inputs,

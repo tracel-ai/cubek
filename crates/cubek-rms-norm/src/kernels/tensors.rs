@@ -5,9 +5,9 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{
-    Axis, Geometry, Launcher,
+    Dimension, Geometry, Launcher,
     launch::{Bound, Unbound},
 };
 use cubecl::zspace::metadata::Metadata;
@@ -21,7 +21,7 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
 /// What a launch of this kind declines before preparing anything: rows that are not floats.
-pub const RMS_NORM_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const RMS_NORM_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the microkernel RMS norm normalizes float rows",
 };
 
@@ -72,7 +72,7 @@ pub struct RmsNormOutputBuffer {
 
 /// What a packed or tiled launch declines before preparing anything: rows in batch entries,
 /// which a matrix of rows does not lie in.
-pub const RMS_NORM_ROWS_IN_ENTRIES: Refusal = Refusal::Declined {
+pub const RMS_NORM_ROWS_IN_ENTRIES: Decline = Decline::Unserved {
     why: "a packed or tiled RMS norm writes dense rows, one batch entry of them",
 };
 
@@ -97,7 +97,7 @@ impl RmsNormInputs {
     /// # Errors
     ///
     /// As [`RmsNormTensors::new`].
-    fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Refusal> {
+    fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
         assert_eq!(input.elem, weight.elem, "the weight is the rows' element");
         if !matches!(input.elem, ElemType::Float(_)) {
             return Err(RMS_NORM_ELEMENT_UNVERIFIED);
@@ -151,7 +151,7 @@ impl RmsNormInputs {
     /// # Errors
     ///
     /// [`RMS_NORM_ROWS_IN_ENTRIES`].
-    fn one_entry(self) -> Result<Self, Refusal> {
+    fn one_entry(self) -> Result<Self, Decline> {
         match self.batch {
             1 => Ok(self),
             _ => Err(RMS_NORM_ROWS_IN_ENTRIES),
@@ -207,7 +207,7 @@ impl RmsNormTensors {
     ///
     /// Operands on different devices or of different elements, a weight that is not whole rows of
     /// the normalized dim, or a weight a row whose rows do not divide the input's: no norm at all.
-    pub fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Refusal> {
+    pub fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
         let operands = RmsNormInputs::new(client, input, weight)?;
         let (handle, tensor) = PlainTensor::empty_contiguous(
             client,
@@ -235,7 +235,7 @@ impl RmsNormTensors {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
         let out = launcher
             .arg(self.out.rows.binding.clone(), self.problem.element)
-            .axes(&[B, R, D])
+            .dimensions(&[B, R, D])
             .vectorize(blueprint.width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
@@ -260,7 +260,7 @@ impl RmsNormTensors<Geometry> {
     /// # Panics
     ///
     /// As [`RmsNormTensors::new`].
-    pub fn sink(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Refusal> {
+    pub fn sink(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
         let operands = RmsNormInputs::new(client, input, weight)?;
         let out = Geometry::row_major(&[operands.batch, operands.rows, operands.dim]);
         let placement = Placement::dense_rows(operands.dim);
@@ -274,7 +274,7 @@ impl RmsNormTensors<Geometry> {
         let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
         let out = launcher
             .unbound(&self.out)
-            .axes(&[B, R, D])
+            .dimensions(&[B, R, D])
             .vectorize(blueprint.width)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
@@ -293,8 +293,8 @@ impl RmsNormTensors<Geometry> {
 }
 
 impl RmsNormTensors<PackedRows> {
-    /// The norm of `input`'s last dim, scaled by `weight`, encoded into `out`, a packed
-    /// `[rows, dim]` matrix over a product's lhs axes the caller allocated under one level of block
+    /// The norm of `input`'s last dim, scaled by `weight`, encoded into `out`, a packed `[rows,
+    /// dim]` matrix over a product's lhs dimensions the caller allocated under one level of block
     /// scales along each row. The rows are staged in each cube's shared memory, dense, and encoded
     /// from there.
     ///
@@ -311,7 +311,7 @@ impl RmsNormTensors<PackedRows> {
         input: PlainTensor,
         weight: PlainTensor,
         out: PackedTensor,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let operands = RmsNormInputs::new(client, input, weight)?.one_entry()?;
         let out = PackedRows::new(out, operands.rows, operands.dim)?;
         let (placement, store) = (Placement::dense_rows(operands.dim), out.store());
@@ -354,7 +354,7 @@ impl RmsNormTensors<TiledRows> {
         input: PlainTensor,
         weight: PlainTensor,
         out: PlainTensor,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let operands = RmsNormInputs::new(client, input, weight)?.one_entry()?;
         let element = operands.input.elem;
         let out = TiledRows::new(out, operands.rows, operands.dim, element)?;
@@ -403,18 +403,18 @@ impl<Out> RmsNormTensors<Out> {
             )
         });
         // Each operand as the store states the rows: as it lies, or its row split into blocks.
-        let bind = |tensor: &PlainTensor, leading: &[Axis]| {
-            let (meta, axes) = self.problem.store.restated(&tensor.meta(), leading);
+        let bind = |tensor: &PlainTensor, leading: &[Dimension]| {
+            let (meta, dimensions) = self.problem.store.restated(&tensor.meta(), leading);
             launcher
                 .arg(tensor.bound_as(meta), self.problem.element)
-                .axes(&axes)
+                .dimensions(&dimensions)
                 .vectorize(blueprint.width)
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
         };
         let operands = [
             bind(&self.input, &[B, R]),
-            bind(self.weight.tensor(), self.weight.leading_axes()),
+            bind(self.weight.tensor(), self.weight.leading_dimensions()),
         ];
         (launcher, operands)
     }
@@ -463,8 +463,8 @@ impl RmsNormWeight {
         }
     }
 
-    /// The axes the weight runs along before the dim: none, or each row's.
-    fn leading_axes(&self) -> &'static [Axis] {
+    /// The dimensions the weight runs along before the dim: none, or each row's.
+    fn leading_dimensions(&self) -> &'static [Dimension] {
         match self {
             Self::Shared(_) => &[],
             Self::PerRow(_) => &[R],

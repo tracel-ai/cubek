@@ -5,7 +5,7 @@ use cubecl::CubeTuneId;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::metadata::Metadata;
 use cubek_std::Hardware;
 use cubek_std::plan::BoxedPlan;
@@ -51,7 +51,7 @@ impl MatmulCall {
     /// as the key's bucket stands for, or the call's lhs where none can be laid out alike.
     pub fn representative(key: &MatmulTuneKey, call: &Self) -> Self {
         let grown = match &call.lhs.tensor {
-            // The rows lie along the lhs's second-to-last axis.
+            // The rows lie along the lhs's second-to-last dimension.
             StoredTensor::Plain(lhs) => (lhs.binding.shape.len().checked_sub(2))
                 .and_then(|rows| lhs.zeros_grown(&call.client, rows, key.m)),
             StoredTensor::Packed(_) => None,
@@ -84,7 +84,7 @@ pub struct MatmulCallInput {
 }
 
 /// The framework's dequantize of one packed input, into the element the product is written in.
-pub type FrameworkDequantize = Arc<dyn Fn() -> Result<PlainTensor, Refusal> + Send + Sync>;
+pub type FrameworkDequantize = Arc<dyn Fn() -> Result<PlainTensor, Decline> + Send + Sync>;
 
 impl MatmulCallInput {
     /// A float input, which no dequantize is asked about.

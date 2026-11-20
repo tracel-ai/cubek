@@ -1,7 +1,7 @@
 use super::AttentionCall;
 use crate::kernels::AttentionKernel;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::plan::{Declined, Plan, PlanTree};
 
 /// One kernel at its lead, the first setting it lists, over the cache a call holds: a float one,
@@ -19,7 +19,7 @@ pub enum CacheRead {
 }
 
 /// A call over the other cache than the plan was built for.
-const OTHER_CACHE: Refusal = Refusal::Declined {
+const OTHER_CACHE: Decline = Decline::Unserved {
     why: "the call holds the other cache than this kernel's plan reads",
 };
 

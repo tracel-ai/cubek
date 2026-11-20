@@ -9,7 +9,7 @@ use crate::kernels::{
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::throughput::MemoryAccess;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::Work;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_matmul::kernels::tensor::PlainTensor;
@@ -78,7 +78,7 @@ impl AttentionTuneInputs {
         lengths: PlainTensor,
         arrivals: Option<PlainTensor>,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let kv = KvSource::new(AttentionCache::Float { key, value });
         let kv = match pages {
             Some(pages) => kv.paged(pages),
@@ -103,7 +103,7 @@ impl AttentionTuneInputs {
         kv: KvSource,
         arrivals: Option<PlainTensor>,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let kv = kv.read_as_block_pages(client, scoring.visibility)?;
         let AttentionCache::Float { key, value } = kv.cache.clone() else {
             return Err(ATTENTION_PACKED_UNREAD);
@@ -311,8 +311,9 @@ impl AttentionTuneInputs {
     }
 
     /// Zero keys and values of `batch` sequences, `positions` each, of this call's elements, each
-    /// side its own, and key heads, laid out as `key` says: one buffer per operand, or pools of pages of the key's
-    /// page size read through a table of their own, each sequence's pages in order.
+    /// side its own, and key heads, laid out as `key` says: one buffer per operand, or pools of
+    /// pages of the key's page size read through a table of their own, each sequence's pages in
+    /// order.
     fn zero_keys(
         &self,
         key: &AttentionKey,
@@ -348,7 +349,8 @@ impl AttentionTuneInputs {
     /// out as the call's are and attended to their end; or the call's own where the cache is
     /// paged, the queries lie end to end, or an operand cannot be laid out alike.
     fn whole_representative(&self, key: &AttentionKey) -> Self {
-        // A prompt's positions lie along each operand's third axis: `[batch, heads, positions, dim]`.
+        // A prompt's positions lie along each operand's third dimension: `[batch, heads, positions,
+        // dim]`.
         const POSITIONS: usize = 2;
         let grown = |tensor: &PlainTensor, extent: usize| {
             tensor.zeros_grown(&self.client, POSITIONS, extent)
@@ -671,7 +673,7 @@ mod tests {
             for queries in [1, 512] {
                 let caches = [(F16, F16), (e4m3, F16), (e4m3, e4m3)].map(|(key, value)| {
                     let inputs = match over(queries, key, value) {
-                        Err(Refusal::Declined { why }) => return Err(why),
+                        Err(Decline::Unserved { why }) => return Err(why),
                         inputs => inputs.expect("an even group of float elements"),
                     };
                     let (keyed, round) = match queries {

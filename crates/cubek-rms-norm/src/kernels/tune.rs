@@ -14,7 +14,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
-use cubecl::tile::launch::{Buffered, DestinationLaunch, Refusal, SinkLaunchVisitor};
+use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch, SinkLaunchVisitor};
 use cubecl::tune::{AutotuneOutput, LocalTuner, TunableSet, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeDim, CubeTuneId};
 use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
@@ -29,7 +29,7 @@ use std::sync::Arc;
 /// What makes two norms want the same kernel.
 ///
 /// The row width is **exact**: it is a `d_model` or a `head_dim`, fixed by the model config, and
-/// every owner sizes its registers by it. The row count is anchored — it is the axis a caller
+/// every owner sizes its registers by it. The row count is anchored — it is the dimension a caller
 /// varies freely (batch × sequence) and the one that decides whether the grid is full.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct RmsNormKey {
@@ -153,7 +153,7 @@ impl RmsNormCandidate {
     ///
     /// Why the routine cannot write the norm into `out` at its setting — the plane routine, whose
     /// planes no cube holds, never encodes — or why `out` cannot hold it.
-    pub fn launch_into(&self, call: &RmsNormCall, out: LhsOutput) -> Result<(), Refusal> {
+    pub fn launch_into(&self, call: &RmsNormCall, out: LhsOutput) -> Result<(), Decline> {
         match self {
             Self::CubeGroups(candidate) => candidate.launch_into(call, out),
             Self::Plane(candidate) => candidate.launch_into(call, out),
@@ -283,8 +283,7 @@ impl RmsNormRoutineCandidate<CubeGroupsRmsNormRoutine> {
 impl<R: Routine + Copy> RmsNormRoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, as candidates of the autotune, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self::new(routine, settings, hw))
             .collect()
@@ -301,7 +300,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot run the norm at this setting.
-    pub fn launch(&self, call: &RmsNormCall) -> Result<TensorHandle, Refusal> {
+    pub fn launch(&self, call: &RmsNormCall) -> Result<TensorHandle, Decline> {
         let tensors = RmsNormTensors::new(&call.client, call.input.clone(), call.weight.clone())?;
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
@@ -318,7 +317,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot run the norm at this setting, or why `out` cannot hold it.
-    pub fn launch_tiled(&self, call: &RmsNormCall, out: PlainTensor) -> Result<(), Refusal> {
+    pub fn launch_tiled(&self, call: &RmsNormCall, out: PlainTensor) -> Result<(), Decline> {
         let tensors =
             RmsNormTensors::tiled(&call.client, call.input.clone(), call.weight.clone(), out)?;
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
@@ -336,7 +335,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot encode the norm at this setting, or why `out` cannot hold it.
-    pub fn launch_packed(&self, call: &RmsNormCall, out: PackedTensor) -> Result<(), Refusal> {
+    pub fn launch_packed(&self, call: &RmsNormCall, out: PackedTensor) -> Result<(), Decline> {
         let tensors =
             RmsNormTensors::packed(&call.client, call.input.clone(), call.weight.clone(), out)?;
         self.launch_on::<Encoded, _>(call, &tensors, |blueprint, grid| {
@@ -350,7 +349,7 @@ where
     /// # Errors
     ///
     /// Those of the launch `out` names.
-    pub fn launch_into(&self, call: &RmsNormCall, out: LhsOutput) -> Result<(), Refusal> {
+    pub fn launch_into(&self, call: &RmsNormCall, out: LhsOutput) -> Result<(), Decline> {
         match out {
             LhsOutput::Packed(out) => self.launch_packed(call, out),
             LhsOutput::Tiled(out) => self.launch_tiled(call, out),
@@ -363,7 +362,7 @@ where
     ///
     /// [`RMS_NORM_SINK_TAKES_NO_ROWS`]; what [`RmsNormTensors::sink`] declines; why this device
     /// cannot run the norm at this setting.
-    pub fn sink_launch(&self, call: &RmsNormCall) -> Result<RmsNormRoutineSinkLaunch<R, M>, Refusal>
+    pub fn sink_launch(&self, call: &RmsNormCall) -> Result<RmsNormRoutineSinkLaunch<R, M>, Decline>
     where
         R: Copy,
     {
@@ -387,7 +386,7 @@ where
         call: &RmsNormCall,
         tensors: &RmsNormTensors<Out>,
         bind: impl FnOnce(&RmsNormBlueprint<M>, &Grid) -> RmsNormBinding<O::Operand>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         if tensors.problem().rows == 0 {
             return Ok(());
         }
@@ -402,18 +401,15 @@ where
     fn prepare(
         &self,
         problem: &RmsNormRoutineProblem,
-    ) -> Result<(RmsNormBlueprint<M>, Grid), Refusal> {
-        self.prepared
-            .prepare(&self.routine, &self.hw, problem, &self.settings)
+    ) -> Result<(RmsNormBlueprint<M>, Grid), Decline> {
+        self.prepared.prepare(&self.hw, problem, &self.settings)
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device. Not held: a key's problem places the candidate in a
     /// round, and may never be launched.
     fn prepared(&self, key: &RmsNormKey) -> Option<(RmsNormBlueprint<M>, Grid)> {
-        self.routine
-            .prepare(&self.hw, &RmsNormRoutineProblem::from(key), &self.settings)
-            .ok()
+        R::prepare(&self.hw, &RmsNormRoutineProblem::from(key), &self.settings).ok()
     }
 
     /// The norm of `call` at this candidate's setting.
@@ -482,7 +478,7 @@ pub fn launch_tuned(call: RmsNormCall, device: &Device, tile: GroupPriority) -> 
 /// ([`RmsNormRoutineCandidate::launch_into`]): by the routine the autotune elected for the rows, so
 /// the output inherits the kernel the unfused round chose, or by the floor where no round has
 /// settled or the elected routine cannot write it — the plane routine, whose planes no cube holds,
-/// never encodes, and a setting's stage can outgrow the device. A refusal is a launch's before it
+/// never encodes, and a setting's stage can outgrow the device. A decline is a launch's before it
 /// dispatches, so the floor writes into the same `out`.
 ///
 /// # Errors
@@ -495,7 +491,7 @@ pub fn launch_into_tuned(
     device: &Device,
     tile: GroupPriority,
     out: LhsOutput,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     if let Some(elected) = fastest_rms_norm_routine(&call.client, device, &call.input, tile)
         && elected.launch_into(call, out.clone()).is_ok()
     {

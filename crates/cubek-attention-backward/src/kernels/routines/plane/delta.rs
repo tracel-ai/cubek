@@ -3,7 +3,7 @@
 use super::kernel::plane_delta_kernel;
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
 use cubecl::tile::Partitioning;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_microkernel::attention::{B, G, KV, Q};
 use cubek_microkernel::attention_backward::delta::plane::{
@@ -38,7 +38,7 @@ impl PlaneDeltaRoutine {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &PlaneDeltaRoutineSettings,
-    ) -> Result<PlaneDeltaBlueprint, Refusal> {
+    ) -> Result<PlaneDeltaBlueprint, Decline> {
         let microkernel =
             PlaneDeltaMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let partitioning = Partitioning::new(

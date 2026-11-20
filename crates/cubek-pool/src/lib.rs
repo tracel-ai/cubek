@@ -35,7 +35,7 @@ use crate::legacy::{
 /// A max keeps a NaN in its window, and a window with no input tap holds the max's identity.
 ///
 /// Returns [`PoolError::InvalidDilation`] if a max or average pooling dilation is zero, and
-/// [`PoolError::Refused`] where the max routine cannot run the problem on this device.
+/// [`PoolError::Declined`] where the max routine cannot run the problem on this device.
 pub fn pool2d(
     client: &Client,
     input: TensorBinding,
@@ -64,7 +64,7 @@ pub fn pool2d(
     let hw = Hardware::from_client(client);
     let tensors = PoolTensors::new(client, input, output, options, dtype);
     let routine = CubeMaxPoolRoutine;
-    let settings = routine.settings(&hw)[0];
+    let settings = CubeMaxPoolRoutine::settings(&hw)[0];
     Ok(launch_pool_routine(&routine, &hw, &tensors, &settings)?)
 }
 

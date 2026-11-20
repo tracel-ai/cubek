@@ -1,79 +1,118 @@
 //! What every reduce microkernel computes alone: each row's cells, one or `k` for a top-k, values
-//! or indices. Along the reduced axis, `input[o, r]` and `out[o, s]`; across it, `input[r, o]` and
-//! `out[s, o]`. A hypercube's input splits the reduced axis into its parts, `input[o, p, r]` or
-//! `input[p, r, o]`, a cube a part.
+//! or indices. Along the reduced dimension, `input[BATCH, REDUCED]` and `out[BATCH, SLOTS]`; across
+//! it, `input[REDUCED, BATCH]` and `out[SLOTS, BATCH]`. A hypercube's input splits the reduced
+//! dimension into its parts, `input[BATCH, PARTS, REDUCED]` or `input[PARTS, REDUCED, BATCH]`, a
+//! cube a part.
 
-use crate::launch::reduce::{ReduceLaunch, ReduceScope};
+use crate::launch::reduce::{LineDirection, ReduceLaunch, TestedMicrokernel};
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperation, ReduceWorkItem, ReduceWrites};
+use cubek_microkernel::reduce::{ReduceOperation, ReduceWorkItem, ReduceWrites};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 const I32: ElemType = ElemType::Int(IntKind::I32);
 
-/// Every operation a reduce microkernel serves.
-pub(crate) const OPERATIONS: [ReduceOperation; 12] = [
-    ReduceOperation::Sum,
-    ReduceOperation::Prod,
-    ReduceOperation::Mean,
-    ReduceOperation::Max,
-    ReduceOperation::Min,
-    ReduceOperation::MaxAbs,
-    ReduceOperation::Any,
-    ReduceOperation::All,
-    ReduceOperation::ArgMax,
-    ReduceOperation::ArgMin,
-    ReduceOperation::TopK { k: 3 },
-    ReduceOperation::ArgTopK { k: 3 },
-];
-
-/// The reduce microkernel `hw` runs at each case's scope.
-pub(crate) struct Reduce {
+/// The reduce microkernel `hw` runs each case names.
+pub(crate) struct ReduceMicrokernelScopeUnderTest {
     pub hw: Hardware,
 }
 
-/// One operation over rows `len` values long, read `width` values a line, laid along or across
-/// the reduced axis, reduced by `scope`.
+/// One operation over rows `len` values long holding `rows`, read `width` values a line, laid
+/// along or across the reduced dimension, reduced by `microkernel`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReduceCase {
     pub operation: ReduceOperation,
-    pub scope: ReduceScope,
+    pub microkernel: TestedMicrokernel,
     pub len: usize,
     pub width: usize,
-    pub layout: ReduceLayout,
+    pub lines: LineDirection,
+    pub rows: Rows,
+}
+
+/// What a case's rows hold, each kind a behavior of its own.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Rows {
+    /// Small whole numbers, so every sum is exact, on a cycle of eleven that row `r` starts `r`
+    /// values in and raises by `r`, so no two rows agree; for a product, `±1`, and `2` and `0.5`
+    /// in turn on a cycle of nine, so no partial product of a long row overflows whatever order it
+    /// multiplies in.
+    Plain,
+    /// Plain rows whose largest value sits at positions 1 and `len - 1` and smallest at 2 and
+    /// `len - 2`: the lower index must win the tie.
+    Ties,
+    /// Plain rows with a NaN halfway and at the end.
+    Nan,
+    /// Every value `-inf`.
+    NegativeInfinity,
+    /// Every value zero.
+    Zeros,
+}
+
+/// Rows a case lays along the reduced dimension.
+const ROWS_ALONG: usize = 3;
+
+/// The value a tie sits at, past every plain value.
+const TIE: f32 = 1000.0;
+
+impl Rows {
+    /// Row `r` of `len` values, as `operation` reads it.
+    fn row(self, operation: ReduceOperation, len: usize, r: usize) -> Vec<f32> {
+        match self {
+            Rows::Plain => plain_row(operation, len, r),
+            Rows::Ties => with_values(
+                plain_row(operation, len, r),
+                &[(1, TIE), (len - 1, TIE), (2, -TIE), (len - 2, -TIE)],
+            ),
+            Rows::Nan => with_values(
+                plain_row(operation, len, r),
+                &[(len / 2, f32::NAN), (len - 1, f32::NAN)],
+            ),
+            Rows::NegativeInfinity => vec![f32::NEG_INFINITY; len],
+            Rows::Zeros => vec![0.0; len],
+        }
+    }
+}
+
+/// Row `r` of [`Rows::Plain`], `len` values long, as `operation` reads it.
+fn plain_row(operation: ReduceOperation, len: usize, r: usize) -> Vec<f32> {
+    match operation {
+        ReduceOperation::Prod => (r..r + len).map(product_value).collect(),
+        _ => (r..r + len)
+            .map(|i| ((i * 7) % 11) as f32 - 5.0 + r as f32)
+            .collect(),
+    }
+}
+
+/// Value `i` of the cycle a product's rows hold.
+fn product_value(i: usize) -> f32 {
+    match i % 9 {
+        0 => 2.0,
+        4 => 0.5,
+        3 | 5 => -1.0,
+        _ => 1.0,
+    }
+}
+
+/// `row` with each `(position, value)` of `at` written in.
+fn with_values(mut row: Vec<f32>, at: &[(usize, f32)]) -> Vec<f32> {
+    for &(position, value) in at {
+        row[position] = value;
+    }
+    row
+}
+
+/// `case` launched once and checked against the reduce reference; a microkernel the device does
+/// not run is a skip.
+pub(crate) fn reduces_like_the_cpu(case: ReduceCase) {
+    let hw = Hardware::from_client(&cubecl::test_device().client());
+    ReduceMicrokernelScopeUnderTest { hw }.check([case]);
 }
 
 impl ReduceCase {
-    /// Every operation over `(len, width)` rows reduced by `scope` along the reduced axis, then
-    /// across it at `across`.
-    pub(crate) fn every_operation(
-        scope: ReduceScope,
-        along: &[(usize, usize)],
-        across: &[(usize, usize)],
-    ) -> Vec<Self> {
-        let laid = |layout, sizes: &[(usize, usize)]| {
-            sizes
-                .iter()
-                .flat_map(move |&(len, width)| {
-                    OPERATIONS.map(|operation| Self {
-                        operation,
-                        scope,
-                        len,
-                        width,
-                        layout,
-                    })
-                })
-                .collect::<Vec<_>>()
-        };
-        let mut cases = laid(ReduceLayout::Along, along);
-        cases.extend(laid(ReduceLayout::Across, across));
-        cases
-    }
-
     /// The element the output is written in: the values', or an index's.
     fn out(&self) -> ElemType {
         match self.operation.writes() {
@@ -86,60 +125,37 @@ impl ReduceCase {
 /// A reduction on the host: its rows and what each writes.
 struct HostReduce {
     case: ReduceCase,
+    /// Each row's values, read in order and by row (Arrival and Position Usage).
     rows: Vec<Vec<f32>>,
 }
 
 impl HostReduce {
-    /// Rows of `len` values: small whole numbers, so every sum is exact; one row with ties at
-    /// both ends, one with a NaN, one all `-inf`, one with zeros; for a product, values `±1`, and
-    /// `2` and `0.5` in turn, so no partial product of a long row overflows, whatever order it
-    /// multiplies in. Across the reduced axis, every row a column: as many rows as a whole number
-    /// of lines.
+    /// The rows `case` names: [`ROWS_ALONG`] along the reduced dimension; across it, each row a
+    /// column, as many as two whole lines.
     fn new(case: ReduceCase) -> Self {
-        let len = case.len;
-        let base: Vec<f32> = match case.operation {
-            ReduceOperation::Prod => (0..len)
-                .map(|i| match i % 9 {
-                    0 => 2.0,
-                    4 => 0.5,
-                    3 | 5 => -1.0,
-                    _ => 1.0,
-                })
-                .collect(),
-            _ => (0..len).map(|i| ((i * 7) % 11) as f32 - 5.0).collect(),
+        let count = match case.lines {
+            LineDirection::Along => ROWS_ALONG,
+            LineDirection::Across => 2 * case.width,
         };
-        let with = |at: &[(usize, f32)]| {
-            let mut row = base.clone();
-            for &(i, v) in at {
-                row[i % len] = v;
-            }
-            row
-        };
-        let rows = vec![
-            base.clone(),
-            with(&[(1, 9.0), (len - 1, 9.0), (2, -9.0), (len - 2, -9.0)]),
-            with(&[(len / 2, f32::NAN), (len - 1, f32::NAN)]),
-            vec![f32::NEG_INFINITY; len],
-            with(&[(0, 0.0), (len / 3, 0.0)]),
-        ];
-        let rows = match case.layout {
-            ReduceLayout::Along => rows,
-            ReduceLayout::Across => rows.iter().cycle().take(2 * case.width).cloned().collect(),
-        };
+        let rows = (0..count)
+            .map(|r| case.rows.row(case.operation, case.len, r))
+            .collect();
         Self { case, rows }
     }
 
     /// The input's shape and its values in that order.
     fn input(&self) -> (Shape, Vec<f32>) {
         let (rows, len) = (self.rows.len(), self.case.len);
-        match (self.case.layout, self.case.scope) {
-            (ReduceLayout::Along, ReduceScope::Hypercube { parts, .. }) => {
+        match (self.case.lines, self.case.microkernel) {
+            (LineDirection::Along, TestedMicrokernel::HypercubeLastArrival { parts, .. }) => {
                 (shape![rows, parts, len / parts], self.rows.concat())
             }
-            (ReduceLayout::Along, _) => (shape![rows, len], self.rows.concat()),
-            (ReduceLayout::Across, scope) => {
-                let shape = match scope {
-                    ReduceScope::Hypercube { parts, .. } => shape![parts, len / parts, rows],
+            (LineDirection::Along, _) => (shape![rows, len], self.rows.concat()),
+            (LineDirection::Across, microkernel) => {
+                let shape = match microkernel {
+                    TestedMicrokernel::HypercubeLastArrival { parts, .. } => {
+                        shape![parts, len / parts, rows]
+                    }
                     _ => shape![len, rows],
                 };
                 let values = (0..len)
@@ -153,9 +169,9 @@ impl HostReduce {
     /// The output's shape: a row's cells along its row, or down its column.
     fn out_shape(&self) -> Shape {
         let (rows, cells) = (self.rows.len(), self.case.operation.written_per_row());
-        match self.case.layout {
-            ReduceLayout::Along => shape![rows, cells],
-            ReduceLayout::Across => shape![cells, rows],
+        match self.case.lines {
+            LineDirection::Along => shape![rows, cells],
+            LineDirection::Across => shape![cells, rows],
         }
     }
 
@@ -164,81 +180,34 @@ impl HostReduce {
         let per_row: Vec<Vec<f32>> = self
             .rows
             .iter()
-            .map(|row| Self::cells(row, self.case.operation))
+            .map(|row| self.case.operation.reference_cells(row))
             .collect();
-        let values = match self.case.layout {
-            ReduceLayout::Along => per_row.concat(),
-            ReduceLayout::Across => (0..self.case.operation.written_per_row())
+        let values = match self.case.lines {
+            LineDirection::Along => per_row.concat(),
+            LineDirection::Across => (0..self.case.operation.written_per_row())
                 .flat_map(|s| per_row.iter().map(move |cells| cells[s]))
                 .collect(),
         };
         HostData::row_major(HostDataVec::F32(values), self.out_shape())
     }
-
-    /// What `operation` writes for `row`: its cells, values or indices as numbers.
-    fn cells(row: &[f32], operation: ReduceOperation) -> Vec<f32> {
-        let nan = row.iter().any(|v| v.is_nan());
-        let reduce_row = |init: f32, f: fn(f32, f32) -> f32| row.iter().copied().fold(init, f);
-        let keeping_nan = |v: f32| if nan { f32::NAN } else { v };
-        let flag = |holds: bool| if holds { 1.0 } else { 0.0 };
-        match operation {
-            ReduceOperation::Sum => vec![row.iter().sum()],
-            ReduceOperation::Prod => vec![row.iter().product()],
-            ReduceOperation::Mean => vec![row.iter().sum::<f32>() / row.len() as f32],
-            ReduceOperation::Max => vec![keeping_nan(reduce_row(f32::NEG_INFINITY, f32::max))],
-            ReduceOperation::Min => vec![keeping_nan(reduce_row(f32::INFINITY, f32::min))],
-            ReduceOperation::MaxAbs => vec![keeping_nan(
-                row.iter()
-                    .map(|v| v.abs())
-                    .fold(f32::NEG_INFINITY, f32::max),
-            )],
-            ReduceOperation::Any => vec![flag(row.iter().any(|v| *v != 0.0))],
-            ReduceOperation::All => vec![flag(row.iter().all(|v| *v != 0.0))],
-            ReduceOperation::ArgMax => vec![Self::ranked(row, true, 1)[0].1 as f32],
-            ReduceOperation::ArgMin => vec![Self::ranked(row, false, 1)[0].1 as f32],
-            ReduceOperation::TopK { k } => Self::ranked(row, true, k).iter().map(|e| e.0).collect(),
-            ReduceOperation::ArgTopK { k } => Self::ranked(row, true, k)
-                .iter()
-                .map(|e| e.1 as f32)
-                .collect(),
-        }
-    }
-
-    /// The `k` best of `row` under `largest`, with their indices: the larger (smaller) value
-    /// first, the lower index between equal values, a NaN ahead of every number.
-    fn ranked(row: &[f32], largest: bool, k: usize) -> Vec<(f32, usize)> {
-        let mut order: Vec<(f32, usize)> = row.iter().copied().zip(0..).collect();
-        order.sort_by(|a, b| {
-            let by_value = match (a.0.is_nan(), b.0.is_nan()) {
-                (true, true) => core::cmp::Ordering::Equal,
-                (true, false) => core::cmp::Ordering::Less,
-                (false, true) => core::cmp::Ordering::Greater,
-                _ if largest => b.0.partial_cmp(&a.0).unwrap(),
-                _ => a.0.partial_cmp(&b.0).unwrap(),
-            };
-            by_value.then(a.1.cmp(&b.1))
-        });
-        order.truncate(k);
-        order
-    }
 }
 
-impl ScopeUnderTest for Reduce {
+impl ScopeUnderTest for ReduceMicrokernelScopeUnderTest {
     type Case = ReduceCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let host = HostReduce::new(*case);
         let item = ReduceWorkItem {
             operation: case.operation,
             input: F32,
             accumulator: F32,
-            layout: case.layout,
+            lines_along: case.lines.dimension(),
             with_indices: false,
         };
         let launch = ReduceLaunch::new(
             &self.hw,
             item,
-            case.scope,
+            case.microkernel,
             host.rows.len(),
             case.len,
             case.width,
@@ -274,4 +243,106 @@ impl ScopeUnderTest for Reduce {
     fn tolerance(&self, _case: &Self::Case) -> f32 {
         1e-4
     }
+}
+
+/// A test for each `name: operation`, each one launch of `microkernel` on rows `len` values long
+/// holding `rows`, read `width` values a line, laid `lines`.
+macro_rules! reduce_tests {
+    (
+        $microkernel:expr,
+        $lines:ident,
+        $len:expr,
+        $width:expr,
+        $rows:ident,
+        [$($name:ident: $operation:expr),* $(,)?]
+    ) => {
+        $(
+            #[test]
+            fn $name() {
+                $crate::reduce::reduces_like_the_cpu($crate::reduce::ReduceCase {
+                    operation: $operation,
+                    microkernel: $microkernel,
+                    len: $len,
+                    width: $width,
+                    lines: $crate::launch::reduce::LineDirection::$lines,
+                    rows: $crate::reduce::Rows::$rows,
+                });
+            }
+        )*
+    };
+}
+
+/// [`reduce_tests`] on plain rows, for every operation a reduce microkernel serves.
+macro_rules! every_operation {
+    ($microkernel:expr, $lines:ident, $len:expr, $width:expr) => {
+        use cubek_microkernel::reduce::ReduceOperation;
+        reduce_tests!($microkernel, $lines, $len, $width, Plain, [
+            sum: ReduceOperation::Sum,
+            prod: ReduceOperation::Prod,
+            mean: ReduceOperation::Mean,
+            max: ReduceOperation::Max,
+            min: ReduceOperation::Min,
+            max_abs: ReduceOperation::MaxAbs,
+            any: ReduceOperation::Any,
+            all: ReduceOperation::All,
+            arg_max: ReduceOperation::ArgMax,
+            arg_min: ReduceOperation::ArgMin,
+            top_3: ReduceOperation::TopK { k: 3 },
+            arg_top_3: ReduceOperation::ArgTopK { k: 3 },
+        ]);
+    };
+}
+
+/// [`reduce_tests`] on the rows whose values a reduction must rank or test with care, each kind
+/// with the operations it matters to.
+macro_rules! edge_rows {
+    ($microkernel:expr, $lines:ident, $len:expr, $width:expr) => {
+        /// The largest and the smallest value twice: the lower index wins.
+        mod ties {
+            use super::*;
+            use cubek_microkernel::reduce::ReduceOperation;
+            reduce_tests!($microkernel, $lines, $len, $width, Ties, [
+                arg_max: ReduceOperation::ArgMax,
+                arg_min: ReduceOperation::ArgMin,
+                arg_top_3: ReduceOperation::ArgTopK { k: 3 },
+            ]);
+        }
+
+        /// A NaN twice: it ranks ahead of every number, so an extremum keeps the first.
+        mod nan {
+            use super::*;
+            use cubek_microkernel::reduce::ReduceOperation;
+            reduce_tests!($microkernel, $lines, $len, $width, Nan, [
+                max: ReduceOperation::Max,
+                min: ReduceOperation::Min,
+                max_abs: ReduceOperation::MaxAbs,
+                arg_max: ReduceOperation::ArgMax,
+                arg_min: ReduceOperation::ArgMin,
+                top_3: ReduceOperation::TopK { k: 3 },
+                arg_top_3: ReduceOperation::ArgTopK { k: 3 },
+            ]);
+        }
+
+        /// Every value `-inf`: a real value, which outranks every empty slot.
+        mod negative_infinity {
+            use super::*;
+            use cubek_microkernel::reduce::ReduceOperation;
+            reduce_tests!($microkernel, $lines, $len, $width, NegativeInfinity, [
+                max: ReduceOperation::Max,
+                arg_max: ReduceOperation::ArgMax,
+                top_3: ReduceOperation::TopK { k: 3 },
+                arg_top_3: ReduceOperation::ArgTopK { k: 3 },
+            ]);
+        }
+
+        /// Every value zero: neither any nor all of them is set.
+        mod zeros {
+            use super::*;
+            use cubek_microkernel::reduce::ReduceOperation;
+            reduce_tests!($microkernel, $lines, $len, $width, Zeros, [
+                any: ReduceOperation::Any,
+                all: ReduceOperation::All,
+            ]);
+        }
+    };
 }

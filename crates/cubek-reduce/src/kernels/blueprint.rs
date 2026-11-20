@@ -1,10 +1,13 @@
 //! A reduce launch's compile-time decisions.
 
-use crate::kernels::ReduceRoutineProblem;
-use cubecl::tile::Partitioning;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubek_microkernel::reduce::{ReduceLayout, ReduceOperand};
+use crate::kernels::{BATCH, ReduceRoutineProblem};
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
+use cubecl::tile::space::UnitCube;
+use cubecl::tile::{Levels, Partitioning};
+use cubek_microkernel::reduce::{ReduceOperand, ReduceWorkItem};
 use cubek_std::Hardware;
+use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_std::routine::{CubeResources, Grid};
 
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its owners,
 /// and the width each operand binds at.
@@ -12,7 +15,7 @@ use cubek_std::Hardware;
 /// One type for every routine of this kind, named per routine by an alias: what differs between
 /// them is the microkernel.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReduceRoutineBlueprint<M> {
+pub struct ReduceBlueprint<M> {
     pub microkernel: M,
     pub partitioning: Partitioning,
     /// The input's width: what a line of it holds.
@@ -21,14 +24,15 @@ pub struct ReduceRoutineBlueprint<M> {
     pub out_width: usize,
 }
 
-/// The widths the operands bind at on `hw`, at most the widest line the operation keeps apart: to
+/// The widths the operands bind at on `hw`, at most `widest_line`, the widest line the carrier keeps apart: to
 /// the requirements the microkernel enqueued in `vectorization`, the binding adds each buffer's
 /// alignment, and a line that never runs past a row along the reduced dim, or past the rows across
 /// it. Settled before the partitioning, whose owners hold a line of rows across the reduced dim.
-pub fn reduce_widths(
+pub(crate) fn reduce_widths(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
     mut vectorization: Vectorization<ReduceOperand>,
+    widest_line: Option<usize>,
 ) -> [usize; 2] {
     for (operand, alignment) in [ReduceOperand::Input, ReduceOperand::Out]
         .into_iter()
@@ -36,24 +40,97 @@ pub fn reduce_widths(
     {
         vectorization.require(VectorRequirement::Aligned { operand, alignment });
     }
-    let line_stays_in = match (problem.layout(), problem.contiguous) {
-        (ReduceLayout::Across, Some(inner)) => problem.shape[inner],
-        _ => problem.reduced_extent(),
-    };
+    // The indices go out at the values' width, so their buffer aligns it too.
+    if let Some(indices) = problem.indices {
+        vectorization.require(VectorRequirement::Aligned {
+            operand: ReduceOperand::Out,
+            alignment: indices.elem_alignment,
+        });
+    }
+    let line_stays_in = problem
+        .contiguous
+        .filter(|_| problem.lines_along() == BATCH)
+        .map_or(problem.reduced_extent(), |inner| problem.shape[inner]);
     vectorization.require(VectorRequirement::Access {
         operand: ReduceOperand::Input,
         elements: line_stays_in,
     });
     let ceiling = hw.vector_ceiling(problem.elements.input);
-    let widest = problem
-        .operation
-        .widest_line()
-        .map_or(ceiling, |widest| widest.min(ceiling));
+    let widest = widest_line.map_or(ceiling, |widest| widest.min(ceiling));
     [ReduceOperand::Input, ReduceOperand::Out]
         .map(|operand| vectorization.width(operand, |_| widest))
 }
 
-impl<M> ReduceRoutineBlueprint<M> {
+/// The widths `microkernel`, whose lines are at most `widest_line` wide, binds `problem`'s
+/// operands at on `hw`: what it asks of them, then [`reduce_widths`].
+pub(crate) fn microkernel_widths<M: Microkernel<CubeSpace = (), Operand = ReduceOperand>>(
+    hw: &Hardware,
+    problem: &ReduceRoutineProblem,
+    microkernel: &M,
+    widest_line: Option<usize>,
+) -> [usize; 2] {
+    let mut vectorization = Vectorization::new();
+    microkernel.vectorize(&(), &mut vectorization);
+    reduce_widths(hw, problem, vectorization, widest_line)
+}
+
+/// What `microkernel` costs reducing `problem` on `grid`, added to `estimate`.
+pub(crate) fn estimate_reduce<M: Microkernel<WorkItem = ReduceWorkItem, CubeSpace = ()>>(
+    problem: &ReduceRoutineProblem,
+    microkernel: &M,
+    grid: &Grid,
+    estimate: &mut KernelEstimate,
+) {
+    microkernel.estimate(&problem.work_item(), &(), grid.planes(), estimate);
+}
+
+/// The launch of a unit an owner: `problem`'s owners at `width`, each its own unit, in cubes of
+/// `planes` planes as wide as `hw` dispatches one, holding no shared memory.
+///
+/// # Errors
+///
+/// Where the device cannot launch that grid.
+pub(crate) fn unit_launch(
+    hw: &Hardware,
+    problem: &ReduceRoutineProblem,
+    width: usize,
+    planes: usize,
+) -> Result<(Partitioning, Grid), Decline> {
+    let plane_width = hw.dispatch_plane_size() as usize;
+    let partitioning = Partitioning::new(
+        problem.space(),
+        Levels::leaf(&problem.owner_box_at_width(width))
+            .launch_units(
+                &[BATCH],
+                UnitCube {
+                    plane_width,
+                    planes,
+                },
+            )
+            .build(),
+    );
+    let cube = CubeResources {
+        plane_width: plane_width as u32,
+        shared_memory: 0,
+    };
+    let grid = Grid::new(hw, &partitioning, cube)?;
+    Ok((partitioning, grid))
+}
+
+/// A routine's settings: each of its microkernel's `microkernels` with each of its own `knobs`,
+/// the microkernel's order outermost, built by `settings`.
+pub(crate) fn each_microkernel_with<M: Copy, K: Copy, S, const N: usize>(
+    microkernels: Vec<M>,
+    knobs: [K; N],
+    settings: impl Fn(M, K) -> S,
+) -> Vec<S> {
+    microkernels
+        .into_iter()
+        .flat_map(|microkernel| knobs.map(|knob| settings(microkernel, knob)))
+        .collect()
+}
+
+impl<M> ReduceBlueprint<M> {
     /// `microkernel` placed by `partitioning`, its operands bound at `widths`.
     pub fn new(microkernel: M, partitioning: Partitioning, widths: [usize; 2]) -> Self {
         let [width, out_width] = widths;
@@ -63,5 +140,67 @@ impl<M> ReduceRoutineBlueprint<M> {
             width,
             out_width,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::ReduceIndices;
+    use cubecl::tile::layout::ElemAlignment;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// Each microkernel setting crossed with each knob, the microkernel's outermost.
+    #[test]
+    fn settings_cross_the_microkernels_with_the_knobs() {
+        let crossed = each_microkernel_with(vec!['a', 'b'], [1, 2], |microkernel, knob| {
+            (microkernel, knob)
+        });
+        assert_eq!(crossed, vec![('a', 1), ('a', 2), ('b', 1), ('b', 2)]);
+    }
+
+    /// A carrier's widest line bounds the input's width.
+    #[test]
+    fn the_widest_line_bounds_the_width() {
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
+        let [width, _] = reduce_widths(&hw, &problem, Vectorization::new(), Some(1));
+        assert_eq!(width, 1);
+    }
+
+    /// Indices beside the values align the output's width too: a strided indices buffer narrows it
+    /// to one.
+    #[test]
+    fn strided_indices_narrow_the_outputs_width() {
+        let hw = devices::m2_pro();
+        let dense = ReduceRoutineProblem::dense(&[4096, 4], 0, ReduceOperation::ArgMax);
+        let [_, dense_width] = reduce_widths(&hw, &dense, Vectorization::new(), None);
+        assert!(
+            dense_width > 1,
+            "rows across the axis go out a line at a time"
+        );
+        let problem = ReduceRoutineProblem {
+            indices: Some(ReduceIndices {
+                element: cubecl::ir::ElemType::UInt(cubecl::ir::UIntKind::U32),
+                elem_alignment: ElemAlignment::ONE,
+            }),
+            ..dense
+        };
+        let [_, out_width] = reduce_widths(&hw, &problem, Vectorization::new(), None);
+        assert_eq!(out_width, 1);
+    }
+
+    /// A unit-an-owner launch groups its units in cubes of `planes` planes the device's width.
+    #[test]
+    fn a_unit_launch_holds_its_planes_in_a_cube() {
+        const PLANES: usize = 4;
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[64, 300], 1, ReduceOperation::Sum);
+        let (_, grid) = unit_launch(&hw, &problem, 1, PLANES).expect("the unit launch fits");
+        assert_eq!(
+            grid.launch.units_per_cube(),
+            hw.dispatch_plane_size() * PLANES as u32
+        );
     }
 }

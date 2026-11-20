@@ -6,7 +6,7 @@
 
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_rms_norm::kernels::{RmsNormCall, RmsNormRoutine, RmsNormRoutineCandidate};
@@ -21,7 +21,7 @@ pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
 /// The `ε` every case adds to the mean of squares.
 pub(crate) const EPSILON: f32 = 1e-6;
 
-/// Which refusals a routine may answer a case with.
+/// Which declines a routine may answer a case with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Declines {
     /// None: the autotune's floor, which a decline would leave with nothing to fall back on.
@@ -203,7 +203,7 @@ impl<R: RmsNormRoutine<M> + Copy, M: Microkernel> ScopeUnderTest for RmsNorm<R, 
     /// # Panics
     ///
     /// Where the routine refuses a case it may not.
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let rows = case.rows;
         let call = RmsNormCall {
             client: client.clone(),
@@ -224,7 +224,7 @@ impl<R: RmsNormRoutine<M> + Copy, M: Microkernel> ScopeUnderTest for RmsNorm<R, 
         let out = match (case.candidate.launch(&call), self.declines) {
             (Ok(out), _) => out,
             (Err(why), Declines::AsItsMicrokernelStates)
-                if why == (Refusal::Declined { why: M::DECLINE }) =>
+                if why == (Decline::Unserved { why: M::DECLINE }) =>
             {
                 return Err(why);
             }
