@@ -163,7 +163,7 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
             filling_planes: settings.filling_planes.get(),
         };
         // The problem its microkernel plans on, every packed input read as it reads it.
-        let read = CubeStagedPlacement::planned(
+        let (read, picked) = CubeStagedPlacement::planned(
             hw,
             problem,
             &settings.microkernel,
@@ -177,6 +177,7 @@ impl Routine for CubeStagedTmaFillerMatmulRoutine {
             settings.cube_order,
             fill,
             CubeStagedStore::Fragments,
+            picked,
         )?;
         placement.check_tma_fill(hw)?;
         placement.prepare(hw)

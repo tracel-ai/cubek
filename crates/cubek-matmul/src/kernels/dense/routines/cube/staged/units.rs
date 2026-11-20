@@ -258,7 +258,7 @@ impl Routine for CubeStagedMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         // The problem its microkernel plans on, every packed input read as it reads it.
-        let read = CubeStagedPlacement::planned(
+        let (read, picked) = CubeStagedPlacement::planned(
             hw,
             problem,
             &settings.microkernel,
@@ -272,6 +272,7 @@ impl Routine for CubeStagedMatmulRoutine {
             settings.cube_order,
             CubeStagedFill::BY_UNITS,
             CubeStagedStore::Fragments,
+            picked,
         )?
         .prepare(hw)
     }

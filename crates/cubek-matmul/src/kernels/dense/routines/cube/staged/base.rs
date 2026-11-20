@@ -67,10 +67,14 @@ impl<'a> CubeStagedPlacement<'a> {
         cube_order: CubeOrder,
         fill: CubeStagedFill,
         store: CubeStagedStore,
+        picked: Option<CubeStagedMicrokernel>,
     ) -> Result<Self, Refusal> {
         let view = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
-        let microkernel = Self::pick(hw, &item, settings, fill, store)?;
+        let microkernel = match picked {
+            Some(microkernel) => microkernel,
+            None => Self::pick(hw, &item, settings, fill, store)?,
+        };
         if microkernel.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
@@ -100,17 +104,21 @@ impl<'a> CubeStagedPlacement<'a> {
 
     /// The problem `settings`' microkernel plans and is bound on, its stages filled by `fill` and
     /// its box stored by `store`: `problem` with every packed input read as that microkernel reads
-    /// it ([`MatmulMicrokernel::planned_space`]), which [`new`](Self::new) then places.
+    /// it ([`MatmulMicrokernel::planned_space`]), which [`new`](Self::new) then places. Beside it,
+    /// the microkernel, where `problem` is read as it was stated, so `new` need not pick it again.
     pub(crate) fn planned<'p>(
         hw: &Hardware,
         problem: &'p MatmulRoutineProblem,
         settings: &CubeStagedMicrokernelSettings,
         fill: CubeStagedFill,
         store: CubeStagedStore,
-    ) -> Result<Cow<'p, MatmulRoutineProblem>, Refusal> {
+    ) -> Result<(Cow<'p, MatmulRoutineProblem>, Option<CubeStagedMicrokernel>), Refusal> {
         let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)?.work_item();
         let microkernel = Self::pick(hw, &item, settings, fill, store)?;
-        Ok(problem.read_as(microkernel.planned_space()))
+        Ok(match problem.read_as(microkernel.planned_space()) {
+            Cow::Borrowed(stated) => (Cow::Borrowed(stated), Some(microkernel)),
+            read => (read, None),
+        })
     }
 
     /// The first of `settings`' microkernels on `hw` for `item`, its stages filled by `fill` and its

@@ -233,7 +233,8 @@ impl CubeStagedMicrokernel {
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
         // The step is planned on every packed input's finest reads, which every wider read is
-        // whole numbers of; the reads are then widened to the stage, the window its units fill.
+        // whole numbers of; the inputs are then read as widely as they were bound and the stage,
+        // the window its units fill, holds whole.
         let Some(space) = item.blocks else {
             return Vec::new();
         };
@@ -279,7 +280,7 @@ impl CubeStagedMicrokernel {
                 let stage_blocks = NonZeroUsize::new(blocks)?.checked_mul(settings.stage_steps)?;
                 let window = stage_blocks.get() * block;
                 Some(Self {
-                    planned: Some(finest.within(window, window)?),
+                    planned: Some(space.within(window, window)?),
                     ..Self::new(
                         settings,
                         plane,

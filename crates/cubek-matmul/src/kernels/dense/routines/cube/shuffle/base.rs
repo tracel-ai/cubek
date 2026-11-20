@@ -18,6 +18,7 @@ use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
+use std::borrow::Cow;
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
 /// planes splitting the contraction between them: in software sums
@@ -244,15 +245,18 @@ impl CubeShuffleMatmulRoutine {
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
         // The problem its microkernel plans on, every packed input read as it reads it.
-        let item = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?.work_item();
-        let planning = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let stated = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?.work_item();
+        let planning = CubeShuffleMicrokernel::best(hw, &stated, &settings.microkernel)?;
         let read = problem.read_as(planning.planned_space());
         let problem: &MatmulRoutineProblem = &read;
         let packing = &problem.inputs.rhs.packing().unwrap_or(*packing);
         let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         view.check_steps(hw)?;
         let item = view.work_item();
-        let mut microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let mut microkernel = match read {
+            Cow::Borrowed(_) => planning,
+            Cow::Owned(_) => CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?,
+        };
         let columns = microkernel.plane.column_dimension();
         let partitioning = match (settings.cubes_per_worker, hw.workers()) {
             (Some(_), _) if !view.distributed_batch_dimensions().is_empty() => {

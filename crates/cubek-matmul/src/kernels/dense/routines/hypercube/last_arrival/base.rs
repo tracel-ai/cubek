@@ -17,6 +17,7 @@ use cubek_std::Hardware;
 use cubek_std::matmul_dimensions::{K, KB, KI, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid, Routine};
+use std::borrow::Cow;
 
 /// `out = lhs · rhs` with every tile's steps of `K` laid end to end and shared between a fixed
 /// grid of cubes, one run each: a run may start inside one tile and end inside another,
@@ -213,11 +214,15 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
             Ok((view, item, microkernel))
         };
-        // The problem its microkernel plans on, every packed input read as it reads it.
-        let (_, _, planning) = item(problem)?;
-        let read = problem.read_as(planning.planned_space());
+        // The problem its microkernel plans on, every packed input read as it reads it: placed
+        // again only where that re-read it.
+        let stated = item(problem)?;
+        let read = problem.read_as(stated.2.planned_space());
         let problem: &MatmulRoutineProblem = &read;
-        let (view, item, microkernel) = item(problem)?;
+        let (view, item, microkernel) = match read {
+            Cow::Borrowed(_) => stated,
+            Cow::Owned(_) => item(problem)?,
+        };
         problem.check_block_scales(
             microkernel.block_scales(),
             microkernel.cube.fill.delivery == CubeStagedDelivery::Tma,
