@@ -199,6 +199,25 @@ const SHAPES: &[ShapeSpec] = &[
         n: 1536,
         k: 1536,
     },
+    // A gated delta net's beta and decay projections (Qwen3.5/3.8 27B):
+    // d_model 5120 to one value per value head, 48. A decode step is m=1, a
+    // 512-token prefill m=512.
+    ShapeSpec {
+        tag: "delta_net_heads_1x1x48x5120",
+        label: "Delta net beta/decay decode (b=1 m=1 n=48 k=5120)",
+        b: 1,
+        m: 1,
+        n: 48,
+        k: 5120,
+    },
+    ShapeSpec {
+        tag: "delta_net_heads_1x512x48x5120",
+        label: "Delta net beta/decay prefill (b=1 m=512 n=48 k=5120)",
+        b: 1,
+        m: 512,
+        n: 48,
+        k: 5120,
+    },
     // Edge cases (degenerate dims).
     ShapeSpec {
         tag: "outer_2x8192x8192x1",

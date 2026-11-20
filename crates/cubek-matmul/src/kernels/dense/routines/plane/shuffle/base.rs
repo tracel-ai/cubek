@@ -309,6 +309,22 @@ impl PlaneShuffleMatmulRoutine {
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
 
+    /// The planes one cube holds side by side along `n` against a float rhs: the settings' count,
+    /// snapped to what the runs of columns `n` holds divide, as against a packed rhs
+    /// ([`PlaneShufflePackedPlacement`]). A cube of more planes than the runs left would hand its
+    /// last planes runs past the rhs's end, and an rhs stored in tiles is read inside one of its
+    /// tiles as one unmasked run, which no plane may start past its end.
+    fn float_planes(
+        problem: &MatmulRoutineProblem,
+        microkernel: &PlaneShuffleMicrokernel,
+        settings: &PlaneShuffleMatmulRoutineSettings,
+    ) -> usize {
+        let runs = problem
+            .n
+            .div_ceil(microkernel.columns() * microkernel.groups_along_n);
+        divisor_at_most(runs, settings.planes.get())
+    }
+
     /// [`Routine::prepare`] against a float rhs.
     fn prepare_float(
         &self,
@@ -326,7 +342,10 @@ impl PlaneShuffleMatmulRoutine {
         let partitioning = view.plane_partitioning(
             microkernel.tiling(),
             &[M, N],
-            PlaneOrder::new(&[(N, settings.planes.get())], CubeOrder::RowMajor),
+            PlaneOrder::new(
+                &[(N, Self::float_planes(problem, &microkernel, settings))],
+                CubeOrder::RowMajor,
+            ),
         );
         let blueprint = self.blueprint(hw, problem, microkernel, partitioning)?;
         let cube = CubeResources {
@@ -707,6 +726,33 @@ mod tests {
         for m in 1..=PlaneShuffleMicrokernel::MAX_ROWS {
             let held = m.next_power_of_two();
             assert_eq!(rows(m), (held, held));
+        }
+    }
+
+    /// Against a float rhs a cube holds as many planes as divide the runs of columns `n` holds, so
+    /// no plane of the last cube starts past the rhs's end: a projection to fewer columns than a
+    /// cube of the settings' planes reads, a gated delta net's per-head gates, laid either way.
+    #[test]
+    fn no_plane_starts_past_the_last_run_of_columns() {
+        let hw = devices::strix_halo();
+        for rhs_layout in [MatmulLayout::Col, MatmulLayout::Row] {
+            let problem =
+                MatmulRoutineProblem::dense(1, 48, 5120, F16).laid(MatmulOperand::Rhs, rhs_layout);
+            for settings in PlaneShuffleMatmulRoutine.settings(&hw) {
+                let Ok((blueprint, _)) =
+                    PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings)
+                else {
+                    continue;
+                };
+                let microkernel = &blueprint.microkernel;
+                let run = (microkernel.columns() * microkernel.groups_along_n) as u64;
+                let runs = 48u64.div_ceil(run);
+                let planes = blueprint.partitioning.columns() / run;
+                assert!(
+                    runs.is_multiple_of(planes),
+                    "{settings} on a {rhs_layout:?} rhs: {planes} planes over {runs} runs"
+                );
+            }
         }
     }
 

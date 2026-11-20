@@ -106,7 +106,9 @@ where
             let (blueprint, grid) = routine
                 .prepare(&hw, &tensors.problem(), &settings)
                 .map_err(declined)?;
-            routine.dispatch_into_buffer(&tensors, blueprint, grid);
+            routine
+                .dispatch_into_buffer(&tensors, blueprint, grid)
+                .map_err(declined)?;
             let handle = match call.destination {
                 Some(destination) => destination,
                 None => tensors
