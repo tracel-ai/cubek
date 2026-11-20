@@ -144,7 +144,8 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
                     let (blueprint, grid) =
                         self.routine
                             .prepare(&self.hw, &tensors.problem(), settings)?;
-                    self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+                    self.routine
+                        .dispatch_into_buffer(&tensors, blueprint, grid)?;
                     Ok(tensors
                         .into_out()
                         .expect("a launch allocating its output hands it back"))
