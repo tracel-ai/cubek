@@ -37,8 +37,9 @@ fn a_packed_activation_against_a_float_weight_answers_at_every_setting() {
     staged.check(staged.at(settings, &products));
 }
 
-/// Activations against a weight in the same block-scaled format, NVFP4, MXFP4 and MXFP8, a
-/// model's projections at a prompt's rows, and at rows and columns no box divides, a prompt's
+/// Activations against a weight in the same block-scaled format, NVFP4, MXFP4 and MXFP8, the
+/// weight in rows and in the tile order a load stores it in on the device, which the TMA routines
+/// read, a model's projections at a prompt's rows, and at rows and columns no box divides, a prompt's
 /// ragged last chunk: every box past the matrix's edge reads zeros and writes nothing. On an RTX
 /// PRO 6000 every setting whose planes hold a grid of block-scaled fragments, rather than one,
 /// answered zero: the grid's fragments were loaded into copies and contracted unwritten, and the
@@ -53,16 +54,19 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
     ]
     .into_iter()
     .flat_map(|format| {
-        let both = PackedProduct::of(
-            Stored::Packed { format, seed: 1 },
-            Stored::Packed { format, seed: 2 },
-        )
-        .k(5120);
         [
-            both.clone().m(512).n(128),
-            both.clone().m(33).n(96),
-            both.m(300).n(96),
+            Stored::Packed { format, seed: 2 },
+            Stored::PackedInTileOrder { format, seed: 2 },
         ]
+        .into_iter()
+        .flat_map(move |weight| {
+            let both = PackedProduct::of(Stored::Packed { format, seed: 1 }, weight).k(5120);
+            [
+                both.clone().m(512).n(128),
+                both.clone().m(33).n(96),
+                both.m(300).n(96),
+            ]
+        })
     })
     .collect();
     let products = products.as_slice();

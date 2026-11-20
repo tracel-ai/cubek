@@ -2,7 +2,8 @@
 
 use cubek_matmul::kernels::{
     CubeShuffleMatmulRoutine, CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine,
-    HypercubeLastArrivalMatmulRoutine, LoadingSchedule, PlaneShuffleMatmulRoutine,
+    CubeStagedTmaFillerMatmulRoutine, HypercubeLastArrivalMatmulRoutine, LoadingSchedule,
+    PlaneShuffleMatmulRoutine,
 };
 use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
 
@@ -82,8 +83,10 @@ fn the_split_k_answers_a_decode_step() {
 
 /// A packed weight against a `bf16` activation at a prompt's rows, as a 4-bit model's prefill runs
 /// a projection, at every packed setting of the routines staging it, the units', the copy
-/// engine's and the hypercube's: NVFP4, MXFP4 and MXFP8, at a whole box and at rows and columns no box
-/// divides. Every box reads the weight as widely as its stage, its window and its units' runs
+/// engine's, the TMA filler's and the hypercube's: NVFP4, MXFP4 and MXFP8, in rows and in the tile
+/// order a load stores a weight in on the device, at a whole box and at rows and columns no box
+/// divides. A weight in tile order once bound its scales a word of four blocks a load beside a
+/// window of two, which every kernel landing it by TMA panicked expanding. Every box reads the weight as widely as its stage, its window and its units' runs
 /// hold whole: MXFP4's four 32-wide blocks once staged 128 of `K` a step, and on an RTX PRO 6000
 /// the boxes leading NVFP4 outgrew shared memory on MXFP4 alone; the copy engine's boxes staged
 /// as stored once panicked compiling on MXFP4, their window of 64 holding half a word of its
@@ -97,11 +100,18 @@ fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
     ]
     .into_iter()
     .flat_map(|format| {
-        let projection = PackedProduct::of(Stored::Bf16, Stored::Packed { format, seed: 5 });
         [
-            projection.clone().m(128).n(128).k(2048),
-            projection.m(33).n(96).k(1024),
+            Stored::Packed { format, seed: 5 },
+            Stored::PackedInTileOrder { format, seed: 5 },
         ]
+        .into_iter()
+        .flat_map(|weight| {
+            let projection = PackedProduct::of(Stored::Bf16, weight);
+            [
+                projection.clone().m(128).n(128).k(2048),
+                projection.m(33).n(96).k(1024),
+            ]
+        })
     })
     .collect();
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
@@ -112,6 +122,11 @@ fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
     let async_copy = ByRoutine::new(CubeStagedAsyncCopyMatmulRoutine, Declines::AsItStates);
     async_copy.check(async_copy.at(
         CubeStagedAsyncCopyMatmulRoutine.packed_settings(async_copy.hw()),
+        &products,
+    ));
+    let filler = ByRoutine::new(CubeStagedTmaFillerMatmulRoutine, Declines::AsItStates);
+    filler.check(filler.at(
+        CubeStagedTmaFillerMatmulRoutine.packed_settings(filler.hw()),
         &products,
     ));
     let hypercube = ByRoutine::new(HypercubeLastArrivalMatmulRoutine, Declines::AsItStates);
