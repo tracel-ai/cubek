@@ -32,6 +32,7 @@ pub(crate) enum PackedFormat {
     Q4,
     Nvfp4,
     Mxfp4,
+    Mxfp8,
 }
 
 impl PackedFormat {
@@ -48,6 +49,10 @@ impl PackedFormat {
             Self::Nvfp4 => nvfp4_scheme(),
             Self::Mxfp4 => QuantScheme::default()
                 .with_value(QuantValue::E2M1)
+                .per_block([32], ScaleDtype::UE8M0)
+                .with_store(QuantStore::PackedU32(0)),
+            Self::Mxfp8 => QuantScheme::default()
+                .with_value(QuantValue::E4M3)
                 .per_block([32], ScaleDtype::UE8M0)
                 .with_store(QuantStore::PackedU32(0)),
         }
@@ -192,6 +197,7 @@ impl PackedSlabsSpec {
         let peak = scheme.value.range().1;
         let codes: Vec<f32> = match scheme.value {
             QuantValue::E2M1 => vec![0., 0.5, 1., 1.5, 2., 3., 4., 6.],
+            QuantValue::E4M3 => e4m3_codes(),
             _ => (0..=peak as usize).map(|code| code as f32).collect(),
         };
         let headroom = peak.log2().ceil() as i32 + 2;
@@ -214,6 +220,20 @@ impl PackedSlabsSpec {
             })
             .collect()
     }
+}
+
+/// Every finite non-negative value `e4m3` holds: its 127 codes below the NaN, so a block of them
+/// quantizes to itself. The integers up to its peak do not: 17 already rounds.
+fn e4m3_codes() -> Vec<f32> {
+    (0..0x7f_u8)
+        .map(|code| {
+            let (exponent, mantissa) = (i32::from(code >> 3), f32::from(code & 0b111));
+            match exponent {
+                0 => mantissa / 8. * 2f32.powi(-6),
+                _ => (1. + mantissa / 8.) * 2f32.powi(exponent - 7),
+            }
+        })
+        .collect()
 }
 
 /// A well-mixed number from `i` and `seed`, so no pattern of the indices repeats at a slab, a row

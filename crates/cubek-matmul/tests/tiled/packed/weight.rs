@@ -79,7 +79,7 @@ fn the_split_k_answers_a_decode_step() {
 
 /// A packed weight against a `bf16` activation at a prompt's rows, as a 4-bit model's prefill runs
 /// a projection, at every packed setting of the routines staging it, the units', the copy
-/// engine's and the hypercube's: NVFP4 and MXFP4, at a whole box and at rows and columns no box
+/// engine's and the hypercube's: NVFP4, MXFP4 and MXFP8, at a whole box and at rows and columns no box
 /// divides. The decoding boxes read the weight a word of scales at a time, and a scale block at a
 /// time two steps a stage; MXFP4's word of four 32-wide blocks once staged 128 of `K` a step, and
 /// on an RTX PRO 6000 the boxes leading NVFP4 outgrew shared memory on MXFP4 alone. The copy
@@ -87,16 +87,20 @@ fn the_split_k_answers_a_decode_step() {
 /// half a word of its scales.
 #[test]
 fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
-    let products: Vec<PackedProduct> = [PackedFormat::Nvfp4, PackedFormat::Mxfp4]
-        .into_iter()
-        .flat_map(|format| {
-            let projection = PackedProduct::of(Stored::Bf16, Stored::Packed { format, seed: 5 });
-            [
-                projection.clone().m(128).n(128).k(2048),
-                projection.m(33).n(96).k(1024),
-            ]
-        })
-        .collect();
+    let products: Vec<PackedProduct> = [
+        PackedFormat::Nvfp4,
+        PackedFormat::Mxfp4,
+        PackedFormat::Mxfp8,
+    ]
+    .into_iter()
+    .flat_map(|format| {
+        let projection = PackedProduct::of(Stored::Bf16, Stored::Packed { format, seed: 5 });
+        [
+            projection.clone().m(128).n(128).k(2048),
+            projection.m(33).n(96).k(1024),
+        ]
+    })
+    .collect();
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
     staged.check_some(staged.at(
         CubeStagedMatmulRoutine.packed_settings(staged.hw()),
