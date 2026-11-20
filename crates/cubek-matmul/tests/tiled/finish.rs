@@ -128,6 +128,7 @@ where
     let counter = client.create_from_slice(u32::as_bytes(&[0]));
     let binding = tensors
         .bind(&blueprint, &grid)
+        .expect("the counted product binds as it prepared")
         .map_out(|out| CountedOperand {
             out,
             // SAFETY: one `u32` the kernel only adds into.

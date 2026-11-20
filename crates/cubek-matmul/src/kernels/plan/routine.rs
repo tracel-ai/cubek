@@ -77,7 +77,8 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
             None => R::prepare_first_served(hw, &tensors.problem())?,
             Some(settings) => R::prepare(hw, &tensors.problem(), settings)?,
         };
-        self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+        self.routine
+            .dispatch_into_buffer(&tensors, blueprint, grid)?;
         Ok(destination.clone())
     }
 }

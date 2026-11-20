@@ -33,8 +33,7 @@ struct Extents {
     k: usize,
 }
 
-/// The dimension of one operand a stride of zero broadcasts: every index along it reads one
-/// element.
+/// The axis of one operand a stride of zero broadcasts: every index along it reads one element.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Broadcast {
     /// The lhs's batch: one lhs matrix for every batch.
@@ -52,6 +51,9 @@ pub(crate) enum Broadcast {
 pub(crate) struct RhsTiles {
     pub n: usize,
     pub k: usize,
+    /// Each tile's rows split at the widest read the device serves, as a load stores a weight
+    /// ([`matrix_storage`](cubek_matmul::tiled::storage::matrix_storage)).
+    pub in_reads: bool,
 }
 
 #[cfg(feature = "tiled")]
@@ -59,10 +61,13 @@ impl RhsTiles {
     /// `rhs`, `[k, n]` of `element`, copied into these tiles.
     fn store(self, client: &Client, rhs: TensorHandle, element: ElemType) -> TensorHandle {
         use cubecl::tile::Dimension;
-        use cubek_matmul::tiled::storage::{StorageLevels, tile};
+        use cubek_matmul::tiled::storage::{StorageLevels, matrix_storage, tile};
         const K: Dimension = Dimension(0);
         const N: Dimension = Dimension(1);
-        let storage = StorageLevels::new(&[(N, self.n), (K, self.k)]).grid(&[N, K]);
+        let storage = match self.in_reads {
+            true => matrix_storage(client, element, [(K, self.k), (N, self.n)]),
+            false => StorageLevels::new(&[(N, self.n), (K, self.k)]).grid(&[N, K]),
+        };
         tile(client, rhs.binding(), &[K, N], element, None, storage)
             .unwrap_or_else(|why| panic!("{self:?} store no such rhs: {why}"))
     }
@@ -170,10 +175,10 @@ impl Product {
         }
     }
 
-    /// The same product, the stride of `dimension` zero.
-    pub(crate) fn broadcast(self, dimension: Broadcast) -> Self {
+    /// The same product, the stride of `axis` zero.
+    pub(crate) fn broadcast(self, axis: Broadcast) -> Self {
         Self {
-            broadcast: Some(dimension),
+            broadcast: Some(axis),
             ..self
         }
     }
@@ -311,8 +316,8 @@ impl Product {
     }
 
     /// Exact for integers. For floats, the epsilon of every element the product is read and summed
-    /// at, five hundred times over: seeded `f32` inputs read at tf32 where the process allows it
-    /// and the device takes it.
+    /// at, five hundred times over: seeded `f32` inputs read at tf32 where the process allows it and
+    /// the device takes it.
     pub(crate) fn tolerance(&self, client: &Client) -> f32 {
         if let ElemType::Int(_) = self.elems.out {
             return 0.;
@@ -357,8 +362,8 @@ impl Debug for Product {
             self.elems.rhs,
             self.elems.out,
         )?;
-        if let Some(dimension) = self.broadcast {
-            write!(f, ", {dimension:?} broadcast")?;
+        if let Some(axis) = self.broadcast {
+            write!(f, ", {axis:?} broadcast")?;
         }
         if self.values == Values::Eighths {
             write!(f, ", in eighths")?;

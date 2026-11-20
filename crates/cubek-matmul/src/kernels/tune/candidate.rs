@@ -91,7 +91,8 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
             let (blueprint, grid) =
                 self.prepared
                     .prepare(&self.hw, &tensors.problem(), settings)?;
-            self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+            self.routine
+                .dispatch_into_buffer(&tensors, blueprint, grid)?;
             Ok(match destination {
                 Some(destination) => destination,
                 None => tensors
