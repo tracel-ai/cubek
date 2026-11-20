@@ -67,6 +67,14 @@ pub struct RmsNormCall {
     pub epsilon: f32,
 }
 
+/// What an autotune's candidates run on: the call, and the output every one of them writes into,
+/// allocated once before the race.
+#[derive(Clone)]
+struct RmsNormRace {
+    call: RmsNormCall,
+    out: TensorHandle,
+}
+
 /// What an autotune's candidate hands back: the norm, and the client it lives on, which the
 /// autotune checks read two candidates' outputs through.
 #[derive(Clone)]
@@ -207,7 +215,7 @@ impl From<CubeRmsNormRoutineSettings> for RmsNormRoutineSettings {
 type RmsNormIdentity = CandidateIdentity<RmsNormCandidate>;
 
 /// The autotune's candidates, as the tuner holds them.
-type RmsNormTunables = Arc<TunableSet<RmsNormKey, RmsNormCall, RmsNormOutput, RmsNormIdentity>>;
+type RmsNormTunables = Arc<TunableSet<RmsNormKey, RmsNormRace, RmsNormOutput, RmsNormIdentity>>;
 
 static TUNER: LocalTuner<RmsNormKey, CubeTuneId> = local_tuner!("norm");
 
@@ -278,12 +286,7 @@ where
     /// Why this device cannot run the norm at this setting.
     pub fn launch(&self, call: &RmsNormCall) -> Result<TensorHandle, Decline> {
         let tensors = RmsNormTensors::new(&call.client, call.input.clone(), call.weight.clone())?;
-        self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
-            tensors
-                .bind(blueprint, grid)
-                .map_out(|out| (out, Write::Replace))
-        })?;
-        Ok(tensors.into_out())
+        self.launch_rows(call, tensors)
     }
 
     /// The norm of [`launch`](Self::launch), written into `out`, a float `[rows, dim]` matrix
@@ -388,9 +391,25 @@ where
         R::prepare(&self.hw, &RmsNormRoutineProblem::from(key), &self.settings).ok()
     }
 
-    /// The norm of `call` at this candidate's setting.
-    fn run(&self, call: RmsNormCall) -> Result<RmsNormOutput, String> {
-        self.launch(&call)
+    /// The norm of `call` written into the rows `tensors` hold, handed back.
+    fn launch_rows(
+        &self,
+        call: &RmsNormCall,
+        tensors: RmsNormTensors,
+    ) -> Result<TensorHandle, Decline> {
+        self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
+            tensors
+                .bind(blueprint, grid)
+                .map_out(|out| (out, Write::Replace))
+        })?;
+        Ok(tensors.into_out())
+    }
+
+    /// The norm of `race`'s call at this candidate's setting, written into the race's output.
+    fn run(&self, race: RmsNormRace) -> Result<RmsNormOutput, String> {
+        let RmsNormRace { call, out } = race;
+        RmsNormTensors::contiguous(&call.client, call.input.clone(), call.weight.clone(), out)
+            .and_then(|tensors| self.launch_rows(&call, tensors))
             .map(|handle| RmsNormOutput {
                 client: call.client.clone(),
                 handle,
@@ -432,22 +451,27 @@ where
 }
 
 /// The norm of `call` through the autotune, its candidates grouped at priority `tile` on `device`.
+///
+/// The output is allocated once, before the race: every candidate of a round writes into it, and
+/// so does the winner's run on the call.
 pub fn launch_tuned(call: RmsNormCall, device: &Device, tile: GroupPriority) -> TensorHandle {
+    let (out, _) = PlainTensor::empty_contiguous(
+        &call.client,
+        call.input.binding.shape.clone(),
+        call.input.elem,
+    );
     // Nothing to normalize is nothing to tune: an empty input shares the key of a single row,
     // and a round measured on it would time no launch and keep a winner for the decode bucket.
     if call.input.binding.shape.contains(&0) {
-        let (handle, _) = PlainTensor::empty_contiguous(
-            &call.client,
-            call.input.binding.shape.clone(),
-            call.input.elem,
-        );
-        return handle;
+        return out;
     }
     let client = call.client.clone();
     // Keyed by the device: the set is built from what this device supports.
     let id = CubeTuneId::new(&client, device);
     let tunables = tunables(&id, &client, tile);
-    TUNER.execute(&id, &client, tunables, call).handle
+    TUNER
+        .execute(&id, &client, tunables, RmsNormRace { call, out })
+        .handle
 }
 
 /// The norm of `call` written into `out`, a matrix of its rows as a product reads its lhs
@@ -505,9 +529,9 @@ fn tunables(id: &CubeTuneId, client: &Client, tile: GroupPriority) -> RmsNormTun
 fn candidates(
     hw: Hardware,
     priority: GroupPriority,
-) -> TunableSet<RmsNormKey, RmsNormCall, RmsNormOutput, RmsNormIdentity> {
-    let mut autotune = Autotune::<RmsNormKey, RmsNormCall, RmsNormOutput, RmsNormIdentity>::new(
-        |call: &RmsNormCall| RmsNormKey::from(&call.input),
+) -> TunableSet<RmsNormKey, RmsNormRace, RmsNormOutput, RmsNormIdentity> {
+    let mut autotune = Autotune::<RmsNormKey, RmsNormRace, RmsNormOutput, RmsNormIdentity>::new(
+        |race: &RmsNormRace| RmsNormKey::from(&race.call.input),
     );
     let tile = autotune.group("tile", priority);
     let floor = RmsNormRoutineCandidate::floor(&hw);
@@ -516,25 +540,25 @@ fn candidates(
             &tile,
             RmsNormRoutineCandidate::list(CubeRmsNormRoutine, &hw),
             |candidate| RmsNormIdentity::Routine(candidate.clone().into()),
-            |candidate, call| candidate.run(call),
+            |candidate, race| candidate.run(race),
         )
         .identified(
             &tile,
             RmsNormRoutineCandidate::list(PlaneRmsNormRoutine, &hw),
             |candidate| RmsNormIdentity::Routine(candidate.clone().into()),
-            |candidate, call| candidate.run(call),
+            |candidate, race| candidate.run(race),
         )
         .identified(
             &tile,
             RmsNormRoutineCandidate::list(CubeGroupsRmsNormRoutine, &hw),
             |candidate| RmsNormIdentity::Routine(candidate.clone().into()),
-            |candidate, call| candidate.run(call),
+            |candidate, race| candidate.run(race),
         )
         // The cube groups' lead, which runs everywhere: taking `tile` out of the autotune stops
         // the family being measured, not being served.
         .floor(RmsNormIdentity::named(
             "cube-groups-rms-norm-floor",
-            move |call: RmsNormCall| floor.run(call),
+            move |race: RmsNormRace| floor.run(race),
         ))
         .finish()
 }
@@ -547,10 +571,17 @@ mod tests {
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-    /// **A race runs on the call's buffers.** The autotune hands its candidates the call's own
-    /// rows and weight, whatever bucket the rows' count is keyed in.
-    #[test]
-    fn a_race_runs_on_the_calls_rows() {
+    /// The memory `output`'s buffer lies in.
+    fn output_memory(output: &TensorHandle) -> impl PartialEq + core::fmt::Debug + use<> {
+        PlainTensor::of_handle(output.clone())
+            .binding
+            .handle
+            .memory
+            .id()
+    }
+
+    /// A race of three rows over 64, its output allocated once.
+    fn race_of_three_rows() -> RmsNormRace {
         let client = cubek_test_utils::client();
         let f32 = ElemType::Float(FloatKind::F32);
         let call = RmsNormCall {
@@ -559,11 +590,51 @@ mod tests {
             weight: PlainTensor::zeros(&client, &[64], [1], f32),
             epsilon: 1e-6,
         };
-        let tunables = candidates(Hardware::from_client(&client), GroupPriority::DEFAULT);
-        let raced = tunables.generate_inputs(&RmsNormKey::from(&call.input), &call);
+        let (out, _) = PlainTensor::empty_contiguous(&client, [3, 64].into(), f32);
+        RmsNormRace { call, out }
+    }
+
+    /// **A race runs on the call's buffers.** The autotune hands its candidates the call's own
+    /// rows, weight and output, whatever bucket the rows' count is keyed in.
+    #[test]
+    fn a_race_runs_on_the_calls_rows() {
+        let race = race_of_three_rows();
+        let tunables = candidates(
+            Hardware::from_client(&race.call.client),
+            GroupPriority::DEFAULT,
+        );
+        let raced = tunables.generate_inputs(&RmsNormKey::from(&race.call.input), &race);
         let memory = |tensor: &PlainTensor| tensor.binding.handle.memory.id();
-        assert_eq!(memory(&raced.input), memory(&call.input));
-        assert_eq!(memory(&raced.weight), memory(&call.weight));
+        assert_eq!(memory(&raced.call.input), memory(&race.call.input));
+        assert_eq!(memory(&raced.call.weight), memory(&race.call.weight));
+        assert_eq!(output_memory(&raced.out), output_memory(&race.out));
+    }
+
+    /// **A race allocates no output.** Every candidate that runs writes the norm into the race's
+    /// one output.
+    #[test]
+    fn every_candidate_writes_the_races_output() {
+        let race = race_of_three_rows();
+        let hw = Hardware::from_client(&race.call.client);
+        let outputs = (RmsNormRoutineCandidate::list(CubeGroupsRmsNormRoutine, &hw).iter())
+            .map(|candidate| candidate.run(race.clone()))
+            .chain(
+                RmsNormRoutineCandidate::list(PlaneRmsNormRoutine, &hw)
+                    .iter()
+                    .map(|candidate| candidate.run(race.clone())),
+            )
+            .chain(
+                RmsNormRoutineCandidate::list(CubeRmsNormRoutine, &hw)
+                    .iter()
+                    .map(|candidate| candidate.run(race.clone())),
+            )
+            .filter_map(Result::ok)
+            .map(|output| output_memory(&output.handle))
+            .collect::<Vec<_>>();
+        assert!(!outputs.is_empty(), "the floor runs everywhere");
+        for output in outputs {
+            assert_eq!(output, output_memory(&race.out));
+        }
     }
 
     /// On devices a dev machine cannot show: the cube groups, this kind's floor, prepare
