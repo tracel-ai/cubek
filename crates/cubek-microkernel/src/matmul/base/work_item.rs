@@ -73,6 +73,55 @@ impl MatmulBlocks {
             .collect()
     }
 
+    /// This space with every packed input at its finest reads, a word of values and, where its
+    /// scales are bytes, one scale ([`Packing::finest`]): what a microkernel plans its step on
+    /// before it widens its reads to the step ([`within`](Self::within)).
+    pub fn finest(&self) -> Self {
+        Self {
+            packings: self
+                .packings
+                .map(|input, packing| packing.map(|packing| packing.finest(Self::across(input)))),
+            ..*self
+        }
+    }
+
+    /// This space with every packed input at the widest reads that a run of `run` values and a
+    /// window of `window` along `K` hold whole ([`Packing::read_within`]): the reads a microkernel
+    /// whose units read runs of `run` from a window of `window` takes. `None` where an input's do
+    /// not fit.
+    pub fn within(&self, run: usize, window: usize) -> Option<Self> {
+        let mut packings = self.packings;
+        for input in MatmulOperand::INPUTS {
+            if let Some(packing) = self.packings.get(input) {
+                let read = packing.read_within(Self::across(input), run, window)?;
+                packings = packings.with(input, Some(read));
+            }
+        }
+        Some(Self { packings, ..*self })
+    }
+
+    /// This space with every packed input read a scale block at a time ([`Packing::by_block`]):
+    /// what a microkernel whose units load one block of one row with its scale plans on. `None`
+    /// where an input reads no block whole.
+    pub fn by_block(&self) -> Option<Self> {
+        let mut packings = self.packings;
+        for input in MatmulOperand::INPUTS {
+            if let Some(packing) = self.packings.get(input) {
+                packings = packings.with(input, Some(packing.by_block()?));
+            }
+        }
+        Some(Self { packings, ..*self })
+    }
+
+    /// The dimension an input's matrix lies across: its rows' dimension, `M` for the lhs and `N`
+    /// for the rhs.
+    fn across(input: MatmulOperand) -> Dimension {
+        match input {
+            MatmulOperand::Lhs => M,
+            _ => N,
+        }
+    }
+
     /// What one read of `operand` and of its scales brings: a float one's a value, no scales.
     pub fn operand(&self, operand: MatmulOperand) -> Operand {
         self.packings
@@ -132,6 +181,15 @@ impl MatmulBlocks {
 }
 
 impl MatmulWorkItem {
+    /// This item over `blocks`, the same space with its packed inputs read as `blocks` states:
+    /// what a microkernel that re-reads them plans on.
+    pub fn with_blocks(&self, blocks: MatmulBlocks) -> Self {
+        Self {
+            blocks: Some(blocks),
+            ..*self
+        }
+    }
+
     /// The element its inputs may be rounded to for a matrix instruction: tf32 where both are
     /// `f32` and float, and the reading allows it; none otherwise.
     pub fn rounded(&self) -> Option<ElemType> {

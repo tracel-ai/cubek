@@ -175,7 +175,7 @@ impl PlaneShuffleMatmulRoutine {
     ) -> bool {
         use cubecl::tile::layout::Run;
         use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
-        let rhs = problem.packings.rhs.as_ref();
+        let rhs = problem.inputs.rhs.packing();
         let one_tile = PlaneShuffleKSplit::Run(Run::StoredTile);
         (settings.microkernel.k_split != one_tile
             || rhs.is_some_and(|packing| {
@@ -189,7 +189,11 @@ impl PlaneShuffleMatmulRoutine {
                 );
                 reads.is_some_and(|reads| reads > 1)
             }))
-            && (!settings.microkernel.by_block || problem.rhs_by_block().is_ok())
+            && (!settings.microkernel.by_block
+                || MatmulOperand::INPUTS
+                    .into_iter()
+                    .filter_map(|input| problem.inputs.get(input).packing())
+                    .all(|packing| packing.by_block().is_some()))
     }
 
     /// `microkernel` placed by `partitioning`, its widths settled.
@@ -359,10 +363,13 @@ impl PlaneShuffleMatmulRoutine {
         packing: &Packing,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Decline> {
-        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let read = problem.rhs_read(settings.microkernel.by_block)?;
+        // The problem its microkernel plans on, every packed input read as it reads it: planned
+        // before any step is checked, which is the planned reads'.
+        let item = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?.work_item();
+        let planning = PlaneShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let read = problem.read_as(planning.planned_space());
         let problem: &MatmulRoutineProblem = &read;
-        let packing = problem.packings.rhs.as_ref().unwrap_or(packing);
+        let packing = &problem.inputs.rhs.packing().unwrap_or(*packing);
         let PlaneShufflePackedPlacement {
             microkernel,
             columns,
@@ -413,7 +420,7 @@ impl PlaneShufflePackedPlacement {
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<Self, Decline> {
-        if problem.packings.rhs.is_none() {
+        if problem.inputs.rhs.packing().is_none() {
             return Err(MATMUL_STREAMED_INPUT_FLOAT);
         }
         let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
@@ -495,7 +502,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let settings = match problem.packings.rhs {
+        let settings = match problem.inputs.rhs.packing() {
             Some(_) => Self::packed_settings(),
             None => Self::settings(hw),
         };
@@ -527,7 +534,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        match &problem.packings.rhs {
+        match &problem.inputs.rhs.packing() {
             Some(packing) => Self::packed_estimate(problem, packing, blueprint, grid, estimate),
             None => Self::float_estimate(problem, blueprint, grid, estimate),
         }
@@ -541,7 +548,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        match &problem.packings.rhs {
+        match &problem.inputs.rhs.packing() {
             Some(packing) => Self::prepare_packed(hw, problem, packing, settings),
             None => Self::prepare_float(hw, problem, settings),
         }
@@ -855,15 +862,12 @@ mod tests {
             .chain([devices::wgpu_no_subgroups(), devices::rdna_range()])
         {
             for settings in PlaneShuffleMatmulRoutine::indexed_packed_settings() {
-                let declines_rhs = settings.microkernel.by_block && problem.rhs_by_block().is_err();
-                let unread = MatmulRoutineProblem::RHS_UNREAD_BY_BLOCK;
                 match (
                     PlaneShuffleMatmulRoutine::prepare(&hw, &problem, &settings),
                     hw.plane_size().is_ok()
                         && PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem),
                 ) {
                     (Ok(_), true) => {}
-                    (Err(why), false) if declines_rhs => assert_eq!(why, unread, "{settings}"),
                     (Err(Decline::Unserved { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
                     }

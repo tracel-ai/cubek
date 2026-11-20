@@ -1,3 +1,4 @@
+use crate::matmul::MatmulBlocks;
 use crate::matmul::cube::{
     CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, MatmulCubeSpace,
     MatmulPlaneLayout,
@@ -240,6 +241,11 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
     /// Its cubes': the element their fill decodes their inputs into.
     fn decoded_stage(&self) -> Option<ElemType> {
         self.cube.decoded_stage()
+    }
+
+    /// Its cubes': the space they planned on.
+    fn planned_space(&self) -> Option<MatmulBlocks> {
+        self.cube.planned_space()
     }
 }
 

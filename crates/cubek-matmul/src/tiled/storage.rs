@@ -83,15 +83,8 @@ pub use cubecl::tile::{
     layout::{StorageLevels, StoragePartitioning},
 };
 
-/// A matmul input's values as they lie, which the tile it is stored in depends on: elements of one
-/// type, or codes packed under a quantization scheme.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredValues {
-    /// One element of this type a value.
-    Elements(ElemType),
-    /// Codes packed under this scheme.
-    Packed(QuantScheme),
-}
+/// A matmul input's values as they lie, which the tile it is stored in depends on.
+pub use cubek_std::layout::stored::StoredValues;
 
 /// The order a packed matrix's tiles lie in on `hw` ([`TileWords`]), which its writer stores and
 /// every reader binds: row by row where a reader takes a row's run whole, the TMA engine filling

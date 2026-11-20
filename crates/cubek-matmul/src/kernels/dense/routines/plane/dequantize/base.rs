@@ -81,7 +81,7 @@ impl PlaneDequantizeMatmulRoutine {
             },
         );
         let (blueprint, grid) = PlaneDequantizeMatmulRoutine::prepare(hw, problem, settings)?;
-        let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
+        let packing = &problem.inputs.rhs.packing().expect(MatmulView::PREPARED);
         let lined = packing.operand.lined();
         // Rows of the dimension the words do not run along, a line of the dimension they do in
         // each.
@@ -158,7 +158,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
+        let packing = &problem.inputs.rhs.packing().expect(MatmulView::PREPARED);
         let alone = Self::alone(problem);
         let item = MatmulView::new(&alone, PlaneShuffleMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
@@ -200,7 +200,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
             columns,
             planes,
         } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
-        let packing = problem.packings.rhs.as_ref().expect(MatmulView::PREPARED);
+        let packing = &problem.inputs.rhs.packing().expect(MatmulView::PREPARED);
         let partitioning = MatmulView::new(&alone, PlaneShuffleMatmulRoutine::ROWS_KIND)?
             .partitioning(
                 microkernel.tiling().planes(&[(columns, planes)]),

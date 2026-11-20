@@ -36,10 +36,15 @@ fn every_unit_registers_setting_reads_each_route_s_slab() {
 #[test]
 fn every_packed_plane_shuffle_setting_reads_each_route_s_packed_slab() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
-    let products: Vec<Routed> = [PackedFormat::Q8, PackedFormat::Q4, PackedFormat::Nvfp4]
-        .into_iter()
-        .flat_map(|format| [Routed::MOE.packed(format), Routed::NARROW.packed(format)])
-        .collect();
+    let products: Vec<Routed> = [
+        PackedFormat::Q8,
+        PackedFormat::Q4,
+        PackedFormat::Nvfp4,
+        PackedFormat::Mxfp4,
+    ]
+    .into_iter()
+    .flat_map(|format| [Routed::MOE.packed(format), Routed::NARROW.packed(format)])
+    .collect();
     shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine::packed_settings(), &products));
 }
 

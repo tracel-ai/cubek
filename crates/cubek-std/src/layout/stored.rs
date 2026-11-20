@@ -7,7 +7,8 @@
 
 use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
 use crate::matmul_dimensions::{K, blocked};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
+use cubecl::ir::ElemType;
+use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::{Run, VectorTile};
 use cubecl::tile::{Dimension, MicroTile, OperandReads, Space, kind::Field};
@@ -103,6 +104,40 @@ impl Operand {
         lined.then(|| Operand {
             reads: OperandReads {
                 read: MicroTile::along(dimension, block),
+                scale_read: MicroTile::along(dimension, 1),
+                ..self.reads
+            },
+            ..self
+        })
+    }
+
+    /// This operand, stored in tile order, read `words` words to a load, as
+    /// [`in_tile_order`](Self::in_tile_order) reads it from the word up, `across` the dimension its
+    /// matrix lies across: a narrower load than the one it was bound for, for a reader whose run is
+    /// shorter. Scales read one apiece stay so. `None` in rows, where a read is one word already, or
+    /// for a load tile order does not read whole.
+    pub fn reloaded(self, across: Dimension, words: usize) -> Option<Self> {
+        let order = self.tiles?;
+        let word = Operand::packed(
+            K,
+            order.values_per_word(),
+            K,
+            order.block(),
+            TileOrder::SCALES_PER_WORD,
+        );
+        let reloaded = word.in_tile_order(order, across, words)?;
+        match self.reads_scales_alone() {
+            true => reloaded.scales_alone(),
+            false => Some(reloaded),
+        }
+    }
+
+    /// This operand with each scale read alone and its values read as they were: what a reader
+    /// whose window holds part of a word of scales reads. `None` without scales.
+    fn scales_alone(self) -> Option<Self> {
+        let dimension = self.scaled_along()?;
+        Some(Operand {
+            reads: OperandReads {
                 scale_read: MicroTile::along(dimension, 1),
                 ..self.reads
             },
@@ -618,6 +653,73 @@ pub enum BlockScales {
     Words,
 }
 
+/// A matmul input's values as they lie: elements of one type, or codes packed under a
+/// quantization scheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StoredValues {
+    /// One element of this type a value.
+    Elements(ElemType),
+    /// Codes packed under this scheme.
+    Packed(QuantScheme),
+}
+
+/// One input of a product as it is stored: what its values are, the float element they stand for,
+/// and how a read of them and of their scales lies ([`Operand`]).
+///
+/// Every input is one of these, and a float input is the case with no scales: its values are
+/// elements of the element it stands for, read a value at a time. Nothing reads an input by asking
+/// whether it is quantized; it reads what its values and its scales are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StoredInput {
+    /// What its values are.
+    pub values: StoredValues,
+    /// The float element its values stand for: a float input's own; a packed one's, the element
+    /// its codes are decoded into, its scales applied, wherever an instruction takes no codes.
+    pub element: ElemType,
+    /// How a read of its values and of its scales lies.
+    pub operand: Operand,
+}
+
+impl StoredInput {
+    /// A float input of `element`: its values are its elements, a value a read, no scales.
+    pub fn plain(element: ElemType) -> Self {
+        Self {
+            values: StoredValues::Elements(element),
+            element,
+            operand: Operand::plain(),
+        }
+    }
+
+    /// An input packed as `packing` says, standing for values of `element`.
+    pub fn packed(packing: Packing, element: ElemType) -> Self {
+        Self {
+            values: StoredValues::Packed(packing.scheme),
+            element,
+            operand: packing.operand,
+        }
+    }
+
+    /// Bytes `values` of its values hold as stored: its words and its block scales; a float
+    /// input's, its elements.
+    pub fn bytes(&self, values: usize) -> usize {
+        match self.packing() {
+            Some(packing) => packing.bytes(values),
+            None => values * self.element.size(),
+        }
+    }
+
+    /// How it is packed, where its values are codes: its reads and scales, and its scheme.
+    pub fn packing(&self) -> Option<Packing> {
+        match self.values {
+            StoredValues::Packed(scheme) => Some(Packing {
+                operand: self.operand,
+                scheme,
+            }),
+            StoredValues::Elements(_) => None,
+        }
+    }
+}
+
 /// How a matrix is packed: what one read of its words brings and how far one block scale covers,
 /// over its two dimensions, and the scheme that stores them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -628,28 +730,85 @@ pub struct Packing {
 
 impl Packing {
     /// This packing read a scale block at a time: a unit loads one block of values and its one
-    /// scale. Only `ue4m3` block scales are read so, each a byte a unit loads alone, in rows or in
-    /// tile order; any other scale's word is read whole. `None` where the scheme or the operand
-    /// reads no block whole.
+    /// scale, which it loads alone ([`scales_read_alone`](Self::scales_read_alone)), in rows or in
+    /// tile order. `None` where the scheme or the operand reads no block whole.
     pub fn by_block(&self) -> Option<Packing> {
         Some(Packing {
             operand: self.operand.by_block()?,
             scheme: self.scheme,
         })
-        .filter(Packing::scales_are_bytes)
+        .filter(Packing::scales_read_alone)
     }
 
-    /// Whether its reads take each `ue4m3` scale byte alone, as [`by_block`](Self::by_block)
-    /// reads them: what binds its block scales a byte apiece.
-    pub fn reads_scale_bytes(&self) -> bool {
-        self.operand.reads_scales_alone() && self.scales_are_bytes()
+    /// The finest reads of this packing, as stored, `across` the dimension its matrix lies across:
+    /// its values a word a read, narrowed from the load it was bound for where the matrix is stored
+    /// in tile order, and its scales one a read. What a reader plans its step
+    /// on before it widens its reads to the step ([`read_within`](Self::read_within)): every other
+    /// read of the packing is a whole number of these.
+    pub fn finest(&self, across: Dimension) -> Packing {
+        let words = self.operand.read_values() / self.scheme.num_quants();
+        let operand = match words > 1 {
+            true => self.operand.reloaded(across, 1).unwrap_or(self.operand),
+            false => self.operand,
+        };
+        let operand = match self.scales_read_alone() {
+            true => operand.scales_alone().unwrap_or(operand),
+            false => operand,
+        };
+        Packing {
+            operand,
+            scheme: self.scheme,
+        }
     }
 
-    /// Whether its block scales are `ue4m3` bytes.
-    fn scales_are_bytes(&self) -> bool {
-        self.scheme
-            .block_scale()
-            .is_some_and(|block| block.dtype == ScaleDtype::UE4M3)
+    /// The widest reads of this packing that a reader holds whole: its values in runs of `run`
+    /// along `K`, its scales over a window of `window` along `K`, `across` the dimension its
+    /// matrix lies across.
+    ///
+    /// Values are read as they were bound, the widest load the device takes, narrowed a load at a
+    /// time where the matrix is stored in tile order; in rows a read is one word already. Scales are
+    /// read a word at a time where the window holds whole words of them, and one at a time
+    /// otherwise ([`scales_read_alone`](Self::scales_read_alone)). `None` where no read fits: a run
+    /// shorter than one word, or a window holding part of one scale.
+    pub fn read_within(&self, across: Dimension, run: usize, window: usize) -> Option<Packing> {
+        let mut operand = self.operand;
+        while !run.is_multiple_of(operand.read(K)) {
+            let words = operand.read_values() / self.scheme.num_quants();
+            operand = operand.reloaded(across, (words / 2).max(1))?;
+            if words == 1 {
+                return None;
+            }
+        }
+        let scale_span = |operand: &Operand| operand.scale_read_space().map(|read| read.extent(K));
+        if scale_span(&operand).is_some_and(|span| !window.is_multiple_of(span)) {
+            operand = match self.scales_read_alone() {
+                true => operand.scales_alone()?,
+                false => return None,
+            };
+        }
+        match scale_span(&operand).is_some_and(|span| !window.is_multiple_of(span)) {
+            true => None,
+            false => Some(Packing {
+                operand,
+                scheme: self.scheme,
+            }),
+        }
+    }
+
+    /// Whether its reads take each scale alone, as [`by_block`](Self::by_block) reads them: what
+    /// binds its block scales one apiece.
+    pub fn reads_scales_alone(&self) -> bool {
+        self.operand.reads_scales_alone() && self.scales_read_alone()
+    }
+
+    /// Whether each of its block scales is whole bytes, which a unit loads alone: every scale type
+    /// a scheme states, `ue4m3` and `ue8m0` a byte, `f16` two, `f32` four.
+    fn scales_read_alone(&self) -> bool {
+        self.scheme.block_scale().is_some_and(|block| {
+            ElemType::from_scale_dtype(block.dtype)
+                .size_bits()
+                .is_multiple_of(u8::BITS as usize)
+        })
     }
 
     /// Bits one value holds, packed.
@@ -726,6 +885,88 @@ mod tests {
     /// NVFP4 laid out in `tile` as `words` asks.
     fn laid(words: TileWords, tile: (usize, usize)) -> TileOrder {
         TileOrder::laid(&tile_order::nvfp4_scheme(), words, tile).expect("NVFP4 is tile order")
+    }
+
+    /// A packing in `order`, read `words` words to a load, under `scheme`.
+    fn in_order(scheme: cubecl::quant::scheme::QuantScheme, words: usize) -> Packing {
+        let order = TileOrder::laid(&scheme, TileWords::RowByRow, (128, 8)).expect("tile order");
+        let operand = Operand::of_scheme(&scheme, K, [K, N])
+            .and_then(|operand| operand.in_tile_order(order, N, words))
+            .expect("tile order is read");
+        Packing { operand, scheme }
+    }
+
+    /// `value` packed down `k` of a `[k, n]` matrix, a scale of `scale` every `block`.
+    fn down_k(
+        value: cubecl::quant::scheme::QuantValue,
+        block: u8,
+        scale: cubecl::quant::scheme::ScaleDtype,
+    ) -> cubecl::quant::scheme::QuantScheme {
+        cubecl::quant::scheme::QuantScheme::default()
+            .with_value(value)
+            .per_block([block, 1], scale)
+            .with_store(cubecl::quant::scheme::QuantStore::PackedU32(1))
+    }
+
+    /// Reads as `(values along K, K one read of scales covers)`.
+    fn reads(packing: Option<Packing>) -> Option<(usize, usize)> {
+        packing.map(|packing| {
+            let scales = packing.operand.scale_read_space().expect("scaled");
+            (packing.operand.read(K), scales.extent(K))
+        })
+    }
+
+    /// Every format a reader with a 16-value run and a 64-deep window reads whole, from properties
+    /// alone: MXFP4 in tile order narrowed from its 32-value load to two words, its scale word of
+    /// 128 read a scale at a time; NVFP4's 16-value load and 64-wide scale word kept; MXFP8's
+    /// 16-value load kept and its 128-wide scale word read a scale at a time.
+    #[test]
+    fn a_reader_takes_the_widest_reads_its_run_and_window_hold() {
+        use cubecl::quant::scheme::{QuantValue, ScaleDtype};
+        let mxfp4 = in_order(down_k(QuantValue::E2M1, 32, ScaleDtype::UE8M0), WORDS);
+        let nvfp4 = in_order(tile_order::nvfp4_scheme(), WORDS);
+        let mxfp8 = in_order(down_k(QuantValue::E4M3, 32, ScaleDtype::UE8M0), WORDS);
+        assert_eq!(reads(Some(mxfp4)), Some((32, 128)));
+        assert_eq!(reads(mxfp4.read_within(N, 16, 64)), Some((16, 32)));
+        assert_eq!(reads(nvfp4.read_within(N, 16, 64)), Some((16, 64)));
+        assert_eq!(reads(mxfp8.read_within(N, 16, 64)), Some((16, 32)));
+        // A window of whole words of scales keeps them a word a read.
+        assert_eq!(reads(mxfp4.read_within(N, 32, 128)), Some((32, 128)));
+    }
+
+    /// The finest reads are a word of values and, where scales are bytes, one scale: MXFP4 in tile
+    /// order from its 32-value load and 128-wide scale word to 8 and 32; q4's word of `f32` scales,
+    /// one a word, kept.
+    #[test]
+    fn the_finest_reads_are_a_word_and_a_scale() {
+        use cubecl::quant::scheme::{QuantValue, ScaleDtype};
+        let mxfp4 = in_order(down_k(QuantValue::E2M1, 32, ScaleDtype::UE8M0), WORDS);
+        assert_eq!(reads(Some(mxfp4.finest(N))), Some((8, 32)));
+        let scheme = down_k(QuantValue::Q4S, 32, ScaleDtype::F32);
+        let q4 = Packing {
+            operand: Operand::of_scheme(&scheme, K, [K, N]).expect("one dimension a block"),
+            scheme,
+        };
+        assert_eq!(reads(Some(q4.finest(N))), Some((8, 32)));
+    }
+
+    /// A window holding part of one scale reads none: `f32` scales, one a word, are read a scale at
+    /// a time, and a window of 16 holds half of one of 32.
+    #[test]
+    fn a_window_holding_part_of_one_scale_reads_none() {
+        use cubecl::quant::scheme::{QuantValue, ScaleDtype};
+        let q4 = Packing {
+            operand: Operand::of_scheme(&down_k(QuantValue::Q4S, 32, ScaleDtype::F32), K, [K, N])
+                .expect("one dimension a block"),
+            scheme: down_k(QuantValue::Q4S, 32, ScaleDtype::F32),
+        };
+        assert_eq!(reads(q4.read_within(N, 8, 32)), Some((8, 32)));
+        assert_eq!(reads(q4.read_within(N, 8, 16)), None);
+        assert_eq!(
+            reads(q4.read_within(N, 4, 32)),
+            None,
+            "a run shorter than a word"
+        );
     }
 
     /// Tile order row by row, as the writer stores it for a 128-bit load, is read two words along

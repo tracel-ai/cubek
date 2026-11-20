@@ -1,3 +1,4 @@
+use crate::matmul::MatmulBlocks;
 use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedFillingDecline, CubeStagedMicrokernelSettings,
     CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaDecline, MatmulCubeSpace, MatmulPlaneLayout,
@@ -58,6 +59,10 @@ pub struct CubeStagedMicrokernel {
     pub depth: CubeStagedDepth,
     /// How its planes read each operand out of the stages.
     pub reads: MatmulOperands<MatmulRead>,
+    /// The block-split space it planned on, every packed input at the reads it takes: the widest
+    /// its stage holds whole, where the stage is decoded ([`MatmulBlocks::within`]), or its
+    /// planes', where they read the stage as stored. `None` over float inputs.
+    pub planned: Option<MatmulBlocks>,
 }
 
 /// What one stage of a cube spans along the contraction.
@@ -106,6 +111,7 @@ impl CubeStagedMicrokernel {
             store: CubeStagedStore::Fragments,
             depth,
             reads,
+            planned: None,
         }
     }
 
@@ -196,9 +202,18 @@ impl CubeStagedMicrokernel {
         item: &MatmulWorkItem,
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
+        // A stage read as stored is one step of the instruction: deeper ones are the decoding
+        // planes' alone.
+        let one_step = settings.stage_steps.get() == 1;
         let mut candidates: Vec<Self> = match item.as_stored() {
-            Some(stored) => Self::as_stored_candidates(hw, &stored, settings),
-            None => Vec::new(),
+            Some(stored) if one_step => Self::as_stored_candidates(hw, &stored, settings)
+                .into_iter()
+                .map(|candidate| Self {
+                    planned: candidate.plane.blocks,
+                    ..candidate
+                })
+                .collect(),
+            _ => Vec::new(),
         };
         candidates.extend(Self::decoding_candidates(hw, item, settings));
         candidates
@@ -208,14 +223,23 @@ impl CubeStagedMicrokernel {
     /// float product's plane microkernels on the decoded stages, the tile layer's instruction
     /// first, one for each matrix instruction under which a step of `K`, the stage, is
     /// whole scale blocks, each a whole number of the instruction's steps. A plane holds the
-    /// settings' steps of `M` and `N` and walks a step of `K` through each stage, block by block,
-    /// in the instruction's calls ([`MatmulStep::calls`]). The units filling
-    /// each stage decode every packed input into [`MatmulWorkItem::decoded_element`].
+    /// settings' steps of `M` and `N` and walks the settings' steps of `K` through each stage
+    /// ([`CubeStagedMicrokernelSettings::stage_steps`]), block by block, in the instruction's
+    /// calls ([`MatmulStep::calls`]). The units filling each stage decode every packed input into
+    /// [`MatmulWorkItem::decoded_element`].
     fn decoding_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
+        // The step is planned on every packed input's finest reads, which every wider read is
+        // whole numbers of; the inputs are then read as widely as they were bound and the stage,
+        // the window its units fill, holds whole.
+        let Some(space) = item.blocks else {
+            return Vec::new();
+        };
+        let finest = space.finest();
+        let item = &item.with_blocks(finest);
         let (block, read) = (Self::block(item), item.decoded_element());
         let step = item
             .blocks
@@ -253,8 +277,17 @@ impl CubeStagedMicrokernel {
                     },
                     ..plane
                 };
-                let depth = CubeStagedDepth::ScaleBlocks(NonZeroUsize::new(blocks)?);
-                Some(Self::new(settings, plane, depth, item.decoding_reads()))
+                let stage_blocks = NonZeroUsize::new(blocks)?.checked_mul(settings.stage_steps)?;
+                let window = stage_blocks.get() * block;
+                Some(Self {
+                    planned: Some(space.within(window, window)?),
+                    ..Self::new(
+                        settings,
+                        plane,
+                        CubeStagedDepth::ScaleBlocks(stage_blocks),
+                        item.decoding_reads(),
+                    )
+                })
             })
             .collect()
     }
@@ -832,6 +865,10 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// Its walk's ([`CubeStagedWalk::decoded`]).
     fn decoded_stage(&self) -> Option<ElemType> {
         self.walk().decoded()
+    }
+
+    fn planned_space(&self) -> Option<MatmulBlocks> {
+        self.planned
     }
 }
 
