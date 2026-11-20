@@ -1494,6 +1494,7 @@ name = "cubek-microkernel"
 version = "0.4.0-pre.2"
 dependencies = [
  "cubecl",
+ "cubek-microkernel",
  "cubek-std",
  "cubek-test-utils",
  "half",
