@@ -9,8 +9,8 @@ use cubecl::tile::{Dimension, Indexing};
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{
-    MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand, MatmulOperands,
-    MatmulStoredTile,
+    MatmulBlocks, MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand,
+    MatmulOperands, MatmulStoredTile,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{BlockScales, Packing, StoredInput};
@@ -125,52 +125,28 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// What a setting reading the rhs a scale block at a time declines where it reads none so
-    /// ([`Packing::by_block`]): no packed rhs, block scales wider than a byte, blocks that are no
-    /// whole number of reads in rows, or tiles whose block is not the scheme's.
-    pub const RHS_UNREAD_BY_BLOCK: Refusal = Refusal::Declined {
-        why: "reading the rhs a block at a time needs a packed rhs with one-byte block scales \
-              (ue4m3 or ue8m0), in blocks that are whole reads in rows or the tiles' own block in \
-              tile order",
-    };
-
-    /// What a setting reading the rhs a scale block at a time declines against a packed lhs: the
-    /// lhs is still read a word of scales at a time, and a stage holding the two read apart
-    /// decodes the product wrong. The lhs's word sets the step besides, so a read by block of the
-    /// rhs would stage no less of `K`.
-    pub const PACKED_LHS_UNREAD_BY_BLOCK: Refusal = Refusal::Declined {
-        why: "reading the rhs a block at a time against a packed lhs, which is read a word of \
-              scales at a time: the stage decodes two inputs read apart wrong",
-    };
-
-    /// This problem with its packed rhs read a scale block at a time ([`Packing::by_block`]): the
-    /// problem a microkernel reading so plans on.
-    ///
-    /// # Errors
-    ///
-    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where its rhs reads none so, and
-    /// [`PACKED_LHS_UNREAD_BY_BLOCK`](Self::PACKED_LHS_UNREAD_BY_BLOCK) where its lhs is packed.
-    pub fn rhs_by_block(&self) -> Result<Self, Refusal> {
-        if self.inputs.lhs.packing().is_some() {
-            return Err(Self::PACKED_LHS_UNREAD_BY_BLOCK);
-        }
-        let mut by_block = self.clone();
-        let rhs = &mut by_block.inputs.rhs;
-        let packing = rhs.packing().and_then(|packing| packing.by_block());
-        *rhs = StoredInput::packed(packing.ok_or(Self::RHS_UNREAD_BY_BLOCK)?, rhs.element);
-        Ok(by_block)
-    }
-
-    /// The problem a microkernel reading the rhs `by_block` plans and binds on: this one re-read a
-    /// scale block at a time ([`rhs_by_block`](Self::rhs_by_block)), or this one as it is.
-    ///
-    /// # Errors
-    ///
-    /// As [`rhs_by_block`](Self::rhs_by_block), where it reads by block.
-    pub fn rhs_read(&self, by_block: bool) -> Result<Cow<'_, Self>, Refusal> {
-        match by_block {
-            true => self.rhs_by_block().map(Cow::Owned),
-            false => Ok(Cow::Borrowed(self)),
+    /// This problem with its packed inputs read as `planned` states: the problem a microkernel
+    /// that re-read them plans and is bound on ([`MatmulMicrokernel::planned_space`](cubek_microkernel::matmul::MatmulMicrokernel::planned_space)). Itself where
+    /// `planned` is `None` or reads every input as it is.
+    pub fn read_as(&self, planned: Option<MatmulBlocks>) -> Cow<'_, Self> {
+        let Some(planned) = planned else {
+            return Cow::Borrowed(self);
+        };
+        let inputs = self
+            .inputs
+            .map(|operand, input| match planned.packings.get(operand) {
+                Some(packing) => StoredInput {
+                    operand: packing.operand,
+                    ..input
+                },
+                None => input,
+            });
+        match inputs == self.inputs {
+            true => Cow::Borrowed(self),
+            false => Cow::Owned(Self {
+                inputs,
+                ..self.clone()
+            }),
         }
     }
 

@@ -201,18 +201,23 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
-        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let read = problem.rhs_read(settings.microkernel.cube.by_block)?;
+        let item = |problem| {
+            let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
+            let item = view.work_item();
+            if item
+                .blocks
+                .is_some_and(|blocks| blocks.packings.lhs.is_some())
+            {
+                return Err(MATMUL_HYPERCUBE_PACKED_LHS);
+            }
+            let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+            Ok((view, item, microkernel))
+        };
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let (_, _, planning) = item(problem)?;
+        let read = problem.read_as(planning.planned_space());
         let problem: &MatmulRoutineProblem = &read;
-        let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
-        let item = view.work_item();
-        if item
-            .blocks
-            .is_some_and(|blocks| blocks.packings.lhs.is_some())
-        {
-            return Err(MATMUL_HYPERCUBE_PACKED_LHS);
-        }
-        let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let (view, item, microkernel) = item(problem)?;
         problem.check_block_scales(
             microkernel.block_scales(),
             microkernel.cube.fill.delivery == CubeStagedDelivery::Tma,

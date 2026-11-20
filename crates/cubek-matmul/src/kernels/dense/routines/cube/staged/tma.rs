@@ -161,8 +161,14 @@ impl Routine for CubeStagedTmaMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let read = problem.rhs_read(settings.microkernel.by_block)?;
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let read = CubeStagedPlacement::planned(
+            hw,
+            problem,
+            &settings.microkernel,
+            Self::FILL,
+            CubeStagedStore::Fragments,
+        )?;
         let placement = CubeStagedPlacement::new(
             hw,
             &read,

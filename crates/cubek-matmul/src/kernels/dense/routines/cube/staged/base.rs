@@ -31,6 +31,7 @@ use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_dimensions::{K, KB, KI, MI, N, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
+use std::borrow::Cow;
 
 /// The cube routines' blueprint: how a stage its microkernel walks holds its cells is the one
 /// layout of shared memory that depends on the problem; the rest is the microkernel's.
@@ -69,25 +70,7 @@ impl<'a> CubeStagedPlacement<'a> {
     ) -> Result<Self, Refusal> {
         let view = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
-        CubeStagedMicrokernel::admits(&item)?;
-        let by_units = fill.delivery == CubeStagedDelivery::Copy;
-        // An operand the TMA engine lands is read in the instruction the tile layer picks for
-        // landed operands: the planes take the first candidate whose sum it opens, as it opens it.
-        let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
-            .filter(|candidate| {
-                by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
-            })
-            .find_map(|candidate| {
-                CubeStagedMicrokernel {
-                    fill,
-                    store,
-                    ..candidate
-                }
-                .summed(hw, &item)
-            })
-            .ok_or(Refusal::Declined {
-                why: CubeStagedMicrokernel::decline(settings),
-            })?;
+        let microkernel = Self::pick(hw, &item, settings, fill, store)?;
         if microkernel.walk().decoded().is_some() {
             view.check_steps(hw)?;
         }
@@ -113,6 +96,51 @@ impl<'a> CubeStagedPlacement<'a> {
             resolved,
             cube_space,
         })
+    }
+
+    /// The problem `settings`' microkernel plans and is bound on, its stages filled by `fill` and
+    /// its box stored by `store`: `problem` with every packed input read as that microkernel reads
+    /// it ([`MatmulMicrokernel::planned_space`]), which [`new`](Self::new) then places.
+    pub(crate) fn planned<'p>(
+        hw: &Hardware,
+        problem: &'p MatmulRoutineProblem,
+        settings: &CubeStagedMicrokernelSettings,
+        fill: CubeStagedFill,
+        store: CubeStagedStore,
+    ) -> Result<Cow<'p, MatmulRoutineProblem>, Refusal> {
+        let item = MatmulView::new(problem, CubeStagedMatmulRoutine::ROWS_KIND)?.work_item();
+        let microkernel = Self::pick(hw, &item, settings, fill, store)?;
+        Ok(problem.read_as(microkernel.planned_space()))
+    }
+
+    /// The first of `settings`' microkernels on `hw` for `item`, its stages filled by `fill` and its
+    /// box stored by `store`, summed as `item` sums. An operand the TMA engine lands is read in the
+    /// instruction the tile layer picks for landed operands: the planes take the first candidate
+    /// whose sum it opens, as it opens it.
+    fn pick(
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        settings: &CubeStagedMicrokernelSettings,
+        fill: CubeStagedFill,
+        store: CubeStagedStore,
+    ) -> Result<CubeStagedMicrokernel, Refusal> {
+        CubeStagedMicrokernel::admits(item)?;
+        let by_units = fill.delivery == CubeStagedDelivery::Copy;
+        CubeStagedMicrokernel::candidates(hw, item, settings)
+            .filter(|candidate| {
+                by_units || item.blocks.is_some() || candidate.walk().decoded().is_none()
+            })
+            .find_map(|candidate| {
+                CubeStagedMicrokernel {
+                    fill,
+                    store,
+                    ..candidate
+                }
+                .summed(hw, item)
+            })
+            .ok_or(Refusal::Declined {
+                why: CubeStagedMicrokernel::decline(settings),
+            })
     }
 
     fn microkernel(&self) -> &CubeStagedMicrokernel {
@@ -491,7 +519,16 @@ pub(crate) fn widths_in_blocks(
         None => {
             let widest = hw.load_values(contracted.elements.get(operand)).min(block);
             match problem.inputs.get(operand).packing() {
-                Some(_) => widest,
+                // In tile order a read is the load the input is bound at, as its microkernel
+                // planned it; in rows a read is a word, and a load as many as the device takes,
+                // within a unit's run where its planes decode the input as they load it.
+                Some(packing) => match packing.operand.tile_order() {
+                    Some(_) => packing.operand.read_values().min(widest),
+                    None => microkernel
+                        .plane
+                        .decoding_run()
+                        .map_or(widest, |run| widest.min(run)),
+                },
                 None => float_width_in_blocks(problem, &blocks, partitioning, operand, widest),
             }
         }

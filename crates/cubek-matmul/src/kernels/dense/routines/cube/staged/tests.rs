@@ -1495,13 +1495,12 @@ mod base {
         assert!(estimate.work.is_some());
     }
 
-    /// On a GPU with every block-scaled instruction `sm_120` has, a format's product read as
-    /// stored prepares on that format's instruction where a step covers whole reads of its
-    /// scales: NVFP4's, its scales handed over a word a step, as the instruction takes them. A
-    /// step of MXFP4 (64) or MXFP8 (32) covers part of a read of four scales of thirty-two, a
-    /// window the tile DSL cuts only on whole reads, so the block-scaled list prepares neither:
-    /// on an RTX PRO 6000 every MXFP4 launch failed to expand and left its output unwritten.
-    /// Both run on the planes that decode as they load instead.
+    /// On a GPU with every block-scaled instruction `sm_120` has, each format's product read as
+    /// stored prepares on that format's instruction, each input read as widely as a step holds
+    /// whole: NVFP4's scales a word a step, as the instruction takes them; MXFP4's (a step of 64)
+    /// and MXFP8's (a step of 32), whose word of four scales of thirty-two a step holds part of,
+    /// one at a time as fields. Read a word at a time, every MXFP4 launch once failed to expand
+    /// on an RTX PRO 6000 and left its output unwritten.
     #[test]
     fn each_format_read_as_stored_prepares_on_its_instruction() {
         use cubecl::tile::BlockScaledOperands;
@@ -1522,9 +1521,9 @@ mod base {
             )
         };
         let formats = [
-            ((NVFP4_FORM, 64), Some(BlockScales::Words)),
-            (ue8m0(FloatKind::E2M1x2, 64), None),
-            (ue8m0(FloatKind::E4M3, 32), None),
+            ((NVFP4_FORM, 64), BlockScales::Words),
+            (ue8m0(FloatKind::E2M1x2, 64), BlockScales::Fields),
+            (ue8m0(FloatKind::E4M3, 32), BlockScales::Fields),
         ];
         for ((form, k), scales) in formats {
             let inputs = CubeStagedMatmulRoutine::block_scaled_inputs(&form)
@@ -1540,10 +1539,6 @@ mod base {
                 .into_iter()
                 .filter_map(|(_, prepared)| prepared.ok())
                 .collect();
-            let Some(scales) = scales else {
-                assert!(prepared.is_empty(), "{form:?}");
-                continue;
-            };
             assert!(!prepared.is_empty(), "{form:?}");
             for (blueprint, _) in prepared {
                 let instruction = blueprint.microkernel.plane.instruction;
@@ -1668,12 +1663,12 @@ mod base {
         }
         assert!(estimated > 0, "no packed setting prepared");
     }
-    /// An MXFP4 weight read a scale block at a time stages one 32-wide block of `K` a step, where
-    /// read a word of scales at a time it stages the word's four: on an RTX PRO 6000 the box with
-    /// a second stage in flight that leads NVFP4 at a prompt's rows outgrows shared memory read
-    /// by the word, and fits read by block, two steps a stage holding 64 of `K` as NVFP4's does.
+    /// A stage decoding an MXFP4 weight holds the steps its settings count, each one 32-wide
+    /// block of `K`, the weight's finest read: four are a word of its scales, 128 of `K`, which
+    /// on an RTX PRO 6000 the box with a second stage in flight that leads NVFP4 at a prompt's
+    /// rows outgrows; two fit, 64 of `K` as four of NVFP4's 16-wide blocks hold.
     #[test]
-    fn an_mxfp4_weight_read_by_block_stages_one_block_a_step() {
+    fn a_decoded_stage_holds_the_steps_its_settings_count() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
         use cubek_microkernel::matmul::cube::CubeStagedDepth;
 
@@ -1714,10 +1709,13 @@ mod base {
         let single = CubeStagedMicrokernelSettings::in_steps((4, 2), (2, 4), StageRing::SINGLE);
         let double = single.ringed(StageRing::DOUBLE);
 
-        assert_eq!(depth(single), blocks(4));
-        assert_eq!(depth(single.by_block()), blocks(1));
-        assert!(depth(double).is_err(), "two stages of four blocks fit");
-        assert_eq!(depth(double.by_block().stage_steps(2)), blocks(2));
+        assert_eq!(depth(single.stage_steps(4)), blocks(4));
+        assert_eq!(depth(single), blocks(1));
+        assert!(
+            depth(double.stage_steps(4)).is_err(),
+            "two stages of four blocks fit"
+        );
+        assert_eq!(depth(double.stage_steps(2)), blocks(2));
     }
 
     /// Against an NVFP4 weight the units decode into its stages, the setting that hands the float

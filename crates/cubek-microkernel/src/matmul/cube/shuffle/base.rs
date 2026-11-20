@@ -1,3 +1,4 @@
+use crate::matmul::MatmulBlocks;
 use crate::matmul::cube::MatmulCubeSpace;
 use crate::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
@@ -276,15 +277,15 @@ impl CubeShuffleMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let col_weight = item.layouts.rhs == MatmulLayout::Col;
         let meet = CubeMeet::of(hw);
-        // Reading by block is planned on an rhs its routine re-read so: planned on one read as
-        // stored, it would bind otherwise than it plans.
-        let planned = !by_block
-            || item
-                .blocks
-                .and_then(|space| space.packings.rhs)
-                .is_some_and(|packing| packing.reads_scale_bytes());
-        let planes = (planned && PlaneShuffleMicrokernel::admits(item).is_ok())
-            .then(|| PlaneShuffleMicrokernel::candidates(hw, item, settings));
+        // Its planes load as the cube's schedule says: a block of one row a load where it reads
+        // by block, the space planned so.
+        let settings = PlaneShuffleMicrokernelSettings {
+            by_block,
+            ..*settings
+        };
+        let planes = PlaneShuffleMicrokernel::admits(item)
+            .is_ok()
+            .then(|| PlaneShuffleMicrokernel::candidates(hw, item, &settings).collect::<Vec<_>>());
         planes.into_iter().flatten().filter_map(move |plane| {
             let planes = match plane.blocks {
                 None => col_weight.then_some(target)?,
@@ -567,8 +568,11 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
         }
     }
 
-    fn reads_rhs_by_block(&self) -> bool {
-        self.by_block
+    fn planned_space(&self) -> Option<MatmulBlocks> {
+        match self.plane {
+            CubeShufflePlane::Shuffle(plane) => plane.planned_space(),
+            CubeShufflePlane::Fragment(plane) => plane.blocks,
+        }
     }
 }
 

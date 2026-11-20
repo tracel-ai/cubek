@@ -57,20 +57,19 @@ impl CubeStagedAsyncCopyMatmulRoutine {
         CubeStagedMicrokernelSettings::in_steps((4, 2), (2, 4), StageRing::DOUBLE);
 
     /// The settings a product against a packed input races on `hw`: the box handing its float
-    /// input to the engine (`PACKED_FLOAT_ON_ENGINE`), read a word of scales at a time and a
-    /// scale block at a time two steps a stage ([`CubeStagedMatmulRoutine::packed_settings`] says
-    /// why), then the boxes staged as stored (`CubeStagedMatmulRoutine::STORED`), which by the
+    /// input to the engine (`PACKED_FLOAT_ON_ENGINE`) at every count of steps of `K` a stage
+    /// holds ([`CubeStagedMatmulRoutine::PACKED_STAGE_STEPS`]), then the boxes staged as stored (`CubeStagedMatmulRoutine::STORED`), which by the
     /// units never were the fastest. None without a copy engine. Its cubes in the grid's order.
     ///
-    /// On an RTX PRO 6000 at Qwen3.8 27B's down projection at 512 rows, the box read by block took
-    /// MXFP4 to 381 µs, as NVFP4's read by the word, where read by the word MXFP4's outgrew
-    /// shared memory.
+    /// On an RTX PRO 6000 at Qwen3.8 27B's down projection at 512 rows, the box two steps a stage
+    /// took MXFP4 to 381 µs, as NVFP4's four, where MXFP4's four outgrew shared memory.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedAsyncCopyMatmulRoutineSettings> {
         if !hw.unit_async_copy() {
             return Vec::new();
         }
         let decoding = Self::PACKED_FLOAT_ON_ENGINE;
-        [decoding, decoding.by_block().stage_steps(2)]
+        CubeStagedMatmulRoutine::PACKED_STAGE_STEPS
+            .map(|steps| decoding.stage_steps(steps))
             .into_iter()
             .chain(CubeStagedMatmulRoutine::STORED)
             .map(|microkernel| CubeStagedAsyncCopyMatmulRoutineSettings {
@@ -194,8 +193,14 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let read = problem.rhs_read(settings.microkernel.by_block)?;
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let read = CubeStagedPlacement::planned(
+            hw,
+            problem,
+            &settings.microkernel,
+            Self::FILL,
+            CubeStagedStore::Fragments,
+        )?;
         let placement = CubeStagedPlacement::new(
             hw,
             &read,

@@ -1033,21 +1033,23 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     blueprint.microkernel.words_delivery(),
                 ),
             };
-        let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
-        // A microkernel reading the rhs a block at a time planned on the rhs read so.
-        let by_block = match (&self.rhs, blueprint.microkernel.reads_rhs_by_block()) {
-            (StoredTensor::Packed(tensor), true) => {
-                Some(StoredTensor::Packed(tensor.by_block().expect(
-                    "a microkernel reading by block planned on an rhs that reads so",
-                )))
+        // Every packed input is bound at the reads its microkernel planned on.
+        let planned = blueprint.microkernel.planned_space();
+        let read = |operand: &StoredTensor, input: MatmulOperand| {
+            let reads = planned.and_then(|space| space.packings.get(input));
+            match (operand, reads) {
+                (StoredTensor::Packed(tensor), Some(packing)) => {
+                    StoredTensor::Packed(tensor.read_as(packing.operand))
+                }
+                _ => operand.clone(),
             }
-            _ => None,
         };
-        let rhs = bind(
-            by_block.as_ref().unwrap_or(&self.rhs),
-            [K, N],
-            blueprint.widths.rhs,
+        let (lhs, rhs) = (
+            read(&self.lhs, MatmulOperand::Lhs),
+            read(&self.rhs, MatmulOperand::Rhs),
         );
+        let lhs = bind(&lhs, [M, K], blueprint.widths.lhs);
+        let rhs = bind(&rhs, [K, N], blueprint.widths.rhs);
         let lhs = self.read_through_table(MatmulOperand::Lhs, lhs);
         let rhs = self.read_through_table(MatmulOperand::Rhs, rhs);
         MatmulBinding {

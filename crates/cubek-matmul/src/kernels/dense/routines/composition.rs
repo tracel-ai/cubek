@@ -1,5 +1,5 @@
-//! Which routine serves which product, written down: every routine, at every setting any of its
-//! lists races, against every pairing of an activation and a weight in each format the kernels
+//! Which routine serves which product, written down: every routine, at every setting the
+//! autotunes race it at for that product, against every pairing of an activation and a weight in each format the kernels
 //! store, on each kind of device, at a prompt's rows and at one. A line names the routines that
 //! prepare the product, with how many of their settings do, and for each routine none of whose
 //! settings does, the refusals it gave.
@@ -288,8 +288,10 @@ where
     }
 }
 
-/// Every routine on `problem`, named by its prefix, at the settings of every list it races.
+/// Every routine on `problem`, named by its prefix, at the settings of every list the autotunes
+/// race it at: its own, and against a packed input the lists for packed inputs too.
 fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static str, Served)> {
+    let any_packed = problem.packings() != MatmulOperands::all(None);
     vec![
         (
             "unit-registers",
@@ -317,7 +319,7 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
                 problem,
                 [
                     PlaneShuffleMatmulRoutine.settings(hw),
-                    PlaneShuffleMatmulRoutine.packed_settings(),
+                    packed(any_packed, PlaneShuffleMatmulRoutine.packed_settings()),
                 ],
             ),
         ),
@@ -338,7 +340,7 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
                 problem,
                 [
                     CubeShuffleMatmulRoutine.settings(hw),
-                    CubeShuffleMatmulRoutine.packed_settings(hw),
+                    packed(any_packed, CubeShuffleMatmulRoutine.packed_settings(hw)),
                 ],
             ),
         ),
@@ -350,8 +352,11 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
                 problem,
                 [
                     CubeStagedMatmulRoutine.settings(hw),
-                    CubeStagedMatmulRoutine.packed_settings(hw),
-                    CubeStagedMatmulRoutine.packed_one_step_settings(),
+                    packed(any_packed, CubeStagedMatmulRoutine.packed_settings(hw)),
+                    packed(
+                        any_packed,
+                        CubeStagedMatmulRoutine.packed_one_step_settings(),
+                    ),
                 ],
             ),
         ),
@@ -363,8 +368,14 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
                 problem,
                 [
                     CubeStagedAsyncCopyMatmulRoutine.settings(hw),
-                    CubeStagedAsyncCopyMatmulRoutine.packed_settings(hw),
-                    CubeStagedAsyncCopyMatmulRoutine.block_scaled_settings(hw),
+                    packed(
+                        any_packed,
+                        CubeStagedAsyncCopyMatmulRoutine.packed_settings(hw),
+                    ),
+                    packed(
+                        any_packed,
+                        CubeStagedAsyncCopyMatmulRoutine.block_scaled_settings(hw),
+                    ),
                 ],
             ),
         ),
@@ -376,7 +387,10 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
                 problem,
                 [
                     CubeStagedTmaMatmulRoutine.settings(hw),
-                    CubeStagedTmaMatmulRoutine.block_scaled_settings(hw),
+                    packed(
+                        any_packed,
+                        CubeStagedTmaMatmulRoutine.block_scaled_settings(hw),
+                    ),
                 ],
             ),
         ),
@@ -388,7 +402,10 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
                 problem,
                 [
                     CubeStagedTmaFillerMatmulRoutine.settings(hw),
-                    CubeStagedTmaFillerMatmulRoutine.packed_settings(hw),
+                    packed(
+                        any_packed,
+                        CubeStagedTmaFillerMatmulRoutine.packed_settings(hw),
+                    ),
                 ],
             ),
         ),
@@ -400,7 +417,10 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
                 problem,
                 [
                     CubeStagedTmaStoredMatmulRoutine.settings(hw),
-                    CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(hw),
+                    packed(
+                        any_packed,
+                        CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(hw),
+                    ),
                 ],
             ),
         ),
@@ -421,11 +441,22 @@ fn every_routine(hw: &Hardware, problem: &MatmulRoutineProblem) -> Vec<(&'static
                 problem,
                 [
                     HypercubeLastArrivalMatmulRoutine.settings(hw),
-                    HypercubeLastArrivalMatmulRoutine.packed_settings(hw),
+                    packed(
+                        any_packed,
+                        HypercubeLastArrivalMatmulRoutine.packed_settings(hw),
+                    ),
                 ],
             ),
         ),
     ]
+}
+
+/// `list` where the product has a packed input, which only then races it; none otherwise.
+fn packed<T>(any_packed: bool, list: Vec<T>) -> Vec<T> {
+    match any_packed {
+        true => list,
+        false => Vec::new(),
+    }
 }
 
 /// Every product on every device: a heading per product, the routines that serve it, then each

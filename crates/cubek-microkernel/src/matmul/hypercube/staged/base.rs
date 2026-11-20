@@ -1,3 +1,4 @@
+use crate::matmul::MatmulBlocks;
 use crate::matmul::cube::{
     CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, MatmulCubeSpace,
     MatmulPlaneLayout,
@@ -242,9 +243,9 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
         self.cube.decoded_stage()
     }
 
-    /// Its cubes': whether they read the packed rhs a scale block at a time.
-    fn reads_rhs_by_block(&self) -> bool {
-        self.cube.reads_rhs_by_block()
+    /// Its cubes': the space they planned on.
+    fn planned_space(&self) -> Option<MatmulBlocks> {
+        self.cube.planned_space()
     }
 }
 

@@ -189,7 +189,11 @@ impl PlaneShuffleMatmulRoutine {
                 );
                 reads.is_some_and(|reads| reads > 1)
             }))
-            && (!settings.microkernel.by_block || problem.rhs_by_block().is_ok())
+            && (!settings.microkernel.by_block
+                || MatmulOperand::INPUTS
+                    .into_iter()
+                    .filter_map(|input| problem.inputs.get(input).packing())
+                    .all(|packing| packing.by_block().is_some()))
     }
 
     /// `microkernel` placed by `partitioning`, its widths settled.
@@ -345,8 +349,11 @@ impl PlaneShuffleMatmulRoutine {
         packing: &Packing,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<(PlaneShuffleMatmulRoutineBlueprint, Grid), Refusal> {
-        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let read = problem.rhs_read(settings.microkernel.by_block)?;
+        // The problem its microkernel plans on, every packed input read as it reads it: planned
+        // before any step is checked, which is the planned reads'.
+        let item = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?.work_item();
+        let planning = PlaneShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let read = problem.read_as(planning.planned_space());
         let problem: &MatmulRoutineProblem = &read;
         let packing = &problem.inputs.rhs.packing().unwrap_or(*packing);
         let PlaneShufflePackedPlacement {
@@ -824,15 +831,12 @@ mod tests {
             .chain([devices::wgpu_no_subgroups(), devices::rdna_range()])
         {
             for settings in PlaneShuffleMatmulRoutine.indexed_packed_settings() {
-                let declines_rhs = settings.microkernel.by_block && problem.rhs_by_block().is_err();
-                let unread = MatmulRoutineProblem::RHS_UNREAD_BY_BLOCK;
                 match (
                     PlaneShuffleMatmulRoutine.prepare(&hw, &problem, &settings),
                     hw.plane_size().is_ok()
                         && PlaneShuffleMatmulRoutine::sizes_packed(&settings, &problem),
                 ) {
                     (Ok(_), true) => {}
-                    (Err(why), false) if declines_rhs => assert_eq!(why, unread, "{settings}"),
                     (Err(Refusal::Declined { why: details }), false) => {
                         assert_eq!(details, PlaneShuffleMicrokernel::DECLINE, "{settings}")
                     }

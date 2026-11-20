@@ -188,26 +188,28 @@ impl PlaneFragmentMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let shape = Self::decoding_instruction(item.elements.lhs, item.sum);
         let window = settings.depth.get() * shape.k as usize;
-        let rhs = space.operand(MatmulOperand::Rhs);
-        let runs_whole = (window / 4).is_multiple_of(rhs.read(K));
-        // A window states `K` as whole scale blocks and the position inside one, and holds whole
-        // reads of the rhs's scales: MXFP4's window of 64 holds half a word of four scales of
-        // thirty-two, which no stage lays out, where read a block at a time it holds two reads.
-        let blocks_whole = rhs
+        // A unit's run of the window, one of the four quads of `k` its fragment's units split, is
+        // whole reads of the rhs, and the window whole reads of its scales: each read as widely as
+        // they hold whole ([`MatmulBlocks::within`]). MXFP4 in tile order, bound for a 32-value
+        // load, is read two words at a time in a run of 16, its scales one at a time in a window
+        // of 64.
+        let planned = space.within(window / Self::RUNS_A_WINDOW, window);
+        let reads_whole = planned.is_some();
+        let space = planned.unwrap_or(space);
+        // A window states `K` as whole scale blocks and the position inside one.
+        let blocks_whole = space
+            .operand(MatmulOperand::Rhs)
             .grouping(K, space.k)
             .is_some_and(|block| window.is_multiple_of(block));
-        let scales_whole = rhs
-            .scale_read_space()
-            .is_none_or(|read| window.is_multiple_of(read.extent(K)));
         // A plane holding every row whole holds one fragment of them; one whose rows are tiled, a
         // stage's, holds the settings' fragments along `M`, each against the rhs fragment
         // decoded once a step.
         let rows_fit = settings.along_m == NonZeroUsize::MIN || item.rows == MatmulRows::Tiled;
         let windowed = rows_fit && settings.fragment_depth == PlaneFragmentDepth::Stage;
         let offered = windowed
-            && runs_whole
+            && Self::serves(item, &space)
+            && reads_whole
             && blocks_whole
-            && scales_whole
             && space.k.is_multiple_of(window)
             && Self::decodes(hw, item.elements.lhs, item.sum);
         let instruction = PlaneFragmentInstruction::mma(shape);
@@ -774,39 +776,29 @@ impl PlaneFragmentMicrokernel {
             }
             _ => Vec::new(),
         };
-        // Along `K`, what one read of each packed input's scales covers: the tile DSL cuts a step's
-        // window of them on whole reads.
-        let scale_reads: Vec<usize> = MatmulOperand::INPUTS
-            .into_iter()
-            .filter(|&input| space.packings.get(input).is_some())
-            .filter_map(|input| space.operand(input).scale_read_space())
-            .map(|read| read.extent(K))
-            .collect();
         offered
             .into_iter()
-            // A step of the instruction is whole reads of each input's scales, so whole blocks too,
-            // or its window of them would start or end inside a read. MXFP4's step of 64 covers
-            // half a read of four scales of thirty-two, which leaves it to the planes that decode
-            // as they load.
-            .filter(|instruction| {
-                let [_, _, (_, k)] = instruction.shape();
-                committed
-                    && block.is_some()
-                    && scale_reads.iter().all(|&read| k.is_multiple_of(read))
-            })
+            .filter(|_| committed && block.is_some())
             // It contracts a fragment its own step deep, so a plane whose fragments span a
             // stage's steps of `K` is not one it serves.
             .filter(|instruction| !deep || instruction.contracts_deeper_fragments())
-            .map(|instruction| Self {
-                instruction,
-                step: None,
-                cost: instruction.cost(),
-                orders: instruction.orders(item.layouts),
-                settings,
-                dimensions: item.dimensions,
-                blocks: Some(space),
-                k_stated: PlaneFragmentKStatement::Blocks,
-                unit: PlaneUnit::Instruction,
+            // A step of the instruction holds whole reads of each input, values and scales, or its
+            // window of them would start or end inside a read: each input is read as widely as
+            // the step holds whole ([`MatmulBlocks::within`]). MXFP4's step of 64 holds half a
+            // word of four scales of thirty-two, so its scales are read one at a time.
+            .filter_map(|instruction| {
+                let [_, _, (_, k)] = instruction.shape();
+                Some(Self {
+                    instruction,
+                    step: None,
+                    cost: instruction.cost(),
+                    orders: instruction.orders(item.layouts),
+                    settings,
+                    dimensions: item.dimensions,
+                    blocks: Some(space.within(k, k)?),
+                    k_stated: PlaneFragmentKStatement::Blocks,
+                    unit: PlaneUnit::Instruction,
+                })
             })
             .collect()
     }
@@ -835,7 +827,7 @@ impl PlaneFragmentMicrokernel {
     /// deep spans of it: the instruction's whole step along the caller's `K` dimension, or, where
     /// the plane reads a packed rhs as stored (the block-scaled instruction, or fragments that
     /// decode it as they load), the blocks its steps cover along `KB` beside the whole of each
-    /// block along `KI`.
+    /// block along `KI`, or one block along `KB` and the part of it they cover along `KI`.
     fn k_dimensions(&self, depth: usize) -> Vec<(Dimension, usize)> {
         let [_, _, (_, k)] = self.shape();
         match (self.blocks, self.k_stated) {
@@ -844,8 +836,14 @@ impl PlaneFragmentMicrokernel {
                     .operand(MatmulOperand::Rhs)
                     .grouping(K, space.k)
                     .expect("a plane reading a packed rhs as stored reads it grouped along K");
+                // A span of whole blocks, or, shorter than one, part of a single block: an `f16`
+                // step of 16 inside MXFP4's block of 32.
                 let (blocks, inside) = blocked(K);
-                vec![(blocks, k * depth / block), (inside, block)]
+                let span = k * depth;
+                match span >= block {
+                    true => vec![(blocks, span / block), (inside, block)],
+                    false => vec![(blocks, 1), (inside, span)],
+                }
             }
             _ => vec![(self.dimensions.k, k * depth)],
         }
@@ -1145,6 +1143,20 @@ impl PlaneFragmentMicrokernel {
     fn fragment_shape(&self, depth: usize) -> [(MatmulDim, usize); 3] {
         let [m, n, (dim, k)] = self.shape();
         [m, n, (dim, k * depth)]
+    }
+
+    /// The runs a window of `K` splits into, one a unit, where the plane decodes a packed rhs as
+    /// it loads: the four quads of `k` its fragment's units split.
+    const RUNS_A_WINDOW: usize = 4;
+
+    /// The values of `K` one unit reads in one run where it decodes a packed rhs as it loads its
+    /// fragments: a quarter of its window, the settings' steps of its instruction. A load of the
+    /// rhs is no wider. `None` for a plane reading no packed rhs so: a float one, or the
+    /// block-scaled instruction's.
+    pub fn decoding_run(&self) -> Option<usize> {
+        let [_, _, (_, k)] = self.shape();
+        let decodes = self.blocks.is_some() && !self.instruction.block_scaled();
+        decodes.then(|| self.settings.depth.get() * k / Self::RUNS_A_WINDOW)
     }
 
     /// The extent along `dim` of the leaf a unit reads: one fragment's tile, as deep as its

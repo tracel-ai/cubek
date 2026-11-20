@@ -243,8 +243,10 @@ impl CubeShuffleMatmulRoutine {
         packing: &Packing,
         settings: &CubeShuffleMatmulRoutineSettings,
     ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
-        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let read = problem.rhs_read(settings.microkernel.by_block)?;
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let item = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?.work_item();
+        let planning = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let read = problem.read_as(planning.planned_space());
         let problem: &MatmulRoutineProblem = &read;
         let packing = &problem.inputs.rhs.packing().unwrap_or(*packing);
         let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;

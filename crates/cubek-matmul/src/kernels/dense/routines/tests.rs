@@ -5,7 +5,7 @@ use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{Dimension, Space};
-use cubek_microkernel::matmul::{MatmulOperands, MatmulStep};
+use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands, MatmulStep};
 use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_dimensions::{K, M, N, blocked};
@@ -132,10 +132,7 @@ mod plane_shuffle {
                     }
                     let (blueprint, _) =
                         prepared.unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
-                    let read = match settings.microkernel.by_block {
-                        true => problem.rhs_by_block().expect("sized on an rhs read so"),
-                        false => problem.clone(),
-                    };
+                    let read = problem.read_as(blueprint.microkernel.planned_space());
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
@@ -170,12 +167,7 @@ mod cube_shuffle {
                         continue;
                     };
                     prepared += 1;
-                    let read = match settings.microkernel.by_block {
-                        true => problem
-                            .rhs_by_block()
-                            .expect("a by-block setting prepared on an rhs read so"),
-                        false => problem.clone(),
-                    };
+                    let read = problem.read_as(blueprint.microkernel.planned_space());
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
@@ -189,19 +181,21 @@ mod cube_shuffle {
         assert!(prepared > 0);
     }
 
-    /// The by-block split of `K` reads the formats whose block scales are a byte each, NVFP4's
-    /// `ue4m3` and MXFP4's and MXFP8's `ue8m0`, NVFP4 in rows and in tile order in either word
-    /// order, a block of one row lying together in each: no wider scale is bound a byte apiece.
+    /// The by-block split of `K` reads every format whose scales group `K`, each scale loaded
+    /// alone whatever its type: NVFP4's `ue4m3` in rows and in tile order in either word order, a
+    /// block of one row lying together in each, MXFP4's and MXFP8's `ue8m0`, and q4's and q8's
+    /// `f16`. A format packed along `N` has no block of `K` to read.
     #[test]
-    fn the_split_k_reads_one_byte_scales_alone() {
+    fn the_split_k_reads_every_scale_alone() {
         let hw = devices::m2_pro();
         let settings = crate::kernels::LoadingSchedule::SPLIT_K.settings();
         for (name, problem) in problems(1) {
             let prepared = CubeShuffleMatmulRoutine.prepare(&hw, &problem, &settings);
-            let byte_scales = ["nvfp4", "mxfp4", "mxfp8"]
-                .iter()
-                .any(|format| name.starts_with(format));
-            assert_eq!(prepared.is_ok(), byte_scales, "{name}: {prepared:?}");
+            assert_eq!(
+                prepared.is_ok(),
+                !name.ends_with("along n"),
+                "{name}: {prepared:?}"
+            );
         }
     }
 }
@@ -243,12 +237,6 @@ mod cube_staged {
                 let blueprint = match prepared {
                     Ok((blueprint, _)) => blueprint,
                     Err(Refusal::SharedMemoryPastDevice { .. }) => continue,
-                    Err(error)
-                        if settings.microkernel.by_block && problem.rhs_by_block().is_err() =>
-                    {
-                        assert_eq!(Some(error), problem.rhs_by_block().err(), "{name}");
-                        continue;
-                    }
                     Err(error) if name.ends_with("along n") => {
                         assert_eq!(error, CubeStagedMicrokernel::UNGROUPED_K, "{name}");
                         continue;
@@ -259,9 +247,7 @@ mod cube_staged {
                     tile_order_prepared += 1;
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
-                let read = problem
-                    .rhs_read(settings.microkernel.by_block)
-                    .expect("a prepared setting reads its rhs so");
+                let read = problem.read_as(blueprint.microkernel.planned_space());
                 let step = step(&hw, &read).under(Space::new(&[(M, m), (N, n), (K, k)]));
                 let cube_space = blueprint.partitioning.cube_space();
                 assert!(

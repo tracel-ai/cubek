@@ -444,13 +444,14 @@ impl PackedTensor {
         self.operand
     }
 
-    /// This matrix read a scale block at a time ([`Packing::by_block`]), its block scales bound
-    /// one to a read. The same bytes; `None` where its packing reads no block so.
-    pub fn by_block(&self) -> Option<Self> {
-        Some(Self {
-            operand: self.packing().by_block()?.operand,
+    /// This matrix read as `operand` states, a launch's planned reads of the same bytes
+    /// ([`MatmulMicrokernel::planned_space`](cubek_microkernel::matmul::MatmulMicrokernel::planned_space)):
+    /// its words a load at a time, its block scales bound a word or one to a read.
+    pub fn read_as(&self, operand: Operand) -> Self {
+        Self {
+            operand,
             ..self.clone()
-        })
+        }
     }
 
     /// How it is packed: its reads and scales, and its scheme.
@@ -651,10 +652,10 @@ impl PackedTensor {
                 .gathered(Self::over_whole_matrix(&words_dimensions, tiled_along))
         });
         match scales {
-            // A read taking its one scale alone ([`Packing::by_block`]): each a byte of its own,
-            // bound as the element it is, a `ue4m3` the `e4m3` byte with its sign clear, so a unit
-            // loads the byte it uses rather than the word around it.
-            BlockScales::Fields if self.packing().reads_scale_bytes() => {
+            // A read taking its one scale alone ([`Packing::by_block`]): each bound as the element
+            // it is, a `ue4m3` the `e4m3` byte with its sign clear, so a unit loads the scale it
+            // uses rather than the word around it.
+            BlockScales::Fields if self.packing().reads_scales_alone() => {
                 let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype());
                 let scales_dimensions = tile_order::scales_dimensions(across);
                 // In the tiles tile order stores them in, where it does, stated a row a read: a
@@ -1117,11 +1118,13 @@ impl PackedTensor {
     /// The block scales a byte apiece, `blocks` a row, each row stepped at its stride counted in
     /// scales: a buffer holding them in wider elements steps its rows in those.
     fn block_scale_bytes(&self, rows: usize, blocks: usize) -> TensorBinding {
+        // Counted in scales: a row's run of stored elements, each so many scales.
+        let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype()).size();
         let per_element = self.block_scales.elem.size();
         let step = self
             .block_scales
             .row_step()
-            .map_or(blocks, |step| step * per_element);
+            .map_or(blocks, |step| step * per_element / scale);
         self.block_scales
             .bound_as(Metadata::new([rows, blocks], [step, 1]))
     }

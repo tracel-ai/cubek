@@ -1,3 +1,4 @@
+use crate::matmul::MatmulBlocks;
 use crate::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernelSettings,
     CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal, MatmulCubeSpace, MatmulPlaneLayout,
@@ -58,9 +59,10 @@ pub struct CubeStagedMicrokernel {
     pub depth: CubeStagedDepth,
     /// How its planes read each operand out of the stages.
     pub reads: MatmulOperands<MatmulRead>,
-    /// Whether it reads its packed rhs a scale block at a time
-    /// ([`CubeStagedMicrokernelSettings::by_block`]).
-    pub by_block: bool,
+    /// The block-split space it planned on, every packed input at the reads it takes: the widest
+    /// its stage holds whole, where the stage is decoded ([`MatmulBlocks::within`]), or its
+    /// planes', where they read the stage as stored. `None` over float inputs.
+    pub planned: Option<MatmulBlocks>,
 }
 
 /// What one stage of a cube spans along the contraction.
@@ -109,7 +111,7 @@ impl CubeStagedMicrokernel {
             store: CubeStagedStore::Fragments,
             depth,
             reads,
-            by_block: settings.by_block,
+            planned: None,
         }
     }
 
@@ -204,7 +206,13 @@ impl CubeStagedMicrokernel {
         // planes' alone.
         let one_step = settings.stage_steps.get() == 1;
         let mut candidates: Vec<Self> = match item.as_stored() {
-            Some(stored) if one_step => Self::as_stored_candidates(hw, &stored, settings),
+            Some(stored) if one_step => Self::as_stored_candidates(hw, &stored, settings)
+                .into_iter()
+                .map(|candidate| Self {
+                    planned: candidate.plane.blocks,
+                    ..candidate
+                })
+                .collect(),
             _ => Vec::new(),
         };
         candidates.extend(Self::decoding_candidates(hw, item, settings));
@@ -224,6 +232,13 @@ impl CubeStagedMicrokernel {
         item: &MatmulWorkItem,
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
+        // The step is planned on every packed input's finest reads, which every wider read is
+        // whole numbers of; the reads are then widened to the stage, the window its units fill.
+        let Some(space) = item.blocks else {
+            return Vec::new();
+        };
+        let finest = space.finest();
+        let item = &item.with_blocks(finest);
         let (block, read) = (Self::block(item), item.decoded_element());
         let step = item
             .blocks
@@ -261,10 +276,17 @@ impl CubeStagedMicrokernel {
                     },
                     ..plane
                 };
-                let depth = CubeStagedDepth::ScaleBlocks(
-                    NonZeroUsize::new(blocks)?.checked_mul(settings.stage_steps)?,
-                );
-                Some(Self::new(settings, plane, depth, item.decoding_reads()))
+                let stage_blocks = NonZeroUsize::new(blocks)?.checked_mul(settings.stage_steps)?;
+                let window = stage_blocks.get() * block;
+                Some(Self {
+                    planned: Some(finest.within(window, window)?),
+                    ..Self::new(
+                        settings,
+                        plane,
+                        CubeStagedDepth::ScaleBlocks(stage_blocks),
+                        item.decoding_reads(),
+                    )
+                })
             })
             .collect()
     }
@@ -687,15 +709,7 @@ impl Microkernel for CubeStagedMicrokernel {
     ) -> impl Iterator<Item = Self> {
         let merges = settings.planes_along_k.get() > 1;
         let atomic = hw.shared_f32_atomic_add();
-        // Reading by block is planned on an rhs its routine re-read so: planned on one read as
-        // stored, it would bind otherwise than it plans.
-        let rhs_read_by_block = item
-            .blocks
-            .is_some_and(|space| space.packings.rhs.is_some_and(|p| p.reads_scale_bytes()));
         let candidates: Vec<Self> = match item.blocks {
-            _ if settings.by_block && !rhs_read_by_block => Vec::new(),
-            // A float stage is its planes' step: deeper stages hold a packed input's blocks.
-            None if settings.stage_steps.get() > 1 => Vec::new(),
             None => Self::as_stored_candidates(hw, item, settings),
             Some(_) => Self::candidates_in_blocks(hw, item, settings),
         };
@@ -852,8 +866,8 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
         self.walk().decoded()
     }
 
-    fn reads_rhs_by_block(&self) -> bool {
-        self.by_block
+    fn planned_space(&self) -> Option<MatmulBlocks> {
+        self.planned
     }
 }
 

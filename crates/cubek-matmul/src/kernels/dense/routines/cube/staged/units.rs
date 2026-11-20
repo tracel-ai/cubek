@@ -100,6 +100,15 @@ impl CubeStagedMatmulRoutine {
         CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::DOUBLE),
     ];
 
+    /// The steps of `K` a stage decoding a packed input holds, each a step of the inputs' finest
+    /// reads, which the stage then reads as widely as it holds whole: four, which over byte scales
+    /// is a word of them, NVFP4's 64 of `K` and MXFP4's 128; and two, which on an RTX PRO 6000
+    /// gave MXFP4's boxes with a second stage in flight room in shared memory at 64 of `K`, its
+    /// 27B down projection at 512 rows then running as fast as NVFP4's (672 against 674 µs), where
+    /// one block a stage lost a fifth to the barriers between twice as many stages. Tunables:
+    /// each is raced, the first a caller that measures nothing takes.
+    pub const PACKED_STAGE_STEPS: [usize; 2] = [4, 2];
+
     /// The settings a product of a handful of rows against a packed input races: one step of `M`
     /// and `N` a plane, on one, two or four planes along `N`, split four or eight ways along `K`,
     /// one stage at a time or three in flight. Measured on Qwen3-4B's projections at one to sixteen
@@ -113,7 +122,8 @@ impl CubeStagedMatmulRoutine {
                 for along_k in Self::PACKED_ONE_STEP_PLANES_ALONG_K {
                     settings.push(CubeStagedMatmulRoutineSettings::on_grid(
                         CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
-                            .split_along_k(along_k),
+                            .split_along_k(along_k)
+                            .stage_steps(Self::PACKED_STAGE_STEPS[0]),
                     ));
                 }
             }
@@ -123,9 +133,8 @@ impl CubeStagedMatmulRoutine {
 
     /// The settings a product against a packed input races on `hw`: the lead, the boxes several
     /// steps tall the float routine races, one stage at a time and with a second in flight, each
-    /// reading the rhs a word of scales at a time, and a scale block at a time two steps a stage
-    /// ([`by_block`](CubeStagedMicrokernelSettings::by_block),
-    /// [`stage_steps`](CubeStagedMicrokernelSettings::stage_steps)), then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
+    /// at every count of steps of `K` a stage holds ([`PACKED_STAGE_STEPS`](Self::PACKED_STAGE_STEPS)),
+    /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
     /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
     /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
     /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
@@ -135,12 +144,8 @@ impl CubeStagedMatmulRoutine {
     /// third once the projection's residual add is fused into its store, which its fragments
     /// drain into cell by cell.
     ///
-    /// Read by block, a step of `K` is one scale block deep rather than a word of scales' blocks.
-    /// On an RTX PRO 6000, MXFP4's word of four 32-wide blocks staged 128 of `K` a step, and the
-    /// boxes with a second stage in flight that lead NVFP4 outgrew the device's shared memory;
-    /// read by block two steps a stage, MXFP4 stages 64 of `K` as NVFP4 does, and its down
-    /// projection of a 27B model at 512 rows ran as fast as NVFP4's (672 against 674 µs), where a
-    /// stage of one block lost a fifth to the barriers between twice as many stages.
+    /// A step of `K` is planned on the inputs' finest reads, one scale block where scales are
+    /// bytes ([`CubeStagedMicrokernel::planned`](cubek_microkernel::matmul::cube::CubeStagedMicrokernel::planned)).
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
         let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
             .into_iter()
@@ -149,7 +154,7 @@ impl CubeStagedMatmulRoutine {
                     CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
                 })
             })
-            .flat_map(|settings| [settings, settings.by_block().stage_steps(2)]);
+            .flat_map(|settings| Self::PACKED_STAGE_STEPS.map(|steps| settings.stage_steps(steps)));
         let one_step = self
             .packed_one_step_settings()
             .into_iter()
@@ -252,8 +257,14 @@ impl Routine for CubeStagedMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let read = problem.rhs_read(settings.microkernel.by_block)?;
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let read = CubeStagedPlacement::planned(
+            hw,
+            problem,
+            &settings.microkernel,
+            CubeStagedFill::BY_UNITS,
+            CubeStagedStore::Fragments,
+        )?;
         CubeStagedPlacement::new(
             hw,
             &read,

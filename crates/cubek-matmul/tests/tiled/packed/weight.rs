@@ -80,11 +80,11 @@ fn the_split_k_answers_a_decode_step() {
 /// A packed weight against a `bf16` activation at a prompt's rows, as a 4-bit model's prefill runs
 /// a projection, at every packed setting of the routines staging it, the units', the copy
 /// engine's and the hypercube's: NVFP4, MXFP4 and MXFP8, at a whole box and at rows and columns no box
-/// divides. The decoding boxes read the weight a word of scales at a time, and a scale block at a
-/// time two steps a stage; MXFP4's word of four 32-wide blocks once staged 128 of `K` a step, and
-/// on an RTX PRO 6000 the boxes leading NVFP4 outgrew shared memory on MXFP4 alone. The copy
-/// engine's boxes staged as stored once panicked compiling on MXFP4, their window of 64 holding
-/// half a word of its scales.
+/// divides. Every box reads the weight as widely as its stage, its window and its units' runs
+/// hold whole: MXFP4's four 32-wide blocks once staged 128 of `K` a step, and on an RTX PRO 6000
+/// the boxes leading NVFP4 outgrew shared memory on MXFP4 alone; the copy engine's boxes staged
+/// as stored once panicked compiling on MXFP4, their window of 64 holding half a word of its
+/// scales, and its 32-value loads longer than a unit's run of 16.
 #[test]
 fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
     let products: Vec<PackedProduct> = [

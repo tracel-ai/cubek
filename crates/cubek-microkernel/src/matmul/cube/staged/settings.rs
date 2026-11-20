@@ -25,16 +25,11 @@ pub struct CubeStagedMicrokernelSettings {
     /// depends on the device and on which way the operands run, so it is a setting a table races
     /// rather than a rule.
     pub stage_layout: StageLayout,
-    /// Whether it reads a packed rhs a scale block at a time, each block's scale a byte loaded
-    /// alone ([`Packing::by_block`](cubek_std::layout::stored::Packing::by_block)), rather than a
-    /// word of scales at a time. A step of `K` is then one block deep rather than a word of
-    /// scales' blocks, so each stage holds as many times fewer values: MXFP4's 32-wide blocks
-    /// stage 32 of `K` a step rather than 128.
-    pub by_block: bool,
-    /// Steps of `K` one stage holds against a packed input its units decode: one where a step is
-    /// a word of scales' blocks, more where it is a block read alone
-    /// ([`by_block`](Self::by_block)). Two MXFP4 blocks read alone stage 64 of `K`, as one word
-    /// of NVFP4's scales does, where one would hold half the stage between two barriers.
+    /// Steps of `K` one stage holds against a packed input its units decode, each a step of the
+    /// inputs' finest reads: a scale block where scales are bytes, a word of scales otherwise. The
+    /// stage then reads each input as widely as it holds whole: four steps over byte scales are a
+    /// word of them, read a word at a time; two MXFP4 blocks are 64 of `K`, read a scale at a time.
+    /// Against float inputs a stage is its planes' step, which holds no scale block to count.
     pub stage_steps: NonZeroUsize,
 }
 
@@ -47,7 +42,6 @@ impl CubeStagedMicrokernelSettings {
         scratch: Scratch::OneTile,
         ring: StageRing::SINGLE,
         stage_layout: Self::SWIZZLED,
-        by_block: false,
         stage_steps: NonZeroUsize::MIN,
     };
 
@@ -97,7 +91,6 @@ impl CubeStagedMicrokernelSettings {
             scratch: Scratch::None,
             ring,
             stage_layout: Self::SWIZZLED,
-            by_block: false,
             stage_steps: NonZeroUsize::MIN,
         }
     }
@@ -127,7 +120,6 @@ impl CubeStagedMicrokernelSettings {
             scratch: Scratch::OneTile,
             ring,
             stage_layout: Self::SWIZZLED,
-            by_block: false,
             stage_steps: NonZeroUsize::MIN,
         }
     }
@@ -135,7 +127,7 @@ impl CubeStagedMicrokernelSettings {
     /// Eight by one steps on each of one by two planes, one stage at a time: on the M2, eight by
     /// two instructions a plane in tile order, the float staged routine's fastest box on the
     /// Qwen3-4B projections at a prompt's rows, whose planes contract the same stages these hold.
-    pub const PACKED: Self = Self::in_steps((8, 1), (1, 2), StageRing::SINGLE);
+    pub const PACKED: Self = Self::in_steps((8, 1), (1, 2), StageRing::SINGLE).stage_steps(4);
 
     /// These settings with their planes' instruction laying its rows along `rows_along`.
     pub const fn rows_along(self, rows_along: PlaneFragmentRowsAlong) -> Self {
@@ -163,14 +155,6 @@ impl CubeStagedMicrokernelSettings {
             plane,
             planes,
             ..Self::DEFAULT
-        }
-    }
-
-    /// These settings reading a packed rhs a scale block at a time, each scale a byte alone.
-    pub const fn by_block(self) -> Self {
-        Self {
-            by_block: true,
-            ..self
         }
     }
 
@@ -206,8 +190,8 @@ impl CubeStagedMicrokernelSettings {
     }
 }
 
-/// Nothing for one plane along `K`, a one-fragment scratch, the swizzled stage layout, a read a
-/// word of scales at a time or a stage of one step, so the settings that hold them keep their
+/// Nothing for one plane along `K`, a one-fragment scratch, the swizzled stage layout or a stage
+/// of one step, so the settings that hold them keep their
 /// names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -221,9 +205,6 @@ impl core::fmt::Display for CubeStagedMicrokernelSettings {
         write!(f, "{}", self.ring)?;
         if self.stage_layout != Self::SWIZZLED {
             write!(f, "{}", self.stage_layout)?;
-        }
-        if self.by_block {
-            write!(f, " by_block")?;
         }
         if self.stage_steps.get() > 1 {
             write!(f, " stage_steps={}", self.stage_steps)?;
