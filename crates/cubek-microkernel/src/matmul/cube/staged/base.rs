@@ -333,7 +333,10 @@ impl CubeStagedMicrokernel {
             MatmulRead::AsBound => false,
         };
         match (decoded, packed, self.fill.delivery) {
-            (true, _, _) => Some(FragmentSource::Decoded),
+            // Decoded by the fill into the element its stage holds, which the kernel states
+            // (`CubeStagedWalk::as_staged`): its values name the fragments.
+            (true, true, _) => self.reads.get(input).staged().map(FragmentSource::Values),
+            (true, false, _) => Some(FragmentSource::Decoded),
             (false, true, _) => None,
             (false, false, CubeStagedDelivery::Tma) => Some(FragmentSource::Landed(element)),
             (false, false, _) => Some(FragmentSource::Values(element)),
@@ -938,12 +941,12 @@ mod tests {
         assert!(exact.is_err(), "{exact:?}");
     }
 
-    /// A packed input its fill decodes contracts at the float input's element, and its planes are
-    /// admitted; two decoded inputs, NVFP4 against NVFP4, name no element, so the sum the kernel
-    /// would open has no instruction and no plane is admitted, rather than one whose kernel fails
-    /// to expand.
+    /// A packed input its fill decodes contracts at the element its stage holds: the float
+    /// input's beside one, the output's where both are packed, NVFP4 against NVFP4. The kernel
+    /// opens its sum on the inputs as their stages hold them (`CubeStagedWalk::as_staged`), so
+    /// two decoded inputs name that element; they once named none, and no plane was admitted.
     #[test]
-    fn decoded_inputs_are_admitted_only_beside_a_float_one() {
+    fn decoded_inputs_contract_at_the_element_their_stages_hold() {
         let (f16, f32) = (
             ElemType::Float(FloatKind::F16),
             ElemType::Float(FloatKind::F32),
@@ -964,8 +967,8 @@ mod tests {
         let settings = CubeStagedMicrokernelSettings::DEFAULT;
         let one = CubeStagedMicrokernel::best(&hw, &item(None), &settings).unwrap();
         assert_eq!(one.decoded_stage(), Some(f16));
-        let both = CubeStagedMicrokernel::best(&hw, &item(nvfp4), &settings);
-        assert!(both.is_err(), "{both:?}");
+        let both = CubeStagedMicrokernel::best(&hw, &item(nvfp4), &settings).unwrap();
+        assert_eq!(both.decoded_stage(), Some(f16));
     }
 
     /// A device whose deepest 16-bit instruction is deeper than an NVFP4 scale block, as RDNA's
