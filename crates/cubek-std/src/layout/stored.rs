@@ -619,6 +619,73 @@ pub enum BlockScales {
     Words,
 }
 
+/// A matmul input's values as they lie: elements of one type, or codes packed under a
+/// quantization scheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StoredValues {
+    /// One element of this type a value.
+    Elements(ElemType),
+    /// Codes packed under this scheme.
+    Packed(QuantScheme),
+}
+
+/// One input of a product as it is stored: what its values are, the float element they stand for,
+/// and how a read of them and of their scales lies ([`Operand`]).
+///
+/// Every input is one of these, and a float input is the case with no scales: its values are
+/// elements of the element it stands for, read a value at a time. Nothing reads an input by asking
+/// whether it is quantized; it reads what its values and its scales are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StoredInput {
+    /// What its values are.
+    pub values: StoredValues,
+    /// The float element its values stand for: a float input's own; a packed one's, the element
+    /// its codes are decoded into, its scales applied, wherever an instruction takes no codes.
+    pub element: ElemType,
+    /// How a read of its values and of its scales lies.
+    pub operand: Operand,
+}
+
+impl StoredInput {
+    /// A float input of `element`: its values are its elements, a value a read, no scales.
+    pub fn plain(element: ElemType) -> Self {
+        Self {
+            values: StoredValues::Elements(element),
+            element,
+            operand: Operand::plain(),
+        }
+    }
+
+    /// An input packed as `packing` says, standing for values of `element`.
+    pub fn packed(packing: Packing, element: ElemType) -> Self {
+        Self {
+            values: StoredValues::Packed(packing.scheme),
+            element,
+            operand: packing.operand,
+        }
+    }
+
+    /// Bytes `values` of its values hold as stored: its words and its block scales; a float
+    /// input's, its elements.
+    pub fn bytes(&self, values: usize) -> usize {
+        match self.packing() {
+            Some(packing) => packing.bytes(values),
+            None => values * self.element.size(),
+        }
+    }
+
+    /// How it is packed, where its values are codes: its reads and scales, and its scheme.
+    pub fn packing(&self) -> Option<Packing> {
+        match self.values {
+            StoredValues::Packed(scheme) => Some(Packing {
+                operand: self.operand,
+                scheme,
+            }),
+            StoredValues::Elements(_) => None,
+        }
+    }
+}
+
 /// How a matrix is packed: what one read of its words brings and how far one block scale covers,
 /// over its two dimensions, and the scheme that stores them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

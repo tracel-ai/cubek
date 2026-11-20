@@ -175,7 +175,7 @@ impl PlaneShuffleMatmulRoutine {
     ) -> bool {
         use cubecl::tile::layout::Run;
         use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
-        let rhs = problem.packings.rhs.as_ref();
+        let rhs = problem.inputs.rhs.packing();
         let one_tile = PlaneShuffleKSplit::Run(Run::StoredTile);
         (settings.microkernel.k_split != one_tile
             || rhs.is_some_and(|packing| {
@@ -348,7 +348,7 @@ impl PlaneShuffleMatmulRoutine {
         // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
         let read = problem.rhs_read(settings.microkernel.by_block)?;
         let problem: &MatmulRoutineProblem = &read;
-        let packing = problem.packings.rhs.as_ref().unwrap_or(packing);
+        let packing = &problem.inputs.rhs.packing().unwrap_or(*packing);
         let PlaneShufflePackedPlacement {
             microkernel,
             columns,
@@ -399,7 +399,7 @@ impl PlaneShufflePackedPlacement {
         problem: &MatmulRoutineProblem,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<Self, Refusal> {
-        if problem.packings.rhs.is_none() {
+        if problem.inputs.rhs.packing().is_none() {
             return Err(MATMUL_STREAMED_INPUT_FLOAT);
         }
         let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
@@ -482,7 +482,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let settings = match problem.packings.rhs {
+        let settings = match problem.inputs.rhs.packing() {
             Some(_) => self.packed_settings(),
             None => self.settings(hw),
         };
@@ -516,7 +516,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        match &problem.packings.rhs {
+        match &problem.inputs.rhs.packing() {
             Some(packing) => self.packed_estimate(problem, packing, blueprint, grid, estimate),
             None => self.float_estimate(problem, blueprint, grid, estimate),
         }
@@ -531,7 +531,7 @@ impl Routine for PlaneShuffleMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        match &problem.packings.rhs {
+        match &problem.inputs.rhs.packing() {
             Some(packing) => self.prepare_packed(hw, problem, packing, settings),
             None => self.prepare_float(hw, problem, settings),
         }

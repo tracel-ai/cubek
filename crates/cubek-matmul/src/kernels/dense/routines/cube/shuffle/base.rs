@@ -246,7 +246,7 @@ impl CubeShuffleMatmulRoutine {
         // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
         let read = problem.rhs_read(settings.microkernel.by_block)?;
         let problem: &MatmulRoutineProblem = &read;
-        let packing = problem.packings.rhs.as_ref().unwrap_or(packing);
+        let packing = &problem.inputs.rhs.packing().unwrap_or(*packing);
         let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         view.check_steps(hw)?;
         let item = view.work_item();
@@ -316,7 +316,7 @@ impl Routine for CubeShuffleMatmulRoutine {
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let settings = match problem.packings.rhs {
+        let settings = match problem.inputs.rhs.packing() {
             Some(_) => self.packed_settings(hw),
             None => self.settings(hw),
         };
@@ -349,7 +349,7 @@ impl Routine for CubeShuffleMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        match &problem.packings.rhs {
+        match &problem.inputs.rhs.packing() {
             Some(packing) => self.packed_estimate(problem, packing, blueprint, grid, estimate),
             None => self.float_estimate(problem, blueprint, grid, estimate),
         }
@@ -364,7 +364,7 @@ impl Routine for CubeShuffleMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Refusal> {
         problem.check_unindexed()?;
-        match &problem.packings.rhs {
+        match &problem.inputs.rhs.packing() {
             Some(packing) => self.prepare_packed(hw, problem, packing, settings),
             None => self.prepare_float(hw, problem, settings),
         }

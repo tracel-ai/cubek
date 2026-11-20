@@ -390,7 +390,8 @@ fn estimate_in_blocks(
         .product();
     let k = problem.k;
     let size = |operand: MatmulOperand| item.elements.get(operand).size();
-    let input = |operand: MatmulOperand, extent: usize| match problem.packings.get(operand) {
+    let input = |operand: MatmulOperand, extent: usize| match problem.inputs.get(operand).packing()
+    {
         Some(packing) => GlobalStream {
             bytes: packing.values_bytes(extent * k) as u64,
             run_bytes: packing.values_bytes(block),
@@ -489,7 +490,7 @@ pub(crate) fn widths_in_blocks(
         ),
         None => {
             let widest = hw.load_values(contracted.elements.get(operand)).min(block);
-            match problem.packings.get(operand) {
+            match problem.inputs.get(operand).packing() {
                 Some(_) => widest,
                 None => float_width_in_blocks(problem, &blocks, partitioning, operand, widest),
             }

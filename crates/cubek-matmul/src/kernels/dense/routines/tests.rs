@@ -94,9 +94,7 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
 
 /// `problem`'s step on `hw`, contracted one value at a time.
 fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
-    let operands = problem
-        .packings
-        .map(|_, packing| packing.map_or(Operand::plain(), |packing| packing.operand));
+    let operands = problem.inputs.map(|_, input| input.operand);
     MatmulStep::new(hw, operands, problem.elements)
 }
 
@@ -413,7 +411,7 @@ mod packed_lhs {
             4096,
             F16,
             MatmulOperands {
-                rhs: packed_lhs(m).packings.lhs,
+                rhs: packed_lhs(m).packings().lhs,
                 ..MatmulOperands::all(None)
             },
         );
@@ -521,10 +519,7 @@ mod hypercube_last_arrival {
         );
         for m in [128, 300] {
             for (name, problem) in problems(m) {
-                let block = problem
-                    .packings
-                    .rhs
-                    .and_then(|packing| packing.operand.grouping(K, problem.k));
+                let block = problem.inputs.rhs.operand.grouping(K, problem.k);
                 let mut prepared = 0;
                 for settings in HypercubeLastArrivalMatmulRoutine.packed_settings(&hw) {
                     let Ok((blueprint, _)) =

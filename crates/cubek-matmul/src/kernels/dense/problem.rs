@@ -13,13 +13,13 @@ use cubek_microkernel::matmul::{
     MatmulStoredTile,
 };
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::{BlockScales, Packing};
+use cubek_std::layout::stored::{BlockScales, Packing, StoredInput};
 use cubek_std::layout::tile_order::TileOrder;
 use cubek_std::matmul_dimensions::{EXPERT, K, batch_dimension};
 use cubek_std::routine::EstimatedProblem;
 
-/// `out[b] = lhs[b] · rhs[b]` for every batch `b`, as the host describes it, each input float or
-/// packed ([`packings`](Self::packings)).
+/// `out[b] = lhs[b] · rhs[b]` for every batch `b`, as the host describes it, each input as it is
+/// stored ([`inputs`](Self::inputs)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulRoutineProblem {
     /// The output's batch extents, outermost first. An operand of extent one there is broadcast.
@@ -34,7 +34,7 @@ pub struct MatmulRoutineProblem {
     pub n: usize,
     pub k: usize,
     /// The element each operand is read at: a float operand's stored one, a packed one's the
-    /// element its words unpack into ([`packings`](Self::packings) says how it is stored).
+    /// element its words unpack into ([`inputs`](Self::inputs) says how it is stored).
     pub elements: MatmulOperands<ElemType>,
     /// Batches each operand holds: the output's, or fewer where an operand is broadcast.
     pub batches_held: MatmulOperands<usize>,
@@ -54,9 +54,9 @@ pub struct MatmulRoutineProblem {
     pub stored_tiles: MatmulOperands<Option<MatmulStoredTile>>,
     /// Where the output goes.
     pub destination: MatmulDestination,
-    /// How each operand is stored where it is packed: its words, its scales and their scheme.
-    /// `None` for a float operand, read as stored.
-    pub packings: MatmulOperands<Option<Packing>>,
+    /// How each operand is stored: what its values are, the element they stand for, and how a read
+    /// of them and of their scales lies. A float operand is the case with no scales.
+    pub inputs: MatmulOperands<StoredInput>,
     /// The table an input reads one entry of per batch, where the product has one: which slab of
     /// a stacked rhs a batch contracts against, or the run of `K` it sums.
     pub index: Option<MatmulIndex>,
@@ -119,7 +119,7 @@ impl MatmulRoutineProblem {
     ///
     /// [`MATMUL_PACKED_UNREAD`], for a packed operand.
     pub fn check_plain(&self) -> Result<(), Refusal> {
-        match self.packings == MatmulOperands::all(None) {
+        match self.packings() == MatmulOperands::all(None) {
             true => Ok(()),
             false => Err(MATMUL_PACKED_UNREAD),
         }
@@ -151,16 +151,13 @@ impl MatmulRoutineProblem {
     /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where its rhs reads none so, and
     /// [`PACKED_LHS_UNREAD_BY_BLOCK`](Self::PACKED_LHS_UNREAD_BY_BLOCK) where its lhs is packed.
     pub fn rhs_by_block(&self) -> Result<Self, Refusal> {
-        if self.packings.lhs.is_some() {
+        if self.inputs.lhs.packing().is_some() {
             return Err(Self::PACKED_LHS_UNREAD_BY_BLOCK);
         }
         let mut by_block = self.clone();
-        let rhs = by_block
-            .packings
-            .rhs
-            .as_mut()
-            .ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
-        *rhs = rhs.by_block().ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
+        let rhs = &mut by_block.inputs.rhs;
+        let packing = rhs.packing().and_then(|packing| packing.by_block());
+        *rhs = StoredInput::packed(packing.ok_or(Self::RHS_UNREAD_BY_BLOCK)?, rhs.element);
         Ok(by_block)
     }
 
@@ -205,10 +202,9 @@ impl MatmulRoutineProblem {
         block_scales: BlockScales,
         by_tma: bool,
     ) -> Result<(), Refusal> {
-        let scales_in_tiles = [self.packings.lhs, self.packings.rhs]
+        let scales_in_tiles = [self.inputs.lhs, self.inputs.rhs]
             .into_iter()
-            .flatten()
-            .filter_map(|packing| packing.operand.tile_order())
+            .filter_map(|input| input.operand.tile_order())
             .any(TileOrder::scales_in_tiles);
         match block_scales == BlockScales::Words && scales_in_tiles && !by_tma {
             true => Err(MATMUL_SCALE_WORDS_IN_TILES),
@@ -298,7 +294,11 @@ impl MatmulRoutineProblem {
             },
             stored_tiles: MatmulOperands::all(None),
             destination: out.destination,
-            packings: MatmulOperands::all(None),
+            inputs: MatmulOperands {
+                lhs: StoredInput::plain(lhs.elem),
+                rhs: StoredInput::plain(rhs.elem),
+                out: StoredInput::plain(out.element),
+            },
             index: None,
         }
     }
@@ -326,7 +326,7 @@ impl MatmulRoutineProblem {
             stored_tiles: MatmulOperands::all(None),
             // A launch the table times allocates its output.
             destination: MatmulDestination::Buffer,
-            packings: MatmulOperands::all(None),
+            inputs: MatmulOperands::all(StoredInput::plain(element)),
             index: None,
         }
     }
@@ -387,6 +387,11 @@ impl MatmulRoutineProblem {
         }
     }
 
+    /// How each input is packed, where its values are codes: `None` for an input of elements.
+    pub fn packings(&self) -> MatmulOperands<Option<Packing>> {
+        self.inputs.map(|_, input| input.packing())
+    }
+
     /// The element a packed operand's words unpack into, so nothing rounds before the sum.
     pub const PACKED: ElemType = ElemType::Float(cubecl::ir::FloatKind::F32);
 
@@ -430,7 +435,10 @@ impl MatmulRoutineProblem {
             buffer_alignments: alignments,
             stored_tiles: MatmulOperands::all(None),
             destination: MatmulDestination::Buffer,
-            packings,
+            inputs: packings.map(|_, packing| match packing {
+                Some(packing) => StoredInput::packed(packing, element),
+                None => StoredInput::plain(element),
+            }),
             index: None,
         }
     }
@@ -534,10 +542,7 @@ impl EstimatedProblem for MatmulRoutineProblem {
             out: self.stated_rows * self.n,
         };
         let bytes = values.map(|operand, values| {
-            let held = match self.packings.get(operand) {
-                Some(packing) => packing.bytes(values),
-                None => values * self.elements.get(operand).size(),
-            };
+            let held = self.inputs.get(operand).bytes(values);
             self.batches_held.get(operand) * held
         });
         Work {

@@ -79,7 +79,7 @@ impl<'a> MatmulView<'a> {
             lhs: Some(lhs),
             rhs: Some(rhs),
             ..
-        } = problem.packings
+        } = problem.packings()
             && let (Some(lhs), Some(rhs)) = (
                 lhs.operand.grouping(K, problem.k),
                 rhs.operand.grouping(K, problem.k),
@@ -316,11 +316,10 @@ impl<'a> MatmulView<'a> {
     /// [`MATMUL_STEPS_UNCLOSED`](cubek_microkernel::matmul::MATMUL_STEPS_UNCLOSED), and
     /// [`MATMUL_PACKED_READS_SPLIT`](cubek_microkernel::matmul::MATMUL_PACKED_READS_SPLIT).
     pub fn check_steps(&self, hw: &Hardware) -> Result<(), Refusal> {
-        let packings = self.problem.packings;
-        if packings == MatmulOperands::all(None) {
+        let operands = self.problem.inputs.map(|_, input| input.operand);
+        if operands == MatmulOperands::all(Operand::plain()) {
             return Ok(());
         }
-        let operands = packings.map(|_, packing| packing.map_or(Operand::plain(), |p| p.operand));
         MatmulStep::new(hw, operands, self.problem.elements).check(
             operands,
             self.problem.n,
@@ -357,9 +356,9 @@ impl<'a> MatmulView<'a> {
     /// The block-split space packed operands put the product in, the rows those a work item
     /// holds; none where every operand is float.
     pub fn blocks(&self) -> Option<MatmulBlocks> {
-        let packed = self.problem.packings != MatmulOperands::all(None);
+        let packed = self.problem.packings() != MatmulOperands::all(None);
         packed.then(|| MatmulBlocks {
-            packings: self.problem.packings,
+            packings: self.problem.packings(),
             m: self.rows(),
             n: self.problem.n,
             k: self.problem.k,
