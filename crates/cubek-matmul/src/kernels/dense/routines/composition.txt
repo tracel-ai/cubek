@@ -20,8 +20,9 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-s
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · f16 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-staged 61/88, cube-staged-async-copy 18/21, cube-staged-tma-filler 3/5, hypercube-last-arrival 59/113
-  refused (cube-staged-tma, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-staged 61/88, cube-staged-async-copy 18/21, hypercube-last-arrival 59/113
+  refused (cube-staged-tma-filler): an input's block scales are read one at a time, and the engine lands values beside words of scales only
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · f16 × mxfp8 (tiles)
@@ -51,8 +52,9 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-s
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · bf16 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-staged 61/88, cube-staged-async-copy 18/21, cube-staged-tma-filler 3/5, hypercube-last-arrival 59/113
-  refused (cube-staged-tma, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-staged 61/88, cube-staged-async-copy 18/21, hypercube-last-arrival 59/113
+  refused (cube-staged-tma-filler): an input's block scales are read one at a time, and the engine lands values beside words of scales only
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · bf16 × mxfp8 (tiles)
@@ -166,8 +168,12 @@ served by: none
   refused (plane-shuffle, plane-dequantize, cube-shuffle, cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored, hypercube-last-arrival): two packed operands are read in one block-split space, so their scales group k alike
 
 # rtx-pro-6000 · 1 rows · mxfp4 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged 40/88, cube-staged-async-copy 15/21, cube-staged-tma 12/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 4/9
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged 40/88, cube-staged-async-copy 15/21
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): a stage is deeper than one of an input's tiles whose rows are shorter than the stage's swizzle, which the engine pads
+  refused (cube-staged-tma): a stage is deeper than one of an input's tiles, and its block scales lie in tiles a box lands one tile deep
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an input's block scales are read one at a time, and the engine lands values beside words of scales only
   refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (cube-staged-tma-filler): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · mxfp4 × mxfp8 (tiles)
@@ -202,8 +208,11 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 1 rows · mxfp8 × mxfp8 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged 40/88, cube-staged-async-copy 16/21, cube-staged-tma 19/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 8/9
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/19, cube-staged 40/88, cube-staged-async-copy 16/21
+  refused (cube-staged-tma): a stage is deeper than one of an input's tiles, and its block scales lie in tiles a box lands one tile deep
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an input's block scales are read one at a time, and the engine lands values beside words of scales only
   refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
+  refused (cube-staged-tma-filler): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · f16 × f16 (rows)
@@ -231,8 +240,9 @@ served by: plane-dequantize 1/1, cube-staged 74/88, cube-staged-async-copy 21/21
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · f16 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 61/88, cube-staged-async-copy 18/21, cube-staged-tma-filler 3/5, hypercube-last-arrival 59/113
-  refused (cube-staged-tma, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
+served by: plane-dequantize 1/1, cube-staged 61/88, cube-staged-async-copy 18/21, hypercube-last-arrival 59/113
+  refused (cube-staged-tma-filler): an input's block scales are read one at a time, and the engine lands values beside words of scales only
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -267,8 +277,9 @@ served by: plane-dequantize 1/1, cube-staged 74/88, cube-staged-async-copy 21/21
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · bf16 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 61/88, cube-staged-async-copy 18/21, cube-staged-tma-filler 3/5, hypercube-last-arrival 59/113
-  refused (cube-staged-tma, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
+served by: plane-dequantize 1/1, cube-staged 61/88, cube-staged-async-copy 18/21, hypercube-last-arrival 59/113
+  refused (cube-staged-tma-filler): an input's block scales are read one at a time, and the engine lands values beside words of scales only
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -395,9 +406,13 @@ served by: none
   refused (plane-shuffle, plane-dequantize, cube-shuffle, cube-staged, cube-staged-async-copy, cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored, hypercube-last-arrival): two packed operands are read in one block-split space, so their scales group k alike
 
 # rtx-pro-6000 · 512 rows · mxfp4 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 40/88, cube-staged-async-copy 15/21, cube-staged-tma 12/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 4/9
+served by: plane-dequantize 1/1, cube-staged 40/88, cube-staged-async-copy 15/21
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): a stage is deeper than one of an input's tiles whose rows are shorter than the stage's swizzle, which the engine pads
+  refused (cube-staged-tma): a stage is deeper than one of an input's tiles, and its block scales lie in tiles a box lands one tile deep
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an input's block scales are read one at a time, and the engine lands values beside words of scales only
   refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
+  refused (cube-staged-tma-filler): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · mxfp4 × mxfp8 (tiles)
@@ -436,9 +451,12 @@ served by: plane-dequantize 1/1
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rtx-pro-6000 · 512 rows · mxfp8 × mxfp8 (tiles)
-served by: plane-dequantize 1/1, cube-staged 40/88, cube-staged-async-copy 16/21, cube-staged-tma 19/24, cube-staged-tma-filler 1/5, cube-staged-tma-stored 8/9
+served by: plane-dequantize 1/1, cube-staged 40/88, cube-staged-async-copy 16/21
+  refused (cube-staged-tma): a stage is deeper than one of an input's tiles, and its block scales lie in tiles a box lands one tile deep
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an input's block scales are read one at a time, and the engine lands values beside words of scales only
   refused (hypercube-last-arrival): the hypercube routines read a packed rhs beside a float lhs, and this lhs is packed
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
+  refused (cube-staged-tma-filler): this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · f16 × f16 (rows)
@@ -463,8 +481,9 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-s
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · f16 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-staged 81/88, cube-staged-async-copy 12/12, cube-staged-tma-filler 3/5, hypercube-last-arrival 107/113
-  refused (cube-staged-tma, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-staged 81/88, cube-staged-async-copy 12/12, hypercube-last-arrival 107/113
+  refused (cube-staged-tma-filler): an input's block scales are read one at a time, and the engine lands values beside words of scales only
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · f16 × mxfp8 (tiles)
@@ -494,8 +513,9 @@ served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-s
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · bf16 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-staged 81/88, cube-staged-async-copy 12/12, cube-staged-tma-filler 3/5, hypercube-last-arrival 107/113
-  refused (cube-staged-tma, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 18/19, cube-staged 81/88, cube-staged-async-copy 12/12, hypercube-last-arrival 107/113
+  refused (cube-staged-tma-filler): an input's block scales are read one at a time, and the engine lands values beside words of scales only
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 1 rows · bf16 × mxfp8 (tiles)
@@ -675,8 +695,9 @@ served by: plane-dequantize 1/1, cube-staged 87/88, cube-staged-async-copy 12/12
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · f16 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 81/88, cube-staged-async-copy 12/12, cube-staged-tma-filler 3/5, hypercube-last-arrival 107/113
-  refused (cube-staged-tma, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
+served by: plane-dequantize 1/1, cube-staged 81/88, cube-staged-async-copy 12/12, hypercube-last-arrival 107/113
+  refused (cube-staged-tma-filler): an input's block scales are read one at a time, and the engine lands values beside words of scales only
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -711,8 +732,9 @@ served by: plane-dequantize 1/1, cube-staged 87/88, cube-staged-async-copy 12/12
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # h100 · 512 rows · bf16 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 81/88, cube-staged-async-copy 12/12, cube-staged-tma-filler 3/5, hypercube-last-arrival 107/113
-  refused (cube-staged-tma, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
+served by: plane-dequantize 1/1, cube-staged 81/88, cube-staged-async-copy 12/12, hypercube-last-arrival 107/113
+  refused (cube-staged-tma-filler): an input's block scales are read one at a time, and the engine lands values beside words of scales only
+  refused (cube-staged-tma, cube-staged-tma-filler, cube-staged-tma-stored): an operand is stored in tiles a descriptor cannot land a stage of row by row
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
