@@ -240,6 +240,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::routines::routine_check;
     use cubecl::tile::launch::Decline;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
@@ -286,5 +287,88 @@ mod tests {
             matches!(prepared, Err(Decline::Unserved { .. })),
             "{prepared:?}"
         );
+    }
+
+    /// The routine at the last setting it serves, its shortest parts, so that rows too short for
+    /// its first setting's parts still split, launched from `input` into `out`.
+    fn launch_at_shortest_parts(
+        client: &cubecl::client::Client,
+        reduction: &routine_check::Reduction,
+        input: cubecl::prelude::TensorBinding,
+        out: cubecl::prelude::TensorBinding,
+    ) -> Result<(), Decline> {
+        let hw = cubek_std::Hardware::from_client(client);
+        let tensors = reduction.tensors(client, input, out);
+        let (blueprint, grid) = HypercubeLastArrivalReduceRoutine::settings(&hw)
+            .iter()
+            .rev()
+            .map(|settings| {
+                HypercubeLastArrivalReduceRoutine::prepare(&hw, tensors.problem(), settings)
+            })
+            .reduce(|last, earlier| last.or(earlier))
+            .unwrap_or(Err(cubek_std::routine::ROUTINE_LISTS_NO_SETTING))?;
+        HypercubeLastArrivalReduceRoutine::launch(&tensors, blueprint, grid);
+        Ok(())
+    }
+
+    /// A test for each operation whose rows hold what it writes, each one launch at the shortest
+    /// parts of `shape` reduced along `axis`.
+    macro_rules! every_operation {
+        ($shape:expr, $axis:expr) => {
+            routine_check::reduction_tests!(super::launch_at_shortest_parts, $shape, $axis, [
+                sum: ReduceOperation::Sum,
+                prod: ReduceOperation::Prod,
+                mean: ReduceOperation::Mean,
+                max: ReduceOperation::Max,
+                min: ReduceOperation::Min,
+                max_abs: ReduceOperation::MaxAbs,
+                any: ReduceOperation::Any,
+                all: ReduceOperation::All,
+                arg_max: ReduceOperation::ArgMax,
+                arg_min: ReduceOperation::ArgMin,
+                top_1: ReduceOperation::TopK { k: 1 },
+                arg_top_1: ReduceOperation::ArgTopK { k: 1 },
+                top_3: ReduceOperation::TopK { k: 3 },
+                arg_top_3: ReduceOperation::ArgTopK { k: 3 },
+            ]);
+        };
+    }
+
+    /// A `[2, 3, 5000]` tensor along its contiguous dim, in three parts.
+    mod along_the_contiguous_dim {
+        use super::*;
+        every_operation!([2, 3, 5000], 2);
+    }
+
+    /// A `[3, 2100, 4]` tensor along its middle dim, across the contiguous one, in five parts.
+    mod across_the_contiguous_dim {
+        use super::*;
+        every_operation!([3, 2100, 4], 1);
+    }
+
+    /// Rows three long, of one part.
+    mod rows_of_one_part {
+        use super::*;
+        every_operation!([2, 3, 5000], 1);
+    }
+
+    /// More row axes than a grid has, the rows on both sides of the reduced axis.
+    mod more_row_axes_around_the_reduced_one {
+        use super::*;
+        routine_check::reduction_tests!(super::launch_at_shortest_parts, [2, 3, 2, 2, 64], 2, [
+            sum: ReduceOperation::Sum,
+            mean: ReduceOperation::Mean,
+            arg_max: ReduceOperation::ArgMax,
+        ]);
+    }
+
+    /// More row axes than a grid has, all before the reduced axis.
+    mod more_row_axes_before_the_reduced_one {
+        use super::*;
+        routine_check::reduction_tests!(super::launch_at_shortest_parts, [2, 3, 2, 2, 64], 4, [
+            sum: ReduceOperation::Sum,
+            mean: ReduceOperation::Mean,
+            arg_max: ReduceOperation::ArgMax,
+        ]);
     }
 }

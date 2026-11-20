@@ -195,4 +195,8 @@ mod tests {
         let prepared = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
         assert!(prepared.is_ok(), "{prepared:?}");
     }
+
+    crate::kernels::routines::routine_check::reduces_unbound_each_dim!(
+        crate::kernels::UnitDirectReduceRoutine
+    );
 }

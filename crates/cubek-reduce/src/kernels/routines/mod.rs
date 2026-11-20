@@ -6,6 +6,8 @@ mod hypercube_atomic_reduce;
 mod hypercube_last_arrival_reduce;
 mod plane_shuffle_reduce;
 mod reduce_launcher;
+#[cfg(test)]
+mod routine_check;
 mod unit_direct_reduce;
 mod unit_direct_zero_reduce;
 

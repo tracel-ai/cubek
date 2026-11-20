@@ -219,6 +219,7 @@ fn launch_atomic<I: TileOperand>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::routines::routine_check;
     use cubecl::tile::launch::Decline;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
@@ -234,5 +235,45 @@ mod tests {
             matches!(prepared, Err(Decline::Unserved { .. })),
             "{prepared:?}"
         );
+    }
+
+    /// The atomic hypercube launched unbound, as a fused read stands in for, its input bound back
+    /// as the buffer it is, into `out` zeroed first by the zero routine, as its tuned candidate does.
+    fn launch_unbound(
+        client: &cubecl::client::Client,
+        reduction: &routine_check::Reduction,
+        input: cubecl::prelude::TensorBinding,
+        out: cubecl::prelude::TensorBinding,
+    ) -> Result<(), Decline> {
+        let tensors = routine_check::unbound_tensors::<HypercubeAtomicReduceRoutine, _>(
+            client, &input, out, reduction,
+        )?;
+        let hw = cubek_std::Hardware::from_client(client);
+        let prepared = HypercubeAtomicReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
+        crate::kernels::launch_zeroed_atomic_unbound::<cubecl::tile::launch::StoredTileOperand>(
+            &hw,
+            &tensors,
+            prepared,
+            routine_check::bound_back(input),
+        )
+    }
+
+    /// Sums launched unbound into an output that starts away from zero, so the zeroing before the
+    /// sum is checked too.
+    mod unbound {
+        use super::*;
+
+        routine_check::reduction_tests!(launch_unbound, [1, 1, 9000], 2, [
+            sums_one_long_row: ReduceOperation::Sum,
+        ]);
+        routine_check::reduction_tests!(launch_unbound, [2, 3, 5000], 2, [
+            sums_rows_along_the_contiguous_dim: ReduceOperation::Sum,
+        ]);
+        routine_check::reduction_tests!(launch_unbound, [3, 2100, 4], 1, [
+            sums_rows_across_the_contiguous_dim: ReduceOperation::Sum,
+        ]);
+        routine_check::reduction_tests!(launch_unbound, [4, 9000], 1, [
+            sums_the_rows_of_a_matrix: ReduceOperation::Sum,
+        ]);
     }
 }

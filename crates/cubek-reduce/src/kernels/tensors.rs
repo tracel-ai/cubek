@@ -329,3 +329,56 @@ pub(crate) fn bound_at(
         .build()
         .expect(ADMITTED_PLAN_RUNS)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::{FloatKind, IntKind};
+    use cubecl::zspace::Shape;
+    use cubek_test_utils::TestInput;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// A buffer of `shape` in f32 on the test device, holding zeros.
+    fn zeros(client: &Client, shape: &[usize]) -> TensorBinding {
+        TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+            .dtype(F32)
+            .zeros()
+            .generate_without_host_data()
+            .binding()
+    }
+
+    /// `ReduceTensors::with_indices` for `operation` along the last axis of a `[4, 8]` input, the
+    /// values one wide and the indices `indices_shape`.
+    fn tensors_with_indices(operation: ReduceOperation, indices_shape: &[usize]) -> ReduceTensors {
+        let client = cubecl::test_device().client();
+        ReduceTensors::with_indices(
+            &client,
+            zeros(&client, &[4, 8]),
+            zeros(&client, &[4, 1]),
+            zeros(&client, indices_shape),
+            1,
+            operation,
+            ReduceElements {
+                input: F32,
+                accumulator: F32,
+                out: F32,
+            },
+            ElemType::Int(IntKind::I32),
+        )
+    }
+
+    /// A sum's values carry no index: with_indices' documented panic.
+    #[test]
+    #[should_panic]
+    fn indices_beside_a_sum_panic() {
+        tensors_with_indices(ReduceOperation::Sum, &[4, 1]);
+    }
+
+    /// Indices of another shape than the values: with_indices' documented panic.
+    #[test]
+    #[should_panic]
+    fn indices_of_another_shape_panic() {
+        tensors_with_indices(ReduceOperation::ArgMax, &[1, 4]);
+    }
+}

@@ -10,8 +10,6 @@ mod routines;
 mod select;
 mod strategy;
 mod tensors;
-#[cfg(test)]
-mod tests;
 mod tune;
 
 pub use blueprint::*;
