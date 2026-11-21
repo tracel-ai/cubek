@@ -77,7 +77,7 @@ fn plane_shuffle_reduce<
     indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
-    if comptime!(microkernel.lines_across() == 1) {
+    if microkernel.lines_across() == 1 {
         plane_shuffle_reduce_window::<In, Acc, Out, Idx, N, C>(
             plane,
             input,
@@ -153,7 +153,7 @@ fn plane_shuffle_reduce_across<
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     let columns = microkernel.lines_across();
-    let per_column = comptime!(microkernel.lanes() / columns);
+    let per_column = microkernel.lanes() / columns;
     let values = values_across::<In, N>(plane, input, columns);
     let acc =
         accumulate_across::<In, Acc, N, C>(plane, input, values, per_column, microkernel.item());
