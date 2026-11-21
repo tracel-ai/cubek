@@ -118,7 +118,9 @@ impl CubeAttentionMicrokernelSettings {
     /// dim deep; then the one-by-four box on two slots the copy engine fills, over two and four
     /// heads; then eight planes a cube, four heads by two planes along their queries, on the boxes
     /// and rings a long causal prompt runs fastest on; then the one-by-two box of the four-plane
-    /// split on two and three slots the copy engine fills. The wide steps hold one head because a
+    /// split on two and three slots the copy engine fills; then the lead's box on four planes in
+    /// padded rows, two heads by two planes along their queries and one head by four, which a
+    /// device of 64 KiB of shared memory holds at a head dim of 256. The wide steps hold one head because a
     /// step's stages and the heads' windows share one budget; one that still does not fit the
     /// device's shared memory declines there.
     fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
@@ -309,6 +311,20 @@ impl CubeAttentionMicrokernelSettings {
             query_as_keys,
             ..four_planes_split
         });
+        // Four planes a cube, each a one-by-one box over stages in padded rows, as two heads by two
+        // planes along their queries or one head by four: what a device of 64 KiB of shared memory
+        // holds at a head dim of 256, where a larger box's stages do not fit and a plane holds its
+        // output sixteen fragments wide. On an R9700 (512 queries over 4096 keys, last first),
+        // two heads by two planes takes 1.11 ms over six query heads to a key head at a head dim of
+        // 256 against 1.66 ms for the fastest plane shuffle, 3.21 against 6.73 over 24 to 4, and at
+        // a head dim of 128, 2.34 against 7.01 ms over 48 to 8. One head by four planes was within
+        // 3% of it on each.
+        let four_small_planes = [(2, 2), (1, 4)].map(|(heads, planes)| Self {
+            heads: count(heads),
+            planes_along_queries: count(planes),
+            layout: StageLayout::PaddedRows,
+            ..lead
+        });
         [lead, fragments(2, 2), fragments(2, 4)]
             .into_iter()
             .chain(wide)
@@ -323,6 +339,7 @@ impl CubeAttentionMicrokernelSettings {
             .chain(copied)
             .chain(eight_warps)
             .chain(pipelined)
+            .chain(four_small_planes)
             .collect()
     }
 
