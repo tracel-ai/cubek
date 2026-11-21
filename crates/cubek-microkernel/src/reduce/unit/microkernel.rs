@@ -1,5 +1,6 @@
 use super::base::UnitDirectReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, accumulate_read, row_lanes, row_values};
+use crate::reduce::write::{UnitCarrierWriteMicrokernel, unit_carrier_write_microkernel};
+use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier, accumulate_read};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -61,9 +62,9 @@ fn unit_direct_reduce<
     indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: UnitDirectReduceMicrokernel,
 ) {
-    let operation = microkernel.item().operation;
-    let monoid = operation.monoid();
-    let row_lanes = row_lanes(input);
+    let monoid = microkernel.item().operation.monoid();
+    let load = input.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
 
     let lines = input.flat::<In, N>();
     let count = lines.shape();
@@ -79,16 +80,15 @@ fn unit_direct_reduce<
         );
     }
 
-    let values = row_values(count, row_lanes);
-
-    C::write::<Out, Idx>(
+    unit_carrier_write_microkernel::<Out, Idx, Acc, N, C>(
         acc,
         out,
         indices,
-        values,
-        row_lanes,
-        operation,
-        microkernel.item().writes(),
+        count * row_lanes,
+        comptime!(UnitCarrierWriteMicrokernel::new(
+            microkernel.item(),
+            row_lanes
+        )),
     );
 }
 

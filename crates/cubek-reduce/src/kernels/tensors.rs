@@ -1,11 +1,14 @@
 //! How a reduce launch reads its operands and binds them.
 
-use crate::kernels::{REDUCED, ReduceBlueprint, ReduceElements, ReduceRoutineProblem, SLOTS};
+use crate::kernels::{
+    REDUCED, ReduceBlueprint, ReduceElements, ReduceRoutineProblem, ReduceWorkspace, SLOTS,
+};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Decline, Unbound};
-use cubecl::tile::{Dimension, Geometry, Launcher};
+use cubecl::tile::layout::ElemAlignment;
+use cubecl::tile::{Dimension, Geometry, Launcher, Space};
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
@@ -30,6 +33,8 @@ pub struct ReduceTensors<In = TensorBinding> {
     /// The indices written beside the values, of `out`'s shape at their own strides, where they
     /// are.
     indices: Option<TensorBinding>,
+    /// The scratch the caller gave, where it gave any.
+    workspace: Option<ReduceWorkspace>,
     problem: ReduceRoutineProblem,
 }
 
@@ -48,6 +53,19 @@ impl<In> ReduceTensors<In> {
 
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// These tensors with `workspace`, the scratch the routines that split a row across cubes take
+    /// ([`ReduceWorkspace::bytes_for`]): without one, those routines decline.
+    pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
+        Self {
+            problem: ReduceRoutineProblem {
+                workspace: workspace.bytes(),
+                ..self.problem
+            },
+            workspace: Some(workspace),
+            ..self
+        }
     }
 }
 
@@ -72,6 +90,7 @@ impl ReduceTensors<TensorBinding> {
             input,
             out,
             indices: None,
+            workspace: None,
             problem,
         }
     }
@@ -111,22 +130,6 @@ impl ReduceTensors<TensorBinding> {
         tensors.indices = Some(indices);
         tensors
     }
-
-    /// Both operands bound as `blueprint` states them, on `grid`.
-    ///
-    /// # Panics
-    ///
-    /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
-    pub(crate) fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
-        ReduceBinding::bound(
-            &self.client,
-            &self.problem,
-            [&self.input, &self.out],
-            self.indices.as_ref(),
-            blueprint,
-            grid,
-        )
-    }
 }
 
 impl ReduceTensors<Geometry> {
@@ -153,12 +156,15 @@ impl ReduceTensors<Geometry> {
             input,
             out,
             indices: None,
+            workspace: None,
             problem,
         }
     }
+}
 
-    /// The input's spec and geometry as `blueprint` states them, on `grid`, for the caller to
-    /// bind, and the output bound.
+impl ReduceTensors<TensorBinding> {
+    /// Both operands bound as `blueprint` states them, on `grid`, over `space`, the problem's own
+    /// extents.
     ///
     /// # Panics
     ///
@@ -167,15 +173,59 @@ impl ReduceTensors<Geometry> {
         &self,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
+        space: Space,
+    ) -> ReduceBinding {
+        ReduceBinding {
+            workspace: self.workspace.clone(),
+            ..ReduceBinding::bound(
+                &self.client,
+                &self.problem,
+                [&self.input, &self.out],
+                self.indices.as_ref(),
+                blueprint,
+                grid,
+                space,
+            )
+        }
+    }
+}
+
+impl ReduceTensors<Geometry> {
+    /// The problem as the input's own geometry states it, its alignment the geometry's rather than
+    /// the width the caller binds it at.
+    pub(crate) fn stated_problem(&self) -> ReduceRoutineProblem {
+        let [_, out] = self.problem.elem_alignments;
+        let input = ElemAlignment::new(self.input.shape(), self.input.strides());
+        ReduceRoutineProblem {
+            elem_alignments: [input, out],
+            ..self.problem.clone()
+        }
+    }
+
+    /// The input's spec and geometry as `blueprint` states them, on `grid`, over `space`, the
+    /// problem's own extents, for the caller to bind, and the output bound.
+    ///
+    /// # Panics
+    ///
+    /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
+    pub(crate) fn bind<M>(
+        &self,
+        blueprint: &ReduceBlueprint<M>,
+        grid: &Grid,
+        space: Space,
     ) -> ReduceBinding<Unbound, Bound> {
-        ReduceBinding::unbound(
-            &self.client,
-            &self.problem,
-            &self.input,
-            &self.out,
-            blueprint,
-            grid,
-        )
+        ReduceBinding {
+            workspace: self.workspace.clone(),
+            ..ReduceBinding::unbound(
+                &self.client,
+                &self.problem,
+                &self.input,
+                &self.out,
+                blueprint,
+                grid,
+                space,
+            )
+        }
     }
 }
 
@@ -187,6 +237,8 @@ pub(crate) struct ReduceBinding<In = Bound, Out = In> {
     pub out: Out,
     /// The indices beside the values, where the launch writes both.
     pub indices: Option<Bound>,
+    /// The scratch the caller gave, where it gave any.
+    pub workspace: Option<ReduceWorkspace>,
 }
 
 impl<In, Out> ReduceBinding<In, Out> {
@@ -201,13 +253,14 @@ impl<In, Out> ReduceBinding<In, Out> {
             input: input(self.input),
             out: out(self.out),
             indices: self.indices,
+            workspace: self.workspace,
         }
     }
 }
 
 impl ReduceBinding {
     /// `input` and `out`, and `indices` beside them where there are, bound as `blueprint`
-    /// states them for `problem`, on `grid`.
+    /// states them for `problem`, on `grid` over `space`.
     fn bound<M>(
         client: &Client,
         problem: &ReduceRoutineProblem,
@@ -215,8 +268,9 @@ impl ReduceBinding {
         indices: Option<&TensorBinding>,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
+        space: Space,
     ) -> Self {
-        let launcher = launcher_of(client, problem, blueprint, grid);
+        let launcher = launcher_of(client, problem, blueprint, grid, space);
         let (input, dimensions) = problem.labelled(input.clone(), REDUCED);
         let input = launcher
             .arg(input, problem.elements.input)
@@ -238,13 +292,14 @@ impl ReduceBinding {
             input,
             out,
             indices,
+            workspace: None,
         }
     }
 }
 
 impl ReduceBinding<Unbound, Bound> {
     /// The spec and geometry of `input`, which the caller binds, as `blueprint` states them for
-    /// `problem`, on `grid`, and `out` bound.
+    /// `problem`, on `grid` over `space`, and `out` bound.
     fn unbound<M>(
         client: &Client,
         problem: &ReduceRoutineProblem,
@@ -252,8 +307,9 @@ impl ReduceBinding<Unbound, Bound> {
         out: &TensorBinding,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
+        space: Space,
     ) -> Self {
-        let launcher = launcher_of(client, problem, blueprint, grid);
+        let launcher = launcher_of(client, problem, blueprint, grid, space);
         let (input, dimensions) = problem.labelled_geometry(input, REDUCED);
         let input = launcher
             .unbound(&input)
@@ -268,23 +324,22 @@ impl ReduceBinding<Unbound, Bound> {
             input,
             out,
             indices: None,
+            workspace: None,
         }
     }
 }
 
-/// The launcher `grid` builds for `problem` placed by `blueprint`.
+/// The launcher `grid` builds for `problem` placed by `blueprint`, over `space`, the problem's own
+/// extents: the Blueprint's partitioning states the extents of the problem its Tune Key stands
+/// for, which the kernel leaves to the launch.
 fn launcher_of<M>(
     client: &Client,
     problem: &ReduceRoutineProblem,
     blueprint: &ReduceBlueprint<M>,
     grid: &Grid,
+    space: Space,
 ) -> Launcher {
-    grid.launcher(client, || {
-        (
-            problem.kernel(&blueprint.partitioning),
-            blueprint.partitioning.space().clone(),
-        )
-    })
+    grid.launcher(client, || (problem.kernel(&blueprint.partitioning), space))
 }
 
 /// `buffer`, an output of `problem` or the indices beside it, bound in `element` at the output's

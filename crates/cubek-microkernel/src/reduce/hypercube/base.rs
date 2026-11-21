@@ -30,6 +30,10 @@ impl HypercubeLastArrivalReduceMicrokernel {
     }
 
     /// The widest line its part's carrier keeps apart.
+    ///
+    /// # Panics
+    ///
+    /// As the unit microkernel's [`widest_line`](crate::reduce::unit::UnitDirectReduceMicrokernel::widest_line).
     pub fn widest_line(&self) -> Option<usize> {
         self.part.widest_line()
     }
@@ -162,6 +166,17 @@ mod tests {
             hypercube.shared_memory_bytes_at_width(WIDTH),
             part.shared_memory_bytes_at_width(WIDTH) + size_of::<u32>()
         );
+    }
+
+    /// A hypercube's widest line is its part's.
+    #[test]
+    fn its_widest_line_is_its_parts() {
+        const LANES: usize = 32;
+        const PLANES: usize = 4;
+        const LANE_SLOTS: usize = 32;
+        let item = ReduceWorkItem::along_f32(ReduceOperation::TopK { k: 4 });
+        let part = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        let hypercube = HypercubeLastArrivalReduceMicrokernel::new(part);
         assert_eq!(hypercube.widest_line(), part.widest_line());
     }
 

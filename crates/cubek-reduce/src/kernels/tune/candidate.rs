@@ -45,7 +45,9 @@ impl ReduceCandidate {
     pub fn fastest(client: &Client, device: &Device, key: &ReduceKey) -> Option<Self> {
         fastest_tuned(client, device, key)
     }
+}
 
+impl ReduceCandidate {
     /// The candidate that launches through `dispatch`.
     fn launching(dispatch: ReduceCandidateLauncherDispatch) -> Self {
         Self {

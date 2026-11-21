@@ -6,7 +6,8 @@ use cubek_std::microkernel::StageLayout;
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::attention::{
-    Forward, PROMPT, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR,
+    Forward, PROMPT, PROMPT_HEAD_DIM_256, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8,
+    PROMPTS_WIDE_PER_TENSOR,
 };
 
 /// The cube staged routine's lead on every prompt case.
@@ -47,6 +48,15 @@ fn a_swizzled_stage_matches_the_host() {
                 ..lead
             });
     forward.check(forward.at(swizzled, &[PROMPT_WIDE]));
+}
+
+/// Every setting the routine lists at a head dim of 256, where the output's rows a correction
+/// scales run sixteen fragments wide: a setting whose stages the device's shared memory does not
+/// hold declines.
+#[test]
+fn every_cube_staged_setting_matches_the_host_at_a_head_dim_of_256() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    forward.check(forward.at_every_setting(&[PROMPT_HEAD_DIM_256]));
 }
 
 /// Every setting the routine lists, the copy engine's among them, at a model's head dim: the

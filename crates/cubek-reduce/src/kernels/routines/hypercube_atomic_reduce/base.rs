@@ -1,8 +1,7 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
-    BATCH, REDUCED, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
-    ReduceTensors, UNBOUND_LINES_NARROWER, each_microkernel_with, estimate_reduce,
-    microkernel_widths,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
+    each_microkernel_with, estimate_reduce, microkernel_widths, prepared_from_key, split_launch,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -12,25 +11,27 @@ use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{
     AccumulateArgLaunch, Bound, Decline, StoredTileOperand, TileOperand, Unbound, Vectorization,
 };
-use cubecl::tile::{Geometry, Levels, Partitioning, TileTensorLaunch};
+use cubecl::tile::{Geometry, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::{
     CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
 };
 use cubek_microkernel::reduce::{ReduceOperand, ReduceOperation};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Grid, Routine};
 
 /// Every row split into parts along the reduced dim, a cube a part, which reduces it as the cube
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
 /// The output must hold zero before it runs ([`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
-/// zeroes it), since it only ever adds. Its cubes run along [`REDUCED`], then [`BATCH`].
+/// zeroes it), since it only ever adds. Its cubes run along
+/// [`REDUCED`](crate::kernels::REDUCED), then [`BATCH`](crate::kernels::BATCH).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HypercubeAtomicReduceRoutine;
 
-/// The cube microkernel's planes, and how many lines each unit reads of a part.
+/// What a measurement settles for the atomic hypercube: each cube's microkernel, and the lines a
+/// unit reads of a part, which set how many cubes add into one row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeAtomicReduceSettings {
     pub microkernel: CubeStagedReduceMicrokernelSettings,
@@ -58,7 +59,8 @@ impl Routine for HypercubeAtomicReduceRoutine {
     type Blueprint = HypercubeAtomicReduceBlueprint;
     type Partitioning = Partitioning;
 
-    /// Its microkernel's planes, each with the longest parts first.
+    /// Each cube microkernel setting crossed with
+    /// [`UNIT_LINES`](HypercubeAtomicReduceSettings::UNIT_LINES).
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         each_microkernel_with(
             CubeStagedReduceMicrokernel::settings(hw),
@@ -83,40 +85,39 @@ impl Routine for HypercubeAtomicReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        if problem.operation != ReduceOperation::Sum {
-            return Err(Decline::Unserved {
-                why: "the atomic hypercube adds its parts, which only a sum's parts make whole",
-            });
-        }
-        if !hw
-            .properties
-            .atomic_type_usage(Type::atomic(problem.elements.out))
-            .contains(AtomicUsage::Add)
-        {
-            return Err(Decline::Unserved {
-                why: "the device has no atomic add for the output's element",
-            });
-        }
-        let microkernel =
-            CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-        let units = microkernel.units();
-        let part = problem.split_part(units, settings.unit_lines, widths[0]);
-        let owner = problem.split_owner_box(widths[0], part);
-        // The parts ride the grid's `X`, the boxes of rows the rest.
-        let partitioning = Partitioning::new(
-            problem.space(),
-            Levels::leaf(&owner).cubes(&[REDUCED, BATCH]).build(),
-        );
-        let cube = CubeResources {
-            plane_width: units as u32,
-            shared_memory: microkernel.shared_memory_bytes_at_width(widths[0]),
-        };
-        let grid = Grid::new(hw, &partitioning, cube)?;
-        Ok((
-            ReduceBlueprint::new(microkernel, partitioning, widths),
-            grid,
-        ))
+        // Inside, `problem` is the problem the call's Tune Key stands for.
+        prepared_from_key::<Self, _>(hw, problem, |problem| {
+            if problem.operation != ReduceOperation::Sum {
+                return Err(Decline::Unserved {
+                    why: "the atomic hypercube adds its parts, which only a sum's parts make whole",
+                });
+            }
+            if !hw
+                .properties
+                .atomic_type_usage(Type::atomic(problem.elements.out))
+                .contains(AtomicUsage::Add)
+            {
+                return Err(Decline::Unserved {
+                    why: "the device has no atomic add for the output's element",
+                });
+            }
+            let microkernel =
+                CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
+            let (partitioning, grid) = split_launch(
+                hw,
+                problem,
+                |_| problem.space(),
+                microkernel.units(),
+                settings.unit_lines,
+                widths[0],
+                microkernel.shared_memory_bytes_at_width(widths[0]),
+            )?;
+            Ok((
+                ReduceBlueprint::new(microkernel, partitioning, widths),
+                grid,
+            ))
+        })
     }
 
     fn estimate(
@@ -146,7 +147,10 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
 
     /// `tensors` reduced on `grid`, each cube's total added into the output.
     fn launch(tensors: &ReduceTensors, blueprint: HypercubeAtomicReduceBlueprint, grid: Grid) {
-        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, identity);
+        let space = Self::space(tensors.problem(), &blueprint);
+        let binding = tensors
+            .bind(&blueprint, &grid, space)
+            .map(Bound::arg, identity);
         launch_atomic::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
@@ -158,22 +162,14 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
 
     /// `tensors`, whose input the caller binds, reduced on `grid`, each cube's total added into
     /// the output.
-    ///
-    /// # Errors
-    ///
-    /// [`UNBOUND_LINES_NARROWER`] where `blueprint` reads narrower lines than the caller's input is
-    /// stated at.
     fn launch_unbound<I: TileOperand>(
         tensors: &ReduceTensors<Geometry>,
         blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Decline> {
-        let [input_lines, _] = tensors.problem().elem_alignments;
-        if !input_lines.admits(blueprint.width) {
-            return Err(UNBOUND_LINES_NARROWER);
-        }
-        let binding = tensors.bind(&blueprint, &grid).map(input, identity);
+    ) {
+        let space = Self::space(tensors.problem(), &blueprint);
+        let binding = tensors.bind(&blueprint, &grid, space).map(input, identity);
         launch_atomic::<I>(
             tensors.problem(),
             tensors.client(),
@@ -181,7 +177,6 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
             blueprint,
             grid,
         );
-        Ok(())
     }
 }
 

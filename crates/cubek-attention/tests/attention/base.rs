@@ -88,6 +88,16 @@ pub(crate) const PROMPT_WIDE: AttentionCase = AttentionCase {
     ..PROMPT
 };
 
+/// The wide prompt at a head dim of 256, six query heads to a key head: Qwen3.8 27B's heads on
+/// one card of four under tensor parallelism, whose output a plane holds sixteen fragments wide.
+pub(crate) const PROMPT_HEAD_DIM_256: AttentionCase = AttentionCase {
+    heads: 6,
+    kv_heads: 1,
+    head_dim: 256,
+    val_dim: 256,
+    ..PROMPT_WIDE
+};
+
 /// A decode step at a model's head dim: one position of the wide prompt's heads.
 pub(crate) const DECODE_WIDE: AttentionCase = AttentionCase {
     seq_q: 1,

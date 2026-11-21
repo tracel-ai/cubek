@@ -1,7 +1,6 @@
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, cube};
 
-/// A unit's window of `out`, every cell set to zero.
 #[cube]
 pub(crate) fn unit_direct_zero_microkernel(out: &mut Tile) {
     out.zero();
