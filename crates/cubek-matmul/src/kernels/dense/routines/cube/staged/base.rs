@@ -28,7 +28,6 @@ use cubek_microkernel::matmul::{
 };
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_dimensions::{K, KB, KI, MI, N, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
@@ -270,13 +269,12 @@ fn check_tma_store(
     }
 }
 
-/// Whether the copy engine copies whole every line `blueprint` binds of the inputs it hands it,
-/// those its fill does not decode, of `contracted`: their values, and a packed input's scales as
-/// `read` reads them, which the stage keeps beside the values ([`Delivery::moves_lines`]). A scale
-/// of one byte read alone, as MXFP4's against a short window, is a line no copy moves.
+/// Whether the copy engine copies whole every line of values `blueprint` binds of the inputs it
+/// hands it, those its fill does not decode, of `contracted` ([`Delivery::moves_lines`]). A packed
+/// input's block scales are bound to the units, which load them as they lie however narrow; the
+/// copy engine moves only the values.
 pub(crate) fn check_copy_engine_lines(
     blueprint: &CubeStagedMatmulRoutineBlueprint,
-    read: &MatmulRoutineProblem,
     contracted: &MatmulWorkItem,
 ) -> Result<(), Decline> {
     MatmulOperand::INPUTS
@@ -285,19 +283,8 @@ pub(crate) fn check_copy_engine_lines(
         .try_for_each(|operand| {
             // Bits rather than bytes: an `e2m1` value is half of one.
             let bits = blueprint.widths.get(operand) * contracted.elements.get(operand).size_bits();
-            Delivery::AsyncPerUnit.moves_lines(bits)?;
-            match read.inputs.get(operand).packing().and_then(scale_line_bits) {
-                Some(bits) => Delivery::AsyncPerUnit.moves_lines(bits),
-                None => Ok(()),
-            }
+            Delivery::AsyncPerUnit.moves_lines(bits)
         })
-}
-
-/// The bits of one read of `packing`'s block scales: the scales it takes at once, each of the
-/// scheme's scale element. `None` where the scheme scales no block.
-fn scale_line_bits(packing: Packing) -> Option<usize> {
-    let block = packing.scheme.block_scale()?;
-    Some(packing.operand.scales_per_word() * ElemType::from_scale_dtype(block.dtype).size_bits())
 }
 
 /// What every cube staged routine's cubes access: nothing of the routine's own, which only walks

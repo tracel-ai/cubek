@@ -210,7 +210,7 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
         placement.check_copy_engine(hw)?;
         let contracted = placement.contracted;
         let (blueprint, grid) = placement.prepare(hw)?;
-        base::check_copy_engine_lines(&blueprint, &read, &contracted)?;
+        base::check_copy_engine_lines(&blueprint, &contracted)?;
         Ok((blueprint, grid))
     }
 }
