@@ -1,9 +1,11 @@
 //! A reduce launch's compile-time decisions.
 
-use crate::kernels::{BATCH, ReduceRoutineProblem};
+use crate::kernels::{
+    BATCH, REDUCED, ReduceLauncher, ReduceRoutineProblem, UNBOUND_LINES_NARROWER,
+};
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::space::UnitCube;
-use cubecl::tile::{Levels, Partitioning};
+use cubecl::tile::{Levels, Partitioning, Space};
 use cubek_microkernel::reduce::{ReduceOperand, ReduceWorkItem};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -74,6 +76,38 @@ pub(crate) fn microkernel_widths<M: Microkernel<CubeSpace = (), Operand = Reduce
     reduce_widths(hw, problem, vectorization, widest_line)
 }
 
+/// `R`'s launch of `problem`: the Blueprint `prepare_keyed` prepares for the problem `problem`'s
+/// Tune Key stands for ([`ReduceRoutineProblem::keyed`]), so every call of one key compiles the
+/// same kernel, and the Grid that Blueprint spawns over `problem`'s own extents
+/// ([`ReduceLauncher::space`]), each cube the one the keyed launch holds.
+///
+/// # Errors
+///
+/// Why `prepare_keyed` declines the keyed problem; [`UNBOUND_LINES_NARROWER`] where `problem`'s
+/// input is one the caller binds, stated at a width the Blueprint reads narrower lines than; or
+/// why the device cannot launch the Grid over `problem`.
+pub(crate) fn prepared_from_key<R: ReduceLauncher<M>, M>(
+    hw: &Hardware,
+    problem: &ReduceRoutineProblem,
+    prepare_keyed: impl FnOnce(&ReduceRoutineProblem) -> Result<(ReduceBlueprint<M>, Grid), Decline>,
+) -> Result<(ReduceBlueprint<M>, Grid), Decline> {
+    let (blueprint, keyed_grid) = prepare_keyed(&problem.keyed())?;
+    let [input_lines, _] = problem.elem_alignments;
+    if !input_lines.admits(blueprint.width) {
+        return Err(UNBOUND_LINES_NARROWER);
+    }
+    let partitioning = Partitioning::new(
+        R::space(problem, &blueprint),
+        blueprint.partitioning.levels().to_vec(),
+    );
+    let cube = CubeResources {
+        plane_width: keyed_grid.launch.cube_dim.x,
+        shared_memory: keyed_grid.shared_memory,
+    };
+    let grid = Grid::new(hw, &partitioning, cube)?;
+    Ok((blueprint, grid))
+}
+
 /// What `microkernel` costs reducing `problem` on `grid`, added to `estimate`.
 pub(crate) fn estimate_reduce<M: Microkernel<WorkItem = ReduceWorkItem, CubeSpace = ()>>(
     problem: &ReduceRoutineProblem,
@@ -117,6 +151,38 @@ pub(crate) fn unit_launch(
     Ok((partitioning, grid))
 }
 
+/// The launch of rows split across cubes: each row in parts a cube of `units` units reduces,
+/// `unit_lines` lines of `width` values a unit, a cube a part of a box of rows, over the space
+/// `space_of_part` states for that part length. The parts ride the grid's `X`, the boxes of rows
+/// the rest; each cube holds `shared_memory` bytes.
+///
+/// # Errors
+///
+/// Where the device cannot launch that grid.
+pub(crate) fn split_launch(
+    hw: &Hardware,
+    problem: &ReduceRoutineProblem,
+    space_of_part: impl FnOnce(usize) -> Space,
+    units: usize,
+    unit_lines: usize,
+    width: usize,
+    shared_memory: usize,
+) -> Result<(Partitioning, Grid), Decline> {
+    let part = problem.split_part(units, unit_lines, width);
+    let partitioning = Partitioning::new(
+        space_of_part(part),
+        Levels::leaf(&problem.split_owner_box(width, part))
+            .cubes(&[REDUCED, BATCH])
+            .build(),
+    );
+    let cube = CubeResources {
+        plane_width: units as u32,
+        shared_memory,
+    };
+    let grid = Grid::new(hw, &partitioning, cube)?;
+    Ok((partitioning, grid))
+}
+
 /// A routine's settings: each of its microkernel's `microkernels` with each of its own `knobs`,
 /// the microkernel's order outermost, built by `settings`.
 pub(crate) fn each_microkernel_with<M: Copy, K: Copy, S, const N: usize>(
@@ -150,6 +216,7 @@ mod tests {
     use cubecl::tile::layout::ElemAlignment;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
+    use cubek_std::routine::Routine;
 
     /// Each microkernel setting crossed with each knob, the microkernel's outermost.
     #[test]
@@ -169,17 +236,21 @@ mod tests {
         assert_eq!(width, 1);
     }
 
+    /// Rows across the reduced axis go out a line of rows at a time.
+    #[test]
+    fn rows_across_the_axis_go_out_a_line_at_a_time() {
+        let hw = devices::m2_pro();
+        let dense = ReduceRoutineProblem::dense(&[4096, 4], 0, ReduceOperation::ArgMax);
+        let [_, dense_width] = reduce_widths(&hw, &dense, Vectorization::new(), None);
+        assert!(dense_width > 1);
+    }
+
     /// Indices beside the values align the output's width too: a strided indices buffer narrows it
     /// to one.
     #[test]
     fn strided_indices_narrow_the_outputs_width() {
         let hw = devices::m2_pro();
         let dense = ReduceRoutineProblem::dense(&[4096, 4], 0, ReduceOperation::ArgMax);
-        let [_, dense_width] = reduce_widths(&hw, &dense, Vectorization::new(), None);
-        assert!(
-            dense_width > 1,
-            "rows across the axis go out a line at a time"
-        );
         let problem = ReduceRoutineProblem {
             indices: Some(ReduceIndices {
                 element: cubecl::ir::ElemType::UInt(cubecl::ir::UIntKind::U32),
@@ -202,5 +273,57 @@ mod tests {
             grid.launch.units_per_cube(),
             hw.dispatch_plane_size() * PLANES as u32
         );
+    }
+
+    /// Settings of the unit routine: one plane of units a cube, the default top-k slots.
+    fn unit_settings(hw: &Hardware) -> crate::kernels::UnitDirectReduceSettings {
+        crate::kernels::UnitDirectReduceRoutine::settings(hw)[0]
+    }
+
+    /// Two calls of one Tune Key, rows 300 and 260 long (both lines of 4, both in one bucket),
+    /// prepare one Blueprint.
+    #[test]
+    fn calls_of_one_key_prepare_one_blueprint() {
+        use crate::kernels::{ReduceKey, UnitDirectReduceRoutine};
+        let hw = devices::m2_pro();
+        let long = ReduceRoutineProblem::dense(&[64, 300], 1, ReduceOperation::Sum);
+        let short = ReduceRoutineProblem::dense(&[64, 260], 1, ReduceOperation::Sum);
+        assert_eq!(ReduceKey::from(&long), ReduceKey::from(&short));
+        let prepare = |problem| {
+            UnitDirectReduceRoutine::prepare(&hw, problem, &unit_settings(&hw))
+                .expect("the unit routine serves every problem")
+                .0
+        };
+        assert_eq!(prepare(&long), prepare(&short));
+    }
+
+    /// The Grid spans the call's own rows, not the more its Tune Key's bucket rounds them up to.
+    #[test]
+    fn the_grid_spans_the_calls_own_rows() {
+        use crate::kernels::UnitDirectReduceRoutine;
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[5000, 300], 1, ReduceOperation::Sum);
+        let settings = unit_settings(&hw);
+        let (blueprint, grid) = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings)
+            .expect("the unit routine serves every problem");
+        let (_, own) = unit_launch(&hw, &problem, blueprint.width, settings.planes)
+            .expect("the unit launch fits");
+        assert_eq!(grid.cubes(), own.cubes());
+    }
+
+    /// An input the caller binds in pieces wider than any line the device reads declines.
+    #[test]
+    fn an_input_stated_wider_than_its_lines_declines() {
+        use crate::kernels::UnitDirectReduceRoutine;
+        const PIECE: usize = 64;
+        let hw = devices::m2_pro();
+        let dense = ReduceRoutineProblem::dense(&[64, 4096], 1, ReduceOperation::Sum);
+        let problem = ReduceRoutineProblem {
+            elem_alignments: [ElemAlignment::stored_piece(PIECE), dense.elem_alignments[1]],
+            ..dense
+        };
+        let declined = UnitDirectReduceRoutine::prepare(&hw, &problem, &unit_settings(&hw))
+            .expect_err("no device reads lines of 64");
+        assert_eq!(declined.to_string(), UNBOUND_LINES_NARROWER.to_string());
     }
 }

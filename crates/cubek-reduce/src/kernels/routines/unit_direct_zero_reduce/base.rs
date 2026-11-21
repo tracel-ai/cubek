@@ -1,7 +1,7 @@
 use super::kernel::unit_direct_zero_reduce_kernel;
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
-    reduce_widths, unit_launch,
+    prepared_from_key, reduce_widths, unit_launch,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -66,16 +66,19 @@ impl Routine for UnitDirectZeroReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let microkernel = UnitDirectZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
-        let mut vectorization = Vectorization::new();
-        vectorization.require(problem.work_item().requirement());
-        // It zeroes a sum's output ahead of the atomic routine, which no top-k bounds.
-        let widths = reduce_widths(hw, problem, vectorization, None);
-        let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
-        Ok((
-            ReduceBlueprint::new(microkernel, partitioning, widths),
-            grid,
-        ))
+        // Inside, `problem` is the problem the call's Tune Key stands for.
+        prepared_from_key::<Self, _>(hw, problem, |problem| {
+            let microkernel = UnitDirectZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
+            let mut vectorization = Vectorization::new();
+            vectorization.require(problem.work_item().requirement());
+            // It zeroes a sum's output ahead of the atomic routine, which no top-k bounds.
+            let widths = reduce_widths(hw, problem, vectorization, None);
+            let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
+            Ok((
+                ReduceBlueprint::new(microkernel, partitioning, widths),
+                grid,
+            ))
+        })
     }
 
     fn estimate(
@@ -117,9 +120,8 @@ impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
         blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
         _input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) -> Result<(), Decline> {
+    ) {
         Self::zero_unbound(tensors, blueprint, grid);
-        Ok(())
     }
 }
 
@@ -130,7 +132,8 @@ impl UnitDirectZeroReduceRoutine {
         blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
     ) {
-        let binding = tensors.bind(&blueprint, &grid);
+        let space = Self::space(tensors.problem(), &blueprint);
+        let binding = tensors.bind(&blueprint, &grid, space);
         launch_zero(
             tensors.client(),
             tensors.problem(),

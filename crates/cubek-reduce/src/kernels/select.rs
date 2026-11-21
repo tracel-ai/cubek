@@ -12,7 +12,9 @@ use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
 use cubek_std::routine::{Grid, Routine};
 
-/// `tensors` reduced by the routine the rule picks on `hw`, read top to bottom:
+/// `tensors` reduced by the routine the rule picks on `hw`, read top to bottom. The rule reads the
+/// problem the call's Tune Key stands for ([`ReduceRoutineProblem::keyed`]), so every call of one
+/// key runs the same routine at the same setting:
 ///
 /// 1. Rows enough that a unit each fills the device, each row short enough that a unit walks it
 ///    alone as fast as a plane would: the unit routine.
@@ -27,24 +29,27 @@ use cubek_std::routine::{Grid, Routine};
 ///
 /// Why the unit routine cannot run the problem here, which no device refuses.
 pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
-    let problem = tensors.problem();
-    if let Some((blueprint, grid)) = filling_the_device::<UnitDirectReduceRoutine, _>(hw, problem)
-        && unit_keeps_up(hw, problem, blueprint.width)
+    let keyed = tensors.problem().keyed();
+    if let Some((settings, blueprint)) =
+        filling_the_device::<UnitDirectReduceRoutine, _>(hw, &keyed)
+        && unit_keeps_up(hw, &keyed, blueprint.width)
+        && launched::<UnitDirectReduceRoutine, _>(hw, tensors, &settings)
     {
-        UnitDirectReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
     }
-    if let Some((blueprint, grid)) = filling_the_device::<PlaneShuffleReduceRoutine, _>(hw, problem)
+    if let Some((settings, _)) = filling_the_device::<PlaneShuffleReduceRoutine, _>(hw, &keyed)
+        && launched::<PlaneShuffleReduceRoutine, _>(hw, tensors, &settings)
     {
-        PlaneShuffleReduceRoutine::launch(tensors, blueprint, grid);
         return Ok(());
     }
-    if let Some((blueprint, grid)) = hypercube_filling_the_device(hw, tensors) {
-        HypercubeLastArrivalReduceRoutine::launch(tensors, blueprint, grid);
+    if let Some(settings) = hypercube_filling_the_device(hw, &keyed)
+        && launched::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors, &settings)
+    {
         return Ok(());
     }
-    if let Ok((blueprint, grid)) = CubeStagedReduceRoutine::prepare_first_served(hw, problem) {
-        CubeStagedReduceRoutine::launch(tensors, blueprint, grid);
+    if let Some((settings, _, _)) = first_served::<CubeStagedReduceRoutine, _>(hw, &keyed)
+        && launched::<CubeStagedReduceRoutine, _>(hw, tensors, &settings)
+    {
         return Ok(());
     }
     launch_kernel(ReduceKernel::Unit, hw, tensors)
@@ -64,20 +69,17 @@ fn unit_keeps_up(hw: &Hardware, problem: &ReduceRoutineProblem, width: usize) ->
         .is_none_or(|lanes| problem.reduced_extent().div_ceil(width) <= lanes as usize)
 }
 
-/// The hypercube's launch where a box of rows a cube leaves the device idle and splitting the rows
-/// along the reduced dim gives more cubes: at the first of its settings, the longest parts first,
-/// whose cubes fill the device, or at the one with the most cubes where none does. A top-k takes
-/// the longest parts only: the last cube merges a row's top-k lists one after another, `k` inserts
-/// a part, so shorter parts cost more in the merge than their extra cubes save. `None` where the
-/// device does not say how wide it is, the boxes already fill it, or every row is one part.
+/// The setting of the hypercube's launch where a box of rows a cube leaves the device idle and
+/// splitting the rows along the reduced dim gives more cubes: the first of its settings, the
+/// longest parts first, whose cubes fill the device, or the one with the most cubes where none
+/// does. A top-k takes the longest parts only: the last cube merges a row's top-k lists one after
+/// another, `k` inserts a part, so shorter parts cost more in the merge than their extra cubes
+/// save. `None` where the device does not say how wide it is, the boxes already fill it, or every
+/// row is one part.
 fn hypercube_filling_the_device(
     hw: &Hardware,
-    tensors: &ReduceTensors,
-) -> Option<(
-    <HypercubeLastArrivalReduceRoutine as Routine>::Blueprint,
-    cubek_std::routine::Grid,
-)> {
-    let problem = tensors.problem();
+    problem: &ReduceRoutineProblem,
+) -> Option<HypercubeLastArrivalReduceSettings> {
     let mut most_cubes = None;
     let longest_only = matches!(
         problem.operation.carrier(),
@@ -90,8 +92,7 @@ fn hypercube_filling_the_device(
                 || settings.unit_lines == HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
         });
     for settings in settings {
-        let Ok((blueprint, grid)) =
-            HypercubeLastArrivalReduceRoutine::prepare(hw, problem, &settings)
+        let Ok((blueprint, _)) = HypercubeLastArrivalReduceRoutine::prepare(hw, problem, &settings)
         else {
             continue;
         };
@@ -107,24 +108,46 @@ fn hypercube_filling_the_device(
             continue;
         };
         if cubes >= fill {
-            return Some((blueprint, grid));
+            return Some(settings);
         }
-        if most_cubes.as_ref().is_none_or(|(most, _, _)| cubes > *most) {
-            most_cubes = Some((cubes, blueprint, grid));
+        if most_cubes.as_ref().is_none_or(|(most, _)| cubes > *most) {
+            most_cubes = Some((cubes, settings));
         }
     }
-    most_cubes.map(|(_, blueprint, grid)| (blueprint, grid))
+    most_cubes.map(|(_, settings)| settings)
 }
 
-/// `R`'s launch at the first of its settings `hw` prepares `problem` at, where that launch fills
-/// the device.
+/// The first of `R`'s settings that prepares `problem` on `hw`, with the launch it prepares.
+fn first_served<R: ReduceLauncher<M>, M>(
+    hw: &Hardware,
+    problem: &ReduceRoutineProblem,
+) -> Option<(R::Settings, ReduceBlueprint<M>, Grid)> {
+    R::settings(hw).into_iter().find_map(|settings| {
+        R::prepare(hw, problem, &settings)
+            .ok()
+            .map(|(blueprint, grid)| (settings, blueprint, grid))
+    })
+}
+
+/// [`first_served`]'s setting and Blueprint, where its launch fills the device.
 fn filling_the_device<R: ReduceLauncher<M>, M>(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
-) -> Option<(ReduceBlueprint<M>, Grid)> {
-    R::prepare_first_served(hw, problem)
-        .ok()
-        .filter(|(_, grid)| short_of_the_device(hw, &grid.launch) == 0)
+) -> Option<(R::Settings, ReduceBlueprint<M>)> {
+    first_served::<R, M>(hw, problem)
+        .filter(|(_, _, grid)| short_of_the_device(hw, &grid.launch) == 0)
+        .map(|(settings, blueprint, _)| (settings, blueprint))
+}
+
+/// Whether `R` at `settings` launched on `tensors`: `false` where it declines their problem.
+fn launched<R: ReduceLauncher<M>, M>(
+    hw: &Hardware,
+    tensors: &ReduceTensors,
+    settings: &R::Settings,
+) -> bool {
+    R::prepare(hw, tensors.problem(), settings)
+        .map(|(blueprint, grid)| R::launch(tensors, blueprint, grid))
+        .is_ok()
 }
 
 #[cfg(test)]
@@ -140,15 +163,24 @@ mod tests {
         assert!(unit_keeps_up(&devices::m2_pro(), &problem, 1));
     }
 
+    /// Lines of `WIDTH` values, rows as long as a plane's lanes' lines.
+    const WIDTH: usize = 4;
+
     /// Along it, a unit keeps up while the row holds no more lines than a plane has lanes.
     #[test]
     fn a_unit_keeps_up_along_a_row_no_longer_than_a_plane() {
         let hw = devices::m2_pro();
         let lanes = hw.plane_dim().expect("an M2 Pro commits to a plane width") as usize;
-        const WIDTH: usize = 4;
         let short = ReduceRoutineProblem::dense(&[8, lanes * WIDTH], 1, ReduceOperation::Sum);
-        let long = ReduceRoutineProblem::dense(&[8, lanes * WIDTH + 1], 1, ReduceOperation::Sum);
         assert!(unit_keeps_up(&hw, &short, WIDTH));
+    }
+
+    /// Along it, a unit falls behind on a row longer than a plane's lanes' lines.
+    #[test]
+    fn a_unit_falls_behind_along_a_row_longer_than_a_plane() {
+        let hw = devices::m2_pro();
+        let lanes = hw.plane_dim().expect("an M2 Pro commits to a plane width") as usize;
+        let long = ReduceRoutineProblem::dense(&[8, lanes * WIDTH + 1], 1, ReduceOperation::Sum);
         assert!(!unit_keeps_up(&hw, &long, WIDTH));
     }
 
