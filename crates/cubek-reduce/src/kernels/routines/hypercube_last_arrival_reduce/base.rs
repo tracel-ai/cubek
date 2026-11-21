@@ -3,7 +3,7 @@ use super::kernel::{
     hypercube_last_arrival_reduce_kernel, hypercube_last_arrival_reduce_with_indices_kernel,
 };
 use crate::kernels::{
-    BATCH, PARTIALS, REDUCED, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    PARTIALS, REDUCED, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
     bound_at, each_microkernel_with, estimate_reduce, microkernel_widths, prepared_from_key,
     split_launch,
 };
@@ -14,19 +14,19 @@ use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Levels, Partitioning, Space, TileTensorLaunch};
+use cubecl::tile::{Partitioning, Space, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Grid, Routine};
 
 /// Every row split into parts along the reduced dim, a cube a part, which reduces it as the cube
 /// routine reduces a row; the last of a row's cubes to finish merges the parts: few rows, too long
 /// for one cube each to keep the device busy, as a sampler's argmax over a vocabulary.
 ///
-/// Its cubes run along [`REDUCED`], then [`BATCH`].
+/// Its cubes run along [`REDUCED`](crate::kernels::REDUCED), then [`BATCH`](crate::kernels::BATCH).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HypercubeLastArrivalReduceRoutine;
 
