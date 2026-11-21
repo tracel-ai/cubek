@@ -582,14 +582,15 @@ impl PlaneFragmentMicrokernel {
     ) -> Option<Self> {
         let (device, target) = (&hw.properties, &hw.target);
         let pick = Instruction::for_rescaled_accumulator(
-            device,
-            target,
-            step.lhs,
-            step.rhs,
-            step.sum,
-            step.shape,
+            device, target, step.lhs, step.rhs, step.sum, step.shape,
         )?;
-        Self::holding(item, settings, step, pick, step.rescaled_cost(device, target)?)
+        Self::holding(
+            item,
+            settings,
+            step,
+            pick,
+            step.rescaled_cost(device, target)?,
+        )
     }
 
     /// [`draining`](Self::draining), its sum kept where it lies for the next product to read as

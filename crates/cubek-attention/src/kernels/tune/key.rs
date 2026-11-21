@@ -24,42 +24,6 @@ use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::attention::AttentionOperands;
 use serde::{Deserialize, Serialize};
 
-/// What makes two attentions want the same kernel.
-///
-/// The head shape is **exact** — it is fixed by the model config, and the GQA
-/// ratio decides how much expansion a flash candidate pays. The queries, the
-/// keys and the batch are anchored: they are the dimensions a prompt and a cache
-/// vary freely, and where the crossovers between kernels live.
-///
-/// **A bucket's representative is the extent cubecl's anchor rounds a call up
-/// to**, and a candidate's duplicate proof is taken there rather than at the
-/// call in hand, so the candidates that collapse at some length inside a bucket
-/// collapse together.
-///
-/// **No key reads a cache's size.** A cache's buffers hold its capacity, and how many of their
-/// positions a call attends lives on device; neither is the key's to read. So two contexts, two
-/// cache sizes or two devices sized apart tune the same attention under the same key, and an
-/// environment built at one context serves every other. Where a call's buffers are its own keys,
-/// every position of them attended ([`AttentionTuneInputs::attending_every_position`]), their
-/// extent is the problem's, and the key holds it.
-///
-/// Four shapes reach autotune, and the key states each by its extents:
-///
-/// - **A whole prompt** over its own keys: its length is both the queries and the keys.
-/// - **Queries over keys of their own** of another length, every position attended: both
-///   extents, as the call brought them.
-/// - **Queries over a cache**: a prompt, or a chunk of one prefilled in chunks, attended against
-///   what the chunks before it filled. That is where a long prompt spends its attention, every
-///   chunk after the first, so the key stands for
-///   [`CHUNK_QUERIES`](Self::CHUNK_QUERIES) queries over [`CHUNK_PREFIX`](Self::CHUNK_PREFIX)
-///   keys, at their buckets' extents, whatever the call brought.
-/// - **A decode step over a cache**: one query over its sequences' share of
-///   [`DECODE_KEYS`](Self::DECODE_KEYS) ([`cache_prefix`](Self::cache_prefix)), whatever the
-///   cache holds or the step attends. The attended count is a device tensor, so that the launch
-///   is identical across steps, the graph-capture precondition.
-///
-/// [`AttentionTuneInputs::attending_every_position`]:
-/// crate::kernels::tune::AttentionTuneInputs::attending_every_position
 /// The elements an [`AttentionKey`]'s operands are read in: the query's, which the output is
 /// written in, and the keys' and the values' each its own.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
@@ -80,6 +44,31 @@ impl AttentionKeyElements {
     }
 }
 
+/// What makes two attentions want the same kernel.
+///
+/// The head shape is **exact** — it is fixed by the model config, and the GQA
+/// ratio decides how much expansion a flash candidate pays. The queries, the
+/// keys and the batch are bucketed: they are the dimensions a prompt and a cache
+/// vary freely, and where the crossovers between kernels live.
+///
+/// **A bucket's representative is the extent a call is rounded up to**, and a
+/// candidate's duplicate proof is taken there rather than at the call in hand, so
+/// the candidates that collapse at some length inside a bucket collapse together.
+///
+/// **The queries and the keys are bucketed in powers of two, whatever the autotune level**
+/// ([`positions_bucket`](Self::positions_bucket)). A caller buckets its depth in powers of two and
+/// prefills in chunks of a power of two, so the round measures exactly the extents its calls run.
+/// cubecl's anchor rounds in powers of 1.5 at the extensive level: a chunk of 512 queries would be
+/// measured as 657, a second box of 145 queries no call runs, which ranks the routines otherwise
+/// than they run.
+///
+/// **The keys are the depth the caller states, never a cache's capacity.** How many positions
+/// each sequence attends lives on device, so that every call of one bucket replays the same
+/// launch, the graph-capture precondition; the caller states the call's depth on the host, at its
+/// own bucket ([`AttentionTuneInputs::new`]), and the key anchors it. A prompt into an empty cache
+/// and a chunk deep into a long one are keyed apart, and a cache's buffers may be any size.
+///
+/// [`AttentionTuneInputs::new`]: crate::kernels::tune::AttentionTuneInputs::new
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct AttentionKey {
     /// The element each operand is read in: a cache's keys and values may each be stored in
@@ -92,13 +81,10 @@ pub struct AttentionKey {
     kv_heads: usize,
     /// Head dimension.
     head_dim: usize,
-    /// Query positions.
-    #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
+    /// Query positions, at their bucket ([`positions_bucket`](Self::positions_bucket)).
     queries: usize,
-    /// Key positions: the buffers' extent where they are the call's own keys, the prefix a key
-    /// over a cache stands for otherwise ([`CHUNK_PREFIX`](Self::CHUNK_PREFIX) for a chunk,
-    /// [`cache_prefix`](Self::cache_prefix) for a decode step), never a cache's capacity.
-    #[autotune(anchor(exp(min = 1, max = 1048576, base = 2)))]
+    /// Key positions: the depth the call attends, as its caller states it, at its bucket
+    /// ([`positions_bucket`](Self::positions_bucket)).
     keys: usize,
     #[autotune(anchor(exp(min = 1, max = 64, base = 2)))]
     batch: usize,
@@ -123,63 +109,10 @@ pub struct AttentionKey {
 }
 
 impl AttentionKey {
-    /// The queries a key of many queries over a cache stands for: the narrowest chunk a prompt is
-    /// cut into when it is prefilled in chunks. A device that cuts its prompts wider is keyed
-    /// here all the same, so its chunks run what this chunk elected.
-    pub const CHUNK_QUERIES: usize = 512;
-
-    /// The shallowest prefix a decode step over a cache stands for, however many sequences it
-    /// steps: three chunks into its prompt, deep enough that the walk outweighs the launch.
-    pub const CACHE_PREFIX: usize = 4 * Self::CHUNK_QUERIES;
-
-    /// The keys a decode step over a cache stands for across all its sequences: as many as a
-    /// chunk's prefix ([`CHUNK_PREFIX`](Self::CHUNK_PREFIX)), so its round reads what a chunk's
-    /// does, however many sequences it steps.
-    ///
-    /// Shallow, the routines part by less than a round can be wrong by. On an RTX PRO 6000, one
-    /// query of 32/8 heads over 2048 keys runs in 16 µs split along the keys and in 82 µs on a
-    /// cube a head, close enough for a noisy round to elect the cube a head. Deep, the two part
-    /// by a millisecond (105 against 1186 µs at 32768 keys), and the cube a head leaves the
-    /// device idle: 2356 µs at 65536 keys, 114 GB/s, against 195 µs for the split, 1.38 TB/s.
-    pub const DECODE_KEYS: usize = Self::CHUNK_PREFIX;
-
-    /// The attended prefix a decode step of `sequences` over a cache stands for: its share of
-    /// [`DECODE_KEYS`](Self::DECODE_KEYS), the sequences counted to their power of two as the
-    /// batch's bucket rounds them, and never shallower than
-    /// [`CACHE_PREFIX`](Self::CACHE_PREFIX). A cache of any capacity, attended to any length, is
-    /// keyed here.
-    ///
-    /// The share keeps a round's read as short as a chunk's: a batch of sixty-four each as deep as
-    /// one sequence would read eight gibibytes of a 32/8-head cache each sample.
-    pub fn cache_prefix(sequences: usize) -> usize {
-        (Self::DECODE_KEYS / sequences.max(1).next_power_of_two()).max(Self::CACHE_PREFIX)
-    }
-
-    /// The attended prefix a chunk of many queries over a cache stands for: sixty-four chunks
-    /// into its prompt. A chunk's work grows with the prefix it attends, so a long prompt spends
-    /// its attention on its deep chunks, and the routines rank differently there than near the
-    /// start: on an RTX PRO 6000, 512 queries of 32/8 heads over 2048 keys run fastest on a cube a
-    /// box (84 µs, against 86 µs split four ways along the keys), over 8192 keys split four ways
-    /// (254 µs against 285), and the split's lead grows deeper (922 against 1085 µs at 32768
-    /// keys, 3600 against 4288 µs at 131072). Keyed at the shallow prefix, every chunk of a long
-    /// prompt ran the shallow winner.
-    ///
-    /// How many cubes the split box takes along the keys ranks by depth too: four lead at 8192
-    /// keys, seven and ten from 32768 on. Keyed at 32768, a long prompt's deep chunks run their
-    /// own winner, and a prompt of a few chunks pays a few percent on attention that is
-    /// milliseconds long.
-    pub const CHUNK_PREFIX: usize = 64 * Self::CHUNK_QUERIES;
-
-    /// Whether the queries are the tail of a longer attended prefix rather
-    /// than the whole of it: a chunk, or a decode step.
-    ///
-    /// The flash routines ([`forward`](crate::forward)) serve only a whole prompt: they take no
-    /// attended length, and their causal mask is top-left aligned, where a chunk's queries sit at
-    /// the bottom right of the prefix. On a chunk they would be measuring a different function, so
-    /// the flash candidates decline it. Both extents are anchored alike, so a whole prompt's are
-    /// equal in every bucket.
-    pub fn chunk(&self) -> bool {
-        self.queries != self.keys
+    /// The extent a key holds for a call of `positions` query or key positions: the power of two
+    /// at or above them.
+    pub fn positions_bucket(positions: usize) -> usize {
+        positions.next_power_of_two()
     }
 
     /// Query positions, at the bucket's own extent.
@@ -294,5 +227,18 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
             },
             packed_queries: key.packed_queries(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A power of two is its own bucket, so a chunk of 512 queries is measured as 512, and any
+    /// extent past it is measured at the next.
+    #[test]
+    fn a_bucket_is_the_power_of_two_at_or_above() {
+        let buckets = [1, 300, 512, 513, 2048, 2049].map(AttentionKey::positions_bucket);
+        assert_eq!(buckets, [1, 512, 512, 1024, 2048, 4096]);
     }
 }

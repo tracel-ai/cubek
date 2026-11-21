@@ -36,20 +36,9 @@ pub struct AttentionTuneInputs {
     /// The `[b, h, q, s]` mask hiding keys from the call's queries
     /// ([`with_mask`](Self::with_mask)).
     mask: Option<PlainTensor>,
-    attended: AttendedKeys,
+    /// How deep the call attends, as its caller buckets it: the keys its key holds.
+    depth: usize,
     pub(super) tensors: AttentionTensors,
-}
-
-/// How many of the positions its key and value buffers hold a call attends, as the host knows it:
-/// what tells a cache from the keys of one call.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AttendedKeys {
-    /// As many as the lengths say, which live on device: the buffers are a cache, and their
-    /// extent is its capacity, which no key reads.
-    Lengths,
-    /// Every position the buffers hold: they are the call's own keys, and their extent is the
-    /// problem's.
-    Every,
 }
 
 impl AttentionTuneInputs {
@@ -58,9 +47,11 @@ impl AttentionTuneInputs {
     /// out in two pools of pages ([`AttentionTensors::paged`]), the output allocated. `arrivals`
     /// are the counters the cubes of a box count themselves in at, held across launches.
     ///
-    /// The buffers are taken for a cache: the lengths live on device, so the key reads neither
-    /// them nor the buffers' extent ([`AttentionKey`]). Buffers that are the call's own keys say
-    /// so ([`attending_every_position`](Self::attending_every_position)).
+    /// `depth` is how many keys the call attends, at least as many as its deepest sequence, as its
+    /// caller buckets it: the lengths live on device so that every call of one bucket is the same
+    /// launch, and the key reads `depth` in their place, never the buffers' extent
+    /// ([`AttentionKey`]). Over keys of the call's own, every position attended, it is their
+    /// extent.
     ///
     /// # Errors
     ///
@@ -73,6 +64,7 @@ impl AttentionTuneInputs {
         value: PlainTensor,
         pages: Option<PlainTensor>,
         lengths: PlainTensor,
+        depth: usize,
         arrivals: Option<PlainTensor>,
         scoring: AttentionScoring,
     ) -> Result<Self, Decline> {
@@ -82,7 +74,7 @@ impl AttentionTuneInputs {
             None => kv,
         };
         let queries = AttentionQueries::Dense { query, lengths };
-        Self::attention(client, queries, kv, arrivals, scoring)
+        Self::attention(client, queries, kv, depth, arrivals, scoring)
     }
 
     /// Attention of `queries` over the float keys and values `kv` states, the output allocated
@@ -98,6 +90,7 @@ impl AttentionTuneInputs {
         client: &Client,
         queries: AttentionQueries,
         kv: KvSource,
+        depth: usize,
         arrivals: Option<PlainTensor>,
         scoring: AttentionScoring,
     ) -> Result<Self, Decline> {
@@ -126,17 +119,9 @@ impl AttentionTuneInputs {
             pages,
             scoring,
             mask: None,
-            attended: AttendedKeys::Lengths,
+            depth,
             tensors,
         })
-    }
-
-    /// The same attention, its buffers the call's own keys, every position of them attended: the
-    /// lengths are the buffers' extent, so the key holds that extent as the problem's rather than
-    /// standing for a cache's.
-    pub fn attending_every_position(mut self) -> Self {
-        self.attended = AttendedKeys::Every;
-        self
     }
 
     /// The tensors every candidate launches on, the output among them.
@@ -165,15 +150,6 @@ impl AttentionTuneInputs {
         self.tensors.logsumexp()
     }
 
-    /// The key positions the buffers hold: a sequence's extent, or its pages' positions.
-    fn keys(&self) -> usize {
-        let positions = self.key.shape()[2];
-        match &self.pages {
-            Some(pages) => pages.shape()[1] * positions,
-            None => positions,
-        }
-    }
-
     fn kv_heads(&self) -> usize {
         self.key.shape()[1]
     }
@@ -183,6 +159,14 @@ impl AttentionTuneInputs {
         match &self.query_runs {
             Some((ends, _)) => ends.shape()[0],
             None => self.query.shape()[0],
+        }
+    }
+
+    /// Query positions of a sequence: the query's, or the longest run.
+    fn queries(&self) -> usize {
+        match &self.query_runs {
+            Some((_, longest)) => *longest,
+            None => self.query.shape()[2],
         }
     }
 
@@ -196,40 +180,20 @@ impl AttentionTuneInputs {
         self.pages.as_ref().map(|_| self.key.shape()[2])
     }
 
-    /// The key many query positions are tuned under. Over a cache it is the one chunk every such
-    /// key stands for, whatever the cache holds and however many queries the call brought: a
-    /// winner measured on that chunk serves every call over a cache. Over keys of the call's own
-    /// it keeps the call's extents.
+    /// The key many query positions are tuned under: the call's queries over its depth.
     pub(super) fn many_queries_key(&self) -> AttentionKey {
-        let (queries, keys) = match self.attended {
-            AttendedKeys::Lengths => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
-            // Query positions of a sequence: the query's, or the longest run.
-            AttendedKeys::Every => match &self.query_runs {
-                Some((_, longest)) => (*longest, self.keys()),
-                None => (self.query.shape()[2], self.keys()),
-            },
-        };
-        self.key_of(queries, keys)
+        self.key_of(self.queries(), self.depth)
     }
 
-    /// The key a decode step is tuned under: one query over the keys a decode round attends
-    /// ([`one_query_keys`](Self::one_query_keys)). The single position sees the whole attended
-    /// prefix, or its window's end of it, so a causal mask is no part of the key.
+    /// The key a decode step is tuned under: one query over the call's depth. The single position
+    /// sees the whole attended prefix, or its window's end of it, so a causal mask is no part of
+    /// the key.
     pub(super) fn one_query_key(&self) -> AttentionKey {
-        self.key_of(1, self.one_query_keys())
+        self.key_of(1, self.depth)
     }
 
-    /// The keys a decode step is keyed and measured over: the prefix a decode step of its
-    /// sequences over a cache stands for, or the call's own keys where every position of them is
-    /// attended.
-    fn one_query_keys(&self) -> usize {
-        match self.attended {
-            AttendedKeys::Lengths => AttentionKey::cache_prefix(self.sequences()),
-            AttendedKeys::Every => self.keys(),
-        }
-    }
-
-    /// The key of this call's heads, elements and scoring, `queries` positions over `keys`.
+    /// The key of this call's heads, elements and scoring, `queries` positions over `keys`, each at
+    /// its bucket.
     fn key_of(&self, queries: usize, keys: usize) -> AttentionKey {
         let (heads, head_dim) = self.heads_and_dim();
         AttentionKey::new(
@@ -241,8 +205,8 @@ impl AttentionTuneInputs {
             heads,
             self.kv_heads(),
             head_dim,
-            queries,
-            keys,
+            AttentionKey::positions_bucket(queries),
+            AttentionKey::positions_bucket(keys),
             self.sequences(),
             self.scoring.visibility,
             self.scoring.scale,
@@ -252,18 +216,12 @@ impl AttentionTuneInputs {
         )
     }
 
-    /// The keys a decode step is priced over: those its key names
-    /// ([`one_query_keys`](Self::one_query_keys)), but no more than the call's buffers hold.
-    fn one_query_priced_keys(&self) -> usize {
-        self.one_query_keys().min(self.keys())
-    }
-
-    /// What a decode round's step costs: one query over the keys it is priced over
-    /// ([`one_query_priced_keys`](Self::one_query_priced_keys)), each key and value read once.
-    fn one_query_work(&self) -> Work {
+    /// What a decode round's step costs: one query over the keys `key` holds, each key and
+    /// value read once.
+    fn one_query_work(&self, key: &AttentionKey) -> Work {
         let batch = self.sequences();
         let (heads, head_dim) = self.heads_and_dim();
-        let keys = self.one_query_priced_keys();
+        let keys = key.seq_kv();
         let kv_bytes =
             2 * batch * self.kv_heads() * keys * self.key.shape()[3] * self.key.elem.size();
         Work {
@@ -280,11 +238,11 @@ impl AttentionTuneInputs {
     /// The one-position roofline: the bus, in the direction the traffic goes. One query against
     /// the whole cache reuses nothing — every key and value byte is read once and the write is a
     /// single row — so the ceiling is the **read** bandwidth.
-    pub(super) fn one_query_roofline(_key: &AttentionKey, inputs: &Self) -> Roofline {
+    pub(super) fn one_query_roofline(key: &AttentionKey, inputs: &Self) -> Roofline {
         Roofline {
             client: inputs.client.clone(),
             ceiling: Ceiling::Memory(MemoryAccess::Read),
-            work: inputs.one_query_work(),
+            work: inputs.one_query_work(key),
         }
     }
 }
@@ -293,7 +251,7 @@ impl AttentionTuneInputs {
 mod tests {
     use super::*;
 
-    /// The keys of one attention over caches of several sizes, and over its own keys.
+    /// The keys of attentions at several depths, over caches of several sizes.
     mod keys {
         use super::*;
         use crate::kernels::{AttentionScoring, AttentionVisibility, QueryPlacement};
@@ -306,10 +264,12 @@ mod tests {
         /// Query heads, key heads and head dim: a GQA group of four.
         const HEADS: (usize, usize, usize) = (8, 2, 64);
 
-        /// `queries` positions of one sequence, causal past one, over `positions` keys laid in
-        /// one buffer, or in pages of `page_size` read through a table of their own.
+        /// `queries` positions of one sequence, causal past one, attending `depth` keys of a cache
+        /// of `positions` laid in one buffer, or in pages of `page_size` read through a table of
+        /// their own.
         fn inputs(
             queries: usize,
+            depth: usize,
             positions: usize,
             page_size: Option<usize>,
         ) -> AttentionTuneInputs {
@@ -332,44 +292,72 @@ mod tests {
                     (zeros(shape), zeros(shape), Some(pages))
                 }
             };
-            let lengths = PlainTensor::of_u32s(&client, &[1], &[queries as u32]);
+            let lengths = PlainTensor::of_u32s(&client, &[1], &[depth as u32]);
             let visibility = AttentionVisibility::new(queries > 1, None, QueryPlacement::Last);
             let scoring = AttentionScoring::standard(visibility, head_dim);
-            AttentionTuneInputs::new(&client, query, key, value, pages, lengths, None, scoring)
-                .expect("an even group of a float element")
+            AttentionTuneInputs::new(
+                &client, query, key, value, pages, lengths, depth, None, scoring,
+            )
+            .expect("an even group of a float element")
         }
 
-        /// **No key reads a cache's capacity.** One prompt and one decode step, over caches from
-        /// exactly as long as the prompt to far deeper than the prefix a key stands for, tune
-        /// under one key each; over pages, under one key that differs only by the page size, a
-        /// layout and not a size.
+        /// The key of `inputs`, one query's or many's.
+        fn key(inputs: &AttentionTuneInputs) -> AttentionKey {
+            match inputs.queries() {
+                1 => inputs.one_query_key(),
+                _ => inputs.many_queries_key(),
+            }
+        }
+
+        /// **A key holds the depth its call attends.** A chunk of 512 queries and a decode step,
+        /// each at 512 keys and at 32768, over one cache, are keyed apart, at their depths.
+        #[test]
+        fn a_call_is_keyed_at_its_depth() {
+            for queries in [1, 512] {
+                let shallow = key(&inputs(queries, 512, 65536, None));
+                let deep = key(&inputs(queries, 32768, 65536, None));
+                assert_eq!((shallow.seq_q(), shallow.seq_kv()), (queries, 512));
+                assert_eq!((deep.seq_q(), deep.seq_kv()), (queries, 32768));
+                assert_ne!(shallow, deep, "{queries} queries");
+            }
+        }
+
+        /// **Every call of one bucket is the same call to autotune and to its launch.** Depths
+        /// from just past one power of two to the next share one key, so one winner, and the
+        /// routines prepare one problem for them, so the launch a graph captured replays at each.
+        #[test]
+        fn a_bucket_is_one_key_and_one_launch() {
+            for queries in [1, 37, 512] {
+                let calls: Vec<_> = [1025, 1500, 2048]
+                    .map(|depth| inputs(queries, depth, 4096, None))
+                    .into_iter()
+                    .collect();
+                let first = &calls[0];
+                for call in &calls[1..] {
+                    assert_eq!(key(call), key(first), "{queries} queries");
+                    assert_eq!(
+                        call.tensors().problem(),
+                        first.tensors().problem(),
+                        "{queries} queries"
+                    );
+                }
+                let next = inputs(queries, 2049, 4096, None);
+                assert_ne!(key(&next), key(first), "{queries} queries");
+            }
+        }
+
+        /// **No key reads a cache's capacity.** One depth over caches from as deep as the call to
+        /// far deeper tunes under one key; over pages, under one key that differs only by the
+        /// page size, a layout and not a size.
         #[test]
         fn a_cache_of_any_capacity_is_keyed_alike() {
-            for queries in [1, 37, 512, 3000] {
-                let key = |positions, page_size| {
-                    let inputs = inputs(queries, positions, page_size);
-                    match queries {
-                        1 => inputs.one_query_key(),
-                        _ => inputs.many_queries_key(),
-                    }
-                };
-                // The shortest cache a call fits: as long as the prompt itself.
-                let shortest = key(queries.max(64), None);
-                let keyed = match queries {
-                    1 => (1, AttentionKey::cache_prefix(1)),
-                    _ => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
-                };
-                assert_eq!(
-                    (shortest.seq_q(), shortest.seq_kv()),
-                    keyed,
-                    "{queries} queries"
-                );
-                for positions in [4096, 65536] {
-                    assert_eq!(key(positions, None), shortest, "{queries} queries");
-                }
-                let paged = key(4096, Some(16));
+            for queries in [1, 37, 512] {
+                let depth = 1024;
+                let shortest = key(&inputs(queries, depth, depth, None));
+                assert_eq!(key(&inputs(queries, depth, 65536, None)), shortest);
+                let paged = key(&inputs(queries, depth, 4096, Some(16)));
                 assert_eq!(paged.page_size(), Some(16));
-                assert_eq!(key(65536, Some(16)), paged, "{queries} queries");
+                assert_eq!(key(&inputs(queries, depth, 65536, Some(16))), paged);
             }
         }
 
@@ -393,83 +381,9 @@ mod tests {
                 lengths: PlainTensor::of_u32s(&client, &[1], &[12]),
             };
             let scoring = AttentionScoring::standard(AttentionVisibility::Attended, head_dim);
-            let inputs = AttentionTuneInputs::attention(&client, queries, kv, None, scoring)
+            let inputs = AttentionTuneInputs::attention(&client, queries, kv, 12, None, scoring)
                 .expect("listed blocks within a page, attended whole");
             assert_eq!(inputs.one_query_key().page_size(), Some(4));
-        }
-
-        /// Buffers that are the call's own keys hold the problem's extent: a decode over 300 keys
-        /// and a prompt over 300 queries' own keys are keyed at their buckets, not at a cache's
-        /// prefix.
-        #[test]
-        fn a_calls_own_keys_are_keyed_at_their_extent() {
-            let decode = inputs(1, 300, None)
-                .attending_every_position()
-                .one_query_key();
-            assert_eq!((decode.seq_q(), decode.seq_kv()), (1, 512));
-            let prompt = inputs(300, 300, None)
-                .attending_every_position()
-                .many_queries_key();
-            assert_eq!((prompt.seq_q(), prompt.seq_kv()), (512, 512));
-            assert!(!prompt.chunk());
-        }
-
-        /// **A decode step is priced at the prefix its key stands for, within the call's
-        /// buffers.** A cache deeper than the prefix is priced to the prefix; a shallower one, to
-        /// its end.
-        #[test]
-        fn a_decode_is_priced_at_its_prefix_within_the_calls_buffers() {
-            let prefix = AttentionKey::cache_prefix(1);
-            let attended = [2 * prefix, prefix / 8]
-                .map(|positions| inputs(1, positions, None).one_query_priced_keys());
-            assert_eq!(attended, [prefix, prefix / 8]);
-        }
-
-        /// **A decode step reads as many keys in all, whatever its sequences.** One
-        /// sequence of a deep enough cache is keyed and priced over all of
-        /// [`DECODE_KEYS`](AttentionKey::DECODE_KEYS),
-        /// four over a quarter each, three as the four of their bucket are; sixty-four stop at the
-        /// shallowest prefix rather than below it.
-        #[test]
-        fn a_decode_shares_its_keys_across_its_sequences() {
-            let client = client();
-            let (heads, kv_heads, head_dim) = HEADS;
-            let zeros = |shape: [usize; 4]| {
-                PlainTensor::zeros(&client, &shape, row_major_contiguous_strides(shape), F16)
-            };
-            let decode = |sequences: usize, positions: usize| {
-                let cache = [sequences, kv_heads, positions, head_dim];
-                let lengths = PlainTensor::of_u32s(&client, &[sequences], &vec![1; sequences]);
-                let visibility = AttentionVisibility::new(false, None, QueryPlacement::Last);
-                AttentionTuneInputs::new(
-                    &client,
-                    zeros([sequences, heads, 1, head_dim]),
-                    zeros(cache),
-                    zeros(cache),
-                    None,
-                    lengths,
-                    None,
-                    AttentionScoring::standard(visibility, head_dim),
-                )
-                .expect("an even group of a float element")
-            };
-            let quarter = AttentionKey::DECODE_KEYS / 4;
-            for (sequences, prefix) in [
-                (1, AttentionKey::DECODE_KEYS),
-                (3, quarter),
-                (4, quarter),
-                (64, AttentionKey::CACHE_PREFIX),
-            ] {
-                let inputs = decode(sequences, prefix);
-                assert_eq!(
-                    (
-                        inputs.one_query_key().seq_kv(),
-                        inputs.one_query_priced_keys()
-                    ),
-                    (prefix, prefix),
-                    "{sequences} sequences"
-                );
-            }
         }
 
         /// **Each side of a cache is keyed at its own element.** A chunk and a decode step over
@@ -486,7 +400,7 @@ mod tests {
                     PlainTensor::zeros(&client, &shape, row_major_contiguous_strides(shape), elem)
                 };
                 let cache = [1, kv_heads, 4096, head_dim];
-                let lengths = PlainTensor::of_u32s(&client, &[1], &[queries as u32]);
+                let lengths = PlainTensor::of_u32s(&client, &[1], &[1024]);
                 let visibility = AttentionVisibility::new(queries > 1, None, QueryPlacement::Last);
                 AttentionTuneInputs::new(
                     &client,
@@ -495,6 +409,7 @@ mod tests {
                     zeros(cache, value),
                     None,
                     lengths,
+                    1024,
                     None,
                     AttentionScoring::standard(visibility, head_dim),
                 )
@@ -536,22 +451,24 @@ mod tests {
         #[test]
         fn a_decode_costs_two_contractions() {
             let (heads, _, head_dim) = HEADS;
+            let decode = inputs(1, 256, 4096, None);
+            let work = decode.one_query_work(&decode.one_query_key());
             let one_contraction = 2 * heads * 256 * head_dim;
-            let work = inputs(1, 256, None).one_query_work();
             assert_eq!(work.compute_ops, 2 * one_contraction);
         }
 
-        /// A decode round over a cache is priced over the prefix its key stands for, not over the
-        /// cache.
+        /// A decode round is priced at its key's depth, not at the cache: its cold read and its
+        /// measurement agree about the work.
         #[test]
-        fn a_decode_over_a_cache_is_priced_at_the_keys_it_attends() {
+        fn a_decode_is_priced_at_its_keys_depth() {
             let (_, kv_heads, head_dim) = HEADS;
-            let prefix = AttentionKey::cache_prefix(1);
-            let deep = inputs(1, 2 * prefix, None).one_query_work();
-            let deeper = inputs(1, 4 * prefix, None).one_query_work();
-            assert_eq!(deep.bytes, deeper.bytes);
-            let kv_bytes = 2 * kv_heads * prefix * head_dim * F16.size();
-            assert!(deep.bytes > kv_bytes);
+            let small = inputs(1, 2048, 2048, None);
+            let large = inputs(1, 2048, 65536, None);
+            let price =
+                |inputs: &AttentionTuneInputs| inputs.one_query_work(&inputs.one_query_key());
+            assert_eq!(price(&small).bytes, price(&large).bytes);
+            let kv_bytes = 2 * kv_heads * 2048 * head_dim * F16.size();
+            assert!(price(&small).bytes > kv_bytes);
         }
     }
 }
