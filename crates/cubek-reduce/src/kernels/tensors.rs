@@ -1,6 +1,8 @@
 //! How a reduce launch reads its operands and binds them.
 
-use crate::kernels::{REDUCED, ReduceBlueprint, ReduceElements, ReduceRoutineProblem, SLOTS};
+use crate::kernels::{
+    REDUCED, ReduceBlueprint, ReduceElements, ReduceRoutineProblem, ReduceWorkspace, SLOTS,
+};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
@@ -31,6 +33,8 @@ pub struct ReduceTensors<In = TensorBinding> {
     /// The indices written beside the values, of `out`'s shape at their own strides, where they
     /// are.
     indices: Option<TensorBinding>,
+    /// The scratch the caller gave, where it gave any.
+    workspace: Option<ReduceWorkspace>,
     problem: ReduceRoutineProblem,
 }
 
@@ -49,6 +53,19 @@ impl<In> ReduceTensors<In> {
 
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// These tensors with `workspace`, the scratch the routines that split a row across cubes take
+    /// ([`ReduceWorkspace::bytes_for`]): without one, those routines decline.
+    pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
+        Self {
+            problem: ReduceRoutineProblem {
+                workspace: workspace.bytes(),
+                ..self.problem
+            },
+            workspace: Some(workspace),
+            ..self
+        }
     }
 }
 
@@ -73,6 +90,7 @@ impl ReduceTensors<TensorBinding> {
             input,
             out,
             indices: None,
+            workspace: None,
             problem,
         }
     }
@@ -138,6 +156,7 @@ impl ReduceTensors<Geometry> {
             input,
             out,
             indices: None,
+            workspace: None,
             problem,
         }
     }
@@ -156,15 +175,18 @@ impl ReduceTensors<TensorBinding> {
         grid: &Grid,
         space: Space,
     ) -> ReduceBinding {
-        ReduceBinding::bound(
-            &self.client,
-            &self.problem,
-            [&self.input, &self.out],
-            self.indices.as_ref(),
-            blueprint,
-            grid,
-            space,
-        )
+        ReduceBinding {
+            workspace: self.workspace.clone(),
+            ..ReduceBinding::bound(
+                &self.client,
+                &self.problem,
+                [&self.input, &self.out],
+                self.indices.as_ref(),
+                blueprint,
+                grid,
+                space,
+            )
+        }
     }
 }
 
@@ -192,15 +214,18 @@ impl ReduceTensors<Geometry> {
         grid: &Grid,
         space: Space,
     ) -> ReduceBinding<Unbound, Bound> {
-        ReduceBinding::unbound(
-            &self.client,
-            &self.problem,
-            &self.input,
-            &self.out,
-            blueprint,
-            grid,
-            space,
-        )
+        ReduceBinding {
+            workspace: self.workspace.clone(),
+            ..ReduceBinding::unbound(
+                &self.client,
+                &self.problem,
+                &self.input,
+                &self.out,
+                blueprint,
+                grid,
+                space,
+            )
+        }
     }
 }
 
@@ -212,6 +237,8 @@ pub(crate) struct ReduceBinding<In = Bound, Out = In> {
     pub out: Out,
     /// The indices beside the values, where the launch writes both.
     pub indices: Option<Bound>,
+    /// The scratch the caller gave, where it gave any.
+    pub workspace: Option<ReduceWorkspace>,
 }
 
 impl<In, Out> ReduceBinding<In, Out> {
@@ -226,6 +253,7 @@ impl<In, Out> ReduceBinding<In, Out> {
             input: input(self.input),
             out: out(self.out),
             indices: self.indices,
+            workspace: self.workspace,
         }
     }
 }
@@ -264,6 +292,7 @@ impl ReduceBinding {
             input,
             out,
             indices,
+            workspace: None,
         }
     }
 }
@@ -295,6 +324,7 @@ impl ReduceBinding<Unbound, Bound> {
             input,
             out,
             indices: None,
+            workspace: None,
         }
     }
 }

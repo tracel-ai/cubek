@@ -2,6 +2,7 @@
 
 use crate::kernels::{
     BATCH, REDUCED, ReduceLauncher, ReduceRoutineProblem, UNBOUND_LINES_NARROWER,
+    WORKSPACE_TOO_SMALL,
 };
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::space::UnitCube;
@@ -84,8 +85,9 @@ pub(crate) fn microkernel_widths<M: Microkernel<CubeSpace = (), Operand = Reduce
 /// # Errors
 ///
 /// Why `prepare_keyed` declines the keyed problem; [`UNBOUND_LINES_NARROWER`] where `problem`'s
-/// input is one the caller binds, stated at a width the Blueprint reads narrower lines than; or
-/// why the device cannot launch the Grid over `problem`.
+/// input is one the caller binds, stated at a width the Blueprint reads narrower lines than; why
+/// the device cannot launch the Grid over `problem`; or [`WORKSPACE_TOO_SMALL`] where the
+/// launch needs more scratch than `problem`'s caller gave ([`ReduceLauncher::workspace`]).
 pub(crate) fn prepared_from_key<R: ReduceLauncher<M>, M>(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
@@ -105,6 +107,9 @@ pub(crate) fn prepared_from_key<R: ReduceLauncher<M>, M>(
         shared_memory: keyed_grid.shared_memory,
     };
     let grid = Grid::new(hw, &partitioning, cube)?;
+    if !problem.workspace.holds(&R::workspace(problem, &blueprint)) {
+        return Err(WORKSPACE_TOO_SMALL);
+    }
     Ok((blueprint, grid))
 }
 

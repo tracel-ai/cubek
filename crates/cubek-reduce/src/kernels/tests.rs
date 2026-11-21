@@ -3,10 +3,11 @@
 //! split into parts; and the kernel the rule and the autotune pick.
 
 use crate::eval::cpu_reference;
+use crate::eval::workspace::workspace_for;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceKey,
-    ReduceLauncher, ReduceOpStrategy, ReduceTensors, UnitDirectReduceRoutine,
+    ReduceLauncher, ReduceOpStrategy, ReduceTensors, ReduceWorkspace, UnitDirectReduceRoutine,
     UnitDirectZeroReduceRoutine, launch_kernel, launch_tuned, launch_zeroed_atomic_unbound, select,
 };
 use cubecl::client::Client;
@@ -112,6 +113,27 @@ impl Reduction {
         }
     }
 
+    /// What it reduces in: f32 values, written in the output's element.
+    fn elements(&self) -> ReduceElements {
+        ReduceElements {
+            input: F32,
+            accumulator: F32,
+            out: self.out_elem(),
+        }
+    }
+
+    /// The workspace its caller gives it on `client`, as large as any routine asks.
+    fn workspace(&self, client: &Client) -> ReduceWorkspace {
+        workspace_for(
+            client,
+            &self.shape,
+            self.axis,
+            self.operation,
+            self.elements(),
+            false,
+        )
+    }
+
     fn out_shape(&self) -> Vec<usize> {
         let mut out_shape = self.shape.clone();
         out_shape[self.axis] = self.operation.written_per_row();
@@ -142,12 +164,9 @@ impl ScopeUnderTest for RoutineScopeUnderTest {
             out.clone().binding(),
             reduction.axis,
             reduction.operation,
-            ReduceElements {
-                input: F32,
-                accumulator: F32,
-                out: out_elem,
-            },
-        );
+            reduction.elements(),
+        )
+        .with_workspace(reduction.workspace(client));
         let routine = reduction.routine;
         match routine {
             TestedRoutine::UnitDirect => {
@@ -217,11 +236,7 @@ fn unbound_tensors<R: ReduceLauncher<M>, M>(
     out: TensorBinding,
     reduction: &Reduction,
 ) -> Result<ReduceTensors<Geometry>, Decline> {
-    let elements = ReduceElements {
-        input: F32,
-        accumulator: F32,
-        out: reduction.out_elem(),
-    };
+    let elements = reduction.elements();
     let (axis, operation) = (reduction.axis, reduction.operation);
     let buffers = ReduceTensors::new(
         client,
@@ -230,7 +245,8 @@ fn unbound_tensors<R: ReduceLauncher<M>, M>(
         axis,
         operation,
         elements,
-    );
+    )
+    .with_workspace(reduction.workspace(client));
     let hw = Hardware::from_client(client);
     let (blueprint, _) = R::prepare_first_served(&hw, buffers.problem())?;
     Ok(ReduceTensors::unbound(
@@ -241,7 +257,8 @@ fn unbound_tensors<R: ReduceLauncher<M>, M>(
         axis,
         operation,
         elements,
-    ))
+    )
+    .with_workspace(reduction.workspace(client)))
 }
 
 /// `input` bound back as the plain buffer it is, at the geometry, spec and width the launch
@@ -620,6 +637,44 @@ mod cube_staged {
 /// and merged by the last cube to arrive. It skips where the device commits to no plane width or
 /// one cube's stores do not reach another within a launch.
 mod hypercube_last_arrival {
+    use super::*;
+    use cubecl::CubeElement;
+    use cubek_test_utils::{TestOutcome, ValidationResult};
+
+    /// A launch leaves its arrival counters at zero, so its caller's workspace serves the next
+    /// launch: a `[2, 3, 5000]` sum along its contiguous dim, in three parts.
+    #[test]
+    fn a_launch_leaves_its_counters_at_zero() {
+        let client = cubecl::test_device().client();
+        let reduction = Reduction {
+            routine: TestedRoutine::HypercubeLastArrival,
+            shape: vec![2, 3, 5000],
+            axis: 2,
+            operation: ReduceOperation::Sum,
+        };
+        let workspace = reduction.workspace(&client);
+        let tensors = ReduceTensors::new(
+            &client,
+            zeros(&client, &reduction.shape),
+            zeros(&client, &reduction.out_shape()),
+            reduction.axis,
+            reduction.operation,
+            reduction.elements(),
+        )
+        .with_workspace(workspace.clone());
+        let hw = Hardware::from_client(&client);
+        if let Err(decline) = reduction
+            .routine
+            .launch_with::<HypercubeLastArrivalReduceRoutine, _>(&hw, &tensors)
+        {
+            return TestOutcome::Validated(ValidationResult::Skipped(decline.to_string()))
+                .enforce();
+        }
+        let counters = client
+            .read_one(workspace.arrivals)
+            .expect("the counters read back");
+        assert!(u32::from_bytes(&counters).iter().all(|count| *count == 0));
+    }
 
     /// A `[2, 3, 5000]` tensor along its contiguous dim, in three parts.
     mod along_the_contiguous_dim {

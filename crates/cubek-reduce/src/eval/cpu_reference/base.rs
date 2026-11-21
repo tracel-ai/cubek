@@ -10,6 +10,7 @@ use cubek_test_utils::{
 };
 
 use crate::ReduceOperation;
+use crate::eval::workspace::workspace_for;
 use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
@@ -128,8 +129,10 @@ pub fn strategy_result(
         out: output_dtype,
     };
 
+    let workspace = workspace_for(&client, &shape, axis, operation, elements, false);
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
         kernels::Reduce::new(strategy)
+            .with_workspace(workspace)
             .execute(
                 c,
                 &cubecl::test_device(),
@@ -181,11 +184,13 @@ pub fn strategy_result_with_indices(
         out: input_dtype,
     };
 
+    let workspace = workspace_for(&client, &shape, axis, operation, elements, true);
     let outcome = launch_and_capture_outcome(
         &client,
         &[&values_handle.handle, &indices_handle.handle],
         |c| {
             kernels::Reduce::new(strategy)
+                .with_workspace(workspace)
                 .execute_with_indices(
                     c,
                     &cubecl::test_device(),

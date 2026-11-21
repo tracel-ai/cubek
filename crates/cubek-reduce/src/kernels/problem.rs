@@ -1,5 +1,6 @@
 //! The problem a routine computes.
 
+use crate::kernels::ReduceWorkspaceBytes;
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
@@ -96,6 +97,9 @@ pub struct ReduceRoutineProblem {
     pub elem_alignments: [ElemAlignment; 2],
     /// The indices written beside the values, to a second output of their shape, where they are.
     pub indices: Option<ReduceIndices>,
+    /// The bytes of scratch the caller gave ([`ReduceWorkspace`](crate::kernels::ReduceWorkspace)):
+    /// none unless it gave a workspace.
+    pub workspace: ReduceWorkspaceBytes,
 }
 
 /// The indices a reduction writes beside its values: their element, and the alignment of the
@@ -140,6 +144,7 @@ impl ReduceRoutineProblem {
             elements,
             contiguous,
             indices: None,
+            workspace: ReduceWorkspaceBytes::default(),
         }
     }
 }
@@ -387,6 +392,34 @@ impl ReduceRoutineProblem {
         Self::from(&crate::kernels::ReduceKey::from(self))
     }
 
+    /// A dense row-major input of `shape` reduced along `axis` by `operation` in `elements`, its
+    /// output dense too, and `u32` indices beside it where `with_indices`: the problem a caller
+    /// states by its shape alone, as [`ReduceWorkspace::bytes_for`](crate::kernels::ReduceWorkspace::bytes_for)
+    /// sizes a workspace by.
+    ///
+    /// # Panics
+    ///
+    /// Where `axis` is not an axis of `shape`.
+    pub(crate) fn of_shape(
+        shape: &[usize],
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+        with_indices: bool,
+    ) -> Self {
+        let input = Geometry::row_major(shape);
+        let out = Geometry::row_major(&with_axis_extent(shape, axis, operation.written_per_row()));
+        let stated = Self::stated(&input, &out, axis, operation, elements);
+        let [_, out_alignment] = stated.elem_alignments;
+        Self {
+            indices: with_indices.then_some(ReduceIndices {
+                element: ElemType::UInt(UIntKind::U32),
+                elem_alignment: out_alignment,
+            }),
+            ..stated
+        }
+    }
+
     /// `partitioning` as a kernel compiles it: every dimension but the cells a row writes left to
     /// the launch, the row length too, as today's reduce kernels read it, so one kernel serves
     /// every shape of a rank, layout, elements and widths. An owner's window is one row high, which
@@ -456,6 +489,7 @@ impl ReduceRoutineProblem {
             contiguous: Some(innermost),
             elem_alignments: [ElemAlignment::dense_rows(shape[innermost]); 2],
             indices: None,
+            workspace: ReduceWorkspaceBytes::default(),
         }
     }
 }

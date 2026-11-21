@@ -12,8 +12,9 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
 /// a row, a mean dividing by `values`, the values the whole row holds.
 ///
-/// `arrivals` holds a counter for every row, or box of rows, its caller counts apart, at zero,
-/// which serves this launch alone.
+/// `arrivals` holds a counter for every row, or box of rows, its caller counts apart, at zero; the
+/// row's last cube sets it back to zero once it has merged, so the caller's counters serve its
+/// next launch.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.
 #[cube]
@@ -156,6 +157,7 @@ fn hypercube_last_arrival_reduce<
             row_lanes,
             microkernel,
         );
+        reset_count(arrivals, counter);
     }
 }
 
@@ -183,6 +185,15 @@ fn count_in(arrivals: &[Atomic<u32>], counter: usize) -> u32 {
 
     sync_cube();
     arrived[0]
+}
+
+/// The counter at `counter` of `arrivals` set back to zero by the row's last cube, which every
+/// other cube of the row counted in before: nothing counts there again in this launch.
+#[cube]
+fn reset_count(arrivals: &[Atomic<u32>], counter: usize) {
+    if is_first_unit_of_cube() {
+        arrivals[counter].store(0u32);
+    }
 }
 
 /// The row's `parts` partials, once every cube of the row stored its own, merged by the last

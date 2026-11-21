@@ -13,7 +13,8 @@ use crate::ReduceOperation;
 use crate::eval::benchmarks::correctness::ReduceCorrectness;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::cpu_reference::{accumulation_dtype, output_dtype_for};
-use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
+use crate::eval::workspace::workspace_for;
+use crate::kernels::{self, ReduceElements, ReduceOpStrategy, ReduceWorkspace};
 
 /// `problem` reduced by `strategy` `num_samples` times on the test device, once its result is
 /// checked against the reference.
@@ -35,14 +36,30 @@ pub fn bench(
 
     let device = cubecl::test_device();
     let client = device.client();
+    let value_dtype = problem.precision.to_dtype();
+    // The two launches of a values and indices pair, and the fused one, keep indices beside their
+    // values: a workspace for the indexed carrier serves both.
+    let workspace = workspace_for(
+        &client,
+        &problem.shape,
+        problem.axis,
+        problem.operation,
+        ReduceElements {
+            input: value_dtype,
+            accumulator: accumulation_dtype(),
+            out: output_dtype_for(problem.operation, value_dtype),
+        },
+        problem.kind != ReduceBenchKind::Single,
+    );
 
     let bench = ReduceBenchmark {
         shape: problem.shape.clone(),
         axis: problem.axis,
         operation: problem.operation,
         kind: problem.kind,
-        value_dtype: problem.precision.to_dtype(),
+        value_dtype,
         strategy: *strategy,
+        workspace,
         device,
         client,
         samples: num_samples,
@@ -149,6 +166,8 @@ struct ReduceBenchmark {
     kind: ReduceBenchKind,
     value_dtype: ElemType,
     strategy: ReduceOpStrategy,
+    /// The scratch every launch is given, allocated before any is timed.
+    workspace: ReduceWorkspace,
     device: cubecl::Device,
     client: Client,
     samples: usize,
@@ -164,6 +183,7 @@ impl ReduceBenchmark {
         elements: ReduceElements,
     ) -> Result<(), String> {
         kernels::Reduce::new(self.strategy)
+            .with_workspace(self.workspace.clone())
             .execute(
                 &self.client,
                 &self.device,
@@ -240,6 +260,7 @@ impl Benchmark for ReduceBenchmark {
                 [elements(value_dtype), elements(index_dtype)],
             )?,
             ReduceBenchKind::Fused => kernels::Reduce::new(self.strategy)
+                .with_workspace(self.workspace.clone())
                 .execute_with_indices(
                     &self.client,
                     &self.device,

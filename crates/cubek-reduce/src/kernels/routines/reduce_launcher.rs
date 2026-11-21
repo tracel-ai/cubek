@@ -1,6 +1,8 @@
 //! The trait every reduce routine implements: how it launches what it prepared.
 
-use crate::kernels::{ReduceBinding, ReduceBlueprint, ReduceRoutineProblem, ReduceTensors};
+use crate::kernels::{
+    ReduceBinding, ReduceBlueprint, ReduceRoutineProblem, ReduceTensors, ReduceWorkspaceBytes,
+};
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Bound, StoredTileOperand, TileOperand, Unbound};
@@ -32,6 +34,15 @@ pub(crate) trait ReduceLauncher<M>:
     /// where the Blueprint states those of the problem its Tune Key stands for.
     fn space(problem: &ReduceRoutineProblem, _blueprint: &ReduceBlueprint<M>) -> Space {
         problem.space()
+    }
+
+    /// The scratch `blueprint`'s launch of `problem` takes from its caller's workspace: none, but
+    /// for a routine that splits a row across cubes.
+    fn workspace(
+        _problem: &ReduceRoutineProblem,
+        _blueprint: &ReduceBlueprint<M>,
+    ) -> ReduceWorkspaceBytes {
+        ReduceWorkspaceBytes::default()
     }
 
     /// `tensors` bound as `blueprint` states them and reduced on `grid`.

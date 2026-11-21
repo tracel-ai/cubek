@@ -1,6 +1,8 @@
 //! What tells one reduction from another for the autotune ([`ReduceKey`]).
 
-use crate::kernels::{ReduceElements, ReduceIndices, ReduceRoutineProblem, ReduceTensors};
+use crate::kernels::{
+    ReduceElements, ReduceIndices, ReduceRoutineProblem, ReduceTensors, ReduceWorkspaceBytes,
+};
 use cubecl::AutotuneKey;
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::ElemAlignment;
@@ -98,6 +100,8 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
                 element,
                 elem_alignment: out_alignment,
             }),
+            // It stands for calls whose caller gave the scratch they need.
+            workspace: ReduceWorkspaceBytes::UNBOUNDED,
         }
     }
 }
