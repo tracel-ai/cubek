@@ -132,8 +132,12 @@ impl ReduceRoutineProblem {
             "a reduction along axis {axis} writes the input's shape with that axis {} wide",
             operation.written_per_row()
         );
-        // A line runs along the innermost axis where both operands step one element along it.
-        let inner = shape.len() - 1;
+        // A line runs along the innermost axis where both operands step one element along it,
+        // past the row axes one long, which hold no step (as `labelled` leaves them out).
+        let inner = (0..shape.len())
+            .rev()
+            .find(|&d| d == axis || shape[d] > 1)
+            .expect("the reduced axis is one of the input's");
         let contiguous = (steps_one(input, inner) && steps_one(out, inner)).then_some(inner);
         Self {
             elem_alignments: [input, out]
@@ -235,9 +239,10 @@ impl ReduceRoutineProblem {
     /// The `(extent, stride)` of each axis of an operand of `shape` at `strides`, in its order,
     /// and the dimension each carries: `along` for the reduced axis, [`BATCH`] for every other, so
     /// [`BATCH`] spans the row axes, the first coarsest, on either side of the reduced one.
-    /// Neighbouring row axes that step as one (the outer's stride the inner's whole span) merge
-    /// into one, so a contiguous operand's rows before and after the reduced axis are one axis
-    /// each. An operand of one axis is given a row axis of one.
+    /// A row axis one long holds no step and is left out. Neighbouring row axes that step as one
+    /// (the outer's stride the inner's whole span) merge into one, so a contiguous operand's rows
+    /// before and after the reduced axis are one axis each. An operand with no row axis left is
+    /// given a row axis of one.
     fn labelled_axes(
         &self,
         shape: &[usize],
@@ -246,6 +251,9 @@ impl ReduceRoutineProblem {
     ) -> (Vec<(usize, usize)>, Vec<Dimension>) {
         let mut labelled: Vec<(Dimension, (usize, usize))> = Vec::new();
         for d in 0..shape.len() {
+            if d != self.axis && shape[d] == 1 {
+                continue;
+            }
             let dimension = match d == self.axis {
                 true => along,
                 false => BATCH,
@@ -438,15 +446,12 @@ impl ReduceRoutineProblem {
 }
 
 /// Two neighbouring row axes as one, the outer `(extent, stride)` and the inner, where the outer
-/// steps the inner's whole span or either is one wide.
-fn merged_rows(outer: (usize, usize), inner: (usize, usize)) -> Option<(usize, usize)> {
-    match (outer, inner) {
-        ((1, _), _) => Some(inner),
-        (_, (1, _)) => Some(outer),
-        ((extent, stride), (inner_extent, inner_stride)) => {
-            (stride == inner_extent * inner_stride).then_some((extent * inner_extent, inner_stride))
-        }
-    }
+/// steps the inner's whole span.
+fn merged_rows(
+    (extent, stride): (usize, usize),
+    (inner_extent, inner_stride): (usize, usize),
+) -> Option<(usize, usize)> {
+    (stride == inner_extent * inner_stride).then_some((extent * inner_extent, inner_stride))
 }
 
 impl EstimatedProblem for ReduceRoutineProblem {
@@ -624,6 +629,33 @@ mod tests {
             (dimensions, geometry.shape()),
             (vec![BATCH, REDUCED], &[1, 9][..])
         );
+    }
+
+    /// A row axis one long after the reduced one holds no step: the reduced axis is innermost.
+    #[test]
+    fn a_row_axis_one_long_is_left_out() {
+        let problem = ReduceRoutineProblem::dense(&[4, 8, 1], 1, ReduceOperation::Sum);
+        let (geometry, dimensions) =
+            problem.labelled_geometry(&Geometry::row_major(&[4, 8, 1]), REDUCED);
+        assert_eq!(
+            (dimensions, geometry.shape()),
+            (vec![BATCH, REDUCED], &[4, 8][..])
+        );
+    }
+
+    /// Lines lie along a reduced axis that only row axes one long follow.
+    #[test]
+    fn the_lines_lie_along_a_reduced_axis_before_axes_one_long() {
+        let input = Geometry::row_major(&[4, 8, 1]);
+        let out = Geometry::row_major(&[4, 1, 1]);
+        let problem = ReduceRoutineProblem::stated(
+            &input,
+            &out,
+            1,
+            ReduceOperation::Sum,
+            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
+        );
+        assert_eq!(problem.lines_along(), REDUCED);
     }
 
     /// A tensor of one axis is one row.

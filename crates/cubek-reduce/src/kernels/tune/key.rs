@@ -44,6 +44,15 @@ fn widest_line_of(alignment: ElemAlignment) -> usize {
     line
 }
 
+/// The widest line, a power of two at most [`WIDEST_KEYED_LINE`], that divides `values`: the
+/// widest that keeps every line within one row `values` long.
+fn widest_line_within(values: usize) -> usize {
+    match values {
+        0 => WIDEST_KEYED_LINE,
+        values => (1 << values.trailing_zeros()).min(WIDEST_KEYED_LINE),
+    }
+}
+
 impl From<&ReduceTensors> for ReduceKey {
     fn from(tensors: &ReduceTensors) -> Self {
         Self::from(tensors.problem())
@@ -65,12 +74,17 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
         let out_line = problem.indices.map_or(widest_line_of(out), |indices| {
             widest_line_of(out).min(widest_line_of(indices.elem_alignment))
         });
+        // Lines along the reduced axis run within a row, whatever the buffer's alignment says.
+        let input_line = match problem.lines_along() == REDUCED {
+            true => widest_line_of(input).min(widest_line_within(problem.reduced_extent())),
+            false => widest_line_of(input),
+        };
         Self::new(
             problem.elements,
             problem.indices.map(|indices| indices.element),
             problem.operation,
             problem.lines_along(),
-            widest_line_of(input),
+            input_line,
             out_line,
             problem.reduced_extent(),
             problem.row_count(),
@@ -110,6 +124,24 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
 mod tests {
     use super::*;
     use crate::kernels::BATCH;
+    use cubecl::ir::FloatKind;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// Rows one value long take lines one wide along them, though the buffer is one contiguous
+    /// run of every row.
+    #[test]
+    fn rows_one_value_long_take_lines_one_wide() {
+        let input = Geometry::row_major(&[128, 1, 1]);
+        let problem = ReduceRoutineProblem::stated(
+            &input,
+            &input,
+            2,
+            ReduceOperation::Sum,
+            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
+        );
+        assert_eq!(ReduceKey::from(&problem).input_line, 1);
+    }
 
     /// The problem a key stands for has that key, for rows along the reduced dim.
     #[test]
