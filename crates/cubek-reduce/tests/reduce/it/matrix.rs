@@ -149,6 +149,15 @@ mod reduce_dim {
         );
     }
 
+    /// A row axis one long after the reduced axis: the lines still lie along the reduced axis.
+    mod parallel_before_an_axis_one_long {
+        testgen_reduce!(
+            shape: shape![128, 32, 1],
+            strides: strides![32, 1, 1],
+            axis: Some(1),
+        );
+    }
+
     // `*_large_odd_batch` below already reduces an axis long enough to need
     // more than one cube and plane, so `large` through `xxlarge` only scale
     // that same count.

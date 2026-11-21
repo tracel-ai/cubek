@@ -1,17 +1,16 @@
 //! The operands of one float attention as autotune measures them: the key a call is tuned under,
-//! and the inputs a round measures on in its place.
+//! and what a round on the call's own buffers costs.
 
 use crate::kernels::tune::key::{AttentionKey, AttentionKeyElements};
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionCache, AttentionQueries, AttentionRoutineProblem,
-    AttentionScoring, AttentionTensors, KvSource,
+    ATTENTION_PACKED_UNREAD, AttentionCache, AttentionQueries, AttentionScoring, AttentionTensors,
+    KvSource,
 };
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::throughput::MemoryAccess;
 use cubecl::tile::launch::Decline;
 use cubecl::tune::Work;
-use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_std::autotune::{Ceiling, Roofline};
 
@@ -33,8 +32,6 @@ pub struct AttentionTuneInputs {
     value: PlainTensor,
     /// The `u32` `[b, pages_per_sequence]` table naming each sequence's pages in order.
     pages: Option<PlainTensor>,
-    /// The `u32` counters the cubes of a box count themselves in at, held across launches.
-    arrivals: Option<PlainTensor>,
     scoring: AttentionScoring,
     /// The `[b, h, q, s]` mask hiding keys from the call's queries
     /// ([`with_mask`](Self::with_mask)).
@@ -118,8 +115,8 @@ impl AttentionTuneInputs {
             } => (query.clone(), Some((ends.clone(), *longest))),
         };
         let pages = kv.pages.clone();
-        let tensors = AttentionTensors::attention(client, queries, kv, scoring)?
-            .with_arrivals(arrivals.clone());
+        let tensors =
+            AttentionTensors::attention(client, queries, kv, scoring)?.with_arrivals(arrivals);
         Ok(Self {
             client: client.clone(),
             query,
@@ -127,7 +124,6 @@ impl AttentionTuneInputs {
             key,
             value,
             pages,
-            arrivals,
             scoring,
             mask: None,
             attended: AttendedKeys::Lengths,
@@ -256,224 +252,18 @@ impl AttentionTuneInputs {
         )
     }
 
-    /// The inputs many query positions are measured on: the problem `key` describes.
-    ///
-    /// A whole prompt's key stands for every prompt its bucket holds, so the round measures the
-    /// bucket's longest ([`whole_representative`](Self::whole_representative)). A chunk's key
-    /// stands for every chunk, so the round measures that chunk ([`chunk_extents`]) on operands
-    /// of its own rather than whichever chunk reached the autotune first. Uploaded rather than
-    /// filled: a process mode that drops launches drops a launch, not an upload.
-    ///
-    /// [`chunk_extents`]: Self::chunk_extents
-    pub(super) fn many_queries_representative(key: &AttentionKey, inputs: &Self) -> Self {
-        // A whole prompt's key, or one whose head counts do not divide, which no call produces,
-        // states no chunk.
-        let chunk = AttentionRoutineProblem::try_from(key)
-            .ok()
-            .filter(|_| key.chunk());
-        let Some(problem) = chunk else {
-            return inputs.whole_representative(key);
-        };
-        let (client, elem) = (&inputs.client, inputs.query.elem);
-        let (batch, heads, dim) = (problem.batch, problem.heads(), problem.head_dim);
-        let (queries, positions) = inputs.chunk_extents(key);
-        // Queries lying end to end are measured as runs of the chunk's length, one a sequence.
-        let (query, query_runs) = match inputs.query_runs {
-            None => {
-                let shape = [batch, heads, queries, dim];
-                let strides = row_major_contiguous_strides(shape);
-                (PlainTensor::zeros(client, &shape, strides, elem), None)
-            }
-            Some(_) => {
-                let shape = [batch * queries, heads, dim];
-                let strides = row_major_contiguous_strides(shape);
-                let ends: Vec<u32> = (1..=batch).map(|b| (b * queries) as u32).collect();
-                let ends = PlainTensor::of_u32s(client, &[batch], &ends);
-                let query = PlainTensor::zeros(client, &shape, strides, elem);
-                (query, Some((ends, queries)))
-            }
-        };
-        let (key, value, pages) = inputs.zero_keys(key, positions, batch);
-        inputs.measured_on(query, query_runs, key, value, pages, None)
+    /// The keys a decode step is priced over: those its key names
+    /// ([`one_query_keys`](Self::one_query_keys)), but no more than the call's buffers hold.
+    fn one_query_priced_keys(&self) -> usize {
+        self.one_query_keys().min(self.keys())
     }
 
-    /// The queries and keys a chunk's round measures. Over a cache, the chunk every such key
-    /// stands for, [`CHUNK_QUERIES`](AttentionKey::CHUNK_QUERIES) over
-    /// [`CHUNK_PREFIX`](AttentionKey::CHUNK_PREFIX), not the key's extents: the anchor rounds
-    /// those up to its bucket's edge, which past the default level is no chunk a prompt is cut
-    /// into. At `extensive` 512 queries over 32768 keys anchor to 657 over 37877, a second box of
-    /// 145 queries the routines rank differently than any call runs them. Over the call's own
-    /// keys, the key's extents, the bucket's longest.
-    fn chunk_extents(&self, key: &AttentionKey) -> (usize, usize) {
-        match self.attended {
-            AttendedKeys::Lengths => (AttentionKey::CHUNK_QUERIES, AttentionKey::CHUNK_PREFIX),
-            AttendedKeys::Every => (key.seq_q(), key.seq_kv()),
-        }
-    }
-
-    /// Zero keys and values of `batch` sequences, `positions` each, of this call's elements, each
-    /// side its own, and key heads, laid out as `key` says: one buffer per operand, or pools of
-    /// pages of the key's page size read through a table of their own, each sequence's pages in
-    /// order.
-    fn zero_keys(
-        &self,
-        key: &AttentionKey,
-        positions: usize,
-        batch: usize,
-    ) -> (PlainTensor, PlainTensor, Option<PlainTensor>) {
-        let client = &self.client;
-        let (kv_heads, head_dim) = (self.kv_heads(), key.head_dim());
-        let zeros = |shape: [usize; 4], elem| {
-            PlainTensor::zeros(client, &shape, row_major_contiguous_strides(shape), elem)
-        };
-        let (keys, values) = (self.key.elem, self.value.elem);
-        match key.page_size() {
-            None => {
-                let shape = [batch, kv_heads, positions, head_dim];
-                (zeros(shape, keys), zeros(shape, values), None)
-            }
-            Some(page_size) => {
-                let width = positions.div_ceil(page_size);
-                let count = batch * width;
-                let shape = [count, kv_heads, page_size, head_dim];
-                let table: Vec<u32> = (0..count as u32).collect();
-                (
-                    zeros(shape, keys),
-                    zeros(shape, values),
-                    Some(PlainTensor::of_u32s(client, &[batch, width], &table)),
-                )
-            }
-        }
-    }
-
-    /// A whole prompt's round: zero queries, keys and values as long as the key's bucket, laid
-    /// out as the call's are and attended to their end; or the call's own where the cache is
-    /// paged, the queries lie end to end, or an operand cannot be laid out alike.
-    fn whole_representative(&self, key: &AttentionKey) -> Self {
-        // A prompt's positions lie along each operand's third dimension: `[batch, heads, positions,
-        // dim]`.
-        const POSITIONS: usize = 2;
-        let grown = |tensor: &PlainTensor, extent: usize| {
-            tensor.zeros_grown(&self.client, POSITIONS, extent)
-        };
-        let keyed = || {
-            Some((
-                grown(&self.query, key.seq_q())?,
-                grown(&self.key, key.seq_kv())?,
-                grown(&self.value, key.seq_kv())?,
-            ))
-        };
-        let (query, key, value) = match (&self.pages, &self.query_runs) {
-            (None, None) => keyed(),
-            _ => None,
-        }
-        .unwrap_or_else(|| (self.query.clone(), self.key.clone(), self.value.clone()));
-        self.measured_on(
-            query,
-            self.query_runs.clone(),
-            key,
-            value,
-            self.pages.clone(),
-            None,
-        )
-    }
-
-    /// The inputs a decode candidate is measured on: the call's queries, attended **to the end**
-    /// of the keys the key names ([`one_query_keys`](Self::one_query_keys)).
-    ///
-    /// The length is the one input the key does not name — it lives on device so the launch
-    /// replays across steps — and a live call's is no fair sample of it: where launches are
-    /// discarded it is never advanced, so every candidate would be measured over an empty cache.
-    /// Over a cache, the round measures zero keys and values as deep as the prefix the key stands
-    /// for, whatever the cache holds and whichever bucket the anchor rounds that prefix into; over
-    /// the call's own keys, those keys. Either way the depth is the one
-    /// [`one_query_work`](Self::one_query_work) prices, so the round's cold read and its
-    /// measurement agree about the work. The call's arrival counters are kept: the round has the
-    /// call's sequences and heads, so they cover its boxes, and every candidate counts in at them
-    /// as production does.
-    pub(super) fn one_query_representative(key: &AttentionKey, inputs: &Self) -> Self {
-        let (keys, values, pages) = match inputs.attended {
-            AttendedKeys::Lengths => {
-                inputs.zero_keys(key, inputs.one_query_keys(), inputs.sequences())
-            }
-            AttendedKeys::Every => (
-                inputs.key.clone(),
-                inputs.value.clone(),
-                inputs.pages.clone(),
-            ),
-        };
-        inputs.measured_on(
-            inputs.query.clone(),
-            inputs.query_runs.clone(),
-            keys,
-            values,
-            pages,
-            inputs.arrivals.clone(),
-        )
-    }
-
-    /// The inputs a round measures on: these operands, every sequence attending all the
-    /// positions its buffers hold, into an output of their own, counting in at `arrivals`. The
-    /// lengths are uploaded rather than filled: an upload is not a launch, so a
-    /// process mode that discards launches keeps it.
-    fn measured_on(
-        &self,
-        query: PlainTensor,
-        query_runs: Option<(PlainTensor, usize)>,
-        key: PlainTensor,
-        value: PlainTensor,
-        pages: Option<PlainTensor>,
-        arrivals: Option<PlainTensor>,
-    ) -> Self {
-        let batch = match &query_runs {
-            Some((ends, _)) => ends.shape()[0],
-            None => query.shape()[0],
-        };
-        let positions = key.shape()[2];
-        let keys = match &pages {
-            Some(pages) => pages.shape()[1] * positions,
-            None => positions,
-        };
-        let lengths = PlainTensor::of_u32s(&self.client, &[batch], &vec![keys as u32; batch]);
-        // A mask's cells change which scores count, not what a launch reads or how many steps it
-        // takes: one cell of the call's element, at stride zero over the measured scores.
-        let mask = self.mask.as_ref().map(|mask| {
-            let [batch, heads, queries, _] = query.shape().dims::<4>();
-            PlainTensor::zeros(
-                &self.client,
-                &[batch, heads, queries, keys],
-                vec![0; 4],
-                mask.elem,
-            )
-        });
-        let queries = match query_runs {
-            Some((ends, longest)) => AttentionQueries::Packed {
-                query,
-                ends,
-                longest,
-                lengths,
-            },
-            None => AttentionQueries::Dense { query, lengths },
-        };
-        let kv = KvSource::new(AttentionCache::Float { key, value });
-        let kv = match pages {
-            Some(pages) => kv.paged(pages),
-            None => kv,
-        };
-        let measured = Self::attention(&self.client, queries, kv, arrivals, self.scoring)
-            .expect("operands of the call's elements and heads are admitted as the call's were");
-        match mask {
-            Some(mask) => measured.with_mask(mask),
-            None => measured,
-        }
-    }
-
-    /// What a decode round's step costs: one query over the keys it is measured over
-    /// ([`one_query_keys`](Self::one_query_keys)), each key and value read once.
+    /// What a decode round's step costs: one query over the keys it is priced over
+    /// ([`one_query_priced_keys`](Self::one_query_priced_keys)), each key and value read once.
     fn one_query_work(&self) -> Work {
         let batch = self.sequences();
         let (heads, head_dim) = self.heads_and_dim();
-        let keys = self.one_query_keys();
+        let keys = self.one_query_priced_keys();
         let kv_bytes =
             2 * batch * self.kv_heads() * keys * self.key.shape()[3] * self.key.elem.size();
         Work {
@@ -509,6 +299,7 @@ mod tests {
         use crate::kernels::{AttentionScoring, AttentionVisibility, QueryPlacement};
         use core::num::NonZeroUsize;
         use cubecl::ir::{ElemType, FloatKind};
+        use cubecl::zspace::striding::row_major_contiguous_strides;
         use cubek_test_utils::{TestOutcome, ValidationResult, client};
 
         const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -623,28 +414,20 @@ mod tests {
             assert!(!prompt.chunk());
         }
 
-        /// **A round over a cache measures what its key stands for, whatever bucket holds it.**
-        /// An anchor finer than the default rounds the chunk and the decode prefix a key over a
-        /// cache stands for up to extents no call has (512 queries over 32768 keys to 657 over
-        /// 37877, one query over 32768 keys to one over 37877); the rounds still measure that
-        /// chunk and that prefix, the decode's the depth its work is priced at.
+        /// **A decode step is priced at the prefix its key stands for, within the call's
+        /// buffers.** A cache deeper than the prefix is priced to the prefix; a shallower one, to
+        /// its end.
         #[test]
-        fn a_round_over_a_cache_measures_what_its_key_stands_for() {
-            let chunk = inputs(512, 4096, None);
-            let key = chunk.key_of(657, 37877);
-            assert!(key.chunk());
-            let round = AttentionTuneInputs::many_queries_representative(&key, &chunk);
-            assert_eq!(round.query.shape()[2], AttentionKey::CHUNK_QUERIES);
-            assert_eq!(round.keys(), AttentionKey::CHUNK_PREFIX);
-
-            let decode = inputs(1, 4096, None);
-            let key = decode.key_of(1, 37877);
-            let round = AttentionTuneInputs::one_query_representative(&key, &decode);
-            assert_eq!(round.keys(), AttentionKey::cache_prefix(1));
+        fn a_decode_is_priced_at_its_prefix_within_the_calls_buffers() {
+            let prefix = AttentionKey::cache_prefix(1);
+            let attended = [2 * prefix, prefix / 8]
+                .map(|positions| inputs(1, positions, None).one_query_priced_keys());
+            assert_eq!(attended, [prefix, prefix / 8]);
         }
 
-        /// **A decode step's round reads as many keys in all, whatever its sequences.** One
-        /// sequence is keyed and measured over all of [`DECODE_KEYS`](AttentionKey::DECODE_KEYS),
+        /// **A decode step reads as many keys in all, whatever its sequences.** One
+        /// sequence of a deep enough cache is keyed and priced over all of
+        /// [`DECODE_KEYS`](AttentionKey::DECODE_KEYS),
         /// four over a quarter each, three as the four of their bucket are; sixty-four stop at the
         /// shallowest prefix rather than below it.
         #[test]
@@ -654,8 +437,8 @@ mod tests {
             let zeros = |shape: [usize; 4]| {
                 PlainTensor::zeros(&client, &shape, row_major_contiguous_strides(shape), F16)
             };
-            let decode = |sequences: usize| {
-                let cache = [sequences, kv_heads, 64, head_dim];
+            let decode = |sequences: usize, positions: usize| {
+                let cache = [sequences, kv_heads, positions, head_dim];
                 let lengths = PlainTensor::of_u32s(&client, &[sequences], &vec![1; sequences]);
                 let visibility = AttentionVisibility::new(false, None, QueryPlacement::Last);
                 AttentionTuneInputs::new(
@@ -677,25 +460,24 @@ mod tests {
                 (4, quarter),
                 (64, AttentionKey::CACHE_PREFIX),
             ] {
-                let inputs = decode(sequences);
-                let key = inputs.one_query_key();
-                assert_eq!(key.seq_kv(), prefix, "{sequences} sequences");
-                let round = AttentionTuneInputs::one_query_representative(&key, &inputs);
+                let inputs = decode(sequences, prefix);
                 assert_eq!(
-                    (round.sequences(), round.keys()),
-                    (sequences, prefix),
+                    (
+                        inputs.one_query_key().seq_kv(),
+                        inputs.one_query_priced_keys()
+                    ),
+                    (prefix, prefix),
                     "{sequences} sequences"
                 );
             }
         }
 
-        /// **Each side of a cache is keyed and measured at its own element.** A chunk and a decode
-        /// step over `f16` keys and values, over `e4m3` keys beside `f16` values, and over both
-        /// `e4m3`, tune under three keys: a winner over one reads the others' operands differently
-        /// or not at all. Each round measures every side at the element its call reads it at. A
-        /// cache whose element the runtime declines to store is a skip, not a failure.
+        /// **Each side of a cache is keyed at its own element.** A chunk and a decode step over
+        /// `f16` keys and values, over `e4m3` keys beside `f16` values, and over both `e4m3`, tune
+        /// under three keys: a winner over one reads the others' operands differently or not at
+        /// all. A cache whose element the runtime declines to store is a skip, not a failure.
         #[test]
-        fn each_side_of_a_cache_is_keyed_and_measured_at_its_own_element() {
+        fn each_side_of_a_cache_is_keyed_at_its_own_element() {
             let e4m3 = ElemType::Float(FloatKind::E4M3);
             let client = client();
             let (heads, kv_heads, head_dim) = HEADS;
@@ -723,25 +505,10 @@ mod tests {
                         Err(Decline::Unserved { why }) => return Err(why),
                         inputs => inputs.expect("an even group of float elements"),
                     };
-                    let (keyed, round) = match queries {
-                        1 => {
-                            let keyed = inputs.one_query_key();
-                            let round =
-                                AttentionTuneInputs::one_query_representative(&keyed, &inputs);
-                            (keyed, round)
-                        }
-                        _ => {
-                            let keyed = inputs.many_queries_key();
-                            let round =
-                                AttentionTuneInputs::many_queries_representative(&keyed, &inputs);
-                            (keyed, round)
-                        }
+                    let keyed = match queries {
+                        1 => inputs.one_query_key(),
+                        _ => inputs.many_queries_key(),
                     };
-                    assert_eq!(
-                        (round.query.elem, round.key.elem, round.value.elem),
-                        (F16, key, value),
-                        "{queries} queries: the round measures another cache"
-                    );
                     Ok(keyed)
                 });
                 let keyed: Vec<_> = caches
@@ -769,21 +536,22 @@ mod tests {
         #[test]
         fn a_decode_costs_two_contractions() {
             let (heads, _, head_dim) = HEADS;
-            let one_contraction = 2 * heads * AttentionKey::cache_prefix(1) * head_dim;
+            let one_contraction = 2 * heads * 256 * head_dim;
             let work = inputs(1, 256, None).one_query_work();
             assert_eq!(work.compute_ops, 2 * one_contraction);
         }
 
-        /// A decode round over a cache is priced over the prefix it is measured over, not over
-        /// the cache: its cold read and its measurement agree about the work.
+        /// A decode round over a cache is priced over the prefix its key stands for, not over the
+        /// cache.
         #[test]
-        fn a_decode_over_a_cache_is_priced_at_the_prefix() {
+        fn a_decode_over_a_cache_is_priced_at_the_keys_it_attends() {
             let (_, kv_heads, head_dim) = HEADS;
-            let shallow = inputs(1, 256, None).one_query_work();
-            let deep = inputs(1, 65536, None).one_query_work();
-            assert_eq!(shallow.bytes, deep.bytes);
-            let kv_bytes = 2 * kv_heads * AttentionKey::cache_prefix(1) * head_dim * F16.size();
-            assert!(shallow.bytes > kv_bytes);
+            let prefix = AttentionKey::cache_prefix(1);
+            let deep = inputs(1, 2 * prefix, None).one_query_work();
+            let deeper = inputs(1, 4 * prefix, None).one_query_work();
+            assert_eq!(deep.bytes, deeper.bytes);
+            let kv_bytes = 2 * kv_heads * prefix * head_dim * F16.size();
+            assert!(deep.bytes > kv_bytes);
         }
     }
 }

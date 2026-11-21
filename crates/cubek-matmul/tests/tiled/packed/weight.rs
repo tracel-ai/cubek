@@ -114,11 +114,18 @@ fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
         })
     })
     .collect();
+    let client = cubecl::test_device().client();
+    // A device that runs no plane of these settings offers none or declines them, which skips;
+    // one that runs them must launch at least one.
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
-    staged.check_some(staged.at(
+    let cases = staged.at(
         CubeStagedMatmulRoutine.packed_settings(staged.hw()),
         &products,
-    ));
+    );
+    match cases.first().map(|first| staged.outcome(&client, first)) {
+        Some(TestOutcome::Validated(ValidationResult::Skipped(_))) | None => staged.check(cases),
+        Some(_) => staged.check_some(cases),
+    }
     let async_copy = ByRoutine::new(CubeStagedAsyncCopyMatmulRoutine, Declines::AsItStates);
     async_copy.check(async_copy.at(
         CubeStagedAsyncCopyMatmulRoutine.packed_settings(async_copy.hw()),
@@ -130,8 +137,12 @@ fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
         &products,
     ));
     let hypercube = ByRoutine::new(HypercubeLastArrivalMatmulRoutine, Declines::AsItStates);
-    hypercube.check_some(hypercube.at(
+    let cases = hypercube.at(
         HypercubeLastArrivalMatmulRoutine.packed_settings(hypercube.hw()),
         &products,
-    ));
+    );
+    match cases.first().map(|first| hypercube.outcome(&client, first)) {
+        Some(TestOutcome::Validated(ValidationResult::Skipped(_))) | None => hypercube.check(cases),
+        Some(_) => hypercube.check_some(cases),
+    }
 }

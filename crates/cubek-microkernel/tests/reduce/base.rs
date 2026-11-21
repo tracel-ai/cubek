@@ -180,7 +180,11 @@ impl HostReduce {
         let per_row: Vec<Vec<f32>> = self
             .rows
             .iter()
-            .map(|row| self.case.operation.reference_cells(row))
+            .map(|row| {
+                self.case
+                    .operation
+                    .reference_cells(&values_read(self.case.microkernel, row))
+            })
             .collect();
         let values = match self.case.lines {
             LineDirection::Along => per_row.concat(),
@@ -242,6 +246,17 @@ impl ScopeUnderTest for ReduceMicrokernelScopeUnderTest {
 
     fn tolerance(&self, _case: &Self::Case) -> f32 {
         1e-4
+    }
+}
+
+/// The values of `row` `microkernel` reads: every `stride`-th from the first for the strided
+/// read, the whole row otherwise.
+fn values_read(microkernel: TestedMicrokernel, row: &[f32]) -> Vec<f32> {
+    match microkernel {
+        TestedMicrokernel::UnitStridedReduce { stride } => {
+            row.iter().step_by(stride).copied().collect()
+        }
+        _ => row.to_vec(),
     }
 }
 

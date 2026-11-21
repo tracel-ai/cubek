@@ -1,7 +1,7 @@
 use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, each_microkernel_with,
-    estimate_reduce, microkernel_widths, unit_launch,
+    estimate_reduce, microkernel_widths, prepared_from_key, unit_launch,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -28,7 +28,7 @@ pub struct UnitDirectReduceSettings {
 }
 
 impl UnitDirectReduceSettings {
-    /// Planes a cube holds, the likeliest fastest first.
+    /// Planes of units a cube holds, each unit its own rows, the likeliest fastest first.
     pub const PLANES: [usize; 3] = [4, 1, 8];
 }
 
@@ -72,14 +72,17 @@ impl Routine for UnitDirectReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let microkernel =
-            UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-        let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
-        Ok((
-            ReduceBlueprint::new(microkernel, partitioning, widths),
-            grid,
-        ))
+        // Inside, `problem` is the problem the call's Tune Key stands for.
+        prepared_from_key::<Self, _>(hw, problem, |problem| {
+            let microkernel =
+                UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
+            let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
+            Ok((
+                ReduceBlueprint::new(microkernel, partitioning, widths),
+                grid,
+            ))
+        })
     }
 
     fn estimate(

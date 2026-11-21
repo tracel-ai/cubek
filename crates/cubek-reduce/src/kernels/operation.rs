@@ -2,22 +2,39 @@
 //! strategy picks on the tile routines.
 
 use crate::ReduceError;
-use crate::kernels::{ReduceElements, ReduceOpStrategy, ReduceTensors, launch_by_strategy};
+use crate::kernels::{
+    ReduceElements, ReduceOpStrategy, ReduceTensors, ReduceWorkspace, launch_by_strategy,
+};
 use cubecl::Device;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubek_microkernel::reduce::ReduceOperation;
 
-/// A reduction of one tensor along one axis, run by the kernel its strategy picks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A reduction of one tensor along one axis, run by the kernel its strategy picks, with the
+/// scratch its caller gives the kernels that split a row across cubes.
+#[derive(Debug, Clone)]
 pub struct Reduce {
     strategy: ReduceOpStrategy,
+    workspace: Option<ReduceWorkspace>,
 }
 
 impl Reduce {
-    /// The reduction whose kernel `strategy` picks.
+    /// The reduction whose kernel `strategy` picks, given no scratch: the kernels that split a
+    /// row across cubes decline it.
     pub fn new(strategy: ReduceOpStrategy) -> Self {
-        Self { strategy }
+        Self {
+            strategy,
+            workspace: None,
+        }
+    }
+
+    /// This reduction given `workspace`, the scratch of the kernels that split a row across cubes
+    /// ([`ReduceWorkspace::bytes_for`]), which cubek never allocates.
+    pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
+        Self {
+            workspace: Some(workspace),
+            ..self
+        }
     }
 
     /// Reduce dim `axis` of `input` into `output` by `operation`, in `elements`, on `device`.
@@ -59,7 +76,7 @@ impl Reduce {
             operation.written_per_row(),
         )?;
         let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
-        launch_by_strategy(self.strategy, device, tensors)
+        launch_by_strategy(self.strategy, device, self.given(tensors))
     }
 
     /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
@@ -111,7 +128,17 @@ impl Reduce {
             elements,
             index_element,
         );
-        launch_by_strategy(self.strategy, device, tensors)
+        launch_by_strategy(self.strategy, device, self.given(tensors))
+    }
+}
+
+impl Reduce {
+    /// `tensors` given this reduction's workspace, where it has one.
+    fn given(&self, tensors: ReduceTensors) -> ReduceTensors {
+        match &self.workspace {
+            Some(workspace) => tensors.with_workspace(workspace.clone()),
+            None => tensors,
+        }
     }
 }
 
@@ -121,7 +148,7 @@ impl Reduce {
 /// # Errors
 ///
 /// [`ReduceError::IndicesUnsupported`] for an operation whose values carry no index.
-fn indexed(operation: ReduceOperation) -> Result<ReduceOperation, ReduceError> {
+pub(crate) fn indexed(operation: ReduceOperation) -> Result<ReduceOperation, ReduceError> {
     match operation {
         ReduceOperation::Max | ReduceOperation::ArgMax => Ok(ReduceOperation::ArgMax),
         ReduceOperation::Min | ReduceOperation::ArgMin => Ok(ReduceOperation::ArgMin),

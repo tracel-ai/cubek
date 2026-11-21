@@ -1,5 +1,6 @@
 //! The problem a routine computes.
 
+use crate::kernels::ReduceWorkspaceBytes;
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
@@ -96,6 +97,9 @@ pub struct ReduceRoutineProblem {
     pub elem_alignments: [ElemAlignment; 2],
     /// The indices written beside the values, to a second output of their shape, where they are.
     pub indices: Option<ReduceIndices>,
+    /// The bytes of scratch the caller gave ([`ReduceWorkspace`](crate::kernels::ReduceWorkspace)):
+    /// none unless it gave a workspace.
+    pub workspace: ReduceWorkspaceBytes,
 }
 
 /// The indices a reduction writes beside its values: their element, and the alignment of the
@@ -112,7 +116,7 @@ impl ReduceRoutineProblem {
     ///
     /// # Panics
     ///
-    /// Where `out`'s shape is not that.
+    /// Where `input` has no axis, `axis` is not one of its axes, or `out`'s shape is not that.
     pub fn stated(
         input: &Geometry,
         out: &Geometry,
@@ -128,8 +132,12 @@ impl ReduceRoutineProblem {
             "a reduction along axis {axis} writes the input's shape with that axis {} wide",
             operation.written_per_row()
         );
-        // A line runs along the innermost axis where both operands step one element along it.
-        let inner = shape.len() - 1;
+        // A line runs along the innermost axis where both operands step one element along it,
+        // past the row axes one long, which hold no step (as `labelled` leaves them out).
+        let inner = (0..shape.len())
+            .rev()
+            .find(|&d| d == axis || shape[d] > 1)
+            .expect("the reduced axis is one of the input's");
         let contiguous = (steps_one(input, inner) && steps_one(out, inner)).then_some(inner);
         Self {
             elem_alignments: [input, out]
@@ -140,9 +148,12 @@ impl ReduceRoutineProblem {
             elements,
             contiguous,
             indices: None,
+            workspace: ReduceWorkspaceBytes::default(),
         }
     }
+}
 
+impl ReduceRoutineProblem {
     /// The problem `out = operation(input)` along axis `axis` states, both read where they lie.
     ///
     /// # Panics
@@ -228,9 +239,10 @@ impl ReduceRoutineProblem {
     /// The `(extent, stride)` of each axis of an operand of `shape` at `strides`, in its order,
     /// and the dimension each carries: `along` for the reduced axis, [`BATCH`] for every other, so
     /// [`BATCH`] spans the row axes, the first coarsest, on either side of the reduced one.
-    /// Neighbouring row axes that step as one (the outer's stride the inner's whole span) merge
-    /// into one, so a contiguous operand's rows before and after the reduced axis are one axis
-    /// each. An operand of one axis is given a row axis of one.
+    /// A row axis one long holds no step and is left out. Neighbouring row axes that step as one
+    /// (the outer's stride the inner's whole span) merge into one, so a contiguous operand's rows
+    /// before and after the reduced axis are one axis each. An operand with no row axis left is
+    /// given a row axis of one.
     fn labelled_axes(
         &self,
         shape: &[usize],
@@ -239,6 +251,9 @@ impl ReduceRoutineProblem {
     ) -> (Vec<(usize, usize)>, Vec<Dimension>) {
         let mut labelled: Vec<(Dimension, (usize, usize))> = Vec::new();
         for d in 0..shape.len() {
+            if d != self.axis && shape[d] == 1 {
+                continue;
+            }
             let dimension = match d == self.axis {
                 true => along,
                 false => BATCH,
@@ -318,46 +333,40 @@ impl ReduceRoutineProblem {
 
     /// Every dimension of the problem at its extent: what a routine partitions.
     pub(crate) fn space(&self) -> Space {
-        Space::new(&[
-            (BATCH, self.row_count()),
-            (REDUCED, self.reduced_extent()),
-            (SLOTS, self.operation.written_per_row()),
-        ])
+        Space::new(&self.extents())
     }
 
     /// [`space`](Self::space) and a hypercube's partials, `partial_extent` values of each box of
     /// rows'.
     pub(crate) fn split_space_with_partial_extent(&self, partial_extent: usize) -> Space {
-        Space::new(&[
-            (BATCH, self.row_count()),
-            (REDUCED, self.reduced_extent()),
-            (SLOTS, self.operation.written_per_row()),
-            (PARTIALS, partial_extent),
-        ])
+        let [rows, reduced, slots] = self.extents();
+        Space::new(&[rows, reduced, slots, (PARTIALS, partial_extent)])
     }
 
     /// The values of a row one cube of `units` units reduces when the row is split across cubes,
-    /// each unit `unit_lines` lines of `width` values: along, a line holds `width` values of the
-    /// row; across, one.
+    /// each unit `unit_lines` lines of `width` values.
     pub(crate) fn split_part(&self, units: usize, unit_lines: usize, width: usize) -> usize {
-        units * unit_lines * self.input_load_at_width(width).extent_along(REDUCED)
+        units * unit_lines * self.row_values_a_line_at_width(width)
+    }
+
+    /// The values of one row a line `width` wide holds: `width` where the lines lie along the
+    /// reduced dim, one where they lie across it.
+    pub(crate) fn row_values_a_line_at_width(&self, width: usize) -> usize {
+        self.input_load_at_width(width).extent_along(REDUCED)
     }
 
     /// The box a cube owns where a row is split across cubes: the owner's box at `width`, `part`
     /// values long along [`REDUCED`].
-    pub(crate) fn split_owner_box(&self, width: usize, part: usize) -> Vec<(Dimension, usize)> {
-        [
-            self.owner_box_at_width(width).as_slice(),
-            &[(REDUCED, part)],
-        ]
-        .concat()
+    pub(crate) fn split_owner_box(&self, width: usize, part: usize) -> [(Dimension, usize); 3] {
+        let [rows, slots] = self.owner_box_at_width(width);
+        [rows, slots, (REDUCED, part)]
     }
 
     /// The box an owner holds: one row, or `width` rows side by side across the reduced axis, and
     /// the cells it writes. It leaves [`REDUCED`] to the space, so every owner spans its rows
     /// whole.
-    pub(crate) fn owner_box_at_width(&self, width: usize) -> Vec<(Dimension, usize)> {
-        vec![
+    pub(crate) fn owner_box_at_width(&self, width: usize) -> [(Dimension, usize); 2] {
+        [
             (BATCH, self.box_rows_at_width(width)),
             (SLOTS, self.operation.written_per_row()),
         ]
@@ -372,6 +381,51 @@ impl ReduceRoutineProblem {
     /// the reduced axis, one along it.
     fn box_rows_at_width(&self, width: usize) -> usize {
         self.input_load_at_width(width).extent_along(BATCH)
+    }
+
+    /// Each dimension the problem holds with its extent: the rows, the reduced dim and the cells a
+    /// row writes.
+    fn extents(&self) -> [(Dimension, usize); 3] {
+        [
+            (BATCH, self.row_count()),
+            (REDUCED, self.reduced_extent()),
+            (SLOTS, self.operation.written_per_row()),
+        ]
+    }
+
+    /// The problem this one's Tune Key stands for ([`ReduceKey`](crate::kernels::ReduceKey)): what
+    /// every reduce routine prepares its Blueprint from, so every call of one key compiles the
+    /// same kernel.
+    pub(crate) fn keyed(&self) -> Self {
+        Self::from(&crate::kernels::ReduceKey::from(self))
+    }
+
+    /// A dense row-major input of `shape` reduced along `axis` by `operation` in `elements`, its
+    /// output dense too, and `u32` indices beside it where `with_indices`: the problem a caller
+    /// states by its shape alone, as [`ReduceWorkspace::bytes_for`](crate::kernels::ReduceWorkspace::bytes_for)
+    /// sizes a workspace by.
+    ///
+    /// # Panics
+    ///
+    /// Where `axis` is not an axis of `shape`.
+    pub(crate) fn of_shape(
+        shape: &[usize],
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+        with_indices: bool,
+    ) -> Self {
+        let input = Geometry::row_major(shape);
+        let out = Geometry::row_major(&with_axis_extent(shape, axis, operation.written_per_row()));
+        let stated = Self::stated(&input, &out, axis, operation, elements);
+        let [_, out_alignment] = stated.elem_alignments;
+        Self {
+            indices: with_indices.then_some(ReduceIndices {
+                element: ElemType::UInt(UIntKind::U32),
+                elem_alignment: out_alignment,
+            }),
+            ..stated
+        }
     }
 
     /// `partitioning` as a kernel compiles it: every dimension but the cells a row writes left to
@@ -392,15 +446,12 @@ impl ReduceRoutineProblem {
 }
 
 /// Two neighbouring row axes as one, the outer `(extent, stride)` and the inner, where the outer
-/// steps the inner's whole span or either is one wide.
-fn merged_rows(outer: (usize, usize), inner: (usize, usize)) -> Option<(usize, usize)> {
-    match (outer, inner) {
-        ((1, _), _) => Some(inner),
-        (_, (1, _)) => Some(outer),
-        ((extent, stride), (inner_extent, inner_stride)) => {
-            (stride == inner_extent * inner_stride).then_some((extent * inner_extent, inner_stride))
-        }
-    }
+/// steps the inner's whole span.
+fn merged_rows(
+    (extent, stride): (usize, usize),
+    (inner_extent, inner_stride): (usize, usize),
+) -> Option<(usize, usize)> {
+    (stride == inner_extent * inner_stride).then_some((extent * inner_extent, inner_stride))
 }
 
 impl EstimatedProblem for ReduceRoutineProblem {
@@ -443,6 +494,7 @@ impl ReduceRoutineProblem {
             contiguous: Some(innermost),
             elem_alignments: [ElemAlignment::dense_rows(shape[innermost]); 2],
             indices: None,
+            workspace: ReduceWorkspaceBytes::default(),
         }
     }
 }
@@ -524,31 +576,39 @@ mod tests {
         );
     }
 
-    /// Rows lie along the reduced axis where it is the contiguous one, across it where another is.
+    /// Lines lie along the reduced axis where it is the contiguous one.
     #[test]
-    fn the_lines_lie_along_the_contiguous_axis() {
+    fn the_lines_lie_along_a_contiguous_reduced_axis() {
         let along = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum);
-        let across = ReduceRoutineProblem::dense(&[4, 8], 0, ReduceOperation::Sum);
         assert_eq!(along.lines_along(), REDUCED);
+    }
+
+    /// Lines lie across the reduced axis where another is the contiguous one.
+    #[test]
+    fn the_lines_lie_across_a_strided_reduced_axis() {
+        let across = ReduceRoutineProblem::dense(&[4, 8], 0, ReduceOperation::Sum);
         assert_eq!(across.lines_along(), BATCH);
     }
 
-    /// Across the reduced axis an owner holds a line of rows, `width` side by side; along it, one
-    /// row. Each holds the cells a row writes.
+    /// Across the reduced axis, an owner holds a line of `width` rows.
     #[test]
-    fn an_owner_holds_a_line_of_rows_across_and_one_along() {
+    fn an_owner_across_the_axis_holds_a_line_of_rows() {
         const WIDTH: usize = 4;
         const K: usize = 3;
         let across = ReduceRoutineProblem::dense(&[5, 8], 0, ReduceOperation::TopK { k: K });
         assert_eq!(
             across.owner_box_at_width(WIDTH),
-            vec![(BATCH, WIDTH), (SLOTS, K)]
+            [(BATCH, WIDTH), (SLOTS, K)]
         );
+    }
+
+    /// Along the reduced axis, an owner holds one row.
+    #[test]
+    fn an_owner_along_the_axis_holds_one_row() {
+        const WIDTH: usize = 4;
+        const K: usize = 3;
         let along = ReduceRoutineProblem::dense(&[5, 8], 1, ReduceOperation::TopK { k: K });
-        assert_eq!(
-            along.owner_box_at_width(WIDTH),
-            vec![(BATCH, 1), (SLOTS, K)]
-        );
+        assert_eq!(along.owner_box_at_width(WIDTH), [(BATCH, 1), (SLOTS, K)]);
     }
 
     /// The boxes of rows are the rows over an owner's, rounded up.
@@ -560,13 +620,48 @@ mod tests {
         assert_eq!(across.row_boxes_at_width(WIDTH), ROWS.div_ceil(WIDTH));
     }
 
-    /// A tensor of one axis is one row: it is given a row axis of one.
+    /// A tensor of one axis is given a row axis of one.
+    #[test]
+    fn a_tensor_of_one_axis_is_given_a_row_axis() {
+        let problem = ReduceRoutineProblem::dense(&[9], 0, ReduceOperation::Sum);
+        let (geometry, dimensions) = problem.labelled_geometry(&Geometry::row_major(&[9]), REDUCED);
+        assert_eq!(
+            (dimensions, geometry.shape()),
+            (vec![BATCH, REDUCED], &[1, 9][..])
+        );
+    }
+
+    /// A row axis one long after the reduced one holds no step: the reduced axis is innermost.
+    #[test]
+    fn a_row_axis_one_long_is_left_out() {
+        let problem = ReduceRoutineProblem::dense(&[4, 8, 1], 1, ReduceOperation::Sum);
+        let (geometry, dimensions) =
+            problem.labelled_geometry(&Geometry::row_major(&[4, 8, 1]), REDUCED);
+        assert_eq!(
+            (dimensions, geometry.shape()),
+            (vec![BATCH, REDUCED], &[4, 8][..])
+        );
+    }
+
+    /// Lines lie along a reduced axis that only row axes one long follow.
+    #[test]
+    fn the_lines_lie_along_a_reduced_axis_before_axes_one_long() {
+        let input = Geometry::row_major(&[4, 8, 1]);
+        let out = Geometry::row_major(&[4, 1, 1]);
+        let problem = ReduceRoutineProblem::stated(
+            &input,
+            &out,
+            1,
+            ReduceOperation::Sum,
+            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
+        );
+        assert_eq!(problem.lines_along(), REDUCED);
+    }
+
+    /// A tensor of one axis is one row.
     #[test]
     fn a_tensor_of_one_axis_is_one_row() {
         let problem = ReduceRoutineProblem::dense(&[9], 0, ReduceOperation::Sum);
-        let (geometry, dimensions) = problem.labelled_geometry(&Geometry::row_major(&[9]), REDUCED);
-        assert_eq!(dimensions, vec![BATCH, REDUCED]);
-        assert_eq!(geometry.shape(), &[1, 9]);
         assert_eq!(problem.row_count(), 1);
     }
 
@@ -587,22 +682,39 @@ mod tests {
         let problem = ReduceRoutineProblem::dense(&[2, 3, 4], 1, ReduceOperation::Sum);
         let (_, dimensions) = problem.labelled_geometry(&Geometry::row_major(&[2, 3, 4]), SLOTS);
         assert_eq!(dimensions, vec![BATCH, SLOTS, BATCH]);
-        assert_eq!(problem.shape_with_reduced_extent(7), vec![2, 7, 4]);
     }
 
-    /// A split row's part is its cube's units, each `unit_lines` lines, of `width` values along
-    /// the row and of one across it.
+    /// The shape with another reduced extent keeps the rows on either side.
     #[test]
-    fn a_split_part_counts_values_a_line_by_layout() {
-        const UNITS: usize = 64;
-        const UNIT_LINES: usize = 8;
+    fn another_reduced_extent_keeps_the_rows() {
+        const EXTENT: usize = 7;
+        let problem = ReduceRoutineProblem::dense(&[2, 3, 4], 1, ReduceOperation::Sum);
+        assert_eq!(
+            problem.shape_with_reduced_extent(EXTENT),
+            vec![2, EXTENT, 4]
+        );
+    }
+
+    /// Units of a split part, each `unit_lines` lines.
+    const UNITS: usize = 64;
+    const UNIT_LINES: usize = 8;
+
+    /// Along the row, a split part's lines hold `width` values each.
+    #[test]
+    fn a_split_part_along_the_row_holds_width_values_a_line() {
         const WIDTH: usize = 4;
         let along = ReduceRoutineProblem::dense(&[2, 4096], 1, ReduceOperation::Sum);
-        let across = ReduceRoutineProblem::dense(&[4096, 2], 0, ReduceOperation::Sum);
         assert_eq!(
             along.split_part(UNITS, UNIT_LINES, WIDTH),
             UNITS * UNIT_LINES * WIDTH
         );
+    }
+
+    /// Across rows, a split part's lines hold one value of the row each.
+    #[test]
+    fn a_split_part_across_rows_holds_one_value_a_line() {
+        const WIDTH: usize = 4;
+        let across = ReduceRoutineProblem::dense(&[4096, 2], 0, ReduceOperation::Sum);
         assert_eq!(
             across.split_part(UNITS, UNIT_LINES, WIDTH),
             UNITS * UNIT_LINES

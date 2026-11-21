@@ -1,16 +1,16 @@
 use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    PlaneShuffleReduceRoutine, ReduceKernel, ReduceTensors, UnitDirectReduceRoutine, launch_kernel,
-    tune::*,
+    PlaneShuffleReduceRoutine, ReduceKernel, ReduceLauncher, ReduceTensors,
+    UnitDirectReduceRoutine, launch_kernel, tune::*,
 };
 use cubecl::client::Client;
 use cubecl::throughput::MemoryAccess;
-use cubecl::tune::{LocalTuner, TunableSet, local_tuner};
+use cubecl::tune::{LocalTuner, TunableSet, TuneGroup, local_tuner};
 use cubecl::{CubeTuneId, Device};
 use cubek_std::Hardware;
 use cubek_std::autotune::{
-    Autotune, CandidateIdentity, Ceiling, GroupPriority, Identity, Roofline,
+    Autotune, CandidateIdentity, Ceiling, GroupPriority, Identity, Roofline, TuneCandidate,
 };
 use cubek_std::routine::EstimatedProblem;
 use cubek_std::routine::Routine;
@@ -18,6 +18,9 @@ use std::sync::Arc;
 
 /// What a candidate of the autotune is identified by: the candidate itself, or the floor by name.
 type ReduceIdentity = CandidateIdentity<ReduceCandidate>;
+
+/// The autotune as it is built, before it closes into its candidates.
+type ReduceAutotune = Autotune<ReduceKey, ReduceTensors, (), ReduceIdentity>;
 
 /// The autotune's candidates, as the tuner holds them.
 type ReduceTunables = Arc<TunableSet<ReduceKey, ReduceTensors, (), ReduceIdentity>>;
@@ -62,40 +65,37 @@ where
     ReduceIdentity::Routine(ReduceCandidate::from(candidate.clone()))
 }
 
+/// `autotune` with every setting `R` lists on `hw` among `tile`'s candidates, each run on the
+/// call's tensors.
+fn racing<R, M>(
+    autotune: ReduceAutotune,
+    tile: &TuneGroup<ReduceKey>,
+    hw: &Hardware,
+) -> ReduceAutotune
+where
+    R: ReduceLauncher<M> + Routine<Microkernel = M>,
+    ReduceRoutineRunner<R>: TuneCandidate<Key = ReduceKey> + Clone + Send + Sync + 'static,
+    ReduceCandidate: From<ReduceRoutineRunner<R>>,
+{
+    autotune.identified(
+        tile,
+        ReduceRoutineRunner::<R>::list(hw),
+        identity_of,
+        |candidate, tensors| candidate.run(tensors),
+    )
+}
+
 /// Every routine's candidates on `hw`, identified by their routine and setting, over the unit
 /// routine as the floor, which serves every problem on every device.
 fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceIdentity> {
-    let mut autotune =
-        Autotune::<ReduceKey, ReduceTensors, (), ReduceIdentity>::new(|tensors: &ReduceTensors| {
-            ReduceKey::from(tensors)
-        });
+    let mut autotune = ReduceAutotune::new(|tensors: &ReduceTensors| ReduceKey::from(tensors));
     let tile = autotune.group("tile", GroupPriority::DEFAULT);
     let floor_hw = hw.clone();
+    let autotune = racing::<UnitDirectReduceRoutine, _>(autotune, &tile, &hw);
+    let autotune = racing::<PlaneShuffleReduceRoutine, _>(autotune, &tile, &hw);
+    let autotune = racing::<CubeStagedReduceRoutine, _>(autotune, &tile, &hw);
+    let autotune = racing::<HypercubeLastArrivalReduceRoutine, _>(autotune, &tile, &hw);
     autotune
-        .identified(
-            &tile,
-            ReduceRoutineRunner::<UnitDirectReduceRoutine>::list(&hw),
-            identity_of,
-            |candidate, tensors| candidate.run(tensors),
-        )
-        .identified(
-            &tile,
-            ReduceRoutineRunner::<PlaneShuffleReduceRoutine>::list(&hw),
-            identity_of,
-            |candidate, tensors| candidate.run(tensors),
-        )
-        .identified(
-            &tile,
-            ReduceRoutineRunner::<CubeStagedReduceRoutine>::list(&hw),
-            identity_of,
-            |candidate, tensors| candidate.run(tensors),
-        )
-        .identified(
-            &tile,
-            ReduceRoutineRunner::<HypercubeLastArrivalReduceRoutine>::list(&hw),
-            identity_of,
-            |candidate, tensors| candidate.run(tensors),
-        )
         .identified(
             &tile,
             ReduceRoutineRunner::<HypercubeAtomicReduceRoutine>::list(&hw),

@@ -141,9 +141,11 @@ impl MatmulAutotune {
     }
 
     /// `call` through this autotune's fastest candidate, measuring first where no winner is settled
-    /// for its key.
+    /// for its key: into the call's destination, allocated once before the race where the caller
+    /// gave none ([`MatmulCall::with_destination`]).
     pub fn launch(self, call: &MatmulCall, groups: MatmulAutotuneGroups) -> TensorHandle {
         let (tuner, tunables) = self.tunables(call, groups);
+        let call = call.clone().with_destination();
         tuner
             .execute(&call.tune_id, &call.client, tunables, call.clone())
             .handle
@@ -189,7 +191,7 @@ impl MatmulAutotune {
     }
 }
 
-/// An autotune measured on representative inputs, its candidates keyed as the call keys them.
+/// An autotune measured on the call itself, its candidates keyed as the call keys them.
 pub(super) fn candidate_list() -> CandidateList {
-    CandidateList::measured_on(MatmulCall::key, "as-keyed", MatmulCall::representative)
+    CandidateList::new(MatmulCall::key)
 }
