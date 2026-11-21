@@ -58,7 +58,7 @@ impl PlaneShuffleReduceMicrokernel {
 
     /// The levels below its plane from `owner`, the box of rows one line wide a row's window
     /// holds: the box, read flat, or [`lines_across`](Self::lines_across) of them side by side,
-    /// the plane's units dealt across them and in turns along the reduced dimension, every step
+    /// the plane's units laid across them and in turns along the reduced dimension, every step
     /// of which the plane walks.
     pub fn levels(&self, owner: &[(Dimension, usize)]) -> Levels {
         match self.lines_across {

@@ -1,10 +1,7 @@
 //! A value with the index it was read at: the argmax and the argmin.
 
-use crate::reduce::{
-    OneIndexed, ReduceAccumulator, ReduceOperation, ReduceWrites, lane_indices, stage_slot,
-    write_line,
-};
-use cubecl::tile::{Carrier, Indexed, Monoid, Tile};
+use crate::reduce::{OneIndexed, ReduceAccumulator, lane_indices, stage_slot};
+use cubecl::tile::{Carrier, Indexed, Monoid};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 #[cube]
@@ -58,34 +55,33 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         total
     }
 
-    fn store(acc: Self, values: &mut Tile, indices: &ComptimeOption<Tile>, part: usize) {
-        let mut value_lines = values.flat_mut::<Acc, N>();
-        value_lines.write(part, acc.value);
-        let mut index_tile = indices.clone().unwrap();
-        let mut index_lines = index_tile.flat_mut::<u32, N>();
-        index_lines.write(part, acc.index);
+    fn value_line(acc: &Self, _slot: usize) -> Vector<Acc, N> {
+        acc.value
     }
 
-    fn load(values: &Tile, indices: &ComptimeOption<Tile>, part: usize) -> Self {
-        let index_tile = indices.clone().unwrap();
-        Indexed::<Acc, N> {
-            value: values.flat::<Acc, N>().read(part),
-            index: index_tile.flat::<u32, N>().read(part),
+    fn index_line(acc: &Self, _slot: usize) -> Vector<u32, N> {
+        acc.index
+    }
+
+    fn set_line(acc: &mut Self, _slot: usize, value: Vector<Acc, N>, index: Vector<u32, N>) {
+        acc.value = value;
+        acc.index = index;
+    }
+
+    /// Its lanes reduced one by one as one-lane carriers under `monoid`.
+    fn one_row(acc: Self, #[comptime] monoid: Monoid) -> Self {
+        let mut best = OneIndexed::<Acc>::identity(monoid);
+        #[unroll]
+        for lane in 0..N::value() {
+            let one = OneIndexed::<Acc> {
+                value: Vector::new(acc.value.extract(lane)),
+                index: Vector::new(acc.index.extract(lane)),
+            };
+            best = OneIndexed::<Acc>::combine(best, one, monoid);
         }
-    }
-
-    fn write<Out: Numeric, Idx: Numeric>(
-        acc: Self,
-        out: &mut Tile,
-        indices: &ComptimeOption<Tile>,
-        _count: usize,
-        #[comptime] row_lanes: usize,
-        #[comptime] operation: ReduceOperation,
-        #[comptime] writes: ReduceWrites,
-    ) {
-        match row_lanes > 1 {
-            true => write_row::<Out, Idx, Acc, N>(acc, out, indices, operation.monoid(), writes),
-            false => write_line::<Out, Idx, Acc, N>(out, indices, 0, acc.value, acc.index, writes),
+        Indexed::<Acc, N> {
+            value: Vector::new(best.value.extract(0usize)),
+            index: Vector::new(best.index.extract(0usize)),
         }
     }
 }
@@ -100,27 +96,4 @@ fn stage_plane_partial<Acc: Numeric, N: Size>(
 ) {
     values[slot] = acc.value;
     indices[slot] = acc.index;
-}
-
-/// `acc`, whose lanes hold one row, reduced lane by lane as one-lane carriers under `monoid` and
-/// written as `writes` says.
-#[cube]
-fn write_row<Out: Numeric, Idx: Numeric, Acc: Numeric, N: Size>(
-    acc: Indexed<Acc, N>,
-    out: &mut Tile,
-    indices: &ComptimeOption<Tile>,
-    #[comptime] monoid: Monoid,
-    #[comptime] writes: ReduceWrites,
-) {
-    let mut best = OneIndexed::<Acc>::identity(monoid);
-    #[unroll]
-    for lane in 0..N::value() {
-        let one = OneIndexed::<Acc> {
-            value: Vector::new(acc.value.extract(lane)),
-            index: Vector::new(acc.index.extract(lane)),
-        };
-        best = OneIndexed::<Acc>::combine(best, one, monoid);
-    }
-
-    write_line::<Out, Idx, Acc, Const<1>>(out, indices, 0, best.value, best.index, writes);
 }

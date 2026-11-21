@@ -8,5 +8,4 @@ mod top_values;
 mod values;
 
 pub use base::*;
-pub use line::row_lanes;
 pub(crate) use line::*;

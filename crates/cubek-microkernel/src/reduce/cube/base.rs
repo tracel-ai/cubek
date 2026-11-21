@@ -64,7 +64,7 @@ impl CubeStagedReduceMicrokernel {
 
     /// The levels below its cube from `owner`, the box of rows one line wide a row's window
     /// holds: the box, read flat by all of the cube's units, or
-    /// [`lines_across`](Self::lines_across) of them side by side, each plane's units dealt
+    /// [`lines_across`](Self::lines_across) of them side by side, each plane's units laid
     /// across them and in turns along the reduced dimension, the planes after one another along
     /// it, every step of which the cube walks.
     pub fn levels(&self, owner: &[(Dimension, usize)]) -> Levels {
@@ -77,7 +77,7 @@ impl CubeStagedReduceMicrokernel {
     }
 
     /// The units its levels make a plane of the launch: the whole cube where they state no
-    /// plane, its planes' lanes where they deal the units to its planes.
+    /// plane, its planes' lanes where they split the units into planes.
     pub fn launch_plane_width(&self) -> usize {
         match self.lines_across {
             1 => self.units(),

@@ -7,7 +7,7 @@
 //! value with its index for an argmax, or the `k` best with their indices for a top-k. An owner
 //! reads its lines through its window of the input and accumulates each as it lands, never holding the
 //! row, so a row as long as a vocabulary costs registers for one line; what tells the scopes apart
-//! is only where the partials meet.
+//! is only where the partials meet. Each ends on one unit writing its carrier ([`write`]).
 
 mod accumulator;
 mod columns;
@@ -17,8 +17,10 @@ mod operand;
 mod operation;
 pub mod plane;
 mod position;
+pub mod read;
 pub mod unit;
 mod work_item;
+pub mod write;
 
 pub use accumulator::*;
 pub(crate) use columns::*;

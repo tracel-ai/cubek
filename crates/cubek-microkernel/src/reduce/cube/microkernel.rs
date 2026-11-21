@@ -1,7 +1,14 @@
 use super::base::CubeStagedReduceMicrokernel;
+use crate::reduce::read::{
+    UnitStridedReduceMicrokernel, UnitWalkReduceMicrokernel, unit_strided_reduce_microkernel,
+    unit_walk_reduce_microkernel,
+};
+use crate::reduce::write::{
+    UnitCarrierWriteMicrokernel, UnitWalkWriteMicrokernel, unit_carrier_write_microkernel,
+    unit_walk_write_microkernel,
+};
 use crate::reduce::{
-    ReduceAccumulator, ReduceCarrier, accumulate_strided, column_across_plane,
-    is_first_unit_of_cube, values_across, write_across, write_window,
+    REDUCED, ReduceAccumulator, ReduceCarrier, across_column, is_first_unit_of_cube,
 };
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Region, Tile, TopK, TopValues};
@@ -13,7 +20,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// plane's instructions, the planes meet in shared memory
 /// ([`ReduceAccumulator::across_planes`]), and the cube's first unit writes the total. Read
 /// [`lines_across`](CubeStagedReduceMicrokernel::lines_across) lines of rows wide, each column's
-/// units, in every plane, take its lines in turns as `cube` deals them, so one load reads whole
+/// units, in every plane, take its lines in turns as `cube`'s walk gives them, so one load reads whole
 /// transactions; they meet within their plane's column, then the planes' columns in shared memory.
 #[cube]
 pub(crate) fn cube_staged_reduce_microkernel<
@@ -63,6 +70,7 @@ pub(crate) fn cube_staged_reduce_microkernel<
     }
 }
 
+/// [`cube_staged_reduce_microkernel`] into the carrier `C`.
 #[cube]
 fn cube_staged_reduce<
     In: Numeric,
@@ -78,100 +86,62 @@ fn cube_staged_reduce<
     indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
+    let item = microkernel.item();
     if microkernel.lines_across() == 1 {
-        cube_staged_reduce_window::<In, Acc, Out, Idx, N, C>(
-            cube,
-            input,
-            out,
-            indices,
-            microkernel,
-        );
+        // One line of rows wide: the cube reduces its window, and its first unit writes.
+        let rows = input.at(cube);
+        let count = rows.flat::<In, N>().shape();
+        let total = cube_staged_reduce_part::<In, Acc, N, C>(&rows, 0, count, microkernel);
+
+        if is_first_unit_of_cube() {
+            let load = rows.vector_tile();
+            let row_lanes = comptime!(load.extent_along(REDUCED));
+            let mut rows_out = out.at(cube);
+            let rows_indices = indices.clone().map(|tile| tile.at(cube));
+            unit_carrier_write_microkernel::<Out, Idx, Acc, N, C>(
+                total,
+                &mut rows_out,
+                &rows_indices,
+                count * row_lanes,
+                comptime!(UnitCarrierWriteMicrokernel::new(item, row_lanes)),
+            );
+        }
     } else {
-        cube_staged_reduce_across::<In, Acc, Out, Idx, N, C>(
+        // `lines_across` lines of rows wide: the units of a column hold the low bits of each
+        // plane's lane, as `cube`'s units level lays the reduced dimension innermost, so a column
+        // meets across those bits alone, and its unit at the run's start stages the plane's
+        // partial.
+        let monoid = item.operation.monoid();
+        let columns = microkernel.lines_across();
+        let per_column = microkernel.lanes() / columns;
+        let per_step = microkernel.units() / columns;
+        let window = input.at(cube);
+        let values = window.flat::<In, N>().shape() / columns;
+        let acc = unit_walk_reduce_microkernel::<In, Acc, N, C>(
             cube,
             input,
-            out,
-            indices,
-            microkernel,
+            values,
+            comptime!(UnitWalkReduceMicrokernel::new(item, per_step)),
         );
-    }
-}
-
-/// [`cube_staged_reduce_microkernel`] read one line of rows wide.
-#[cube]
-fn cube_staged_reduce_window<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    Idx: Numeric,
-    N: Size,
-    C: ReduceAccumulator<Acc, N>,
->(
-    cube: &Region,
-    input: &Tile,
-    out: &Tile,
-    indices: &ComptimeOption<Tile>,
-    #[comptime] microkernel: CubeStagedReduceMicrokernel,
-) {
-    let rows = input.at(cube);
-    let count = rows.flat::<In, N>().shape();
-    let total = cube_staged_reduce_part::<In, Acc, N, C>(&rows, 0, count, microkernel);
-
-    if is_first_unit_of_cube() {
-        write_window::<Out, Idx, Acc, N, C>(
+        let plane = across_column::<Acc, N, C>(acc, per_column, monoid);
+        let lane = UNIT_POS_PLANE as usize;
+        let total = C::across_planes(
+            plane,
+            lane / per_column,
+            lane.is_multiple_of(per_column),
+            microkernel.planes(),
+            columns,
+            monoid,
+        );
+        unit_walk_write_microkernel::<Out, Idx, Acc, N, C>(
             cube,
             total,
-            &rows,
-            count,
             out,
             indices,
-            microkernel.item(),
+            values,
+            comptime!(UnitWalkWriteMicrokernel::new(item)),
         );
     }
-}
-
-/// [`cube_staged_reduce_microkernel`] read `lines_across` lines of rows wide. The units of a
-/// column hold the low bits of each plane's lane, as `cube`'s units level lays the reduced
-/// dimension innermost, so a column meets across those bits alone, and its unit at the run's
-/// start stages the plane's partial.
-#[cube]
-fn cube_staged_reduce_across<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    Idx: Numeric,
-    N: Size,
-    C: ReduceAccumulator<Acc, N> + Clone,
->(
-    cube: &Region,
-    input: &Tile,
-    out: &Tile,
-    indices: &ComptimeOption<Tile>,
-    #[comptime] microkernel: CubeStagedReduceMicrokernel,
-) {
-    let monoid = microkernel.item().operation.monoid();
-    let columns = microkernel.lines_across();
-    let per_column = microkernel.lanes() / columns;
-    let per_step = microkernel.units() / columns;
-    let values = values_across::<In, N>(cube, input, columns);
-    let plane = column_across_plane::<In, Acc, N, C>(
-        cube,
-        input,
-        values,
-        per_step,
-        per_column,
-        microkernel.item(),
-    );
-    let lane = UNIT_POS_PLANE as usize;
-    let total = C::across_planes(
-        plane,
-        lane / per_column,
-        lane.is_multiple_of(per_column),
-        microkernel.planes(),
-        columns,
-        monoid,
-    );
-    write_across::<Out, Idx, Acc, N, C>(cube, total, out, indices, values, microkernel.item());
 }
 
 /// The first `count` lines of `input`, the line at `l` read as line `first_line + l` of its row,
@@ -193,13 +163,15 @@ pub(crate) fn cube_staged_reduce_part<
 ) -> C {
     let monoid = microkernel.item().operation.monoid();
     let unit = PLANE_POS as usize * microkernel.lanes() + UNIT_POS_PLANE as usize;
-    let acc = accumulate_strided::<In, Acc, N, C>(
+    let acc = unit_strided_reduce_microkernel::<In, Acc, N, C>(
         input,
         unit,
-        microkernel.units(),
         count,
         first_line,
-        microkernel.item(),
+        comptime!(UnitStridedReduceMicrokernel::new(
+            microkernel.item(),
+            microkernel.units()
+        )),
     );
 
     let plane = C::across(acc, UnitShare::Plane, monoid);

@@ -5,7 +5,6 @@ use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
-use cubek_microkernel::reduce::row_lanes;
 
 /// The extents a hypercube launch is handed at run time, which its kernel does not compile.
 #[derive(CubeType, CubeLaunch, Debug, Clone, Copy)]
@@ -82,10 +81,12 @@ pub(crate) fn hypercube_last_arrival_reduce_kernel<
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
+    let load = x.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
     let o = out.tile_mut(&partitioning);
     let p = partials.tile_mut(&partitioning);
     for cube in &partitioning {
-        let place = split_place(&cube, row_lanes(&x));
+        let place = split_place(&cube, row_lanes);
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
@@ -136,11 +137,13 @@ pub(crate) fn hypercube_last_arrival_reduce_indexed_kernel<
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
+    let load = x.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
     let o = out.tile_mut(&partitioning);
     let p = partials.tile_mut(&partitioning);
     let pi = partial_indices.tile_mut(&partitioning);
     for cube in &partitioning {
-        let place = split_place(&cube, row_lanes(&x));
+        let place = split_place(&cube, row_lanes);
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
@@ -193,12 +196,14 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
     #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
 ) {
     let x = I::tile::<In>(input, &partitioning);
+    let load = x.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
     let o = out.tile_mut(&partitioning);
     let i = indices.tile_mut(&partitioning);
     let p = partials.tile_mut(&partitioning);
     let pi = partial_indices.tile_mut(&partitioning);
     for cube in &partitioning {
-        let place = split_place(&cube, row_lanes(&x));
+        let place = split_place(&cube, row_lanes);
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
