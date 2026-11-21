@@ -196,7 +196,8 @@ impl AttentionTuneInputs {
         self.key_of(1, self.depth)
     }
 
-    /// The key of this call's heads, elements and scoring, `queries` positions over `keys`.
+    /// The key of this call's heads, elements and scoring, `queries` positions over `keys`, each at
+    /// its bucket.
     fn key_of(&self, queries: usize, keys: usize) -> AttentionKey {
         let (heads, head_dim) = self.heads_and_dim();
         AttentionKey::new(
@@ -208,8 +209,8 @@ impl AttentionTuneInputs {
             heads,
             self.kv_heads(),
             head_dim,
-            queries,
-            keys,
+            AttentionKey::positions_bucket(queries),
+            AttentionKey::positions_bucket(keys),
             self.sequences(),
             self.scoring.visibility,
             self.scoring.scale,

@@ -48,13 +48,19 @@ impl AttentionKeyElements {
 ///
 /// The head shape is **exact** — it is fixed by the model config, and the GQA
 /// ratio decides how much expansion a flash candidate pays. The queries, the
-/// keys and the batch are anchored: they are the dimensions a prompt and a cache
+/// keys and the batch are bucketed: they are the dimensions a prompt and a cache
 /// vary freely, and where the crossovers between kernels live.
 ///
-/// **A bucket's representative is the extent cubecl's anchor rounds a call up
-/// to**, and a candidate's duplicate proof is taken there rather than at the
-/// call in hand, so the candidates that collapse at some length inside a bucket
-/// collapse together.
+/// **A bucket's representative is the extent a call is rounded up to**, and a
+/// candidate's duplicate proof is taken there rather than at the call in hand, so
+/// the candidates that collapse at some length inside a bucket collapse together.
+///
+/// **The queries and the keys are bucketed in powers of two, whatever the autotune level**
+/// ([`positions_bucket`](Self::positions_bucket)). A caller buckets its depth in powers of two and
+/// prefills in chunks of a power of two, so the round measures exactly the extents its calls run.
+/// cubecl's anchor rounds in powers of 1.5 at the extensive level: a chunk of 512 queries would be
+/// measured as 657, a second box of 145 queries no call runs, which ranks the routines otherwise
+/// than they run.
 ///
 /// **The keys are the depth the caller states, never a cache's capacity.** How many positions
 /// each sequence attends lives on device, so that every call of one bucket replays the same
@@ -75,11 +81,10 @@ pub struct AttentionKey {
     kv_heads: usize,
     /// Head dimension.
     head_dim: usize,
-    /// Query positions.
-    #[autotune(anchor(exp(min = 1, max = 65536, base = 2)))]
+    /// Query positions, at their bucket ([`positions_bucket`](Self::positions_bucket)).
     queries: usize,
-    /// Key positions: the depth the call attends, as its caller states it.
-    #[autotune(anchor(exp(min = 1, max = 1048576, base = 2)))]
+    /// Key positions: the depth the call attends, as its caller states it, at its bucket
+    /// ([`positions_bucket`](Self::positions_bucket)).
     keys: usize,
     #[autotune(anchor(exp(min = 1, max = 64, base = 2)))]
     batch: usize,
@@ -104,6 +109,12 @@ pub struct AttentionKey {
 }
 
 impl AttentionKey {
+    /// The extent a key holds for a call of `positions` query or key positions: the power of two
+    /// at or above them.
+    pub fn positions_bucket(positions: usize) -> usize {
+        positions.next_power_of_two()
+    }
+
     /// Query positions, at the bucket's own extent.
     pub fn seq_q(&self) -> usize {
         self.queries
@@ -216,5 +227,18 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
             },
             packed_queries: key.packed_queries(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A power of two is its own bucket, so a chunk of 512 queries is measured as 512, and any
+    /// extent past it is measured at the next.
+    #[test]
+    fn a_bucket_is_the_power_of_two_at_or_above() {
+        let buckets = [1, 300, 512, 513, 2048, 2049].map(AttentionKey::positions_bucket);
+        assert_eq!(buckets, [1, 512, 512, 1024, 2048, 4096]);
     }
 }
