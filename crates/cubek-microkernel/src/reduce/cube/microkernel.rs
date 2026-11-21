@@ -235,9 +235,8 @@ fn stage_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     #[unroll]
     for slot in 0..slots {
         values[partial * slots + slot] = C::value_line(&acc, slot);
-        match with_indices {
-            true => indices[partial * slots + slot] = C::index_line(&acc, slot),
-            false => {}
+        if with_indices {
+            indices[partial * slots + slot] = C::index_line(&acc, slot);
         }
     }
 }
