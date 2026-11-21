@@ -4,6 +4,7 @@
 //! among the keys last or first, and a mask differs from head to head.
 
 use core::fmt::Debug;
+use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
@@ -145,6 +146,18 @@ pub(crate) const DECODE: AttentionCase = AttentionCase {
     seq_q: 1,
     visibility: AttentionVisibility::Attended,
     ..PROMPT
+};
+
+/// A single position seeing only the last five of its keys: most of the boxes a routine splits the
+/// keys into see none of them, and merge nothing.
+pub(crate) const DECODE_WINDOWED: AttentionCase = AttentionCase {
+    visibility: AttentionVisibility::Recent {
+        window: match NonZeroUsize::new(5) {
+            Some(window) => window,
+            None => unreachable!(),
+        },
+    },
+    ..DECODE
 };
 
 /// The prompt with its queries placed first among the keys: query `i` sees the keys up to `i`.
