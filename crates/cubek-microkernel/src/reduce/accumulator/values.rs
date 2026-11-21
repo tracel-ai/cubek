@@ -1,7 +1,7 @@
 //! The values themselves, pointwise on the line: a sum, a product, a max, a mean.
 
 use crate::reduce::ReduceAccumulator;
-use cubecl::tile::{Carrier, Monoid};
+use cubecl::tile::Monoid;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 #[cube]
@@ -14,31 +14,6 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         #[comptime] monoid: Monoid,
     ) {
         *acc = monoid.combine::<Vector<Acc, N>>(*acc, line);
-    }
-
-    fn across_planes(
-        acc: Self,
-        column: usize,
-        stages: bool,
-        #[comptime] planes: usize,
-        #[comptime] columns: usize,
-        #[comptime] monoid: Monoid,
-    ) -> Self {
-        let mut slots = Shared::<[Vector<Acc, N>]>::new_slice(planes * columns);
-        if stages {
-            slots[PLANE_POS as usize * columns + column] = acc;
-        }
-
-        sync_cube();
-
-        let mut total = Vector::<Acc, N>::identity(monoid);
-        #[unroll]
-        for plane in 0..planes {
-            total = monoid.combine::<Vector<Acc, N>>(total, slots[plane * columns + column]);
-        }
-
-        sync_cube();
-        total
     }
 
     fn value_line(acc: &Self, _slot: usize) -> Vector<Acc, N> {

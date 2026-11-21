@@ -2,9 +2,8 @@ use cubecl::tile::{Carrier, Monoid};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// What a reduction accumulates a unit's lines into, `N` lanes of `Acc`: how a line read at a position
-/// joins it, how the planes of a cube meet, and the lines it keeps, which the microkernels write
-/// out and store. Which monoid combines it is its [`Carrier`]'s. It reads and writes no Tile: the
-/// microkernels do.
+/// joins it, and the lines it keeps, which the microkernels write out, store and stage. Which monoid
+/// combines it is its [`Carrier`]'s. It reads and writes no memory: the microkernels do.
 #[cube]
 pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     Carrier + CubeType<ExpandType: Assign + Copy>
@@ -22,22 +21,6 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
         #[comptime] row_lanes: usize,
         #[comptime] monoid: Monoid,
     );
-
-    /// The partials of a cube's `planes` planes, each already met across its own lanes, met in
-    /// shared memory, one total for each of the `columns` lines of rows its units lie across:
-    /// the unit of each plane and column where `stages` is set writes its partial to that
-    /// column's slot of its plane, the cube meets, each column's slots are combined, and the
-    /// cube meets again so the slots may be written anew. The first plane's units are left with
-    /// their `column`'s total; an implementation may leave the other units without it, where
-    /// combining costs more than one plane should spend.
-    fn across_planes(
-        acc: Self,
-        column: usize,
-        stages: bool,
-        #[comptime] planes: usize,
-        #[comptime] columns: usize,
-        #[comptime] monoid: Monoid,
-    ) -> Self;
 
     /// Line `slot` of what it keeps: its one line for the values themselves and an
     /// [`Indexed`](cubecl::tile::Indexed), line `slot` of a top-k's `k`, best first.

@@ -20,41 +20,6 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         *acc = Indexed::<Acc, N>::combine_later(*acc, read, monoid);
     }
 
-    fn across_planes(
-        acc: Self,
-        column: usize,
-        stages: bool,
-        #[comptime] planes: usize,
-        #[comptime] columns: usize,
-        #[comptime] monoid: Monoid,
-    ) -> Self {
-        let mut values = Shared::<[Vector<Acc, N>]>::new_slice(planes * columns);
-        let mut indices = Shared::<[Vector<u32, N>]>::new_slice(planes * columns);
-        if stages {
-            stage_plane_partial::<Acc, N>(
-                &mut values,
-                &mut indices,
-                PLANE_POS as usize * columns + column,
-                acc,
-            );
-        }
-
-        sync_cube();
-
-        let mut total = Indexed::<Acc, N>::identity(monoid);
-        #[unroll]
-        for plane in 0..planes {
-            let slot = Indexed::<Acc, N> {
-                value: values[plane * columns + column],
-                index: indices[plane * columns + column],
-            };
-            total = Indexed::<Acc, N>::combine(total, slot, monoid);
-        }
-
-        sync_cube();
-        total
-    }
-
     fn value_line(acc: &Self, _slot: usize) -> Vector<Acc, N> {
         acc.value
     }
@@ -84,16 +49,4 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
             index: Vector::new(best.index.extract(0usize)),
         }
     }
-}
-
-/// A plane's partial, `acc`, staged in slot `slot` of `values` and `indices`.
-#[cube]
-fn stage_plane_partial<Acc: Numeric, N: Size>(
-    values: &mut Shared<[Vector<Acc, N>]>,
-    indices: &mut Shared<[Vector<u32, N>]>,
-    slot: usize,
-    acc: Indexed<Acc, N>,
-) {
-    values[slot] = acc.value;
-    indices[slot] = acc.index;
 }

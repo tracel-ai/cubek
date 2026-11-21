@@ -16,7 +16,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// region. Read one line of rows wide, each of its units accumulates every `units`-th line of the
 /// cube's window, consecutive units reading consecutive lines; each plane's lanes meet in the
 /// plane's instructions, the planes meet in shared memory
-/// ([`ReduceAccumulator::across_planes`]), and the cube's first unit writes the total. Read
+/// ([`across_planes`]), and the cube's first unit writes the total. Read
 /// [`lines_across`](CubeStagedReduceMicrokernel::lines_across) lines of rows wide, each column's
 /// units, in every plane, take its lines in turns as `cube`'s walk gives them, so one load reads whole
 /// transactions; they meet within their plane's column, then the planes' columns in shared memory.
@@ -126,13 +126,12 @@ fn cube_staged_reduce<
         });
         let plane = C::across(acc, column, monoid);
         let lane = UNIT_POS_PLANE as usize;
-        let total = C::across_planes(
+        let total = across_planes::<Acc, N, C>(
             plane,
             lane / per_column,
             lane.is_multiple_of(per_column),
-            microkernel.planes(),
             columns,
-            monoid,
+            microkernel,
         );
         unit_walk_write_microkernel::<Out, Idx, Acc, N, C>(
             cube,
@@ -148,7 +147,7 @@ fn cube_staged_reduce<
 /// The first `count` lines of `input`, the line at `l` read as line `first_line + l` of its row,
 /// accumulated by the cube into `C`: each unit takes every `units`-th line, consecutive units
 /// reading consecutive lines, each plane's lanes meet in the plane's instructions and the planes in
-/// shared memory ([`ReduceAccumulator::across_planes`]). The cube's first unit is left with the
+/// shared memory ([`across_planes`]). The cube's first unit is left with the
 /// total.
 #[cube]
 pub(crate) fn cube_staged_reduce_part<
@@ -177,14 +176,134 @@ pub(crate) fn cube_staged_reduce_part<
 
     let plane = C::across(acc, UnitShare::Plane, monoid);
     let one_column = comptime!(1usize);
-    C::across_planes(
-        plane,
-        0,
-        UNIT_POS_PLANE == 0,
-        microkernel.planes(),
-        one_column,
-        monoid,
-    )
+    across_planes::<Acc, N, C>(plane, 0, UNIT_POS_PLANE == 0, one_column, microkernel)
+}
+
+/// The partials of the cube's planes, each already met across its own lanes, met in shared
+/// memory, one total for each of the `columns` lines of rows its units lie across: the unit of
+/// each plane and column where `stages` is set stages its partial, `acc`, in that column's slot of
+/// its plane, the cube meets, the first plane's units combine their column's slots, and the cube
+/// meets again so the slots may be staged anew. Only the first plane's units are left with their
+/// column's total; the others hold the identity.
+#[cube]
+fn across_planes<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+    acc: C,
+    column: usize,
+    stages: bool,
+    #[comptime] columns: usize,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+) -> C {
+    let operation = microkernel.item().operation;
+    // A partial is its carrier's lines, a slot each, the indices beside where it keeps any.
+    let lines = comptime!(microkernel.planes() * columns * operation.written_per_row());
+    let index_lines = comptime!(match operation.carrier().carries_indices() {
+        true => lines,
+        false => 1,
+    });
+    let mut values = Shared::<[Vector<Acc, N>]>::new_slice(lines);
+    let mut indices = Shared::<[Vector<u32, N>]>::new_slice(index_lines);
+    if stages {
+        stage_partial::<Acc, N, C>(
+            &mut values,
+            &mut indices,
+            PLANE_POS as usize * columns + column,
+            acc,
+            microkernel,
+        );
+    }
+
+    sync_cube();
+
+    let total = merged_by_first_plane::<Acc, N, C>(&values, &indices, column, columns, microkernel);
+
+    sync_cube();
+    total
+}
+
+/// `acc` staged as partial `partial` of `values` and `indices`, its slots' lines side by side.
+#[cube]
+fn stage_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+    values: &mut Shared<[Vector<Acc, N>]>,
+    indices: &mut Shared<[Vector<u32, N>]>,
+    partial: usize,
+    acc: C,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+) {
+    let operation = microkernel.item().operation;
+    let slots = operation.written_per_row();
+    let with_indices = comptime!(operation.carrier().carries_indices());
+    #[unroll]
+    for slot in 0..slots {
+        values[partial * slots + slot] = C::value_line(&acc, slot);
+        match with_indices {
+            true => indices[partial * slots + slot] = C::index_line(&acc, slot),
+            false => {}
+        }
+    }
+}
+
+/// The partials of `column` the cube's planes staged in `values` and `indices`, `columns` a
+/// plane, combined by the cube's first plane; every other unit is left with the identity.
+#[cube]
+fn merged_by_first_plane<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+    values: &Shared<[Vector<Acc, N>]>,
+    indices: &Shared<[Vector<u32, N>]>,
+    column: usize,
+    #[comptime] columns: usize,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+) -> C {
+    let mut total = C::identity(microkernel.item().operation.monoid());
+    if PLANE_POS == 0 {
+        total = merged_partials::<Acc, N, C>(values, indices, column, columns, microkernel);
+    }
+    total
+}
+
+/// The partials of `column` the cube's planes staged in `values` and `indices`, `columns` a
+/// plane, combined. A carrier of one slot unrolls its loop over the planes; a top-k's stays a
+/// loop, as each of its partials is itself `k` lines.
+#[cube]
+fn merged_partials<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+    values: &Shared<[Vector<Acc, N>]>,
+    indices: &Shared<[Vector<u32, N>]>,
+    column: usize,
+    #[comptime] columns: usize,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+) -> C {
+    let operation = microkernel.item().operation;
+    let monoid = operation.monoid();
+    let one_slot = comptime!(operation.written_per_row() == 1);
+    let mut total = C::identity(monoid);
+    #[unroll(one_slot)]
+    for plane in 0..microkernel.planes() {
+        let partial =
+            staged_partial::<Acc, N, C>(values, indices, plane * columns + column, microkernel);
+        total = C::combine(total, partial, monoid);
+    }
+    total
+}
+
+/// Partial `partial` of `values` and `indices` as [`stage_partial`] staged it.
+#[cube]
+fn staged_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+    values: &Shared<[Vector<Acc, N>]>,
+    indices: &Shared<[Vector<u32, N>]>,
+    partial: usize,
+    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+) -> C {
+    let operation = microkernel.item().operation;
+    let slots = operation.written_per_row();
+    let with_indices = comptime!(operation.carrier().carries_indices());
+    let mut staged = C::identity(operation.monoid());
+    #[unroll]
+    for slot in 0..slots {
+        let index = match with_indices {
+            true => indices[partial * slots + slot],
+            false => Vector::new(0u32),
+        };
+        C::set_line(&mut staged, slot, values[partial * slots + slot], index);
+    }
+    staged
 }
 
 /// [`cube_staged_reduce_microkernel`] into a top-k of `k` slots, `K` bound in the
