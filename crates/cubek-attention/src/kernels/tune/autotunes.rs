@@ -2,9 +2,8 @@
 //! positions, and a call of one.
 //!
 //! The routines serve GQA natively, each key head read once per box. They attend the first
-//! `len` positions of a cache with the queries bottom-right aligned, so a call over a cache is
-//! raced on the one chunk, or the one decode step, every key over a cache stands for
-//! ([`AttentionKey`]): no key reads how many positions a cache holds.
+//! `len` positions of a cache with the queries bottom-right aligned, so a call is raced at the
+//! depth its caller states ([`AttentionKey`]), never at how many positions a cache holds.
 
 use crate::kernels::plan::{AttentionCall, AttentionPlan};
 use crate::kernels::select::problem::QueryPositions;

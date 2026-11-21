@@ -151,8 +151,10 @@ mod tests {
                     eprintln!("declined on this device: {decline:?}");
                     return None;
                 }
-                let inputs = AttentionTuneInputs::attention(client, queries, kv, None, scoring)
-                    .expect("the case's tensors are verified");
+                // Every case attends within its cache, so its depth is the cache's bucket.
+                let inputs =
+                    AttentionTuneInputs::attention(client, queries, kv, KEYS, None, scoring)
+                        .expect("the case's tensors are verified");
                 let device = cubecl::test_device();
                 Some(launch_tuned(
                     QueryPositions::Many,
