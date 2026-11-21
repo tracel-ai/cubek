@@ -78,6 +78,7 @@ impl HypercubeStagedLaunch {
         let resolved = microkernel.cube.resolve(
             hw,
             &microkernel.cube.contracted(&item),
+            item.packings(),
             &one_box.cube_space(),
         )?;
         if resolved.shared_memory > hw.shared_memory_budget() {

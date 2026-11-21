@@ -4,6 +4,7 @@ use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
+use cubek_std::layout::stored::Packing;
 use cubek_std::microkernel::StagedOperand;
 
 /// The box one step of a walk through `K` stages of both operands: a cube's, or a plane's own.
@@ -83,15 +84,17 @@ impl MatmulStage {
     }
 
     /// Both operands' boxes of one stage, each stored in its own element of `elements` and bound
-    /// in the order `orders` says, for a fill that reads them as `reads` say: an operand it reads
-    /// at another element is decoded on its way into the stage where `packed` says it is a packed
-    /// input, and converted otherwise (rounded to tf32, read at another float).
+    /// in the order `orders` says, for a fill that reads them as `reads` say. An operand it reads
+    /// at another element is decoded on its way into the stage where `packings` says it is a
+    /// packed input whose block scales are bound as words; one whose block scales are bound a
+    /// scale alone ([`Packing::reads_scales_alone`]), or that is not packed (rounded to tf32,
+    /// read at another float), is converted.
     pub fn operands(
         &self,
         elements: MatmulOperands<ElemType>,
         orders: MatmulOperands<BindingOrder>,
         reads: MatmulOperands<MatmulRead>,
-        packed: MatmulOperands<bool>,
+        packings: MatmulOperands<Option<Packing>>,
     ) -> [StagedOperand; 2] {
         MatmulOperand::INPUTS.map(|operand| {
             let staged = StagedOperand::new(
@@ -100,9 +103,11 @@ impl MatmulStage {
                     .subspace(&operand.dims().map(|dim| self.dimensions.of(dim))),
                 self.dimensions.of(orders.innermost(operand)),
             );
-            match (reads.get(operand).staged(), packed.get(operand)) {
-                (Some(_), true) => staged.decoded_by_fill(),
-                (Some(_), false) => staged.converted_by_fill(),
+            match (reads.get(operand).staged(), packings.get(operand)) {
+                (Some(_), Some(packing)) if !packing.reads_scales_alone() => {
+                    staged.decoded_by_fill(packing.value_bits())
+                }
+                (Some(_), _) => staged.converted_by_fill(),
                 (None, _) => staged,
             }
         })
@@ -123,7 +128,7 @@ impl MatmulStage {
                 elements,
                 orders,
                 MatmulOperands::all(MatmulRead::AsBound),
-                MatmulOperands::all(false),
+                MatmulOperands::all(None),
             )
             .iter()
             .map(|operand| operand.bytes(hw, storage))

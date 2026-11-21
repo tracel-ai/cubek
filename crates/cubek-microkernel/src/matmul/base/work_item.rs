@@ -242,6 +242,12 @@ impl MatmulWorkItem {
     /// its stages: both inputs at [`decoded_element`](Self::decoded_element), over the dimensions
     /// inside a block, the rows tiled. A packed input's stage lies as its words run, a float
     /// one's as its buffer does.
+    /// Its packed inputs' packings, none for a float item.
+    pub fn packings(&self) -> MatmulOperands<Option<Packing>> {
+        self.blocks
+            .map_or(MatmulOperands::all(None), |blocks| blocks.packings)
+    }
+
     pub fn decoded(&self) -> Self {
         let element = self.decoded_element();
         let packings = self
