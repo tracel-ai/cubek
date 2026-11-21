@@ -1,4 +1,4 @@
-use crate::matmul::{MatmulOperand, MatmulOperands, MatmulWorkItem};
+use crate::matmul::{MatmulBlocks, MatmulOperand, MatmulOperands, MatmulWorkItem};
 use cubecl::ir::ElemType;
 use cubecl::tile::Levels;
 use cubecl::tile::launch::Delivery;
@@ -49,12 +49,11 @@ pub trait MatmulMicrokernel:
         BlockScales::Fields
     }
 
-    /// Whether it reads a packed rhs a scale block at a time
-    /// ([`Operand::by_block`](cubek_std::layout::stored::Operand::by_block)) rather than as the
-    /// rhs is stored: its routine plans and binds the rhs so. `false` for one that reads it as
-    /// stored.
-    fn reads_rhs_by_block(&self) -> bool {
-        false
+    /// The block-split space it planned on, every packed input at the reads it takes, where it
+    /// re-read them from those its work item stated: its routine plans and binds the inputs so.
+    /// `None` for one that reads them as stated.
+    fn planned_space(&self) -> Option<MatmulBlocks> {
+        None
     }
 
     /// The element its fill decodes its inputs into, where its stages hold another than they are

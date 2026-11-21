@@ -5,7 +5,7 @@ use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{Dimension, Space};
-use cubek_microkernel::matmul::{MatmulOperands, MatmulStep};
+use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands, MatmulStep};
 use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_dimensions::{K, M, N, blocked};
@@ -94,9 +94,7 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
 
 /// `problem`'s step on `hw`, contracted one value at a time.
 fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
-    let operands = problem
-        .packings
-        .map(|_, packing| packing.map_or(Operand::plain(), |packing| packing.operand));
+    let operands = problem.inputs.map(|_, input| input.operand);
     MatmulStep::new(hw, operands, problem.elements)
 }
 
@@ -134,10 +132,7 @@ mod plane_shuffle {
                     }
                     let (blueprint, _) =
                         prepared.unwrap_or_else(|error| panic!("{name} at {settings}: {error:?}"));
-                    let read = match settings.microkernel.by_block {
-                        true => problem.rhs_by_block().expect("sized on an rhs read so"),
-                        false => problem.clone(),
-                    };
+                    let read = problem.read_as(blueprint.microkernel.planned_space());
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
@@ -173,12 +168,7 @@ mod cube_shuffle {
                         continue;
                     };
                     prepared += 1;
-                    let read = match settings.microkernel.by_block {
-                        true => problem
-                            .rhs_by_block()
-                            .expect("a by-block setting prepared on an rhs read so"),
-                        false => problem.clone(),
-                    };
+                    let read = problem.read_as(blueprint.microkernel.planned_space());
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
@@ -192,17 +182,19 @@ mod cube_shuffle {
         assert!(prepared > 0);
     }
 
-    /// The by-block split of `K` reads NVFP4 alone, in rows and in tile order in either word
-    /// order, a block of one row lying together in each: no other scale is bound a byte apiece.
+    /// The by-block split of `K` reads every format whose scales group `K`, each scale loaded
+    /// alone whatever its type: NVFP4's `ue4m3` in rows and in tile order in either word order, a
+    /// block of one row lying together in each, MXFP4's and MXFP8's `ue8m0`, and q4's and q8's
+    /// `f16`. A format packed along `N` has no block of `K` to read.
     #[test]
-    fn the_split_k_reads_nvfp4_alone() {
+    fn the_split_k_reads_every_scale_alone() {
         let hw = devices::m2_pro();
         let settings = crate::kernels::LoadingSchedule::SPLIT_K.settings();
         for (name, problem) in problems(1) {
             let prepared = CubeShuffleMatmulRoutine::prepare(&hw, &problem, &settings);
             assert_eq!(
                 prepared.is_ok(),
-                name.starts_with("nvfp4"),
+                !name.ends_with("along n"),
                 "{name}: {prepared:?}"
             );
         }
@@ -256,7 +248,8 @@ mod cube_staged {
                     tile_order_prepared += 1;
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
-                let step = step(&hw, &problem).under(Space::new(&[(M, m), (N, n), (K, k)]));
+                let read = problem.read_as(blueprint.microkernel.planned_space());
+                let step = step(&hw, &read).under(Space::new(&[(M, m), (N, n), (K, k)]));
                 let cube_space = blueprint.partitioning.cube_space();
                 assert!(
                     whole_steps(&step, &cube_space.space),
@@ -400,7 +393,7 @@ mod packed_lhs {
             4096,
             F16,
             MatmulOperands {
-                rhs: packed_lhs(m).packings.lhs,
+                rhs: packed_lhs(m).packings().lhs,
                 ..MatmulOperands::all(None)
             },
         );
@@ -506,10 +499,7 @@ mod hypercube_last_arrival {
         );
         for m in [128, 300] {
             for (name, problem) in problems(m) {
-                let block = problem
-                    .packings
-                    .rhs
-                    .and_then(|packing| packing.operand.grouping(K, problem.k));
+                let block = problem.inputs.rhs.operand.grouping(K, problem.k);
                 let mut prepared = 0;
                 for settings in HypercubeLastArrivalMatmulRoutine.packed_settings(&hw) {
                     let Ok((blueprint, _)) =

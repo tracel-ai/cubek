@@ -9,17 +9,17 @@ use cubecl::tile::{Dimension, Indexing};
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{
-    MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand, MatmulOperands,
-    MatmulStoredTile,
+    MatmulBlocks, MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand,
+    MatmulOperands, MatmulStoredTile,
 };
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::{BlockScales, Packing};
+use cubek_std::layout::stored::{BlockScales, Packing, StoredInput};
 use cubek_std::layout::tile_order::TileOrder;
 use cubek_std::matmul_dimensions::{EXPERT, K, batch_dimension};
 use cubek_std::routine::EstimatedProblem;
 
-/// `out[b] = lhs[b] · rhs[b]` for every batch `b`, as the host describes it, each input float or
-/// packed ([`packings`](Self::packings)).
+/// `out[b] = lhs[b] · rhs[b]` for every batch `b`, as the host describes it, each input as it is
+/// stored ([`inputs`](Self::inputs)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulRoutineProblem {
     /// The output's batch extents, outermost first. An operand of extent one there is broadcast.
@@ -34,7 +34,7 @@ pub struct MatmulRoutineProblem {
     pub n: usize,
     pub k: usize,
     /// The element each operand is read at: a float operand's stored one, a packed one's the
-    /// element its words unpack into ([`packings`](Self::packings) says how it is stored).
+    /// element its words unpack into ([`inputs`](Self::inputs) says how it is stored).
     pub elements: MatmulOperands<ElemType>,
     /// Batches each operand holds: the output's, or fewer where an operand is broadcast.
     pub batches_held: MatmulOperands<usize>,
@@ -54,9 +54,9 @@ pub struct MatmulRoutineProblem {
     pub stored_tiles: MatmulOperands<Option<MatmulStoredTile>>,
     /// Where the output goes.
     pub destination: MatmulDestination,
-    /// How each operand is stored where it is packed: its words, its scales and their scheme.
-    /// `None` for a float operand, read as stored.
-    pub packings: MatmulOperands<Option<Packing>>,
+    /// How each operand is stored: what its values are, the element they stand for, and how a read
+    /// of them and of their scales lies. A float operand is the case with no scales.
+    pub inputs: MatmulOperands<StoredInput>,
     /// The table an input reads one entry of per batch, where the product has one: which slab of
     /// a stacked rhs a batch contracts against, or the run of `K` it sums.
     pub index: Option<MatmulIndex>,
@@ -119,48 +119,34 @@ impl MatmulRoutineProblem {
     ///
     /// [`MATMUL_PACKED_UNREAD`], for a packed operand.
     pub fn check_plain(&self) -> Result<(), Decline> {
-        match self.packings == MatmulOperands::all(None) {
+        match self.packings() == MatmulOperands::all(None) {
             true => Ok(()),
             false => Err(MATMUL_PACKED_UNREAD),
         }
     }
 
-    /// What a setting reading the rhs a scale block at a time declines where it reads none so
-    /// ([`Packing::by_block`]): no packed rhs, block scales that are not `ue4m3`, blocks that are
-    /// no whole number of reads in rows, or tiles whose block is not the scheme's.
-    pub const RHS_UNREAD_BY_BLOCK: Decline = Decline::Unserved {
-        why: "reading the rhs a block at a time needs a packed rhs with ue4m3 block scales, in \
-              blocks that are whole reads in rows or the tiles' own block in tile order",
-    };
-
-    /// This problem with its packed rhs read a scale block at a time ([`Packing::by_block`]): the
-    /// problem a microkernel reading so plans on.
-    ///
-    /// # Errors
-    ///
-    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where its rhs reads none so.
-    pub fn rhs_by_block(&self) -> Result<Self, Decline> {
-        let mut by_block = self.clone();
-        let rhs = by_block
-            .packings
-            .rhs
-            .as_mut()
-            .ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
-        *rhs = rhs.by_block().ok_or(Self::RHS_UNREAD_BY_BLOCK)?;
-        Ok(by_block)
-    }
-
-    /// The problem a microkernel reading the rhs `by_block` plans and binds on: this one re-read a
-    /// scale block at a time ([`rhs_by_block`](Self::rhs_by_block)), or this one as it is.
-    ///
-    /// # Errors
-    ///
-    /// [`RHS_UNREAD_BY_BLOCK`](Self::RHS_UNREAD_BY_BLOCK) where it reads by block and its rhs
-    /// reads none so.
-    pub fn rhs_read(&self, by_block: bool) -> Result<Cow<'_, Self>, Decline> {
-        match by_block {
-            true => self.rhs_by_block().map(Cow::Owned),
-            false => Ok(Cow::Borrowed(self)),
+    /// This problem with its packed inputs read as `planned` states: the problem a microkernel
+    /// that re-read them plans and is bound on ([`MatmulMicrokernel::planned_space`](cubek_microkernel::matmul::MatmulMicrokernel::planned_space)). Itself where
+    /// `planned` is `None` or reads every input as it is.
+    pub fn read_as(&self, planned: Option<MatmulBlocks>) -> Cow<'_, Self> {
+        let Some(planned) = planned else {
+            return Cow::Borrowed(self);
+        };
+        let inputs = self
+            .inputs
+            .map(|operand, input| match planned.packings.get(operand) {
+                Some(packing) => StoredInput {
+                    operand: packing.operand,
+                    ..input
+                },
+                None => input,
+            });
+        match inputs == self.inputs {
+            true => Cow::Borrowed(self),
+            false => Cow::Owned(Self {
+                inputs,
+                ..self.clone()
+            }),
         }
     }
 
@@ -192,10 +178,9 @@ impl MatmulRoutineProblem {
         block_scales: BlockScales,
         by_tma: bool,
     ) -> Result<(), Decline> {
-        let scales_in_tiles = [self.packings.lhs, self.packings.rhs]
+        let scales_in_tiles = [self.inputs.lhs, self.inputs.rhs]
             .into_iter()
-            .flatten()
-            .filter_map(|packing| packing.operand.tile_order())
+            .filter_map(|input| input.operand.tile_order())
             .any(TileOrder::scales_in_tiles);
         match block_scales == BlockScales::Words && scales_in_tiles && !by_tma {
             true => Err(MATMUL_SCALE_WORDS_IN_TILES),
@@ -285,7 +270,11 @@ impl MatmulRoutineProblem {
             },
             stored_tiles: MatmulOperands::all(None),
             destination: out.destination,
-            packings: MatmulOperands::all(None),
+            inputs: MatmulOperands {
+                lhs: StoredInput::plain(lhs.elem),
+                rhs: StoredInput::plain(rhs.elem),
+                out: StoredInput::plain(out.element),
+            },
             index: None,
         }
     }
@@ -313,7 +302,7 @@ impl MatmulRoutineProblem {
             stored_tiles: MatmulOperands::all(None),
             // A launch the table times allocates its output.
             destination: MatmulDestination::Buffer,
-            packings: MatmulOperands::all(None),
+            inputs: MatmulOperands::all(StoredInput::plain(element)),
             index: None,
         }
     }
@@ -374,6 +363,11 @@ impl MatmulRoutineProblem {
         }
     }
 
+    /// How each input is packed, where its values are codes: `None` for an input of elements.
+    pub fn packings(&self) -> MatmulOperands<Option<Packing>> {
+        self.inputs.map(|_, input| input.packing())
+    }
+
     /// The element a packed operand's words unpack into, so nothing rounds before the sum.
     pub const PACKED: ElemType = ElemType::Float(cubecl::ir::FloatKind::F32);
 
@@ -417,7 +411,10 @@ impl MatmulRoutineProblem {
             buffer_alignments: alignments,
             stored_tiles: MatmulOperands::all(None),
             destination: MatmulDestination::Buffer,
-            packings,
+            inputs: packings.map(|_, packing| match packing {
+                Some(packing) => StoredInput::packed(packing, element),
+                None => StoredInput::plain(element),
+            }),
             index: None,
         }
     }
@@ -521,10 +518,7 @@ impl EstimatedProblem for MatmulRoutineProblem {
             out: self.stated_rows * self.n,
         };
         let bytes = values.map(|operand, values| {
-            let held = match self.packings.get(operand) {
-                Some(packing) => packing.bytes(values),
-                None => values * self.elements.get(operand).size(),
-            };
+            let held = self.inputs.get(operand).bytes(values);
             self.batches_held.get(operand) * held
         });
         Work {

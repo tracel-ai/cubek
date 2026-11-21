@@ -993,6 +993,24 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .expect("a packed input puts the product in a block-split space")
     }
 
+    /// Its inputs read as `planned`, the space a microkernel planned on: every packed input at the
+    /// reads it takes ([`MatmulMicrokernel::planned_space`]), whichever engine binds it; as stored
+    /// where `planned` is `None`.
+    fn planned_inputs(&self, planned: Option<MatmulBlocks>) -> [StoredTensor; 2] {
+        [
+            (&self.lhs, MatmulOperand::Lhs),
+            (&self.rhs, MatmulOperand::Rhs),
+        ]
+        .map(|(operand, input)| {
+            match (operand, planned.and_then(|space| space.packings.get(input))) {
+                (StoredTensor::Packed(tensor), Some(packing)) => {
+                    StoredTensor::Packed(tensor.read_as(packing.operand))
+                }
+                _ => operand.clone(),
+            }
+        })
+    }
+
     /// Both inputs under `launcher`, beside `out`: each packed one as one tile of its words under
     /// its scales, each float one restated over the block-split space, each moved into the stages
     /// as the microkernel says ([`delivery`](MatmulMicrokernel::delivery),
@@ -1033,21 +1051,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     blueprint.microkernel.words_delivery(),
                 ),
             };
-        let lhs = bind(&self.lhs, [M, K], blueprint.widths.lhs);
-        // A microkernel reading the rhs a block at a time planned on the rhs read so.
-        let by_block = match (&self.rhs, blueprint.microkernel.reads_rhs_by_block()) {
-            (StoredTensor::Packed(tensor), true) => {
-                Some(StoredTensor::Packed(tensor.by_block().expect(
-                    "a microkernel reading by block planned on an rhs that reads so",
-                )))
-            }
-            _ => None,
-        };
-        let rhs = bind(
-            by_block.as_ref().unwrap_or(&self.rhs),
-            [K, N],
-            blueprint.widths.rhs,
-        );
+        let [lhs, rhs] = self.planned_inputs(blueprint.microkernel.planned_space());
+        let lhs = bind(&lhs, [M, K], blueprint.widths.lhs);
+        let rhs = bind(&rhs, [K, N], blueprint.widths.rhs);
         let lhs = self.read_through_table(MatmulOperand::Lhs, lhs);
         let rhs = self.read_through_table(MatmulOperand::Rhs, rhs);
         MatmulBinding {
@@ -1162,6 +1168,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// # Panics
     ///
     /// On a float rhs: a packed product's rhs is packed.
+    #[allow(clippy::too_many_arguments)]
     pub fn tma_packed_operands(
         &self,
         launcher: &Launcher,
@@ -1170,8 +1177,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         orders: MatmulOperands<BindingOrder>,
         widths: MatmulOperands<usize>,
         scales: BlockScales,
+        planned: Option<MatmulBlocks>,
     ) -> (TileTensorLaunch, TileTensorLaunch) {
-        let StoredTensor::Packed(rhs) = &self.rhs else {
+        // Every packed input landed at the reads its microkernel planned on.
+        let [planned_lhs, planned_rhs] = self.planned_inputs(planned);
+        let StoredTensor::Packed(rhs) = &planned_rhs else {
             panic!("tma_packed_operands: a packed rhs");
         };
         // A packed input `operand` across `across`, its words landing a word a cell.
@@ -1195,7 +1205,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 scales,
             )
         };
-        let lhs = match &self.lhs {
+        let lhs = match &planned_lhs {
             StoredTensor::Plain(lhs) => self.tma_float_lhs(lhs, stage, storage, orders, widths.lhs),
             StoredTensor::Packed(lhs) => packed(lhs, MatmulOperand::Lhs, M, widths.lhs),
         };

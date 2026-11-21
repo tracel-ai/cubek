@@ -17,6 +17,7 @@ use cubek_std::Hardware;
 use cubek_std::matmul_dimensions::{K, KB, KI, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid, Routine};
+use std::borrow::Cow;
 
 /// `out = lhs · rhs` with every tile's steps of `K` laid end to end and shared between a fixed
 /// grid of cubes, one run each: a run may start inside one tile and end inside another,
@@ -198,15 +199,27 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_unindexed()?;
-        let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
-        let item = view.work_item();
-        if item
-            .blocks
-            .is_some_and(|blocks| blocks.packings.lhs.is_some())
-        {
-            return Err(MATMUL_HYPERCUBE_PACKED_LHS);
-        }
-        let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let item = |problem| {
+            let view = MatmulView::new(problem, HypercubeLastArrivalMatmulRoutine::ROWS_KIND)?;
+            let item = view.work_item();
+            if item
+                .blocks
+                .is_some_and(|blocks| blocks.packings.lhs.is_some())
+            {
+                return Err(MATMUL_HYPERCUBE_PACKED_LHS);
+            }
+            let microkernel = HypercubeStagedMicrokernel::best(hw, &item, &settings.microkernel)?;
+            Ok((view, item, microkernel))
+        };
+        // The problem its microkernel plans on, every packed input read as it reads it: placed
+        // again only where that re-read it.
+        let stated = item(problem)?;
+        let read = problem.read_as(stated.2.planned_space());
+        let problem: &MatmulRoutineProblem = &read;
+        let (view, item, microkernel) = match read {
+            Cow::Borrowed(_) => stated,
+            Cow::Owned(_) => item(problem)?,
+        };
         problem.check_block_scales(
             microkernel.block_scales(),
             microkernel.cube.fill.delivery == CubeStagedDelivery::Tma,

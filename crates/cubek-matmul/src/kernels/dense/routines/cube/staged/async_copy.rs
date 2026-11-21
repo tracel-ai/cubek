@@ -57,14 +57,19 @@ impl CubeStagedAsyncCopyMatmulRoutine {
         CubeStagedMicrokernelSettings::in_steps((4, 2), (2, 4), StageRing::DOUBLE);
 
     /// The settings a product against a packed input races on `hw`: the box handing its float
-    /// input to the engine (`PACKED_FLOAT_ON_ENGINE`), then the boxes staged as stored
-    /// (`CubeStagedMatmulRoutine::STORED`), which by the units never were the fastest. None
-    /// without a copy engine. Its cubes in the grid's order.
+    /// input to the engine (`PACKED_FLOAT_ON_ENGINE`) at every count of steps of `K` a stage
+    /// holds ([`CubeStagedMatmulRoutine::PACKED_STAGE_STEPS`]), then the boxes staged as stored (`CubeStagedMatmulRoutine::STORED`), which by the
+    /// units never were the fastest. None without a copy engine. Its cubes in the grid's order.
+    ///
+    /// On an RTX PRO 6000 at Qwen3.8 27B's down projection at 512 rows, the box two steps a stage
+    /// took MXFP4 to 381 µs, as NVFP4's four, where MXFP4's four outgrew shared memory.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedAsyncCopyMatmulRoutineSettings> {
         if !hw.unit_async_copy() {
             return Vec::new();
         }
-        [Self::PACKED_FLOAT_ON_ENGINE]
+        let decoding = Self::PACKED_FLOAT_ON_ENGINE;
+        CubeStagedMatmulRoutine::PACKED_STAGE_STEPS
+            .map(|steps| decoding.stage_steps(steps))
             .into_iter()
             .chain(CubeStagedMatmulRoutine::STORED)
             .map(|microkernel| CubeStagedAsyncCopyMatmulRoutineSettings {
@@ -185,13 +190,22 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let placement = CubeStagedPlacement::new(
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let (read, picked) = CubeStagedPlacement::planned(
             hw,
             problem,
+            &settings.microkernel,
+            Self::FILL,
+            CubeStagedStore::Fragments,
+        )?;
+        let placement = CubeStagedPlacement::new(
+            hw,
+            &read,
             &settings.microkernel,
             settings.cube_order,
             Self::FILL,
             CubeStagedStore::Fragments,
+            picked,
         )?;
         placement.check_copy_engine(hw)?;
         let contracted = placement.contracted;

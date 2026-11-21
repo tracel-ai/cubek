@@ -7,7 +7,7 @@ use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{Levels, Partitioning, TileTensorLaunch};
+use cubecl::tile::{Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::plane::{
     PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
@@ -76,9 +76,11 @@ impl Routine for PlaneShuffleReduceRoutine {
         let microkernel =
             PlaneShuffleReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
         let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
+        let microkernel = microkernel.across_rows(hw, widths[0], problem.row_count());
         let partitioning = Partitioning::new(
             problem.space(),
-            Levels::leaf(&problem.owner_box_at_width(widths[0]))
+            microkernel
+                .levels(&problem.owner_box_at_width(widths[0]))
                 .launch_planes(
                     &[BATCH],
                     PlaneOrder::new(&[(BATCH, settings.planes)], CubeOrder::RowMajor),

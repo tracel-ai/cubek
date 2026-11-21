@@ -7,6 +7,8 @@ mod plane;
 mod unit;
 
 #[cfg(test)]
+mod composition;
+#[cfg(test)]
 mod tests;
 
 pub use cube::*;
