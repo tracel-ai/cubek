@@ -1,6 +1,6 @@
 //! A value with the index it was read at: the argmax and the argmin.
 
-use crate::reduce::{OneIndexed, ReduceAccumulator, lane_indices, stage_slot};
+use crate::reduce::{OneIndexed, ReduceAccumulator, lane_indices};
 use cubecl::tile::{Carrier, Indexed, Monoid};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -34,7 +34,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
             stage_plane_partial::<Acc, N>(
                 &mut values,
                 &mut indices,
-                stage_slot(PLANE_POS as usize, column, columns),
+                PLANE_POS as usize * columns + column,
                 acc,
             );
         }
@@ -45,8 +45,8 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
         #[unroll]
         for plane in 0..planes {
             let slot = Indexed::<Acc, N> {
-                value: values[stage_slot(plane, column, columns)],
-                index: indices[stage_slot(plane, column, columns)],
+                value: values[plane * columns + column],
+                index: indices[plane * columns + column],
             };
             total = Indexed::<Acc, N>::combine(total, slot, monoid);
         }

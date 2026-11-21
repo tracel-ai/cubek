@@ -7,9 +7,7 @@ use crate::reduce::write::{
     UnitCarrierWriteMicrokernel, UnitWalkWriteMicrokernel, unit_carrier_write_microkernel,
     unit_walk_write_microkernel,
 };
-use crate::reduce::{
-    REDUCED, ReduceAccumulator, ReduceCarrier, across_column, is_first_unit_of_cube,
-};
+use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Region, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -93,7 +91,7 @@ fn cube_staged_reduce<
         let count = rows.flat::<In, N>().shape();
         let total = cube_staged_reduce_part::<In, Acc, N, C>(&rows, 0, count, microkernel);
 
-        if is_first_unit_of_cube() {
+        if UNIT_POS == 0 {
             let load = rows.vector_tile();
             let row_lanes = comptime!(load.extent_along(REDUCED));
             let mut rows_out = out.at(cube);
@@ -123,7 +121,10 @@ fn cube_staged_reduce<
             values,
             comptime!(UnitWalkReduceMicrokernel::new(item, per_step)),
         );
-        let plane = across_column::<Acc, N, C>(acc, per_column, monoid);
+        let column = comptime!(UnitShare::Group {
+            unit_bits: per_column - 1
+        });
+        let plane = C::across(acc, column, monoid);
         let lane = UNIT_POS_PLANE as usize;
         let total = C::across_planes(
             plane,

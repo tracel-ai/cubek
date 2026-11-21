@@ -1,8 +1,7 @@
-//! What every carrier does with one line: read it, index its lanes, meet across a column.
+//! What every carrier does with one line: read it and index its lanes.
 
 use crate::reduce::{ReadMap, ReduceAccumulator, ReduceWorkItem};
-use cubecl::tile::space::UnitShare;
-use cubecl::tile::{Indexed, Monoid};
+use cubecl::tile::Indexed;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One lane's value and index, what an [`Indexed`] row's lanes reduce to.
@@ -38,20 +37,6 @@ pub(crate) fn accumulate_read<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccum
     let operation = item.operation;
     let mapped = read_mapped::<Acc, N>(Vector::<Acc, N>::cast_from(read), operation.read_map());
     C::accumulate(acc, mapped, index, row_lanes, operation.monoid());
-}
-
-/// `acc` met across the `per_column` units of its column within the plane, which hold the low
-/// bits of the lane: every unit of the column is left with the plane's share of its total.
-#[cube]
-pub(crate) fn across_column<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
-    acc: C,
-    #[comptime] per_column: usize,
-    #[comptime] monoid: Monoid,
-) -> C {
-    let column = comptime!(UnitShare::Group {
-        unit_bits: per_column - 1
-    });
-    C::across(acc, column, monoid)
 }
 
 /// The index of each lane of the line read `line_index` lines into the row, `row_lanes` of its

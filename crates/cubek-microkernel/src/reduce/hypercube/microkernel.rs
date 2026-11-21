@@ -1,6 +1,6 @@
 use super::base::HypercubeLastArrivalReduceMicrokernel;
 use crate::reduce::write::{UnitCarrierWriteMicrokernel, unit_carrier_write_microkernel};
-use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier, is_first_unit_of_cube};
+use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier};
 use cubecl::tile::{Indexed, TOP_K_UNROLL_BUDGET, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -148,7 +148,7 @@ fn hypercube_last_arrival_reduce<
         .reduce_part::<In, Acc, N, C>(input, first_line, count);
 
     // The cube's first unit stores its partial as partial `part` of the row.
-    if is_first_unit_of_cube() {
+    if UNIT_POS == 0 {
         let mut value_lines = partials.flat_mut::<Acc, N>();
         #[unroll(unrolled)]
         for slot in 0..slots {
@@ -177,7 +177,7 @@ fn hypercube_last_arrival_reduce<
         // What every other cube of the row stored is acquired before it is read.
         sync_storage();
 
-        if is_first_unit_of_cube() {
+        if UNIT_POS == 0 {
             let value_lines = partials.flat::<Acc, N>();
             let mut merged = C::identity(monoid);
             for at in 0..parts {
@@ -213,7 +213,7 @@ fn hypercube_last_arrival_reduce<
 #[cube]
 fn count_in(arrivals: &[Atomic<u32>], counter: usize) -> u32 {
     let mut arrived = Shared::<[u32]>::new_slice(1usize);
-    if is_first_unit_of_cube() {
+    if UNIT_POS == 0 {
         arrived[0] = arrivals[counter].fetch_add(1u32);
     }
 
@@ -225,7 +225,7 @@ fn count_in(arrivals: &[Atomic<u32>], counter: usize) -> u32 {
 /// other cube of the row counted in before: nothing counts there again in this launch.
 #[cube]
 fn reset_count(arrivals: &[Atomic<u32>], counter: usize) {
-    if is_first_unit_of_cube() {
+    if UNIT_POS == 0 {
         arrivals[counter].store(0u32);
     }
 }

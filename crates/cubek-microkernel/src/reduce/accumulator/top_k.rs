@@ -1,6 +1,6 @@
 //! The `K` best values with their indices: the top-k.
 
-use crate::reduce::{ReduceAccumulator, lane_indices, stage_slot};
+use crate::reduce::{ReduceAccumulator, lane_indices};
 use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -35,7 +35,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
             stage_plane_list::<Acc, N, K>(
                 &mut values,
                 &mut indices,
-                stage_slot(PLANE_POS as usize, column, columns),
+                PLANE_POS as usize * columns + column,
                 acc,
             );
         }
@@ -141,7 +141,7 @@ fn insert_plane_lists<Acc: Numeric, N: Size, K: Size>(
 ) {
     let k = K::value();
     for plane in 0..planes {
-        let list = stage_slot(plane, column, columns) * k;
+        let list = (plane * columns + column) * k;
         for slot in 0..k {
             total.insert_in_full_order(values[list + slot], indices[list + slot], monoid);
         }

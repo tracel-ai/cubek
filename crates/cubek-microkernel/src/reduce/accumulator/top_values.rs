@@ -1,6 +1,6 @@
 //! The `K` best values without their indices: a top-k that writes only its values.
 
-use crate::reduce::{ReduceAccumulator, stage_slot};
+use crate::reduce::ReduceAccumulator;
 use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -28,11 +28,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         let k = K::value();
         let mut values = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * columns * k));
         if stages {
-            stage_plane_list::<Acc, N, K>(
-                &mut values,
-                stage_slot(PLANE_POS as usize, column, columns),
-                acc,
-            );
+            stage_plane_list::<Acc, N, K>(&mut values, PLANE_POS as usize * columns + column, acc);
         }
 
         sync_cube();
@@ -121,7 +117,7 @@ fn insert_plane_lists<Acc: Numeric, N: Size, K: Size>(
 ) {
     let k = K::value();
     for plane in 0..planes {
-        let list = stage_slot(plane, column, columns) * k;
+        let list = (plane * columns + column) * k;
         for slot in 0..k {
             total.insert(values[list + slot], monoid);
         }

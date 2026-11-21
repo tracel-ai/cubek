@@ -7,7 +7,7 @@ use crate::reduce::write::{
     UnitCarrierWriteMicrokernel, UnitWalkWriteMicrokernel, unit_carrier_write_microkernel,
     unit_walk_write_microkernel,
 };
-use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier, across_column};
+use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Region, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -126,7 +126,10 @@ fn plane_shuffle_reduce<
             values,
             comptime!(UnitWalkReduceMicrokernel::new(item, per_column)),
         );
-        let total = across_column::<Acc, N, C>(acc, per_column, monoid);
+        let column = comptime!(UnitShare::Group {
+            unit_bits: per_column - 1
+        });
+        let total = C::across(acc, column, monoid);
         unit_walk_write_microkernel::<Out, Idx, Acc, N, C>(
             plane,
             total,
