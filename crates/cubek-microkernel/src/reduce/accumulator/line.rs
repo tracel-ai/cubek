@@ -1,6 +1,7 @@
 //! What every carrier does with one line: read it, index its lanes, write it out.
 
 use crate::reduce::{REDUCED, ReadMap, ReduceAccumulator, ReduceWorkItem, ReduceWrites};
+use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -147,6 +148,31 @@ pub(crate) fn accumulate_across<
     acc
 }
 
+/// The carrier of a column of rows within one plane: the lines `region`'s walk deals each unit,
+/// `per_step` units a step, accumulated ([`accumulate_across`]), then met across the plane's
+/// `per_column` units of the column, which hold the low bits of the lane. Every unit of the column
+/// in the plane is left with the plane's share of the column's total.
+#[cube]
+pub(crate) fn column_across_plane<
+    In: Numeric,
+    Acc: Numeric,
+    N: Size,
+    C: ReduceAccumulator<Acc, N>,
+>(
+    region: &Region,
+    input: &Tile,
+    values: usize,
+    #[comptime] per_step: usize,
+    #[comptime] per_column: usize,
+    #[comptime] item: ReduceWorkItem,
+) -> C {
+    let acc = accumulate_across::<In, Acc, N, C>(region, input, values, per_step, item);
+    let column = comptime!(UnitShare::Group {
+        unit_bits: per_column - 1
+    });
+    C::across(acc, column, item.operation.monoid())
+}
+
 /// The cells of `step` that lie within the row's `values`, accumulated into `acc`.
 #[cube]
 fn accumulate_last_step<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
@@ -205,6 +231,38 @@ pub(crate) fn write_across<
             write_cell::<Out, Idx, Acc, N, C>(&unit, total.clone(), out, indices, values, item);
         }
     }
+}
+
+/// `total`, the carrier of the rows of `rows`, `region`'s window of the input, `count` lines long,
+/// written to `out` and `indices` at the same window.
+#[cube]
+pub(crate) fn write_window<
+    Out: Numeric,
+    Idx: Numeric,
+    Acc: Numeric,
+    N: Size,
+    C: ReduceAccumulator<Acc, N>,
+>(
+    region: &Region,
+    total: C,
+    rows: &Tile,
+    count: usize,
+    out: &Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] item: ReduceWorkItem,
+) {
+    let row_lanes = row_lanes(rows);
+    let mut rows_out = out.at(region);
+    let rows_indices = indices.clone().map(|tile| tile.at(region));
+    C::write::<Out, Idx>(
+        total,
+        &mut rows_out,
+        &rows_indices,
+        row_values(count, row_lanes),
+        row_lanes,
+        item.operation,
+        item.writes(),
+    );
 }
 
 /// `total` written to `out` and `indices` at `unit`'s cells.

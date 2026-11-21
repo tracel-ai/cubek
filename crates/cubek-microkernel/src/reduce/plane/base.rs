@@ -75,7 +75,11 @@ impl PlaneShuffleReduceMicrokernel {
         self.lanes
     }
 
-    /// The widest line its carrier keeps apart at its lane slots, where the carrier bounds it.
+    /// As the unit microkernel's [`widest_line`](crate::reduce::unit::UnitDirectReduceMicrokernel::widest_line), at this one's lane slots.
+    ///
+    /// # Panics
+    ///
+    /// As the unit microkernel's.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
