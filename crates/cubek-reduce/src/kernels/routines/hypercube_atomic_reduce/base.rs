@@ -1,8 +1,7 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
-    BATCH, REDUCED, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
-    ReduceTensors, each_microkernel_with, estimate_reduce, microkernel_widths, prepared_from_key,
-    split_launch,
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
+    each_microkernel_with, estimate_reduce, microkernel_widths, prepared_from_key, split_launch,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -12,21 +11,22 @@ use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{
     AccumulateArgLaunch, Bound, Decline, StoredTileOperand, TileOperand, Unbound, Vectorization,
 };
-use cubecl::tile::{Geometry, Levels, Partitioning, TileTensorLaunch};
+use cubecl::tile::{Geometry, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::{
     CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
 };
 use cubek_microkernel::reduce::{ReduceOperand, ReduceOperation};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Grid, Routine};
 
 /// Every row split into parts along the reduced dim, a cube a part, which reduces it as the cube
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
 /// The output must hold zero before it runs ([`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
-/// zeroes it), since it only ever adds. Its cubes run along [`REDUCED`], then [`BATCH`].
+/// zeroes it), since it only ever adds. Its cubes run along
+/// [`REDUCED`](crate::kernels::REDUCED), then [`BATCH`](crate::kernels::BATCH).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HypercubeAtomicReduceRoutine;
 
