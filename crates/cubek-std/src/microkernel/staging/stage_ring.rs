@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn an_operand_decoded_by_its_fill_prefetches_in_registers() {
         let [lhs, rhs] = small_stage();
-        let decoded = [lhs, rhs.converted_by_fill()];
+        let decoded = [lhs, rhs.decoded_by_fill()];
         assert_eq!(
             StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &decoded, 128),
             StageRing::DOUBLE_THROUGH_REGISTERS

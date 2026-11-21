@@ -585,6 +585,7 @@ mod base {
             item.elements,
             blueprint.microkernel.plane.orders,
             MatmulOperands::all(MatmulRead::AsBound),
+            MatmulOperands::all(false),
         );
         assert_eq!(registers.resolve(&hw, &operands, cube_units), registers);
         assert_eq!(

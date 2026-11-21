@@ -48,9 +48,18 @@ impl StagedOperand {
     }
 
     /// This operand with a fill that decodes it, as a fill decoding a packed input does.
-    pub fn converted_by_fill(self) -> Self {
+    pub fn decoded_by_fill(self) -> Self {
         Self {
             fill: StageFill::Decoded,
+            ..self
+        }
+    }
+
+    /// This operand with a fill that converts it, as one rounding it to tf32 or reading it at
+    /// another element does.
+    pub fn converted_by_fill(self) -> Self {
+        Self {
+            fill: StageFill::Converted,
             ..self
         }
     }

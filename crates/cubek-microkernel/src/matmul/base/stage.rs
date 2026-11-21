@@ -83,13 +83,15 @@ impl MatmulStage {
     }
 
     /// Both operands' boxes of one stage, each stored in its own element of `elements` and bound
-    /// in the order `orders` says, for a fill that reads them as `reads` say: an operand it decodes
-    /// is converted on its way into the stage.
+    /// in the order `orders` says, for a fill that reads them as `reads` say: an operand it reads
+    /// at another element is decoded on its way into the stage where `packed` says it is a packed
+    /// input, and converted otherwise (rounded to tf32, read at another float).
     pub fn operands(
         &self,
         elements: MatmulOperands<ElemType>,
         orders: MatmulOperands<BindingOrder>,
         reads: MatmulOperands<MatmulRead>,
+        packed: MatmulOperands<bool>,
     ) -> [StagedOperand; 2] {
         MatmulOperand::INPUTS.map(|operand| {
             let staged = StagedOperand::new(
@@ -98,9 +100,10 @@ impl MatmulStage {
                     .subspace(&operand.dims().map(|dim| self.dimensions.of(dim))),
                 self.dimensions.of(orders.innermost(operand)),
             );
-            match reads.get(operand).staged() {
-                Some(_) => staged.converted_by_fill(),
-                None => staged,
+            match (reads.get(operand).staged(), packed.get(operand)) {
+                (Some(_), true) => staged.decoded_by_fill(),
+                (Some(_), false) => staged.converted_by_fill(),
+                (None, _) => staged,
             }
         })
     }
@@ -116,7 +119,12 @@ impl MatmulStage {
         orders: MatmulOperands<BindingOrder>,
     ) -> usize {
         let block: usize = self
-            .operands(elements, orders, MatmulOperands::all(MatmulRead::AsBound))
+            .operands(
+                elements,
+                orders,
+                MatmulOperands::all(MatmulRead::AsBound),
+                MatmulOperands::all(false),
+            )
             .iter()
             .map(|operand| operand.bytes(hw, storage))
             .sum();
