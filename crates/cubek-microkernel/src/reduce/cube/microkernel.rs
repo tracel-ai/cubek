@@ -1,7 +1,7 @@
 use super::base::CubeStagedReduceMicrokernel;
 use crate::reduce::{
-    ReduceAccumulator, ReduceCarrier, accumulate_across, accumulate_strided, is_first_unit_of_cube,
-    row_lanes, row_values, values_across, write_across,
+    ReduceAccumulator, ReduceCarrier, accumulate_strided, column_across_plane,
+    is_first_unit_of_cube, values_across, write_across, write_window,
 };
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Region, Tile, TopK, TopValues};
@@ -78,7 +78,7 @@ fn cube_staged_reduce<
     indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
-    if comptime!(microkernel.lines_across() == 1) {
+    if microkernel.lines_across() == 1 {
         cube_staged_reduce_window::<In, Acc, Out, Idx, N, C>(
             cube,
             input,
@@ -114,25 +114,18 @@ fn cube_staged_reduce_window<
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
     let rows = input.at(cube);
-    let mut rows_out = out.at(cube);
-    let rows_indices = indices.clone().map(|tile| tile.at(cube));
-    let operation = microkernel.item().operation;
-    let row_lanes = row_lanes(&rows);
     let count = rows.flat::<In, N>().shape();
-
     let total = cube_staged_reduce_part::<In, Acc, N, C>(&rows, 0, count, microkernel);
 
-    let values = row_values(count, row_lanes);
-
     if is_first_unit_of_cube() {
-        C::write::<Out, Idx>(
+        write_window::<Out, Idx, Acc, N, C>(
+            cube,
             total,
-            &mut rows_out,
-            &rows_indices,
-            values,
-            row_lanes,
-            operation,
-            microkernel.item().writes(),
+            &rows,
+            count,
+            out,
+            indices,
+            microkernel.item(),
         );
     }
 }
@@ -158,14 +151,17 @@ fn cube_staged_reduce_across<
 ) {
     let monoid = microkernel.item().operation.monoid();
     let columns = microkernel.lines_across();
-    let per_column = comptime!(microkernel.lanes() / columns);
-    let per_step = comptime!(microkernel.units() / columns);
+    let per_column = microkernel.lanes() / columns;
+    let per_step = microkernel.units() / columns;
     let values = values_across::<In, N>(cube, input, columns);
-    let acc = accumulate_across::<In, Acc, N, C>(cube, input, values, per_step, microkernel.item());
-    let column_units = comptime!(UnitShare::Group {
-        unit_bits: per_column - 1
-    });
-    let plane = C::across(acc, column_units, monoid);
+    let plane = column_across_plane::<In, Acc, N, C>(
+        cube,
+        input,
+        values,
+        per_step,
+        per_column,
+        microkernel.item(),
+    );
     let lane = UNIT_POS_PLANE as usize;
     let total = C::across_planes(
         plane,

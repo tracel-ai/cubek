@@ -1,10 +1,6 @@
-//! Deterministic coverage for the `Any` / `All` logical reductions.
-//!
-//! The randomized `test_any` / `test_all` cases (in `reduce_dim.rs`) compare the
-//! GPU output against a CPU reference over many shapes/strategies, but a buggy
-//! kernel could in principle agree with a buggy reference. These hand-written
-//! cases pin the exact 0/1 outputs for a known mask, so both ops are guaranteed
-//! to produce *both* a `0` and a `1` output.
+//! The `Any` / `All` logical reductions over a mask whose rows hold none, every and one of their
+//! values set, so each writes both a `0` and a `1`, which random inputs (`reduce_dim.rs`) seldom
+//! do. The reference's answers on these rows are pinned by its own Small Tests.
 
 use crate::reduce::it::test_case::UNIT;
 use cubecl::{
@@ -13,30 +9,35 @@ use cubecl::{
     zspace::Shape,
 };
 use cubek_reduce::ReduceOperation;
+use cubek_reduce::eval::cpu_reference::reference;
 use cubek_reduce::kernels::{Reduce, ReduceElements};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput,
-    launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, StridedLayout, TestInput, TestOutcome,
+    assert_equals_approx, launch_and_capture_outcome,
 };
 
-/// Reduce a `[3, 4]` mask along `axis = 1` with `operation` and return the 3 output
-/// values. The rows are designed to hit every interesting slice:
-/// `[0,0,0,0]` (empty), `[1,1,1,1]` (full), `[0,1,0,0]` (mixed).
-fn reduce_mask(operation: ReduceOperation) -> Vec<f32> {
+/// The mask's rows: none set, every one set, one set.
+const ROWS: usize = 3;
+/// Values a row of the mask holds.
+const ROW_LEN: usize = 4;
+
+/// `operation` over the mask's rows checked against the reference: the flags they write, or a
+/// skip where the kernel does not compile.
+fn reduces_the_mask_like_the_reference(operation: ReduceOperation) {
     let client = cubecl::test_device().client();
 
-    let shape = Shape::new([3, 4]);
+    let shape = Shape::new([ROWS, ROW_LEN]);
     #[rustfmt::skip]
     let data = vec![
-        0.0, 0.0, 0.0, 0.0, // any = 0, all = 0
-        1.0, 1.0, 1.0, 1.0, // any = 1, all = 1
-        0.0, 1.0, 0.0, 0.0, // any = 1, all = 0
+        0.0, 0.0, 0.0, 0.0,
+        1.0, 1.0, 1.0, 1.0,
+        0.0, 1.0, 0.0, 0.0,
     ];
 
     let input_dtype = f32::elem_type_native();
-    let (input_handle, _) = TestInput::builder(client.clone(), shape.clone())
+    let (input_handle, input_host) = TestInput::builder(client.clone(), shape.clone())
         .dtype(input_dtype)
-        .layout(StridedLayout::Explicit(vec![4, 1]))
+        .layout(StridedLayout::Explicit(vec![ROW_LEN, 1]))
         .custom(data)
         .generate_with_f32_host_data();
 
@@ -50,7 +51,7 @@ fn reduce_mask(operation: ReduceOperation) -> Vec<f32> {
         out: ElemType::UInt(UIntKind::U32),
     };
 
-    let output_handle = TestInput::builder(client.clone(), Shape::new([3, 1]))
+    let output_handle = TestInput::builder(client.clone(), Shape::new([ROWS, 1]))
         .dtype(elements.out)
         .layout(StridedLayout::Explicit(vec![1, 1]))
         .zeros()
@@ -74,24 +75,22 @@ fn reduce_mask(operation: ReduceOperation) -> Vec<f32> {
 
     match outcome {
         ExecutionOutcome::Executed => {
-            let host = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
-            match host.data {
-                HostDataVec::F32(values) => values,
-                other => panic!("expected f32 output, got {other:?}"),
-            }
+            let written = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
+            let expected = reference(&input_host, 1, operation, None);
+            assert_equals_approx(&written, &expected, 0.0)
+                .as_test_outcome()
+                .enforce();
         }
-        ExecutionOutcome::CompileError(e) => panic!("compile error: {e}"),
+        ExecutionOutcome::CompileError(reason) => TestOutcome::CompileError(reason).enforce(),
     }
 }
 
 #[test]
-fn test_any_deterministic() {
-    let out = reduce_mask(ReduceOperation::Any);
-    assert_eq!(out, vec![0.0, 1.0, 1.0]);
+fn any_writes_a_flag_a_row() {
+    reduces_the_mask_like_the_reference(ReduceOperation::Any);
 }
 
 #[test]
-fn test_all_deterministic() {
-    let out = reduce_mask(ReduceOperation::All);
-    assert_eq!(out, vec![0.0, 1.0, 0.0]);
+fn all_writes_a_flag_a_row() {
+    reduces_the_mask_like_the_reference(ReduceOperation::All);
 }

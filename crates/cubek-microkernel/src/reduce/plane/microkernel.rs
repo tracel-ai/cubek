@@ -1,7 +1,7 @@
 use super::base::PlaneShuffleReduceMicrokernel;
 use crate::reduce::{
-    ReduceAccumulator, ReduceCarrier, accumulate_across, accumulate_strided, row_lanes, row_values,
-    values_across, write_across,
+    ReduceAccumulator, ReduceCarrier, accumulate_strided, column_across_plane, values_across,
+    write_across, write_window,
 };
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Indexed, Region, Tile, TopK, TopValues};
@@ -77,7 +77,7 @@ fn plane_shuffle_reduce<
     indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
-    if comptime!(microkernel.lines_across() == 1) {
+    if microkernel.lines_across() == 1 {
         plane_shuffle_reduce_window::<In, Acc, Out, Idx, N, C>(
             plane,
             input,
@@ -113,23 +113,18 @@ fn plane_shuffle_reduce_window<
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     let rows = input.at(plane);
-    let mut rows_out = out.at(plane);
-    let rows_indices = indices.clone().map(|tile| tile.at(plane));
-    let operation = microkernel.item().operation;
-    let row_lanes = row_lanes(&rows);
     let count = rows.flat::<In, N>().shape();
     let total = plane_shuffle_reduce_part::<In, Acc, N, C>(&rows, count, microkernel);
-    let values = row_values(count, row_lanes);
 
     if UNIT_POS_PLANE == 0 {
-        C::write::<Out, Idx>(
+        write_window::<Out, Idx, Acc, N, C>(
+            plane,
             total,
-            &mut rows_out,
-            &rows_indices,
-            values,
-            row_lanes,
-            operation,
-            microkernel.item().writes(),
+            &rows,
+            count,
+            out,
+            indices,
+            microkernel.item(),
         );
     }
 }
@@ -153,14 +148,16 @@ fn plane_shuffle_reduce_across<
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
     let columns = microkernel.lines_across();
-    let per_column = comptime!(microkernel.lanes() / columns);
+    let per_column = microkernel.lanes() / columns;
     let values = values_across::<In, N>(plane, input, columns);
-    let acc =
-        accumulate_across::<In, Acc, N, C>(plane, input, values, per_column, microkernel.item());
-    let column = comptime!(UnitShare::Group {
-        unit_bits: per_column - 1
-    });
-    let total = C::across(acc, column, microkernel.item().operation.monoid());
+    let total = column_across_plane::<In, Acc, N, C>(
+        plane,
+        input,
+        values,
+        per_column,
+        per_column,
+        microkernel.item(),
+    );
     write_across::<Out, Idx, Acc, N, C>(plane, total, out, indices, values, microkernel.item());
 }
 

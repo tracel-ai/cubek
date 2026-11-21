@@ -97,16 +97,20 @@ mod tests {
         }
     }
 
-    /// Along the reduced dim the output takes one cell a row; across it, an input line is an
-    /// output line.
+    /// Along the reduced dim the output takes one cell a row.
     #[test]
-    fn the_requirement_follows_where_the_lines_run() {
+    fn along_the_axis_the_output_takes_a_cell_a_row() {
         assert_eq!(
             item(ReduceOperation::Sum, REDUCED, false).requirement(),
             VectorRequirement::Elementwise {
                 operand: ReduceOperand::Out
             }
         );
+    }
+
+    /// Across the reduced dim an input line is an output line.
+    #[test]
+    fn across_the_axis_an_input_line_is_an_output_line() {
         assert_eq!(
             item(ReduceOperation::Sum, crate::reduce::BATCH, false).requirement(),
             VectorRequirement::Together {
@@ -122,16 +126,27 @@ mod tests {
         const K: u32 = 3;
         let work = item(ReduceOperation::TopK { k: K as usize }, REDUCED, false).unit_work();
         assert_eq!(work.registers, 2 * K + 2);
+    }
+
+    /// A unit computes on vectors.
+    #[test]
+    fn a_unit_computes_on_vectors() {
+        let work = item(ReduceOperation::Sum, REDUCED, false).unit_work();
         assert_eq!(work.instruction, ArithmeticInstruction::Vector);
     }
 
-    /// With indices beside them, both halves are written; otherwise what the operation writes.
+    /// With indices beside them, both halves are written.
     #[test]
     fn indices_beside_the_values_write_both() {
         assert_eq!(
             item(ReduceOperation::ArgMax, REDUCED, true).writes(),
             ReduceWrites::Both
         );
+    }
+
+    /// Without indices beside them, what the operation writes.
+    #[test]
+    fn without_indices_beside_them_the_operation_writes_its_own() {
         assert_eq!(
             item(ReduceOperation::ArgMax, REDUCED, false).writes(),
             ReduceWrites::Indices
