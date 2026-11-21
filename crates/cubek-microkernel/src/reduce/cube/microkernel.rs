@@ -78,7 +78,7 @@ fn cube_staged_reduce<
     indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: CubeStagedReduceMicrokernel,
 ) {
-    if comptime!(microkernel.lines_across() == 1) {
+    if microkernel.lines_across() == 1 {
         cube_staged_reduce_window::<In, Acc, Out, Idx, N, C>(
             cube,
             input,
@@ -158,8 +158,8 @@ fn cube_staged_reduce_across<
 ) {
     let monoid = microkernel.item().operation.monoid();
     let columns = microkernel.lines_across();
-    let per_column = comptime!(microkernel.lanes() / columns);
-    let per_step = comptime!(microkernel.units() / columns);
+    let per_column = microkernel.lanes() / columns;
+    let per_step = microkernel.units() / columns;
     let values = values_across::<In, N>(cube, input, columns);
     let acc = accumulate_across::<In, Acc, N, C>(cube, input, values, per_step, microkernel.item());
     let column_units = comptime!(UnitShare::Group {
