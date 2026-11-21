@@ -24,7 +24,7 @@ impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
         #[comptime] columns: usize,
         #[comptime] monoid: Monoid,
     ) -> Self {
-        let mut slots = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * columns));
+        let mut slots = Shared::<[Vector<Acc, N>]>::new_slice(planes * columns);
         if stages {
             slots[PLANE_POS as usize * columns + column] = acc;
         }
