@@ -15,6 +15,17 @@ use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::cpu_reference::{accumulation_dtype, output_dtype_for};
 use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
 
+/// `problem` reduced by `strategy` `num_samples` times on the test device, once its result is
+/// checked against the reference.
+///
+/// # Errors
+///
+/// Where the result differs from the reference, or the strategy's kernel cannot run the problem.
+///
+/// # Panics
+///
+/// Where `problem` compares a values launch with an indices launch for an operation that has no
+/// such pair (a sum, a mean, a product, any or all).
 pub fn bench(
     strategy: &ReduceOpStrategy,
     problem: &ReduceProblem,
@@ -126,12 +137,12 @@ impl InputOrder {
     }
 }
 
-/// The range a uniform input is drawn from.
+/// The range a timed input is drawn from.
 const UNIFORM_LOW: f32 = 0.0;
 const UNIFORM_HIGH: f32 = 1.0;
 
 struct ReduceBenchmark {
-    /// The input's extent along each axis, read by axis (Position Usage).
+    /// The timed input's extent along each axis, read by axis (Position Usage).
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,
@@ -280,12 +291,20 @@ mod tests {
     use crate::ReduceOperation;
 
     #[test]
-    fn an_order_is_read_by_its_name_uniform_by_default() {
+    fn ascending_is_read_by_its_name() {
         assert_eq!(InputOrder::named(Some("ascending")), InputOrder::Ascending);
+    }
+
+    #[test]
+    fn descending_is_read_by_its_name() {
         assert_eq!(
             InputOrder::named(Some("descending")),
             InputOrder::Descending
         );
+    }
+
+    #[test]
+    fn no_order_named_is_uniform() {
         assert_eq!(InputOrder::named(None), InputOrder::Uniform);
     }
 
@@ -295,14 +314,19 @@ mod tests {
         InputOrder::named(Some("shuffled"));
     }
 
-    /// The values and the indices a caller launches apart for each indexed operation.
+    /// An arg max runs as a max, then its indices.
     #[test]
-    fn an_indexed_operation_runs_as_its_values_then_its_indices() {
-        const K: usize = 3;
+    fn an_arg_max_runs_as_its_values_then_its_indices() {
         assert_eq!(
             two_launch_operations(ReduceOperation::ArgMax),
             (ReduceOperation::Max, ReduceOperation::ArgMax)
         );
+    }
+
+    /// A top-k runs as its values, then its indices.
+    #[test]
+    fn a_top_k_runs_as_its_values_then_its_indices() {
+        const K: usize = 3;
         assert_eq!(
             two_launch_operations(ReduceOperation::TopK { k: K }),
             (

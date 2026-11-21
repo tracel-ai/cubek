@@ -46,7 +46,9 @@ impl ReduceBenchPrecision {
             ReduceBenchPrecision::F16 => "_f16",
         }
     }
+}
 
+impl ReduceBenchPrecision {
     fn label(self) -> &'static str {
         match self {
             ReduceBenchPrecision::F32 => "",
@@ -72,7 +74,7 @@ pub fn precisions() -> &'static [ReduceBenchPrecision] {
 }
 
 pub struct ReduceProblem {
-    /// The input's extent along each axis, read by axis (Position Usage).
+    /// The catalogued input's extent along each axis, read by axis (Position Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,
@@ -334,7 +336,7 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
 struct SpreadShape<'a> {
     pub name: &'a str,
     pub text: &'a str,
-    /// The input's extent along each axis, read by axis (Position Usage).
+    /// The swept input's extent along each axis, read by axis (Position Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,

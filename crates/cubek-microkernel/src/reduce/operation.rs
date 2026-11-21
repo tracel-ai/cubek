@@ -181,8 +181,13 @@ impl ReduceOperation {
 impl ReduceOperation {
     /// The cells it writes for `row`, computed on the host: one value, or `k` best first for a
     /// top-k, and an index written as a number. A NaN ranks ahead of every number and the lower
-    /// index wins a tie, so a max or a min keeps a NaN. A row shorter than `k` writes one cell a
-    /// value.
+    /// index wins a tie, so a max or a min keeps a NaN. Past a row shorter than `k`, a top-k
+    /// writes the lowest `f32` for a value and `u32::MAX` for an index.
+    ///
+    /// # Panics
+    ///
+    /// Where `row` is empty and the operation keeps one of its values: a max, a min, their
+    /// magnitudes and their indices.
     pub fn reference_cells(self, row: &[f32]) -> Vec<f32> {
         match self {
             Self::Sum => vec![row.iter().sum()],
@@ -195,18 +200,23 @@ impl ReduceOperation {
             Self::All => vec![flag(row.iter().all(|value| *value != 0.0))],
             Self::ArgMax => vec![ranked(row, Rank::Largest)[0].1 as f32],
             Self::ArgMin => vec![ranked(row, Rank::Smallest)[0].1 as f32],
-            Self::TopK { k } => ranked(row, Rank::Largest)
-                .iter()
-                .take(k)
-                .map(|e| e.0)
-                .collect(),
-            Self::ArgTopK { k } => ranked(row, Rank::Largest)
-                .iter()
-                .take(k)
-                .map(|e| e.1 as f32)
-                .collect(),
+            Self::TopK { k } => best_k(row, k, |(value, _)| value, f32::MIN),
+            Self::ArgTopK { k } => best_k(row, k, |(_, index)| index as f32, u32::MAX as f32),
         }
     }
+}
+
+/// The `k` largest values of `row`, best first, each written as `cell` writes it, and `past_row`
+/// for each of the `k` the row is too short to hold.
+#[cfg(feature = "cpu-reference")]
+fn best_k(row: &[f32], k: usize, cell: fn((f32, usize)) -> f32, past_row: f32) -> Vec<f32> {
+    let mut cells: Vec<f32> = ranked(row, Rank::Largest)
+        .into_iter()
+        .take(k)
+        .map(cell)
+        .collect();
+    cells.resize(k, past_row);
+    cells
 }
 
 /// Which end of a row ranks first.
@@ -259,153 +269,159 @@ const fn lines_at_least_one(lines: usize) -> usize {
 mod tests {
     use super::*;
 
-    /// Each operation is the monoid, map and carrier its table row states.
-    #[test]
-    fn each_operation_is_its_table_row() {
-        use ReduceOperation as Op;
-        let rows = [
-            (Op::Sum, Monoid::Sum, ReadMap::AsRead, ReduceCarrier::Values),
-            (
-                Op::Prod,
-                Monoid::Prod,
-                ReadMap::AsRead,
-                ReduceCarrier::Values,
-            ),
-            (
-                Op::Mean,
-                Monoid::Sum,
-                ReadMap::AsRead,
-                ReduceCarrier::Values,
-            ),
-            (Op::Max, Monoid::Max, ReadMap::AsRead, ReduceCarrier::Values),
-            (Op::Min, Monoid::Min, ReadMap::AsRead, ReduceCarrier::Values),
-            (Op::MaxAbs, Monoid::Max, ReadMap::Abs, ReduceCarrier::Values),
-            (
-                Op::Any,
-                Monoid::Max,
-                ReadMap::NonZero,
-                ReduceCarrier::Values,
-            ),
-            (
-                Op::All,
-                Monoid::Min,
-                ReadMap::NonZero,
-                ReduceCarrier::Values,
-            ),
-            (
-                Op::ArgMax,
-                Monoid::Max,
-                ReadMap::AsRead,
-                ReduceCarrier::Indexed,
-            ),
-            (
-                Op::ArgMin,
-                Monoid::Min,
-                ReadMap::AsRead,
-                ReduceCarrier::Indexed,
-            ),
-            (
-                Op::TopK { k: 5 },
-                Monoid::Max,
-                ReadMap::AsRead,
-                ReduceCarrier::TopValues { k: 5 },
-            ),
-            (
-                Op::ArgTopK { k: 5 },
-                Monoid::Max,
-                ReadMap::AsRead,
-                ReduceCarrier::TopK { k: 5 },
-            ),
-            (
-                Op::TopK { k: 1 },
-                Monoid::Max,
-                ReadMap::AsRead,
-                ReduceCarrier::Values,
-            ),
-            (
-                Op::ArgTopK { k: 1 },
-                Monoid::Max,
-                ReadMap::AsRead,
-                ReduceCarrier::Indexed,
-            ),
-        ];
-        for (operation, monoid, map, carrier) in rows {
-            assert_eq!(operation.monoid(), monoid, "{operation:?}");
-            assert_eq!(operation.read_map(), map, "{operation:?}");
-            assert_eq!(operation.carrier(), carrier, "{operation:?}");
-        }
+    /// A test of each property of `$operation` its table row states: its monoid, its read map
+    /// and its carrier.
+    macro_rules! table_row {
+        ($name:ident: $operation:expr => $monoid:expr, $map:expr, $carrier:expr) => {
+            mod $name {
+                use super::*;
+
+                #[test]
+                fn monoid() {
+                    assert_eq!($operation.monoid(), $monoid);
+                }
+
+                #[test]
+                fn read_map() {
+                    assert_eq!($operation.read_map(), $map);
+                }
+
+                #[test]
+                fn carrier() {
+                    assert_eq!($operation.carrier(), $carrier);
+                }
+            }
+        };
     }
 
-    /// Only the arg operations write indices, only the mean divides, and a top-k writes `k` cells.
-    #[test]
-    fn the_arg_operations_write_indices_and_a_top_k_writes_k() {
-        use ReduceOperation as Op;
-        for operation in [Op::ArgMax, Op::ArgMin, Op::ArgTopK { k: 2 }] {
-            assert_eq!(operation.writes(), ReduceWrites::Indices, "{operation:?}");
-        }
-        for operation in [Op::Sum, Op::Max, Op::TopK { k: 2 }, Op::Any] {
-            assert_eq!(operation.writes(), ReduceWrites::Values, "{operation:?}");
-        }
-        assert!(Op::Mean.divides_by_count() && !Op::Sum.divides_by_count());
-        assert_eq!(Op::TopK { k: 7 }.written_per_row(), 7);
-        assert_eq!(Op::ArgTopK { k: 7 }.written_per_row(), 7);
-        assert_eq!(Op::ArgMax.written_per_row(), 1);
+    table_row!(sum: ReduceOperation::Sum => Monoid::Sum, ReadMap::AsRead, ReduceCarrier::Values);
+    table_row!(prod: ReduceOperation::Prod => Monoid::Prod, ReadMap::AsRead, ReduceCarrier::Values);
+    table_row!(mean: ReduceOperation::Mean => Monoid::Sum, ReadMap::AsRead, ReduceCarrier::Values);
+    table_row!(max: ReduceOperation::Max => Monoid::Max, ReadMap::AsRead, ReduceCarrier::Values);
+    table_row!(min: ReduceOperation::Min => Monoid::Min, ReadMap::AsRead, ReduceCarrier::Values);
+    table_row!(max_abs: ReduceOperation::MaxAbs => Monoid::Max, ReadMap::Abs, ReduceCarrier::Values);
+    table_row!(any: ReduceOperation::Any => Monoid::Max, ReadMap::NonZero, ReduceCarrier::Values);
+    table_row!(all: ReduceOperation::All => Monoid::Min, ReadMap::NonZero, ReduceCarrier::Values);
+    table_row!(arg_max: ReduceOperation::ArgMax => Monoid::Max, ReadMap::AsRead, ReduceCarrier::Indexed);
+    table_row!(arg_min: ReduceOperation::ArgMin => Monoid::Min, ReadMap::AsRead, ReduceCarrier::Indexed);
+    table_row!(top_5: ReduceOperation::TopK { k: 5 } => Monoid::Max, ReadMap::AsRead, ReduceCarrier::TopValues { k: 5 });
+    table_row!(arg_top_5: ReduceOperation::ArgTopK { k: 5 } => Monoid::Max, ReadMap::AsRead, ReduceCarrier::TopK { k: 5 });
+    table_row!(top_1: ReduceOperation::TopK { k: 1 } => Monoid::Max, ReadMap::AsRead, ReduceCarrier::Values);
+    table_row!(arg_top_1: ReduceOperation::ArgTopK { k: 1 } => Monoid::Max, ReadMap::AsRead, ReduceCarrier::Indexed);
+
+    /// A test that `$operation` writes what `$writes` names.
+    macro_rules! writes {
+        ($name:ident: $operation:expr => $writes:expr) => {
+            #[test]
+            fn $name() {
+                assert_eq!($operation.writes(), $writes);
+            }
+        };
     }
 
-    /// A read past the edge leaves the total unchanged: each operation's edge monoid is the one
-    /// whose identity its map leaves as it is.
+    writes!(an_arg_max_writes_indices: ReduceOperation::ArgMax => ReduceWrites::Indices);
+    writes!(an_arg_min_writes_indices: ReduceOperation::ArgMin => ReduceWrites::Indices);
+    writes!(an_arg_top_k_writes_indices: ReduceOperation::ArgTopK { k: 2 } => ReduceWrites::Indices);
+    writes!(a_sum_writes_values: ReduceOperation::Sum => ReduceWrites::Values);
+    writes!(a_max_writes_values: ReduceOperation::Max => ReduceWrites::Values);
+    writes!(a_top_k_writes_values: ReduceOperation::TopK { k: 2 } => ReduceWrites::Values);
+    writes!(an_any_writes_values: ReduceOperation::Any => ReduceWrites::Values);
+
+    /// A top-k writes `k` cells a row.
     #[test]
-    fn each_edge_reads_the_identity_its_map_keeps() {
-        use ReduceOperation as Op;
-        let rows = [
-            (Op::Sum, Monoid::Sum),
-            (Op::Mean, Monoid::Sum),
-            (Op::MaxAbs, Monoid::Sum),
-            (Op::Any, Monoid::Sum),
-            (Op::Prod, Monoid::Prod),
-            (Op::All, Monoid::Prod),
-            (Op::Max, Monoid::Max),
-            (Op::ArgMax, Monoid::Max),
-            (Op::TopK { k: 3 }, Monoid::Max),
-            (Op::ArgTopK { k: 3 }, Monoid::Max),
-            (Op::Min, Monoid::Min),
-            (Op::ArgMin, Monoid::Min),
-        ];
-        for (operation, edge) in rows {
-            assert_eq!(operation.edge_monoid(), edge, "{operation:?}");
-        }
+    fn a_top_k_writes_k_cells() {
+        const K: usize = 7;
+        assert_eq!(ReduceOperation::TopK { k: K }.written_per_row(), K);
     }
 
-    /// A carrier holds its slots' values, each lane of each, and a `u32` beside each value where
-    /// it carries indices.
+    /// An arg top-k writes `k` cells a row.
     #[test]
-    fn a_carrier_holds_its_values_and_indices() {
-        const WIDTH: usize = 2;
-        const F32_BYTES: usize = 4;
-        const K: usize = 3;
-        let index = size_of::<u32>();
+    fn an_arg_top_k_writes_k_cells() {
+        const K: usize = 7;
+        assert_eq!(ReduceOperation::ArgTopK { k: K }.written_per_row(), K);
+    }
+
+    /// Every other operation writes one cell a row.
+    #[test]
+    fn an_arg_max_writes_one_cell() {
+        assert_eq!(ReduceOperation::ArgMax.written_per_row(), 1);
+    }
+
+    /// A test that a read past the edge of `$operation`'s row reads the identity of `$edge`, the
+    /// monoid whose identity its map leaves as it is, so the total stays unchanged.
+    macro_rules! edge_reads {
+        ($name:ident: $operation:expr => $edge:expr) => {
+            #[test]
+            fn $name() {
+                assert_eq!($operation.edge_monoid(), $edge);
+            }
+        };
+    }
+
+    edge_reads!(a_sum_edge_reads_zero: ReduceOperation::Sum => Monoid::Sum);
+    edge_reads!(a_mean_edge_reads_zero: ReduceOperation::Mean => Monoid::Sum);
+    edge_reads!(a_max_abs_edge_reads_zero: ReduceOperation::MaxAbs => Monoid::Sum);
+    edge_reads!(an_any_edge_reads_zero: ReduceOperation::Any => Monoid::Sum);
+    edge_reads!(a_prod_edge_reads_one: ReduceOperation::Prod => Monoid::Prod);
+    edge_reads!(an_all_edge_reads_one: ReduceOperation::All => Monoid::Prod);
+    edge_reads!(a_max_edge_reads_its_identity: ReduceOperation::Max => Monoid::Max);
+    edge_reads!(an_arg_max_edge_reads_its_identity: ReduceOperation::ArgMax => Monoid::Max);
+    edge_reads!(a_top_k_edge_reads_its_identity: ReduceOperation::TopK { k: 3 } => Monoid::Max);
+    edge_reads!(an_arg_top_k_edge_reads_its_identity: ReduceOperation::ArgTopK { k: 3 } => Monoid::Max);
+    edge_reads!(a_min_edge_reads_its_identity: ReduceOperation::Min => Monoid::Min);
+    edge_reads!(an_arg_min_edge_reads_its_identity: ReduceOperation::ArgMin => Monoid::Min);
+
+    /// Lines `WIDTH` wide of f32 values.
+    const WIDTH: usize = 2;
+    const F32_BYTES: usize = 4;
+
+    /// A values carrier holds a line of values.
+    #[test]
+    fn a_values_carrier_holds_a_line() {
         assert_eq!(
             ReduceCarrier::Values.bytes(WIDTH, F32_BYTES),
             WIDTH * F32_BYTES
         );
+    }
+
+    /// An indexed carrier holds a `u32` beside each value.
+    #[test]
+    fn an_indexed_carrier_holds_an_index_beside_each_value() {
         assert_eq!(
             ReduceCarrier::Indexed.bytes(WIDTH, F32_BYTES),
-            WIDTH * (F32_BYTES + index)
+            WIDTH * (F32_BYTES + size_of::<u32>())
         );
+    }
+
+    /// A top-values carrier holds `k` lines of values.
+    #[test]
+    fn a_top_values_carrier_holds_k_lines() {
+        const K: usize = 3;
         assert_eq!(
             ReduceCarrier::TopValues { k: K }.bytes(WIDTH, F32_BYTES),
             K * WIDTH * F32_BYTES
         );
+    }
+
+    /// A top-k carrier holds `k` lines of values with their indices.
+    #[test]
+    fn a_top_k_carrier_holds_k_indexed_lines() {
+        const K: usize = 3;
         assert_eq!(
             ReduceCarrier::TopK { k: K }.bytes(WIDTH, F32_BYTES),
-            K * WIDTH * (F32_BYTES + index)
+            K * WIDTH * (F32_BYTES + size_of::<u32>())
         );
     }
 
-    /// Only a mean divides by the count.
+    /// A mean divides by the count.
     #[test]
-    fn only_a_mean_divides_by_the_count() {
+    fn a_mean_divides_by_the_count() {
         assert!(ReduceOperation::Mean.divides_by_count());
+    }
+
+    /// A sum does not divide by the count.
+    #[test]
+    fn a_sum_does_not_divide_by_the_count() {
         assert!(!ReduceOperation::Sum.divides_by_count());
     }
 
@@ -447,5 +463,101 @@ mod tests {
     fn a_top_k_keeping_nothing_panics() {
         const LANE_SLOTS: usize = 32;
         ReduceOperation::TopK { k: 0 }.widest_line_at_lane_slots(LANE_SLOTS);
+    }
+
+    /// A row with a value that is not zero holds any.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn any_of_a_row_with_one_value_set_is_one() {
+        assert_eq!(
+            ReduceOperation::Any.reference_cells(&[0.0, 1.0, 0.0, 0.0]),
+            vec![1.0]
+        );
+    }
+
+    /// A row of zeros holds none.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn any_of_a_row_of_zeros_is_zero() {
+        assert_eq!(
+            ReduceOperation::Any.reference_cells(&[0.0, 0.0, 0.0, 0.0]),
+            vec![0.0]
+        );
+    }
+
+    /// A row with one zero does not hold all.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn all_of_a_row_with_one_value_set_is_zero() {
+        assert_eq!(
+            ReduceOperation::All.reference_cells(&[0.0, 1.0, 0.0, 0.0]),
+            vec![0.0]
+        );
+    }
+
+    /// A row with no zero holds all.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn all_of_a_row_of_ones_is_one() {
+        assert_eq!(
+            ReduceOperation::All.reference_cells(&[1.0, 1.0, 1.0, 1.0]),
+            vec![1.0]
+        );
+    }
+
+    /// A max keeps a NaN ahead of every number.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_max_keeps_a_nan() {
+        let cells = ReduceOperation::Max.reference_cells(&[1.0, f32::NAN, 3.0]);
+        assert!(cells[0].is_nan());
+    }
+
+    /// Of two equal values, the lower index wins.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn an_arg_max_tie_keeps_the_lower_index() {
+        assert_eq!(
+            ReduceOperation::ArgMax.reference_cells(&[1.0, 3.0, 3.0]),
+            vec![1.0]
+        );
+    }
+
+    /// A top-k keeps its `k` largest values, largest first.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_top_k_keeps_the_largest_first() {
+        assert_eq!(
+            ReduceOperation::TopK { k: 2 }.reference_cells(&[1.0, 4.0, 2.0, 3.0]),
+            vec![4.0, 3.0]
+        );
+    }
+
+    /// Past a row shorter than `k`, a top-k writes the lowest `f32`.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_top_k_past_a_short_row_writes_the_lowest_value() {
+        assert_eq!(
+            ReduceOperation::TopK { k: 3 }.reference_cells(&[2.0]),
+            vec![2.0, f32::MIN, f32::MIN]
+        );
+    }
+
+    /// Past a row shorter than `k`, an arg top-k writes `u32::MAX`.
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn an_arg_top_k_past_a_short_row_writes_the_largest_index() {
+        assert_eq!(
+            ReduceOperation::ArgTopK { k: 2 }.reference_cells(&[2.0]),
+            vec![0.0, u32::MAX as f32]
+        );
+    }
+
+    /// A max of an empty row has no value to keep: its documented panic.
+    #[test]
+    #[should_panic]
+    #[cfg(feature = "cpu-reference")]
+    fn a_max_of_an_empty_row_panics() {
+        ReduceOperation::Max.reference_cells(&[]);
     }
 }

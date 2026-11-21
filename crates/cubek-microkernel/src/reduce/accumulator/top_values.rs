@@ -1,6 +1,6 @@
 //! The `K` best values without their indices: a top-k that writes only its values.
 
-use crate::reduce::{ReduceAccumulator, ReduceOperation, ReduceWrites};
+use crate::reduce::{ReduceAccumulator, ReduceOperation, ReduceWrites, stage_slot};
 use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, Tile, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -16,9 +16,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         acc.insert(line, monoid);
     }
 
-    /// Only the first plane, which holds the cube's first unit, merges the planes' lists, and
-    /// its loop over them stays a loop: only each value's walk unrolls
-    /// ([`TOP_K_UNROLL_BUDGET`]).
+    /// As [`TopK`](cubecl::tile::TopK)'s, the lists holding values alone.
     fn across_planes(
         acc: Self,
         column: usize,
@@ -30,7 +28,11 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         let k = K::value();
         let mut values = Shared::<[Vector<Acc, N>]>::new_slice(comptime!(planes * columns * k));
         if stages {
-            stage_plane_list::<Acc, N, K>(&mut values, PLANE_POS as usize * columns + column, acc);
+            stage_plane_list::<Acc, N, K>(
+                &mut values,
+                stage_slot(PLANE_POS as usize, column, columns),
+                acc,
+            );
         }
 
         sync_cube();
@@ -66,8 +68,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc
         TopValues::<Acc, N, K>::new(kept_values)
     }
 
-    /// Where the lanes hold one row, every lane's list is inserted into one one-lane list; one
-    /// lane already holds the row's list, best first, and writes it as it is.
+    /// As [`TopK`](cubecl::tile::TopK)'s, writing the values alone.
     fn write<Out: Numeric, Idx: Numeric>(
         acc: Self,
         out: &mut Tile,
@@ -132,7 +133,7 @@ fn insert_plane_lists<Acc: Numeric, N: Size, K: Size>(
 ) {
     let k = K::value();
     for plane in 0..planes {
-        let list = (plane * columns + column) * k;
+        let list = stage_slot(plane, column, columns) * k;
         for slot in 0..k {
             total.insert(values[list + slot], monoid);
         }

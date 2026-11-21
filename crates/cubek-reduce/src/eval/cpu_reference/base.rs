@@ -11,7 +11,6 @@ use cubek_test_utils::{
 
 use crate::ReduceOperation;
 use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
-use cubek_microkernel::reduce::ReduceWrites;
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
 /// build their input from this alone, so the two see the same values.
@@ -32,7 +31,7 @@ pub enum ReduceValues {
     Ramp,
 }
 
-/// The range a uniform input is drawn from.
+/// The range a checked input is drawn from.
 const UNIFORM_LOW: f32 = -1.0;
 const UNIFORM_HIGH: f32 = 1.0;
 
@@ -52,7 +51,9 @@ impl ReduceInput {
             values: ReduceValues::Uniform(seed),
         }
     }
+}
 
+impl ReduceInput {
     fn tensor(&self, client: Client, shape: Vec<usize>) -> TestInput {
         let builder = TestInput::builder(client, shape.clone()).dtype(self.dtype);
         match self.values {
@@ -100,8 +101,8 @@ pub fn comparison_epsilon(operation: ReduceOperation) -> f32 {
 ///
 /// # Panics
 ///
-/// Where `input` is a ramp whose shape holds a count of values that is not a power of two at
-/// most [`RAMP_MAX_ELEMS`].
+/// Where `axis` is not an axis of `shape`, or `input` is a ramp whose shape holds a count of
+/// values that is not a power of two at most [`RAMP_MAX_ELEMS`].
 pub fn strategy_result(
     client: Client,
     shape: Vec<usize>,
@@ -255,6 +256,10 @@ pub fn cpu_reference_result(
 
 /// Number of progress bumps the reduce reference will produce: one per output
 /// cell.
+///
+/// # Panics
+///
+/// Where `axis` is not an axis of `shape`.
 pub fn cpu_reference_total(shape: &[usize], axis: usize, operation: ReduceOperation) -> u64 {
     let out_shape = output_shape_for(shape, axis, operation);
     out_shape.iter().product::<usize>() as u64
@@ -297,8 +302,11 @@ pub fn contiguous_strides(shape: &[usize]) -> Strides {
 }
 
 /// What `operation` writes for every row of `input` along `axis`, laid as its output is: each
-/// row's [`ReduceOperation::reference_cells`] along `axis`, and past a row shorter than `k` the
-/// lowest `f32` for a value, `u32::MAX` for an index.
+/// row's [`ReduceOperation::reference_cells`] along `axis`.
+///
+/// # Panics
+///
+/// Where `axis` is not an axis of `input`, or as [`ReduceOperation::reference_cells`] does.
 pub fn reference(
     input: &HostData,
     axis: usize,
@@ -309,7 +317,8 @@ pub fn reference(
     let out_strides = contiguous_strides(&out_shape);
     let mut rows_shape = out_shape.clone();
     rows_shape[axis] = 1;
-    let mut data = vec![padding(operation); out_shape.iter().product()];
+    // Every cell is written: a row writes each of its cells.
+    let mut data = vec![0.0; out_shape.iter().product()];
     for_each_coord(&rows_shape, |row_coord| {
         let row: Vec<f32> = row_along(input, axis, row_coord).collect();
         let first: usize = row_coord
@@ -326,15 +335,6 @@ pub fn reference(
         data: HostDataVec::F32(data),
         shape: Shape::from(out_shape),
         strides: out_strides,
-    }
-}
-
-/// What a cell past a row shorter than `k` holds: the lowest `f32` for a value, `u32::MAX` for an
-/// index.
-fn padding(operation: ReduceOperation) -> f32 {
-    match operation.writes() {
-        ReduceWrites::Indices => u32::MAX as f32,
-        ReduceWrites::Values | ReduceWrites::Both => f32::MIN,
     }
 }
 
@@ -375,12 +375,19 @@ fn row_along<'a>(
 mod tests {
     use super::*;
 
-    /// A ramp holds each of its steps once, every value in `[-1, 1)`.
+    /// Every value of a ramp lies in `[-1, 1)`.
+    #[test]
+    fn a_ramp_lies_within_its_range() {
+        const ELEMS: usize = 64;
+        let ramp = ramp_of_len(ELEMS);
+        assert!(ramp.iter().all(|value| (-1.0..1.0).contains(value)));
+    }
+
+    /// A ramp holds each of its steps once.
     #[test]
     fn a_ramp_is_a_permutation_of_its_steps() {
         const ELEMS: usize = 64;
         let mut ramp = ramp_of_len(ELEMS);
-        assert!(ramp.iter().all(|value| (-1.0..1.0).contains(value)));
         ramp.sort_by(f32::total_cmp);
         ramp.dedup();
         assert_eq!(ramp.len(), ELEMS);

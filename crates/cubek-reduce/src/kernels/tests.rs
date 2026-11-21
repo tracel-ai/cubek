@@ -5,9 +5,9 @@
 use crate::eval::cpu_reference;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceLauncher,
-    ReduceOpStrategy, ReduceTensors, UnitDirectReduceRoutine, launch_kernel, launch_tuned,
-    launch_zeroed_atomic_unbound, select,
+    PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceKey,
+    ReduceLauncher, ReduceOpStrategy, ReduceTensors, UnitDirectReduceRoutine,
+    UnitDirectZeroReduceRoutine, launch_kernel, launch_tuned, launch_zeroed_atomic_unbound, select,
 };
 use cubecl::client::Client;
 use cubecl::ir::features::AtomicUsage;
@@ -91,7 +91,7 @@ impl TestedRoutine {
 #[derive(Debug, Clone)]
 struct Reduction {
     routine: TestedRoutine,
-    /// The input's extent along each axis, read by axis (Position Usage).
+    /// The tested input's extent along each axis, read by axis (Position Usage).
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,
@@ -265,7 +265,8 @@ fn launch_unbound<R: ReduceLauncher<M>, M>(
     let tensors = unbound_tensors::<R, M>(client, &input, out, reduction)?;
     let hw = Hardware::from_client(client);
     let (blueprint, grid) = R::prepare_first_served(&hw, tensors.problem())?;
-    R::launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input))
+    R::launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input));
+    Ok(())
 }
 
 /// The atomic hypercube launched unbound as [`launch_unbound`] launches a routine, into `out`
@@ -391,6 +392,36 @@ fn indices_beside_a_sum_panic() {
 #[should_panic]
 fn indices_of_another_shape_panic() {
     tensors_with_indices(ReduceOperation::ArgMax, &[1, 4]);
+}
+
+/// A call whose input the caller binds keys as the call binding that input: a fused reduction
+/// finds the candidate its unfused round settled.
+#[test]
+fn an_unbound_call_keys_as_its_bound_call() {
+    let client = cubecl::test_device().client();
+    let reduction = Reduction {
+        routine: TestedRoutine::UnitDirect,
+        shape: vec![8, 300],
+        axis: 1,
+        operation: ReduceOperation::Sum,
+    };
+    let (input, out) = (zeros(&client, &[8, 300]), zeros(&client, &[8, 1]));
+    let elements = ReduceElements {
+        input: F32,
+        accumulator: F32,
+        out: F32,
+    };
+    let bound = ReduceTensors::new(
+        &client,
+        input.clone(),
+        out.clone(),
+        1,
+        ReduceOperation::Sum,
+        elements,
+    );
+    let unbound = unbound_tensors::<UnitDirectReduceRoutine, _>(&client, &input, out, &reduction)
+        .expect("the unit routine serves every problem");
+    assert_eq!(ReduceKey::from(&unbound), ReduceKey::from(&bound));
 }
 
 /// `reduction` launched once and checked against the reduce reference; a routine that declines it
@@ -695,6 +726,67 @@ mod hypercube_atomic {
     }
 }
 
+/// The zero routine alone: a reduction's output, which starts away from zero, holds only zeros
+/// after it. What the atomic hypercube adds its parts into.
+struct ZeroScopeUnderTest;
+
+impl ScopeUnderTest for ZeroScopeUnderTest {
+    type Case = Reduction;
+
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
+        let out_shape = reduction.out_shape();
+        let out = TestInput::builder(client.clone(), Shape::from(out_shape.clone()))
+            .dtype(F32)
+            .custom(vec![-7.0; out_shape.iter().product()])
+            .generate_without_host_data();
+        let tensors = ReduceTensors::new(
+            client,
+            zeros(client, &reduction.shape),
+            out.clone().binding(),
+            reduction.axis,
+            reduction.operation,
+            ReduceElements {
+                input: F32,
+                accumulator: F32,
+                out: F32,
+            },
+        );
+        let hw = Hardware::from_client(client);
+        let (blueprint, grid) =
+            UnitDirectZeroReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
+        UnitDirectZeroReduceRoutine::launch(&tensors, blueprint, grid);
+        Ok(vec![Written {
+            name: "output",
+            tensor: out,
+            host: HostDataType::F32,
+        }])
+    }
+
+    /// Zeros, the output's shape.
+    fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
+        let out_shape = reduction.out_shape();
+        vec![HostData::row_major(
+            HostDataVec::F32(vec![0.0; out_shape.iter().product()]),
+            Shape::from(out_shape),
+        )]
+    }
+
+    fn tolerance(&self, _reduction: &Reduction) -> f32 {
+        0.0
+    }
+}
+
+/// The output of `[5, 300, 7]` summed along its middle dim, 35 cells, all zeroed.
+#[test]
+fn the_zero_routine_zeroes_every_cell_of_the_output() {
+    ZeroScopeUnderTest.check([Reduction {
+        routine: TestedRoutine::Picked(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic)),
+        shape: vec![5, 300, 7],
+        axis: 1,
+        operation: ReduceOperation::Sum,
+    }]);
+}
+
 /// Every strategy reduces like the CPU wherever it sends a problem: many short rows, one long row,
 /// and rows across the contiguous dim, at extents that are not powers of two. A kernel the device
 /// does not run, or that declines the problem, is skipped.
@@ -769,10 +861,5 @@ mod strategy {
         strategy_reduces_each_problem!(ReduceOpStrategy::Specific(
             ReduceKernel::HypercubeLastArrival
         ));
-    }
-
-    /// The atomic hypercube, pinned: it serves sums alone and declines the rest.
-    mod hypercube_atomic {
-        strategy_reduces_each_problem!(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic));
     }
 }

@@ -195,7 +195,7 @@ pub(crate) fn launch_zeroed_atomic(
 ///
 /// # Errors
 ///
-/// Why the zeroing cannot run the problem here, or why the routine cannot read the caller's input.
+/// Why the zeroing cannot run the problem here.
 pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
     hw: &Hardware,
     tensors: &ReduceTensors<Geometry>,
@@ -206,7 +206,8 @@ pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) = prepared;
     UnitDirectZeroReduceRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
-    HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input)
+    HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input);
+    Ok(())
 }
 
 /// `tensors` reduced by `R` at the first of its settings `hw` prepares them at.
@@ -223,33 +224,49 @@ fn launch_first_served<R: ReduceLauncher<M>, M>(
 mod tests {
     use super::*;
 
-    /// Every strategy: the autotune first, then each policy, then each kernel pinned.
+    /// The autotune is the first strategy.
     #[test]
-    fn every_strategy_lists_the_policies_before_the_pins() {
-        let all = ReduceOpStrategy::all();
-        assert_eq!(all[0], ReduceOpStrategy::Autotune);
-        let policies = all
+    fn the_autotune_comes_first() {
+        assert_eq!(ReduceOpStrategy::all()[0], ReduceOpStrategy::Autotune);
+    }
+
+    /// The policies, the autotune and each heuristic, come before the pins.
+    #[test]
+    fn the_policies_come_before_the_pins() {
+        let policies = ReduceOpStrategy::all()
             .iter()
             .take_while(|strategy| strategy.is_policy())
             .count();
         assert_eq!(policies, 1 + ReduceKernelHeuristic::all().len());
-        assert_eq!(all.len(), policies + ReduceKernel::all().len());
     }
 
-    /// Every name is kebab case and names one strategy.
+    /// Every kernel is pinned once.
     #[test]
-    fn every_name_is_kebab_case_and_its_own() {
-        let names: Vec<&str> = ReduceOpStrategy::all()
-            .iter()
-            .map(ReduceOpStrategy::name)
-            .collect();
-        for name in &names {
-            assert!(
-                name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
-                "{name}"
-            );
-        }
-        let distinct: std::collections::HashSet<&&str> = names.iter().collect();
-        assert_eq!(distinct.len(), names.len());
+    fn every_kernel_is_pinned() {
+        let pins = ReduceOpStrategy::all()
+            .into_iter()
+            .filter(|strategy| !strategy.is_policy())
+            .count();
+        assert_eq!(pins, ReduceKernel::all().len());
+    }
+
+    /// Every name is kebab case.
+    #[test]
+    fn every_name_is_kebab_case() {
+        let kebab = |name: &str| name.chars().all(|c| c.is_ascii_lowercase() || c == '-');
+        assert!(
+            ReduceOpStrategy::all()
+                .iter()
+                .all(|strategy| kebab(strategy.name()))
+        );
+    }
+
+    /// Every name names one strategy.
+    #[test]
+    fn every_name_is_its_own() {
+        let all = ReduceOpStrategy::all();
+        let distinct: std::collections::HashSet<&str> =
+            all.iter().map(ReduceOpStrategy::name).collect();
+        assert_eq!(distinct.len(), all.len());
     }
 }
