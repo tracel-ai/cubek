@@ -132,7 +132,8 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// The settings a product against a packed input races on `hw`: the lead, the boxes several
-    /// steps tall the float routine races, one stage at a time and with a second in flight, each
+    /// steps tall the float routine races, one stage at a time, with a second in flight, and one
+    /// stage with the next held in registers while it is contracted, each
     /// at every count of steps of `K` a stage holds ([`PACKED_STAGE_STEPS`](Self::PACKED_STAGE_STEPS)),
     /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
     /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
@@ -147,14 +148,17 @@ impl CubeStagedMatmulRoutine {
     /// A step of `K` is planned on the inputs' finest reads, one scale block where scales are
     /// bytes ([`CubeStagedMicrokernel::planned`](cubek_microkernel::matmul::cube::CubeStagedMicrokernel::planned)).
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
-        let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
-            .into_iter()
-            .flat_map(|ring| {
-                Self::PACKED_BOXES.map(|(steps, planes)| {
-                    CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
-                })
-            })
-            .flat_map(|settings| Self::PACKED_STAGE_STEPS.map(|steps| settings.stage_steps(steps)));
+        let boxed = [
+            StageRing::SINGLE,
+            StageRing::DOUBLE,
+            StageRing::SINGLE_THROUGH_REGISTERS,
+        ]
+        .into_iter()
+        .flat_map(|ring| {
+            Self::PACKED_BOXES
+                .map(|(steps, planes)| CubeStagedMicrokernelSettings::in_steps(steps, planes, ring))
+        })
+        .flat_map(|settings| Self::PACKED_STAGE_STEPS.map(|steps| settings.stage_steps(steps)));
         let one_step = self
             .packed_one_step_settings()
             .into_iter()

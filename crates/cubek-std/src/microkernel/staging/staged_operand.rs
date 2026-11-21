@@ -21,9 +21,12 @@ pub struct StagedOperand {
 pub enum StageFill {
     /// Copies it as it is bound, at its own width.
     AsStored,
-    /// Converts it: rounds tf32, decodes e2m1 or decodes a packed input. The register prefetch
-    /// reads a plain source at its own width and does not carry that.
+    /// Converts it: rounds tf32 or decodes e2m1 stored as its own element. The register prefetch
+    /// does not carry that.
     Converted,
+    /// Decodes a packed input under its scales, which the register prefetch carries: it holds the
+    /// packed loads and their scales across a contraction and decodes them into the stage after.
+    Decoded,
 }
 
 impl StagedOperand {
@@ -44,7 +47,16 @@ impl StagedOperand {
         }
     }
 
-    /// This operand with a fill that converts it, as a fill decoding a packed input does.
+    /// This operand with a fill that decodes it, as a fill decoding a packed input does.
+    pub fn decoded_by_fill(self) -> Self {
+        Self {
+            fill: StageFill::Decoded,
+            ..self
+        }
+    }
+
+    /// This operand with a fill that converts it, as one rounding it to tf32 or reading it at
+    /// another element does.
     pub fn converted_by_fill(self) -> Self {
         Self {
             fill: StageFill::Converted,

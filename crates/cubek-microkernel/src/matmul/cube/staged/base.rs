@@ -421,7 +421,10 @@ impl CubeStagedMicrokernel {
         let stage = &self.stage(cube_space);
         let plane_width = self.plane.instruction.units(hw)?;
         let units = self.contracting_planes() * plane_width as usize;
-        let operands = stage.operands(item.elements, self.plane.orders, self.walk().reads);
+        let packed = item.blocks.map_or(MatmulOperands::all(false), |blocks| {
+            blocks.packings.map(|_, packing| packing.is_some())
+        });
+        let operands = stage.operands(item.elements, self.plane.orders, self.walk().reads, packed);
         let ring = self.ring.resolve(hw, &operands, units);
         let instruction = self.plane.instruction;
         let merges = self.drain() == CubeStagedDrain::Merged;

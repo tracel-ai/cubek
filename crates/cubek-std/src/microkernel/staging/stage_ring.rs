@@ -79,7 +79,9 @@ impl StageRing {
     /// every width it could bind at: the powers of two up to the widest line `hw` reads.
     ///
     /// An operand whose fill converts it ([`StageFill::Converted`]) is not carried by the register
-    /// prefetch, which reads a plain source at its own width: its ring prefetches into its slots.
+    /// prefetch: its ring prefetches into its slots. One whose fill decodes a packed input
+    /// ([`StageFill::Decoded`]) is, counted at the element it is decoded into, more than the
+    /// packed words and scales the tile DSL holds of it.
     ///
     /// The tile DSL holds one stage ahead in registers, so a ring of more than two stages would
     /// leave the slots past the second idle; and it holds at most [`Prefetch::fits`] scalars a unit
@@ -147,10 +149,27 @@ mod tests {
     #[test]
     fn an_operand_converted_by_its_fill_prefetches_into_its_slots() {
         let [lhs, rhs] = small_stage();
-        let converted = [lhs.converted_by_fill(), rhs];
+        let converted = [
+            StagedOperand {
+                fill: StageFill::Converted,
+                ..lhs
+            },
+            rhs,
+        ];
         assert_eq!(
             StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &converted, 128),
             StageRing::DOUBLE
+        );
+    }
+
+    /// The register prefetch carries an operand its fill decodes, so its ring keeps the registers.
+    #[test]
+    fn an_operand_decoded_by_its_fill_prefetches_in_registers() {
+        let [lhs, rhs] = small_stage();
+        let decoded = [lhs, rhs.decoded_by_fill()];
+        assert_eq!(
+            StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &decoded, 128),
+            StageRing::DOUBLE_THROUGH_REGISTERS
         );
     }
 
