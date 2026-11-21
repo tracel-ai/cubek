@@ -775,7 +775,9 @@ impl PackedTensor {
                 .gathered(Self::over_whole_matrix(&words_dimensions, tiled_along))
         });
         match scales {
-            // Each scale read alone, as `bind` binds it, beside the words the engine lands.
+            // Each scale read alone, as `bind` binds it, beside the words the engine lands. The
+            // units load them as they lie: a scale is one byte, under the four the copy engine
+            // moves at least.
             BlockScales::Fields if self.packing().reads_scales_alone() => {
                 let scales_dimensions = tile_order::scales_dimensions(across);
                 let block_scales = self
@@ -787,7 +789,7 @@ impl PackedTensor {
                         blocks_dimension,
                         &scales_dimensions,
                     )
-                    .delivery(Delivery::AsyncPerUnit)
+                    .delivery(Delivery::SyncPerUnit)
                     .build()
                     .expect(ADMITTED_PLAN_RUNS)
                     .arg();
