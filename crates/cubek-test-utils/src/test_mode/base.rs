@@ -1,7 +1,7 @@
 //! Test-mode policy.
 //!
 //! Reads `cubek.toml` (see `crate::config`) once and decides whether each
-//! test outcome should `Accept` or `Reject`. The TOML's `[test] policy`
+//! test outcome should `Accept`, `Skip` or `Reject`. The TOML's `[test] policy`
 //! field controls the pass/fail logic; the `[print]` section drives what
 //! gets dumped to stdout (in `correctness::render`).
 
@@ -29,15 +29,12 @@ pub fn decide(outcome: TestOutcome) -> TestDecision {
                 }
                 Fail(reason) => Reject(reason),
                 Error(reason) => Reject(reason),
-                Skipped(_) => Accept,
+                Skipped(reason) => Skip(reason),
             },
-            CompileError(reason) => {
-                if print_force_fail {
-                    Reject(reason)
-                } else {
-                    Accept
-                }
-            }
+            CompileError(reason) => match print_force_fail {
+                true => Reject(reason),
+                false => Skip(reason),
+            },
         },
         TestPolicy::Strict => match outcome {
             Validated(result) => match result {

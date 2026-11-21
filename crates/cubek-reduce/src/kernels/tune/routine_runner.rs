@@ -48,28 +48,34 @@ impl<R, M> ReduceRoutineRunner<R>
 where
     R: ReduceLauncher<M> + Routine<Microkernel = M>,
 {
-    /// `tensors` reduced at this candidate's setting.
-    pub(super) fn run(&self, tensors: ReduceTensors) -> Result<(), String> {
-        let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)
-            .map_err(|decline| decline.to_string())?;
-        R::launch(&tensors, blueprint, grid);
-        Ok(())
-    }
-
     /// `tensors`, whose input the caller binds, reduced at this candidate's setting
     /// ([`ReduceLauncher::launch_unbound`]).
     ///
     /// # Errors
     ///
-    /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
-    /// input.
+    /// Why the routine cannot run the problem at its setting, its reading the caller's input
+    /// included.
     pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Decline> {
         let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)?;
-        R::launch_unbound::<I>(tensors, blueprint, grid, input)
+        R::launch_unbound::<I>(tensors, blueprint, grid, input);
+        Ok(())
+    }
+}
+
+impl<R, M> ReduceRoutineRunner<R>
+where
+    R: ReduceLauncher<M> + Routine<Microkernel = M>,
+{
+    /// `tensors` reduced at this candidate's setting.
+    pub(super) fn run(&self, tensors: ReduceTensors) -> Result<(), String> {
+        let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)
+            .map_err(|decline| decline.to_string())?;
+        R::launch(&tensors, blueprint, grid);
+        Ok(())
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the

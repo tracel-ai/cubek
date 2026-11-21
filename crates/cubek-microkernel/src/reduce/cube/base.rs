@@ -64,7 +64,7 @@ impl CubeStagedReduceMicrokernel {
 
     /// The levels below its cube from `owner`, the box of rows one line wide a row's window
     /// holds: the box, read flat by all of the cube's units, or
-    /// [`lines_across`](Self::lines_across) of them side by side, each plane's units dealt
+    /// [`lines_across`](Self::lines_across) of them side by side, each plane's units laid
     /// across them and in turns along the reduced dimension, the planes after one another along
     /// it, every step of which the cube walks.
     pub fn levels(&self, owner: &[(Dimension, usize)]) -> Levels {
@@ -77,7 +77,7 @@ impl CubeStagedReduceMicrokernel {
     }
 
     /// The units its levels make a plane of the launch: the whole cube where they state no
-    /// plane, its planes' lanes where they deal the units to its planes.
+    /// plane, its planes' lanes where they split the units into planes.
     pub fn launch_plane_width(&self) -> usize {
         match self.lines_across {
             1 => self.units(),
@@ -102,7 +102,11 @@ impl CubeStagedReduceMicrokernel {
         self.lanes * self.planes
     }
 
-    /// The widest line its carrier keeps apart at its lane slots, where the carrier bounds it.
+    /// As the unit microkernel's [`widest_line`](crate::reduce::unit::UnitDirectReduceMicrokernel::widest_line), at this one's lane slots.
+    ///
+    /// # Panics
+    ///
+    /// As the unit microkernel's.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
@@ -276,48 +280,70 @@ mod tests {
         ReduceWorkItem::along_f32(ReduceOperation::ArgMax)
     }
 
-    /// The unit runs everywhere; the plane and the cube only where the device commits to a plane
-    /// width, and decline with their reason where it does not.
-    #[test]
-    fn the_plane_and_the_cube_need_a_width_the_device_commits_to() {
-        for hw in [
-            devices::strix_halo(),
-            devices::m2_pro(),
-            devices::h100(),
-            devices::wgpu_no_subgroups(),
-            devices::rdna_range(),
-        ] {
-            let commits = hw.plane_dim().is_ok();
-            assert!(
-                UnitDirectReduceMicrokernel::best(
-                    &hw,
-                    &item(),
-                    &UnitDirectReduceMicrokernelSettings {
-                        lane_slots: TOP_K_LANE_SLOTS[0],
-                    }
-                )
-                .is_ok()
-            );
-            assert_eq!(
-                PlaneShuffleReduceMicrokernel::best(
-                    &hw,
-                    &item(),
-                    &PlaneShuffleReduceMicrokernelSettings {
-                        lane_slots: TOP_K_LANE_SLOTS[0],
-                    }
-                )
-                .is_ok(),
-                commits,
-                "{hw:?}"
-            );
-            for settings in CubeStagedReduceMicrokernel::settings(&hw) {
-                let cube = CubeStagedReduceMicrokernel::best(&hw, &item(), &settings);
-                assert_eq!(cube.is_ok(), commits, "{settings} on {hw:?}");
-                if let Ok(cube) = cube {
-                    assert_eq!(cube.lanes as u32, hw.plane_dim().unwrap());
-                }
-            }
+    /// The unit microkernel's first setting.
+    fn unit_settings() -> UnitDirectReduceMicrokernelSettings {
+        UnitDirectReduceMicrokernelSettings {
+            lane_slots: TOP_K_LANE_SLOTS[0],
         }
+    }
+
+    /// The plane microkernel's first setting.
+    fn plane_settings() -> PlaneShuffleReduceMicrokernelSettings {
+        PlaneShuffleReduceMicrokernelSettings {
+            lane_slots: TOP_K_LANE_SLOTS[0],
+        }
+    }
+
+    /// The cube microkernel's first setting.
+    fn cube_settings() -> CubeStagedReduceMicrokernelSettings {
+        CubeStagedReduceMicrokernelSettings {
+            planes: CubeStagedReduceMicrokernelSettings::PLANES[0],
+            lane_slots: TOP_K_LANE_SLOTS[0],
+        }
+    }
+
+    /// The unit runs on a device without planes.
+    #[test]
+    fn the_unit_runs_without_planes() {
+        let hw = devices::wgpu_no_subgroups();
+        assert!(UnitDirectReduceMicrokernel::best(&hw, &item(), &unit_settings()).is_ok());
+    }
+
+    /// The plane declines on a device without planes.
+    #[test]
+    fn the_plane_declines_without_planes() {
+        let hw = devices::wgpu_no_subgroups();
+        assert!(PlaneShuffleReduceMicrokernel::best(&hw, &item(), &plane_settings()).is_err());
+    }
+
+    /// The plane declines on a device whose plane width is a range it does not commit to.
+    #[test]
+    fn the_plane_declines_on_a_range_of_plane_widths() {
+        let hw = devices::rdna_range();
+        assert!(PlaneShuffleReduceMicrokernel::best(&hw, &item(), &plane_settings()).is_err());
+    }
+
+    /// The plane runs on a device that commits to a plane width.
+    #[test]
+    fn the_plane_runs_on_a_committed_plane_width() {
+        let hw = devices::h100();
+        assert!(PlaneShuffleReduceMicrokernel::best(&hw, &item(), &plane_settings()).is_ok());
+    }
+
+    /// The cube declines on a device whose plane width is a range it does not commit to.
+    #[test]
+    fn the_cube_declines_on_a_range_of_plane_widths() {
+        let hw = devices::rdna_range();
+        assert!(CubeStagedReduceMicrokernel::best(&hw, &item(), &cube_settings()).is_err());
+    }
+
+    /// The cube's lanes are the width its device commits to.
+    #[test]
+    fn the_cubes_lanes_are_the_committed_plane_width() {
+        let hw = devices::m2_pro();
+        let cube = CubeStagedReduceMicrokernel::best(&hw, &item(), &cube_settings())
+            .expect("an M2 Pro commits to a plane width");
+        assert_eq!(Some(cube.lanes as u32), hw.plane_dim().ok());
     }
 
     /// A cube of more planes than the device holds declines.
@@ -332,7 +358,18 @@ mod tests {
         assert!(CubeStagedReduceMicrokernel::best(&hw, &item(), &settings).is_err());
     }
 
-    /// A cube's units are its planes' lanes, and its shared memory a carrier's slot a plane.
+    /// A cube's units are its planes' lanes.
+    #[test]
+    fn a_cubes_units_are_its_planes_lanes() {
+        const LANES: usize = 32;
+        const PLANES: usize = 4;
+        const LANE_SLOTS: usize = 32;
+        let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
+        let cube = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        assert_eq!(cube.units(), LANES * PLANES);
+    }
+
+    /// A cube's shared memory is a carrier's slot a plane.
     #[test]
     fn a_cube_holds_a_slot_a_plane() {
         const LANES: usize = 32;
@@ -341,7 +378,6 @@ mod tests {
         const WIDTH: usize = 4;
         let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
         let cube = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
-        assert_eq!(cube.units(), LANES * PLANES);
         let slot = item
             .operation
             .carrier()
@@ -349,7 +385,7 @@ mod tests {
         assert_eq!(cube.shared_memory_bytes_at_width(WIDTH), PLANES * slot);
     }
 
-    /// Its settings are each plane count with each lane-slot count, the planes outermost.
+    /// Its settings are each plane count with each lane-slot count.
     #[test]
     fn its_settings_cross_planes_with_lane_slots() {
         let settings = CubeStagedReduceMicrokernel::settings(&devices::m2_pro());
@@ -357,6 +393,12 @@ mod tests {
             settings.len(),
             CubeStagedReduceMicrokernelSettings::PLANES.len() * TOP_K_LANE_SLOTS.len()
         );
+    }
+
+    /// Its first setting is its first plane count.
+    #[test]
+    fn its_first_setting_is_its_first_plane_count() {
+        let settings = CubeStagedReduceMicrokernel::settings(&devices::m2_pro());
         assert_eq!(
             settings[0].planes,
             CubeStagedReduceMicrokernelSettings::PLANES[0]
