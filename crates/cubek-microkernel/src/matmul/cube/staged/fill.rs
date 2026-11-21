@@ -94,6 +94,10 @@ pub enum CubeStagedTmaDecline {
     /// the rows of scales a stage holds; a stage deeper than one tile would land them a tile
     /// after another, each row's words apart.
     ScalesDeeperThanATile(MatmulOperand),
+    /// An input's block scales are read one at a time, its stage's window holding part of a word
+    /// of them. The engine lands the values, and the stage keeps their scales beside them through
+    /// the copy engine, a scale a line: one byte, under the four the copy engine moves at least.
+    ScalesReadAlone(MatmulOperand),
 }
 
 /// Why a cube microkernel cannot set planes aside to only fill its stages.
@@ -312,6 +316,13 @@ impl CubeStagedTmaDecline {
             .find(|&operand| scales_deeper_than_a_tile(operand))
         {
             Some(Self::ScalesDeeperThanATile(operand))
+        } else if let Some(operand) = MatmulOperand::INPUTS.into_iter().find(|&operand| {
+            blocks
+                .packings
+                .get(operand)
+                .is_some_and(|packing| packing.reads_scales_alone())
+        }) {
+            Some(Self::ScalesReadAlone(operand))
         } else if [&lhs, &rhs]
             .into_iter()
             .any(|space| Delivery::Tma.moves(space).is_err())
@@ -395,6 +406,9 @@ impl From<CubeStagedTmaDecline> for Decline {
             }
             CubeStagedTmaDecline::TileRowsUnderSwizzle(_) => {
                 "a stage is deeper than one of an input's tiles whose rows are shorter than the stage's swizzle, which the engine pads"
+            }
+            CubeStagedTmaDecline::ScalesReadAlone(_) => {
+                "an input's block scales are read one at a time, and the copy engine that keeps them beside the landed values moves no line under four bytes"
             }
             CubeStagedTmaDecline::ScalesDeeperThanATile(_) => {
                 "a stage is deeper than one of an input's tiles, and its block scales lie in tiles a box lands one tile deep"
