@@ -134,7 +134,7 @@ fn hypercube_last_arrival_reduce<
     let monoid = item.operation.monoid();
     // A partial is its carrier's lines, a slot's apart, the indices beside where it keeps any.
     let slots = item.operation.written_per_row();
-    let with_indices = comptime!(item.operation.carrier().carries_indices());
+    let with_indices = item.operation.carrier().carries_indices();
     let unrolled = comptime!(slots <= TOP_K_UNROLL_BUDGET);
 
     // Past the row's end the input reads the identity of the operation's edge monoid, which
@@ -154,16 +154,13 @@ fn hypercube_last_arrival_reduce<
         for slot in 0..slots {
             value_lines.write(part * slots + slot, C::value_line(&total, slot));
         }
-        match with_indices {
-            true => {
-                let mut index_tile = partial_indices.clone().unwrap();
-                let mut index_lines = index_tile.flat_mut::<u32, N>();
-                #[unroll(unrolled)]
-                for slot in 0..slots {
-                    index_lines.write(part * slots + slot, C::index_line(&total, slot));
-                }
+        if with_indices {
+            let mut index_tile = partial_indices.clone().unwrap();
+            let mut index_lines = index_tile.flat_mut::<u32, N>();
+            #[unroll(unrolled)]
+            for slot in 0..slots {
+                index_lines.write(part * slots + slot, C::index_line(&total, slot));
             }
-            false => {}
         }
     }
 
