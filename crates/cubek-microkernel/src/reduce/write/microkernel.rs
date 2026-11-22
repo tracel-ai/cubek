@@ -23,7 +23,7 @@ pub(crate) fn unit_carrier_write_microkernel<
 ) {
     let operation = microkernel.item().operation;
     let writes = microkernel.item().writes();
-    let one_row = comptime!(microkernel.row_lanes() > 1);
+    let one_row = microkernel.row_lanes() > 1;
     comptime!(assert!(
         writes == ReduceWrites::Values || operation.carrier().carries_indices(),
         "UnitCarrierWriteMicrokernel: {operation:?} keeps no index to write"

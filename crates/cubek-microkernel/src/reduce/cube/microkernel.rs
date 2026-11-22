@@ -195,7 +195,7 @@ fn across_planes<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
 ) -> C {
     let operation = microkernel.item().operation;
     // A partial is its carrier's lines, a slot each, the indices beside where it keeps any.
-    let lines = comptime!(microkernel.planes() * columns * operation.written_per_row());
+    let lines = microkernel.planes() * columns * operation.written_per_row();
     let index_lines = comptime!(match operation.carrier().carries_indices() {
         true => lines,
         false => 1,
@@ -231,7 +231,7 @@ fn stage_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
 ) {
     let operation = microkernel.item().operation;
     let slots = operation.written_per_row();
-    let with_indices = comptime!(operation.carrier().carries_indices());
+    let with_indices = operation.carrier().carries_indices();
     #[unroll]
     for slot in 0..slots {
         values[partial * slots + slot] = C::value_line(&acc, slot);
@@ -271,7 +271,7 @@ fn merged_partials<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
 ) -> C {
     let operation = microkernel.item().operation;
     let monoid = operation.monoid();
-    let one_slot = comptime!(operation.written_per_row() == 1);
+    let one_slot = operation.written_per_row() == 1;
     let mut total = C::identity(monoid);
     #[unroll(one_slot)]
     for plane in 0..microkernel.planes() {
@@ -292,7 +292,7 @@ fn staged_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
 ) -> C {
     let operation = microkernel.item().operation;
     let slots = operation.written_per_row();
-    let with_indices = comptime!(operation.carrier().carries_indices());
+    let with_indices = operation.carrier().carries_indices();
     let mut staged = C::identity(operation.monoid());
     #[unroll]
     for slot in 0..slots {

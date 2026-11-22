@@ -134,7 +134,7 @@ fn hypercube_last_arrival_reduce<
     let monoid = item.operation.monoid();
     // A partial is its carrier's lines, a slot's apart, the indices beside where it keeps any.
     let slots = item.operation.written_per_row();
-    let with_indices = comptime!(item.operation.carrier().carries_indices());
+    let with_indices = item.operation.carrier().carries_indices();
     let unrolled = comptime!(slots <= TOP_K_UNROLL_BUDGET);
 
     // Past the row's end the input reads the identity of the operation's edge monoid, which
