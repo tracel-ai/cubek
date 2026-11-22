@@ -83,15 +83,9 @@ impl SwigluTensors {
     /// On an odd last dim: no fused row of two halves.
     pub fn new(client: &Client, both: PlainTensor) -> Result<Self, Decline> {
         let input = SwigluInput::new(client, both)?;
-        let (handle, tensor) =
+        let (out, _) =
             PlainTensor::empty_contiguous(client, input.shape.clone().into(), input.fused.elem);
-        let rows = tensor.viewed(Metadata::new([input.rows, input.dim], [input.dim, 1]));
-        let placement = Placement::from(&rows);
-        Ok(input.with_out(
-            SwigluOutputBuffer { handle, rows },
-            placement,
-            RowStore::Plain,
-        ))
+        Ok(input.into_contiguous(out))
     }
 
     /// The output, in the input's shape at half its width.
@@ -114,6 +108,37 @@ impl SwigluTensors {
             input,
             out,
         }
+    }
+}
+
+impl SwigluTensors {
+    /// A contiguous output for the gate of `both`: the input's shape at half its width.
+    ///
+    /// # Panics
+    ///
+    /// On an odd last dim: no fused row of two halves.
+    pub(crate) fn allocate_out(client: &Client, both: &PlainTensor) -> TensorHandle {
+        let (handle, _) =
+            PlainTensor::empty_contiguous(client, gated_shape(both).into(), both.elem);
+        handle
+    }
+
+    /// [`SwigluTensors::new`] into `out`, a contiguous buffer the caller allocated
+    /// ([`allocate_out`](Self::allocate_out)): what an autotune's candidates all write into.
+    ///
+    /// # Errors
+    ///
+    /// As [`SwigluTensors::new`].
+    ///
+    /// # Panics
+    ///
+    /// As [`SwigluTensors::new`], and on an `out` of another shape or element than the gate's.
+    pub(crate) fn contiguous(
+        client: &Client,
+        both: PlainTensor,
+        out: TensorHandle,
+    ) -> Result<Self, Decline> {
+        Ok(SwigluInput::new(client, both)?.into_contiguous(out))
     }
 }
 
@@ -231,6 +256,22 @@ impl<Out> SwigluBinding<Out> {
 }
 
 /// The fused rows as every launch reads them, before the output is decided.
+/// The shape of the gate of `both`: its shape at half its width.
+///
+/// # Panics
+///
+/// On an odd last dim: no fused row of two halves.
+fn gated_shape(both: &PlainTensor) -> Vec<usize> {
+    let mut shape = both.binding.shape.to_vec();
+    let last = shape.last_mut().expect("a tensor has a last dimension");
+    assert!(
+        last.is_multiple_of(2),
+        "a fused gate/up row has an even width, got {last}"
+    );
+    *last /= 2;
+    shape
+}
+
 struct SwigluInput {
     client: Client,
     /// `[r, h, d]` over the dense fused rows.
@@ -255,14 +296,8 @@ impl SwigluInput {
         if !both.runs_on(client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
-        let mut shape = both.binding.shape.to_vec();
-        let last = shape.last_mut().expect("a tensor has a last dimension");
-        assert!(
-            last.is_multiple_of(2),
-            "a fused gate/up row has an even width, got {last}"
-        );
-        *last /= 2;
-        let dim = *last;
+        let shape = gated_shape(&both);
+        let dim = *shape.last().expect("a tensor has a last dimension");
         let rows = shape[..shape.len() - 1].iter().product();
         let read_bytes = Hardware::from_client(client).properties.io_width() as u64 / 8;
         let both = both.into_dense_at(client, read_bytes);
@@ -274,6 +309,31 @@ impl SwigluInput {
             rows,
             dim,
         })
+    }
+
+    /// The tensors of the gate of these rows into `out`, a contiguous buffer in the input's shape
+    /// at half its width.
+    ///
+    /// # Panics
+    ///
+    /// On an `out` of another shape or element than the gate's.
+    fn into_contiguous(self, out: TensorHandle) -> SwigluTensors {
+        assert!(
+            out.shape().iter().eq(self.shape.iter()),
+            "the output takes the input's shape at half its width"
+        );
+        assert_eq!(
+            out.dtype, self.fused.elem,
+            "the output takes the input's element"
+        );
+        let rows = PlainTensor::of_handle(out.clone())
+            .viewed(Metadata::new([self.rows, self.dim], [self.dim, 1]));
+        let placement = Placement::from(&rows);
+        self.with_out(
+            SwigluOutputBuffer { handle: out, rows },
+            placement,
+            RowStore::Plain,
+        )
     }
 
     /// The tensors of the gate of these rows into `out`, which lies at `placement` and stores its

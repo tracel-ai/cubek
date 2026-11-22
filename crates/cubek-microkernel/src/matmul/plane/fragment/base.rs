@@ -571,6 +571,28 @@ impl PlaneFragmentMicrokernel {
         Self::holding(item, settings, step, pick, step.cost(device, target)?)
     }
 
+    /// [`draining`](Self::draining), its sum's rows scaled between its products, as an online
+    /// softmax's output is ([`Instruction::for_rescaled_accumulator`]): held in the crate's own
+    /// transport where it offers the fragment API's call, it bounces nothing through a scratch.
+    pub fn rescaling(
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        settings: PlaneFragmentMicrokernelSettings,
+        step: ProductStep,
+    ) -> Option<Self> {
+        let (device, target) = (&hw.properties, &hw.target);
+        let pick = Instruction::for_rescaled_accumulator(
+            device, target, step.lhs, step.rhs, step.sum, step.shape,
+        )?;
+        Self::holding(
+            item,
+            settings,
+            step,
+            pick,
+            step.rescaled_cost(device, target)?,
+        )
+    }
+
     /// [`draining`](Self::draining), its sum kept where it lies for the next product to read as
     /// its `A` ([`Instruction::for_stage_accumulator`]): never drained, it spends nothing a drain
     /// does.

@@ -37,28 +37,6 @@ pub struct SwigluKey {
     rows: usize,
 }
 
-impl SwigluKey {
-    /// What a tuning round measures for this key: dense zero rows as many as the key's bucket
-    /// stands for, the problem the key describes ([`SwigluRoutineProblem::from`]), or the call as
-    /// it came where it holds as many.
-    fn representative(&self, call: &SwigluCall) -> SwigluCall {
-        let rows = call.both.binding.shape.iter().product::<usize>() / (2 * self.dim);
-        if self.rows <= rows {
-            return call.clone();
-        }
-        let both = PlainTensor::zeros(
-            &call.client,
-            &[self.rows, 2 * self.dim],
-            [2 * self.dim, 1],
-            call.both.elem,
-        );
-        SwigluCall {
-            client: call.client.clone(),
-            both,
-        }
-    }
-}
-
 /// The key of the gate of `both`'s fused rows: what tells it apart is their element, width and
 /// count.
 impl From<&PlainTensor> for SwigluKey {
@@ -86,6 +64,14 @@ pub struct SwigluCall {
     pub both: PlainTensor,
 }
 
+/// What an autotune's candidates run on: the call, and the output every one of them writes into,
+/// allocated once before the race.
+#[derive(Clone)]
+struct SwigluRace {
+    call: SwigluCall,
+    out: TensorHandle,
+}
+
 /// What an autotune's candidate hands back: the gate, and the client it lives on, which the
 /// autotune checks read two candidates' outputs through.
 #[derive(Clone)]
@@ -110,7 +96,7 @@ impl AutotuneOutput for SwigluOutput {
 type SwigluIdentity = CandidateIdentity<SwigluRoutineCandidate<CubeSwigluRoutine>>;
 
 /// The autotune's candidates, as the tuner holds them.
-type SwigluTunables = Arc<TunableSet<SwigluKey, SwigluCall, SwigluOutput, SwigluIdentity>>;
+type SwigluTunables = Arc<TunableSet<SwigluKey, SwigluRace, SwigluOutput, SwigluIdentity>>;
 
 static TUNER: LocalTuner<SwigluKey, CubeTuneId> = local_tuner!("activation");
 
@@ -176,13 +162,7 @@ where
     ///
     /// Why this device cannot run the gate at this setting.
     pub fn launch(&self, call: &SwigluCall) -> Result<TensorHandle, Decline> {
-        let tensors = SwigluTensors::new(&call.client, call.both.clone())?;
-        self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
-            tensors
-                .bind(blueprint, grid)
-                .map_out(|out| (out, Write::Replace))
-        })?;
-        Ok(tensors.into_out())
+        self.launch_rows(SwigluTensors::new(&call.client, call.both.clone())?)
     }
 
     /// The gate of [`launch`](Self::launch), written into `out`, a float `[rows, d]` matrix
@@ -259,9 +239,21 @@ where
         R::prepare(&self.hw, &SwigluRoutineProblem::from(key), &self.settings).ok()
     }
 
-    /// The gate of `call` at this candidate's setting.
-    fn run(&self, call: SwigluCall) -> Result<SwigluOutput, String> {
-        self.launch(&call)
+    /// The gate written into the rows `tensors` hold, handed back.
+    fn launch_rows(&self, tensors: SwigluTensors) -> Result<TensorHandle, Decline> {
+        self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
+            tensors
+                .bind(blueprint, grid)
+                .map_out(|out| (out, Write::Replace))
+        })?;
+        Ok(tensors.into_out())
+    }
+
+    /// The gate of `race`'s call at this candidate's setting, written into the race's output.
+    fn run(&self, race: SwigluRace) -> Result<SwigluOutput, String> {
+        let SwigluRace { call, out } = race;
+        SwigluTensors::contiguous(&call.client, call.both.clone(), out)
+            .and_then(|tensors| self.launch_rows(tensors))
             .map(|handle| SwigluOutput {
                 client: call.client.clone(),
                 handle,
@@ -310,6 +302,9 @@ where
 }
 
 /// The gate of `call` through the autotune, its candidates grouped at priority `tile` on `device`.
+///
+/// The output is allocated once, before the race: every candidate of a round writes into it, and
+/// so does the winner's run on the call.
 pub fn launch_tuned(call: SwigluCall, device: &Device, tile: GroupPriority) -> TensorHandle {
     // Nothing to gate is nothing to tune: an empty input shares the key of a single row, and a
     // round measured on it would time no launch and keep a winner for the decode bucket.
@@ -320,10 +315,13 @@ pub fn launch_tuned(call: SwigluCall, device: &Device, tile: GroupPriority) -> T
             .expect("the floor gates every float row");
     }
     let client = call.client.clone();
+    let out = SwigluTensors::allocate_out(&client, &call.both);
     // Keyed by the device: the set is built from what this device supports.
     let id = CubeTuneId::new(&client, device);
     let tunables = tunables(&id, &client, tile);
-    TUNER.execute(&id, &client, tunables, call).handle
+    TUNER
+        .execute(&id, &client, tunables, SwigluRace { call, out })
+        .handle
 }
 
 /// The gate of `call`'s rows written into `out`, a matrix of its rows as a product reads its lhs
@@ -377,11 +375,9 @@ fn tunables(id: &CubeTuneId, client: &Client, tile: GroupPriority) -> SwigluTuna
 fn candidates(
     hw: Hardware,
     priority: GroupPriority,
-) -> TunableSet<SwigluKey, SwigluCall, SwigluOutput, SwigluIdentity> {
-    let mut autotune = Autotune::<SwigluKey, SwigluCall, SwigluOutput, SwigluIdentity>::measured_on(
-        |call: &SwigluCall| SwigluKey::from(&call.both),
-        "as-keyed",
-        SwigluKey::representative,
+) -> TunableSet<SwigluKey, SwigluRace, SwigluOutput, SwigluIdentity> {
+    let mut autotune = Autotune::<SwigluKey, SwigluRace, SwigluOutput, SwigluIdentity>::new(
+        |race: &SwigluRace| SwigluKey::from(&race.call.both),
     );
     let tile = autotune.group("tile", priority);
     let floor = SwigluRoutineCandidate::floor(&hw);
@@ -390,13 +386,13 @@ fn candidates(
             &tile,
             SwigluRoutineCandidate::list(CubeSwigluRoutine, &hw),
             |candidate| SwigluIdentity::Routine(candidate.clone()),
-            |candidate, call| candidate.run(call),
+            |candidate, race| candidate.run(race),
         )
         // The default, which runs everywhere: taking `tile` out of the autotune stops the family
         // being measured, not being served.
         .floor(SwigluIdentity::named(
             "cube-swiglu-floor",
-            move |call: SwigluCall| floor.run(call),
+            move |race: SwigluRace| floor.run(race),
         ))
         .finish()
 }
@@ -408,6 +404,59 @@ mod tests {
     use cubek_std::devices;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
+
+    /// The memory `output`'s buffer lies in.
+    fn output_memory(output: &TensorHandle) -> impl PartialEq + core::fmt::Debug + use<> {
+        PlainTensor::of_handle(output.clone())
+            .binding
+            .handle
+            .memory
+            .id()
+    }
+
+    /// A race of three fused rows of 128, its output allocated once.
+    fn race_of_three_rows() -> SwigluRace {
+        let client = cubek_test_utils::client();
+        let f32 = ElemType::Float(FloatKind::F32);
+        let call = SwigluCall {
+            client: client.clone(),
+            both: PlainTensor::zeros(&client, &[3, 128], [128, 1], f32),
+        };
+        let out = SwigluTensors::allocate_out(&client, &call.both);
+        SwigluRace { call, out }
+    }
+
+    /// **A race runs on the call's buffers.** The autotune hands its candidates the call's own
+    /// fused rows and output, whatever bucket the rows' count is keyed in.
+    #[test]
+    fn a_race_runs_on_the_calls_rows() {
+        let race = race_of_three_rows();
+        let tunables = candidates(
+            Hardware::from_client(&race.call.client),
+            GroupPriority::DEFAULT,
+        );
+        let raced = tunables.generate_inputs(&SwigluKey::from(&race.call.both), &race);
+        let memory = |tensor: &PlainTensor| tensor.binding.handle.memory.id();
+        assert_eq!(memory(&raced.call.both), memory(&race.call.both));
+        assert_eq!(output_memory(&raced.out), output_memory(&race.out));
+    }
+
+    /// **A race allocates no output.** Every candidate that runs writes the gate into the race's
+    /// one output.
+    #[test]
+    fn every_candidate_writes_the_races_output() {
+        let race = race_of_three_rows();
+        let hw = Hardware::from_client(&race.call.client);
+        let outputs = SwigluRoutineCandidate::list(CubeSwigluRoutine, &hw)
+            .iter()
+            .filter_map(|candidate| candidate.run(race.clone()).ok())
+            .map(|output| output_memory(&output.handle))
+            .collect::<Vec<_>>();
+        assert!(!outputs.is_empty(), "the floor runs everywhere");
+        for output in outputs {
+            assert_eq!(output, output_memory(&race.out));
+        }
+    }
 
     /// On devices a dev machine cannot show, every setting prepares: the routine is the floor, so a
     /// decline would leave a key with nothing to measure.

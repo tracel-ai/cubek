@@ -30,6 +30,10 @@ impl UnitDirectReduceMicrokernel {
     }
 
     /// The widest line its carrier keeps apart at its lane slots, where the carrier bounds it.
+    ///
+    /// # Panics
+    ///
+    /// Where its carrier is a top-k keeping no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
@@ -129,30 +133,45 @@ mod tests {
     use crate::reduce::{ReduceOperation, TOP_K_LANE_SLOTS};
     use cubek_std::devices;
 
-    /// Only a top-k bounds the line, to its lane slots spread over `k`.
+    /// A sum leaves the line unbounded.
     #[test]
-    fn its_widest_line_is_its_carriers() {
+    fn a_sum_bounds_no_line() {
         const LANE_SLOTS: usize = 32;
-        const K: usize = 4;
         let sum = UnitDirectReduceMicrokernel::new(
             ReduceWorkItem::along_f32(ReduceOperation::Sum),
             LANE_SLOTS,
         );
+        assert_eq!(sum.widest_line(), None);
+    }
+
+    /// A top-k bounds the line to its lane slots spread over `k`.
+    #[test]
+    fn a_top_k_bounds_the_line_to_its_slots_over_k() {
+        const LANE_SLOTS: usize = 32;
+        const K: usize = 4;
         let top_k = UnitDirectReduceMicrokernel::new(
             ReduceWorkItem::along_f32(ReduceOperation::TopK { k: K }),
             LANE_SLOTS,
         );
-        assert_eq!(sum.widest_line(), None);
         assert_eq!(top_k.widest_line(), Some(LANE_SLOTS / K));
     }
 
-    /// One setting a lane-slot count, and a candidate on a device lacking every feature.
+    /// One setting a lane-slot count.
+    #[test]
+    fn it_lists_a_setting_a_lane_slot_count() {
+        let hw = devices::m2_pro();
+        assert_eq!(
+            UnitDirectReduceMicrokernel::settings(&hw).len(),
+            TOP_K_LANE_SLOTS.len()
+        );
+    }
+
+    /// It has a candidate on a device lacking every feature.
     #[test]
     fn it_runs_on_a_device_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());
-        let settings = UnitDirectReduceMicrokernel::settings(&hw);
-        assert_eq!(settings.len(), TOP_K_LANE_SLOTS.len());
+        let settings = UnitDirectReduceMicrokernel::settings(&hw)[0];
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
-        assert!(UnitDirectReduceMicrokernel::best(&hw, &item, &settings[0]).is_ok());
+        assert!(UnitDirectReduceMicrokernel::best(&hw, &item, &settings).is_ok());
     }
 }

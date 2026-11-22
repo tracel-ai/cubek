@@ -47,25 +47,38 @@ impl MatmulCall {
         Product::of([self.lhs.tensor.kind(), self.rhs.tensor.kind()])
     }
 
-    /// What a tuning round measures for `key`: the call's rhs, and a zero float lhs as many rows
-    /// as the key's bucket stands for, or the call's lhs where none can be laid out alike.
-    pub fn representative(key: &MatmulTuneKey, call: &Self) -> Self {
-        let grown = match &call.lhs.tensor {
-            // The rows lie along the lhs's second-to-last dimension.
-            StoredTensor::Plain(lhs) => (lhs.binding.shape.len().checked_sub(2))
-                .and_then(|rows| lhs.zeros_grown(&call.client, rows, key.m)),
-            StoredTensor::Packed(_) => None,
-        };
-        // A grown lhs makes a product of another shape than the caller's buffer, so the round's
-        // launches allocate their own.
-        match grown {
-            Some(lhs) => Self {
-                lhs: MatmulCallInput::plain(lhs),
-                destination: None,
-                ..call.clone()
-            },
-            None => call.clone(),
+    /// This call writing into its destination, allocated here at the product's shape where the
+    /// caller gave none: a float product in its inputs' element, a packed one in the call's. What an
+    /// autotune measures on, so every candidate and the winner write the one buffer the call
+    /// returns.
+    pub(crate) fn with_destination(mut self) -> Self {
+        if self.destination.is_some() {
+            return self;
         }
+        let elem = match (&self.lhs.tensor, &self.rhs.tensor) {
+            (StoredTensor::Plain(lhs), StoredTensor::Plain(_)) => lhs.elem,
+            _ => self.out,
+        };
+        let (handle, _) = PlainTensor::empty(&self.client, self.product_shape().into(), elem);
+        self.destination = Some(handle);
+        self
+    }
+
+    /// The product's shape: the inputs' broadcast batch dimensions, then the lhs's rows and the
+    /// rhs's columns, read off their logical shapes.
+    fn product_shape(&self) -> Vec<usize> {
+        let logical = |input: &MatmulCallInput| {
+            input
+                .meta
+                .logical_shape()
+                .expect("a tensor's tiling describes its own rank")
+        };
+        let (lhs, rhs) = (logical(&self.lhs), logical(&self.rhs));
+        let rank = lhs.rank();
+        (0..rank - 2)
+            .map(|dim| lhs[dim].max(rhs[dim]))
+            .chain([lhs[rank - 2], rhs[rank - 1]])
+            .collect()
     }
 }
 

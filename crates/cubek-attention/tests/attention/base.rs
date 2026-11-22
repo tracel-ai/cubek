@@ -4,6 +4,7 @@
 //! among the keys last or first, and a mask differs from head to head.
 
 use core::fmt::Debug;
+use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
@@ -87,6 +88,16 @@ pub(crate) const PROMPT_WIDE: AttentionCase = AttentionCase {
     ..PROMPT
 };
 
+/// The wide prompt at a head dim of 256, six query heads to a key head: Qwen3.8 27B's heads on
+/// one card of four under tensor parallelism, whose output a plane holds sixteen fragments wide.
+pub(crate) const PROMPT_HEAD_DIM_256: AttentionCase = AttentionCase {
+    heads: 6,
+    kv_heads: 1,
+    head_dim: 256,
+    val_dim: 256,
+    ..PROMPT_WIDE
+};
+
 /// A decode step at a model's head dim: one position of the wide prompt's heads.
 pub(crate) const DECODE_WIDE: AttentionCase = AttentionCase {
     seq_q: 1,
@@ -145,6 +156,18 @@ pub(crate) const DECODE: AttentionCase = AttentionCase {
     seq_q: 1,
     visibility: AttentionVisibility::Attended,
     ..PROMPT
+};
+
+/// A single position seeing only the last five of its keys: most of the boxes a routine splits the
+/// keys into see none of them, and merge nothing.
+pub(crate) const DECODE_WINDOWED: AttentionCase = AttentionCase {
+    visibility: AttentionVisibility::Recent {
+        window: match NonZeroUsize::new(5) {
+            Some(window) => window,
+            None => unreachable!(),
+        },
+    },
+    ..DECODE
 };
 
 /// The prompt with its queries placed first among the keys: query `i` sees the keys up to `i`.

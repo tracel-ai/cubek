@@ -580,8 +580,7 @@ impl CubeAttentionMicrokernel {
         let mut output = out.planes_output::<EA>(cube);
 
         for plane in cube.planes() {
-            let sum = planes.sum_at(&plane);
-            sum.along(DV).mul(&planes.softmax.normalizer(&plane));
+            let sum = planes.normalized_sum_at(&plane);
             output.drain(&sum, &plane);
         }
 

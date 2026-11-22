@@ -16,6 +16,7 @@ use cubek_test_utils::{
 };
 
 use cubek_reduce::eval::cpu_reference::{contiguous_strides, reference};
+use cubek_reduce::eval::workspace::workspace_for;
 
 /// The unit kernel: a unit reduces each row.
 pub const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit);
@@ -366,8 +367,22 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
             })
             .collect();
         let device = cubecl::test_device();
+        let elements = ReduceElements {
+            input: case.input_dtype,
+            accumulator: case.accumulation_dtype,
+            out: outputs[0].0,
+        };
+        let workspace = workspace_for(
+            client,
+            &case.shape,
+            axis,
+            operation,
+            elements,
+            op.with_indices(),
+        );
+        let reduce = Reduce::new(case.strategy).with_workspace(workspace);
         let launched = match op.with_indices() {
-            true => Reduce::new(case.strategy).execute_with_indices(
+            true => reduce.execute_with_indices(
                 client,
                 &device,
                 input.binding(),
@@ -375,25 +390,17 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
                 outputs[1].1.clone().binding(),
                 axis,
                 operation,
-                ReduceElements {
-                    input: case.input_dtype,
-                    accumulator: case.accumulation_dtype,
-                    out: outputs[0].0,
-                },
+                elements,
                 outputs[1].0,
             ),
-            false => Reduce::new(case.strategy).execute(
+            false => reduce.execute(
                 client,
                 &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 axis,
                 operation,
-                ReduceElements {
-                    input: case.input_dtype,
-                    accumulator: case.accumulation_dtype,
-                    out: outputs[0].0,
-                },
+                elements,
             ),
         };
         // A kernel refuses only by what the device lacks or the problem asks beyond it, which the

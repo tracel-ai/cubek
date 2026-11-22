@@ -17,6 +17,7 @@
 //! 4. **Policy Decision**  
 //!    - Applies test mode to decide if the test passes [`TestDecision`].
 //!      - `Accept`: test passes.  
+//!      - `Skip(String)`: test passes without checking anything, and says why on stderr.  
 //!      - `Reject(String)`: test fails.  
 //!    - Call [`TestDecision::enforce`] to actually fail the test.
 
@@ -129,6 +130,9 @@ impl TestOutcome {
 pub enum TestDecision {
     /// The test is accepted (passes)
     Accept,
+    /// The test checked nothing, because the device cannot run it or its routine declines it:
+    /// it passes, and reports the skip on stderr
+    Skip(String),
     /// The test is rejected (fails)
     Reject(String),
 }
@@ -140,9 +144,20 @@ impl TestDecision {
     pub fn enforce(self) {
         match self {
             TestDecision::Accept => {}
+            TestDecision::Skip(reason) => report_skip(&reason),
             TestDecision::Reject(reason) => panic!("Test failed: {}", reason),
         }
     }
+}
+
+/// `reason` reported on the process's own stderr, which the test harness does not capture as it
+/// does `eprintln!`, so a skip shows in a run that passes.
+fn report_skip(reason: &str) {
+    use std::io::Write;
+    let test = std::thread::current();
+    let line = format!("SKIPPED {}: {reason}\n", test.name().unwrap_or("a test"));
+    // A skip that cannot be reported still passes.
+    let _ = std::io::stderr().write_all(line.as_bytes());
 }
 
 impl ValidationResult {
