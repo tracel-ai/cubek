@@ -146,3 +146,38 @@ fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
         Some(_) => hypercube.check_some(cases),
     }
 }
+
+/// A packed weight in the tile order a load stores it in, landed by the TMA engine beside the
+/// float activation the filling planes keep, at a prompt's rows against a model's depth of `K`:
+/// NVFP4 and MXFP4, the formats whose tiles a box lands (an MXFP8 tile is not). MXFP4's window of
+/// 64 holds half a word of its scales, so it reads them one at a time, a byte apiece, which the
+/// units load beside the box: the copy engine was once handed them and panicked expanding every
+/// such kernel.
+///
+/// A device whose engine lands no NVFP4 weight skips; elsewhere each format launches at least
+/// one setting.
+#[test]
+fn a_packed_weight_in_tile_order_lands_by_tma_at_a_model_s_depth() {
+    let client = cubecl::test_device().client();
+    let filler = ByRoutine::new(CubeStagedTmaFillerMatmulRoutine, Declines::AsItStates);
+    let at_depth = |format| {
+        let weight = Stored::PackedInTileOrder { format, seed: 7 };
+        filler.at(
+            CubeStagedTmaFillerMatmulRoutine.packed_settings(filler.hw()),
+            &[PackedProduct::of(Stored::Bf16, weight).m(96).n(512).k(5120)],
+        )
+    };
+    let nvfp4 = at_depth(PackedFormat::Nvfp4);
+    let lands = nvfp4.iter().any(|case| {
+        !matches!(
+            filler.outcome(&client, case),
+            TestOutcome::Validated(ValidationResult::Skipped(_))
+        )
+    });
+    for cases in [nvfp4, at_depth(PackedFormat::Mxfp4)] {
+        match lands {
+            true => filler.check_some(cases),
+            false => filler.check(cases),
+        }
+    }
+}
