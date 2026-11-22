@@ -8,12 +8,13 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::Scalar;
 use cubecl::prelude::{CubePrimitive, TensorBinding};
-use cubecl::quant::scheme::QuantStore;
+use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Field;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubecl::zspace::Strides;
+use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::MatmulRoutine;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_matmul::tiled::storage::{StoredValues, stored_tile, tile, tile_order_on};
@@ -197,19 +198,22 @@ impl PackedProduct {
     }
 
     /// `matrix`, `[n, k]` packed down `k`, in the tile order a load stores a weight in on the
-    /// device against a `bf16` activation: the device's tile ([`stored_tile`]) and its order of
-    /// it ([`tile_order_on`]), the words relaid as one of the device's loads reads them, the scales
-    /// left in the rows an order laid row by row keeps them in. As it lies where the device has no
-    /// such tile, or lays its tiles block by block, which keeps its scales in tiles of their own.
+    /// device against a `bf16` activation, as a load lays it out: the device's tile
+    /// ([`stored_tile`]) and its order of it ([`tile_order_on`]), read off the scheme a `[k, n]`
+    /// weight states; the words relaid as one of the device's loads reads them; the block scales
+    /// relaid in tiles of their own where the order keeps them so, and otherwise left in their
+    /// rows; the whole read back as a framework hands a quantized weight over
+    /// ([`PackedTensor::of_quantized`]). As it lies where the device has no such tile, or lays its
+    /// tiles block by block.
     fn in_tile_order(&self, client: &Client, matrix: PackedTensor) -> PackedTensor {
         let hw = Hardware::from_client(client);
-        let scheme = matrix.scheme();
+        let weight = Self::stated_over_k_n(&matrix.scheme());
         let bf16 = ElemType::Float(FloatKind::BF16);
-        let order = stored_tile(&hw, MatmulOperand::Rhs, StoredValues::Packed(scheme), bf16)
+        let order = stored_tile(&hw, MatmulOperand::Rhs, StoredValues::Packed(weight), bf16)
             .and_then(|tile| {
                 tile_order_on(
                     &hw,
-                    &scheme,
+                    &weight,
                     (tile.extent(K), tile.extent(N)),
                     (self.k, self.n),
                 )
@@ -218,40 +222,64 @@ impl PackedProduct {
         let Some(order) = order else {
             return matrix;
         };
-        // The words as the kernel names the values, `[n, k/block, block]`, counted in values.
-        let block = order.block();
-        let words = TensorBinding {
-            shape: Shape::from(vec![self.n, self.k / block, block]),
-            strides: Strides::from(vec![self.k, block, 1]),
-            ..matrix.words().binding.clone()
-        };
         let word = u32::elem_type_native();
-        let values = tile(
-            client,
-            words,
+        let words_per_load = hw.load_values(word);
+        let (block, blocks) = (order.block(), self.k / order.block());
+        let relaid = |binding: TensorBinding, dimensions: &[_], field, storage| {
+            tile(client, binding, dimensions, word, Some(field), storage)
+                .expect("the device's tile order closes the matrix in whole tiles")
+        };
+        // The words as the kernel names the values, `[n, k/block, block]`, counted in values.
+        let values = relaid(
+            TensorBinding {
+                shape: Shape::from(vec![self.n, blocks, block]),
+                strides: Strides::from(vec![self.k, block, 1]),
+                ..matrix.words().binding.clone()
+            },
             &tile_order::values_dimensions(N),
-            word,
-            Some(Field::from(scheme.value)),
-            order.values_storage(N, hw.load_values(word)),
-        )
-        .expect("the device's tile order closes the matrix in whole tiles");
-        let sized = [(K, self.k), (N, self.n)];
-        let operand = PackedTensor::read_in_tiles(
-            &hw,
-            sized,
-            Operand::of_scheme(&scheme, K, [K, N]).expect("one block along k"),
-            &tile_order::matrix_values(&values.metadata),
-        )
-        .expect("a matrix the device's tile order laid reads in its tiles");
+            Field::from(weight.value),
+            order.values_storage(N, words_per_load),
+        );
+        let values = PlainTensor::of_handle(values.clone())
+            .bound_as(tile_order::matrix_values(&values.metadata));
+        // The block scales, one byte each in `[n, k/block]` rows, as a `[k/block, n]` matrix.
         let mut scales = matrix.scales().cloned();
-        PackedTensor::new(
-            PlainTensor::of_handle(values),
-            scales.next().expect("block scales"),
-            scales.next(),
-            scheme,
-            operand,
-            sized,
-        )
+        let rows = scales.next().expect("block scales");
+        let rows_a_load = order.rows_a_load(N, words_per_load);
+        let block_scales = match order.scales_storage(N, rows_a_load) {
+            Some(storage) => {
+                let tiled = relaid(
+                    TensorBinding {
+                        shape: Shape::from(vec![self.n, blocks]),
+                        strides: Strides::from(vec![blocks, 1]),
+                        ..rows.binding.clone()
+                    },
+                    &tile_order::scales_dimensions(N),
+                    Field::of_scale(weight.scale_dtype()),
+                    storage,
+                );
+                PlainTensor::of_handle(tiled.clone())
+                    .viewed(tile_order::matrix_scales(&tiled.metadata))
+            }
+            None => rows.viewed(Metadata::new(
+                Shape::from(vec![blocks, self.n]),
+                Strides::from(vec![1, blocks]),
+            )),
+        };
+        PackedTensor::of_quantized(client, values, weight, block_scales, scales.next(), [K, N])
+            .expect("a weight laid as a load lays it reads as a framework hands it over")
+    }
+
+    /// `scheme`, which the slabs state over their own `[n, k]` rows packed along `k`, as a `[k, n]`
+    /// weight states it: packed along its first dimension, each block `[block, 1]`.
+    fn stated_over_k_n(scheme: &QuantScheme) -> QuantScheme {
+        let block = Operand::of_scheme(scheme, K, [N, K])
+            .and_then(|operand| operand.scale(K))
+            .expect("the slabs scale blocks along k");
+        let block = u8::try_from(block).expect("a block of under 256 values");
+        scheme
+            .with_store(QuantStore::PackedU32(1))
+            .per_block([block, 1], scheme.scale_dtype())
     }
 
     /// The operand's values on the host.
