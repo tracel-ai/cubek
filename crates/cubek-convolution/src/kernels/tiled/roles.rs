@@ -1,4 +1,4 @@
-use super::{B, CI, CO, ConvDecline, ConvDim, ConvDimension, SpatialDimCount};
+use super::{B, CI, CO, ConvDecline, ConvDimension, SpatialDim, SpatialDimCount};
 use crate::components::ConvolutionOperation;
 use crate::launch::SpatialWindow;
 use cubecl::prelude::TensorBinding;
@@ -96,10 +96,10 @@ impl ConvGather {
     }
 
     /// The window's input and output extents along `dim`.
-    pub fn window_ends(self, conv_dim: &ConvDim) -> (usize, usize) {
+    pub fn window_ends(self, spatial_dim: &SpatialDim) -> (usize, usize) {
         match self {
-            Self::Window => (conv_dim.gathered, conv_dim.out),
-            Self::Gradient => (conv_dim.out, conv_dim.gathered),
+            Self::Window => (spatial_dim.gathered, spatial_dim.out),
+            Self::Gradient => (spatial_dim.out, spatial_dim.gathered),
         }
     }
 }

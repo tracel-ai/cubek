@@ -88,7 +88,7 @@ impl ConvDimension {
 /// One spatial dim of a convolution: the extents it reads and writes along it and the window
 /// between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ConvDim {
+pub struct SpatialDim {
     /// The extent of the gathered operand: the input, or the output gradient in the data backward.
     pub gathered: usize,
     pub kernel: usize,
@@ -97,7 +97,7 @@ pub struct ConvDim {
     pub window: SpatialWindow,
 }
 
-impl ConvDim {
+impl SpatialDim {
     /// Whether every position the window reads lies in the gathered operand, so no read needs a
     /// check of its own.
     pub fn reads_inside(&self) -> bool {
@@ -116,7 +116,7 @@ pub struct ConvProblem {
     pub channels_in: usize,
     pub channels_out: usize,
     /// The extents and the window of each spatial dim.
-    pub spatial: Vec<ConvDim>,
+    pub spatial: Vec<SpatialDim>,
     /// The element each operand is stored in.
     pub elements: MatmulOperands<ElemType>,
     /// The element the contraction sums in.
@@ -150,7 +150,7 @@ impl ConvProblem {
             channels_in: extents.channels_in.read(&views),
             channels_out: extents.channels_out.read(&views),
             spatial: (0..window.len())
-                .map(|dim| ConvDim {
+                .map(|dim| SpatialDim {
                     gathered: gathered[dim],
                     kernel: kernel[dim],
                     out: out[dim],
@@ -241,7 +241,7 @@ impl ConvProblem {
             || self
                 .spatial
                 .iter()
-                .any(|conv_dim| conv_dim.window.padding > 0)
+                .any(|spatial_dim| spatial_dim.window.padding > 0)
     }
 
     /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: a channels last buffer
@@ -252,7 +252,7 @@ impl ConvProblem {
         let spatial = roles
             .spatial()
             .zip(&self.spatial)
-            .map(|([out, tap], conv_dim)| roles.gather.map(&conv_dim.window, out, tap));
+            .map(|([out, tap], spatial_dim)| roles.gather.map(&spatial_dim.window, out, tap));
         let maps: Vec<_> = [PhysicalAxisMap::of(B)]
             .into_iter()
             .chain(spatial)
@@ -264,7 +264,8 @@ impl ConvProblem {
     /// Whether every position the window reads lies in the input, so no read needs a check of its
     /// own.
     pub fn reads_inside(&self) -> bool {
-        self.roles().gather == ConvGather::Window && self.spatial.iter().all(ConvDim::reads_inside)
+        self.roles().gather == ConvGather::Window
+            && self.spatial.iter().all(SpatialDim::reads_inside)
     }
 }
 
@@ -279,11 +280,11 @@ impl EstimatedProblem for ConvProblem {
             spatial: self
                 .spatial
                 .iter()
-                .map(|conv_dim| {
-                    let (input, out) = gather.window_ends(conv_dim);
+                .map(|spatial_dim| {
+                    let (input, out) = gather.window_ends(spatial_dim);
                     ConvCostDim {
                         input,
-                        kernel: conv_dim.kernel,
+                        kernel: spatial_dim.kernel,
                         out,
                     }
                 })
@@ -346,7 +347,7 @@ mod tests {
                 element: Conv2dElement::F32,
             });
             let spatial: Vec<_> = (problem.spatial.iter())
-                .map(|conv_dim| (conv_dim.gathered, conv_dim.kernel, conv_dim.out))
+                .map(|spatial_dim| (spatial_dim.gathered, spatial_dim.kernel, spatial_dim.out))
                 .collect();
             let expected = match operation {
                 BackwardData => [(8, 3, 10), (7, 2, 8)],

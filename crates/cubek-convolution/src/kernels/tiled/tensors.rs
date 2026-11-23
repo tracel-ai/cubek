@@ -1,5 +1,5 @@
 use super::{
-    B, CI, CO, ConvBinding, ConvDecline, ConvDim, ConvProblem, ConvRoles, SpatialDimCount,
+    B, CI, CO, ConvBinding, ConvDecline, ConvProblem, ConvRoles, SpatialDim, SpatialDimCount,
     TileConvBlueprint,
 };
 use crate::components::ConvolutionOperation;
@@ -258,20 +258,25 @@ impl ConvTensors {
     /// yields.
     fn check_window(&self) -> Result<(), Decline> {
         let problem = self.problem();
-        if problem.spatial.iter().any(|conv_dim| conv_dim.kernel == 0) {
+        if problem
+            .spatial
+            .iter()
+            .any(|spatial_dim| spatial_dim.kernel == 0)
+        {
             return Err(ConvDecline::KernelEmpty.into());
         }
-        let steps_zero =
-            |conv_dim: &ConvDim| conv_dim.window.stride == 0 || conv_dim.window.dilation == 0;
+        let steps_zero = |spatial_dim: &SpatialDim| {
+            spatial_dim.window.stride == 0 || spatial_dim.window.dilation == 0
+        };
         if problem.spatial.iter().any(steps_zero) {
             return Err(ConvDecline::WindowStepZero.into());
         }
         let roles = ConvRoles::of(self.operation, SpatialDimCount(self.window.len()))?;
-        let states_output = |conv_dim: &ConvDim| {
-            let (input, output) = roles.gather.window_ends(conv_dim);
-            conv_dim
+        let states_output = |spatial_dim: &SpatialDim| {
+            let (input, output) = roles.gather.window_ends(spatial_dim);
+            spatial_dim
                 .window
-                .output(SpatialExtent(input), TapCount(conv_dim.kernel))
+                .output(SpatialExtent(input), TapCount(spatial_dim.kernel))
                 == output
         };
         match problem.spatial.iter().all(states_output) {

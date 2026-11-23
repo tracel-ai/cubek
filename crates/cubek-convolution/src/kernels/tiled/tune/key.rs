@@ -1,5 +1,5 @@
 use crate::components::ConvolutionOperation;
-use crate::kernels::tiled::{B, ConvDim, ConvProblem};
+use crate::kernels::tiled::{B, ConvProblem, SpatialDim};
 use cubecl::ir::ElemType;
 use cubecl::throughput::{MemoryAccess, compute_throughput_key};
 use cubecl::tile::layout::ElemAlignment;
@@ -25,7 +25,7 @@ pub struct CubeStagedConvTuneKey {
     pub batch: usize,
     pub channels_in: usize,
     pub channels_out: usize,
-    pub spatial: Vec<ConvDim>,
+    pub spatial: Vec<SpatialDim>,
     pub lhs_width: usize,
     pub rhs_width: usize,
 }
