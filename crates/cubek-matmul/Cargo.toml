@@ -60,3 +60,7 @@ cubecl = { workspace = true, features = ["test-runtime"] }
 [[example]]
 name = "nvfp4_gemv"
 required-features = ["std", "tiled"]
+
+[[example]]
+name = "block_scaled_prefill"
+required-features = ["std", "tiled"]

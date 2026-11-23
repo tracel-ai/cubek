@@ -103,6 +103,39 @@ fn a_packed_activation_against_a_packed_weight_answers_at_every_setting() {
     ));
 }
 
+/// MXFP8 activations against an MXFP4 weight, W4A8 as a prompt runs it, a model's projections
+/// and rows and columns no box divides: every block-scaled setting of the routines that read both
+/// inputs as stored. Both share `ue8m0` scales every thirty-two, so a device whose 8-bit float
+/// instruction multiplies them takes the weight's `e2m1` codes widened to `e4m3`, exactly.
+#[test]
+fn an_mxfp8_activation_against_an_mxfp4_weight_answers_at_every_setting() {
+    let w4a8 = PackedProduct::of(
+        Stored::Packed {
+            format: PackedFormat::Mxfp8,
+            seed: 1,
+        },
+        Stored::Packed {
+            format: PackedFormat::Mxfp4,
+            seed: 2,
+        },
+    )
+    .k(5120);
+    let products = [
+        w4a8.clone().m(512).n(128),
+        w4a8.clone().m(33).n(96),
+        w4a8.m(300).n(96),
+    ];
+
+    let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
+    staged.check(staged.at(vec![CubeStagedMatmulRoutineSettings::DEFAULT], &products));
+
+    let async_copy = ByRoutine::new(CubeStagedAsyncCopyMatmulRoutine, Declines::AsItStates);
+    async_copy.check(async_copy.at(
+        CubeStagedAsyncCopyMatmulRoutine.block_scaled_settings(async_copy.hw()),
+        &products,
+    ));
+}
+
 /// Packed activations against a packed weight of another width, as a decode step mixing formats
 /// runs: every packed setting of the plane shuffle. A `q8` activation against a `q4` weight is lined
 /// at the eight values a step of the weight serves, two words of the activation; a `q4`

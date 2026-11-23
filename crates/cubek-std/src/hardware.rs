@@ -9,7 +9,7 @@ use cubecl::tile::layout::Stagger;
 use cubecl::{
     CubeDim,
     client::Client,
-    features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig},
+    features::{AtomicUsage, MmaConfig, Plane, QuantizedMmaConfig, ScaledMmaConfig},
     ir::{DeviceProperties, ElemType, FloatKind, TargetProperties, Type},
     quant::scheme::{QuantMode, QuantScheme, QuantValue},
     tile::BlockScaledOperands,
@@ -420,6 +420,28 @@ impl BlockScaledMma {
         })
     }
 
+    /// The quantized MMA `config` runs, as a block-scaled instruction one block deep: its tile
+    /// one block of `k`, so each of its rows and columns takes one scale, as a block-scaled
+    /// instruction of one scale a step does. `None` for a tile shallower than its block, or codes
+    /// that are not floats.
+    pub fn of_quantized(config: &QuantizedMmaConfig) -> Option<Self> {
+        if config.k != config.block_k {
+            return None;
+        }
+        let form = BlockScaledOperands::of_quantized(config)?;
+        Some(Self {
+            shape: MmaConfig {
+                a_type: ElemType::Float(stored_code(form.lhs)),
+                b_type: ElemType::Float(stored_code(form.rhs)),
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: config.m,
+                n: config.n,
+                k: config.k,
+            },
+            form,
+        })
+    }
+
     /// Whether the instruction reads, as the `lhs` input or the other, codes stored as `values`
     /// under a scale every `block` of `k`. A code narrower than a byte held one a byte
     /// (`REGISTER_BYTES`) is no word a packed input stores.
@@ -451,14 +473,18 @@ impl BlockScaledMma {
     }
 }
 
-/// The block-scaled instructions `hw` offers ([`BlockScaledMma`]).
+/// The block-scaled instructions `hw` offers ([`BlockScaledMma`]): its block-scaled
+/// instructions, then its quantized MMAs one block deep ([`BlockScaledMma::of_quantized`]),
+/// which the tile layer contracts through where the device has no block-scaled instruction of
+/// their form (RDNA4's 8-bit floats).
 pub fn block_scaled_mma(hw: &Hardware) -> impl Iterator<Item = BlockScaledMma> + Clone + '_ {
-    hw.properties
-        .features
-        .matmul
-        .scaled_mma
+    let matmul = &hw.properties.features.matmul;
+    let scaled = matmul.scaled_mma.iter().filter_map(BlockScaledMma::of);
+    let quantized = matmul
+        .quantized_mma
         .iter()
-        .filter_map(BlockScaledMma::of)
+        .filter_map(BlockScaledMma::of_quantized);
+    scaled.chain(quantized)
 }
 
 /// The block-scaled instructions `hw` offers over inputs packed under `lhs` and `rhs`, each with
