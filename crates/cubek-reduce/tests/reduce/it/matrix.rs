@@ -231,9 +231,8 @@ mod reduce_dim {
         );
     }
 
-    // The only light shape whose reduce axis is contiguous without being the
-    // innermost one, which is where parallel vectorization has to read a
-    // permuted layout rather than a row.
+    // A reduce axis that is contiguous without being the innermost one, in a
+    // permuted layout, which is read a value at a time.
     mod parallel_rank_three_tensor {
         testgen_reduce!(
             shape: shape![16, 16, 16],
