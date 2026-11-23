@@ -96,7 +96,9 @@ impl<N: Size> StepReads<N> for PackedStepReads {
         self.tile.read_page_entry(region)
     }
 
-    /// The fix-up reads the keys' words through their table, so the keys' entry serves it too.
+    /// The entry places the words only, the keys' and the fix-up's, which are the keys' words
+    /// read through the same table. The norms and the fix-up's residual lengths are scales the
+    /// entry leaves alone: each of their reads looks its page up in the table.
     fn with_page_entry(&self, entry: &PageEntry) -> PackedStepReads {
         PackedStepReads {
             tile: self.tile.with_page_entry(entry),

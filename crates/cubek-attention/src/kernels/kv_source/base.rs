@@ -529,29 +529,60 @@ mod tests {
     /// Coordinates a packed key or value holds, four bits each.
     const PACKED_COORDS: usize = 32;
     const PACKED_BITS: u32 = 4;
-    /// Positions a page of the packed pools holds.
-    const PACKED_PAGE: usize = 8;
-    /// Pages of the packed pools: page 0 the null page, and pages no sequence names among them.
-    const PACKED_POOL: usize = 14;
-    /// Each sequence's pages of the pool, in order and scattered over it: the shorter sequences'
-    /// rows end in the null page, page 0, which none of them attends.
-    const PACKED_TABLE: [[u32; 4]; PACKED_SEQUENCES] = [[5, 12, 2, 9], [7, 3, 0, 0], [11, 0, 0, 0]];
+    /// Positions a page of the packed pools holds: no multiple of any step of keys a routine walks,
+    /// so a step's window straddles pages.
+    const PACKED_PAGE: usize = 6;
+    /// Pages each sequence's row of the table names: 300 positions, so the cubes splitting a
+    /// sequence's keys each walk several steps.
+    const PACKED_WIDTH: usize = 50;
+    /// Pages of the packed pools: page 0 the null page, and pages no sequence names among the rest.
+    const PACKED_POOL: usize = 89;
+    /// A step through the pool's pages 1..PACKED_POOL coprime with their count, so consecutive
+    /// pages of a sequence lie far apart and out of order.
+    const PACKED_SCATTER: usize = 31;
     /// Keys each sequence attends, every one ending inside a page.
-    const PACKED_LENGTHS: [u32; PACKED_SEQUENCES] = [29, 11, 5];
+    const PACKED_LENGTHS: [u32; PACKED_SEQUENCES] = [293, 151, 40];
     /// Queries each sequence has where its queries lie end to end, the last of its keys.
     const PACKED_RUNS: [usize; PACKED_SEQUENCES] = [4, 3, 1];
+    /// The norm, and the QJL residual length, of every key and value past a sequence's attended
+    /// length where the cache is laid out as sequences: far from any the pool holds, so a read
+    /// that does not stop at the length reads another cache than the pool.
+    const PACKED_PAST_NORM: f32 = 64.;
 
-    /// A pool of [`PACKED_POOL`] pages, `last` values a row, as the sequences [`PACKED_TABLE`]
-    /// names: a sequence's position `s` of key head `h` is its page's row.
-    fn gathered<T: Copy>(pool: &[T], last: usize) -> Vec<T> {
-        let seq = PACKED_TABLE[0].len() * PACKED_PAGE;
+    /// The table `[b, PACKED_WIDTH]`: each sequence's pages, as many as its attended length
+    /// reaches, scattered over the pool, then the null page, page 0.
+    fn packed_table() -> Vec<u32> {
+        let mut next = 0;
+        let mut table = Vec::new();
+        for length in PACKED_LENGTHS {
+            let used = (length as usize).div_ceil(PACKED_PAGE);
+            for column in 0..PACKED_WIDTH {
+                let page = match column < used {
+                    true => (next * PACKED_SCATTER) % (PACKED_POOL - 1) + 1,
+                    false => 0,
+                };
+                next += usize::from(column < used);
+                table.push(page as u32);
+            }
+        }
+        table
+    }
+
+    /// A pool of [`PACKED_POOL`] pages, `last` values a row, as the sequences [`packed_table`]
+    /// names: a sequence's position `s` of key head `h` is its page's row up to the sequence's
+    /// attended length, and `past` from there.
+    fn gathered<T: Copy>(pool: &[T], last: usize, past: T) -> Vec<T> {
+        let table = packed_table();
         let mut values = Vec::new();
-        for pages in &PACKED_TABLE {
+        for (b, length) in PACKED_LENGTHS.iter().enumerate() {
             for h in 0..PACKED_KV {
-                for s in 0..seq {
-                    let page = pages[s / PACKED_PAGE] as usize;
+                for s in 0..PACKED_WIDTH * PACKED_PAGE {
+                    let page = table[b * PACKED_WIDTH + s / PACKED_PAGE] as usize;
                     let row = (page * PACKED_KV + h) * PACKED_PAGE + s % PACKED_PAGE;
-                    values.extend_from_slice(&pool[row * last..(row + 1) * last]);
+                    match s < *length as usize {
+                        true => values.extend_from_slice(&pool[row * last..(row + 1) * last]),
+                        false => values.extend(core::iter::repeat_n(past, last)),
+                    }
                 }
             }
         }
@@ -567,19 +598,27 @@ mod tests {
         Runs,
     }
 
-    /// The kernels that read a packed cache in pools of pages as they read the same cache laid out
-    /// as the sequences its table names: the pool's words, norms and, under the QJL `fixup`, the
-    /// residual lengths gathered host-side into `[b, kv, s, ·]` buffers. The pool is scattered,
-    /// its null page and the pages no sequence names filled as any other, so a read through the
-    /// wrong page shows. A kernel that declines the sequences is not one of them; one that reads
-    /// the sequences and declines or misreads the pool fails.
+    /// That each kernel of `expected` reads a packed cache in pools of pages as it reads the same
+    /// cache laid out as the sequences its table names, and that every other kernel declines the
+    /// sequences. The sequences hold the pool's words, norms and, under the QJL `fixup`, residual
+    /// lengths up to each sequence's attended length, and another cache past it, so only a read
+    /// that stops at the length matches; the pool is scattered, its null page and the pages no
+    /// sequence names filled as any other, so a read through the wrong page shows.
+    ///
+    /// An expected kernel that declines the sequences on this device is skipped, and says so, as is
+    /// the whole case on a device without the committed plane width every packed reader runs on.
     fn packed_pages_read_as_their_sequences(
         fixup: KeyFixup,
         queries: PackedQueries,
-    ) -> Vec<AttentionKernel> {
+        expected: &[AttentionKernel],
+    ) {
         let client: Client = cubecl::test_device().client();
         let hw = Hardware::from_client(&client);
-        let seq = PACKED_TABLE[0].len() * PACKED_PAGE;
+        if let Err(decline) = hw.plane_dim() {
+            eprintln!("skipped: no packed reader runs on this device: {decline:?}");
+            return;
+        }
+        let seq = PACKED_WIDTH * PACKED_PAGE;
         let row_words = PACKED_COORDS * PACKED_BITS as usize / 32;
         let noise = |at: usize, salt: u64| {
             (at as u64 + 1)
@@ -651,11 +690,14 @@ mod tests {
                 PACKED_SEQUENCES,
                 seq,
                 [
-                    gathered(&key_words, row_words),
-                    gathered(&value_words, row_words),
+                    gathered(&key_words, row_words, 0),
+                    gathered(&value_words, row_words, 0),
                 ],
-                [gathered(&key_norms, 1), gathered(&value_norms, 1)],
-                gathered(&errs, 1),
+                [
+                    gathered(&key_norms, 1, PACKED_PAST_NORM),
+                    gathered(&value_norms, 1, PACKED_PAST_NORM),
+                ],
+                gathered(&errs, 1, PACKED_PAST_NORM),
             )))
         };
         let in_pages = || {
@@ -666,10 +708,7 @@ mod tests {
                 [key_norms.clone(), value_norms.clone()],
                 errs.clone(),
             )))
-            .paged(u32s(
-                &[PACKED_SEQUENCES, PACKED_TABLE[0].len()],
-                PACKED_TABLE.as_flattened(),
-            ))
+            .paged(u32s(&[PACKED_SEQUENCES, PACKED_WIDTH], &packed_table()))
         };
         // The query spans the keys' lines: twice the coordinates under the fix-up.
         let dim = match fixup {
@@ -717,56 +756,95 @@ mod tests {
             }
         };
         let scoring = AttentionScoring::standard(visibility, PACKED_COORDS);
-        let mut served = Vec::new();
+        let (mut served, mut failures) = (Vec::new(), Vec::new());
         for kernel in AttentionKernel::all() {
             let run = |kv: KvSource| {
                 AttentionTensors::attention(&client, stated.clone(), kv, scoring)
                     .and_then(|tensors| kernel.launch_lead_on(&hw, tensors))
                     .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
             };
-            let expected = match run(in_sequences()) {
-                Ok(expected) => expected,
-                Err(decline) => {
+            let reference = match (run(in_sequences()), expected.contains(&kernel)) {
+                (Ok(reference), true) => reference,
+                (Ok(_), false) => {
+                    failures.push(format!("{kernel:?} reads a packed cache, unexpected"));
+                    continue;
+                }
+                (Err(decline), true) => {
+                    eprintln!("{kernel:?} skipped, declined on this device: {decline}");
+                    continue;
+                }
+                (Err(decline), false) => {
                     eprintln!("{kernel:?} declines the sequences: {decline}");
                     continue;
                 }
             };
-            let actual = run(in_pages()).unwrap_or_else(|decline| {
-                panic!("{kernel:?} reads the sequences, and declines their pages: {decline}")
-            });
-            let compared = cubek_test_utils::assert_equals_approx(&actual, &expected, 1e-3);
-            assert!(
-                matches!(compared, ValidationResult::Pass),
-                "{kernel:?}: {compared:?}"
-            );
-            served.push(kernel);
+            match run(in_pages()) {
+                Ok(actual) => {
+                    let compared =
+                        cubek_test_utils::assert_equals_approx(&actual, &reference, 1e-3);
+                    match compared {
+                        ValidationResult::Pass => served.push(kernel),
+                        compared => failures.push(format!("{kernel:?}: {compared:?}")),
+                    }
+                }
+                Err(decline) => failures.push(format!(
+                    "{kernel:?} reads the sequences, and declines their pages: {decline}"
+                )),
+            }
         }
-        eprintln!("read the pages as their sequences: {served:?}");
-        served
+        assert!(failures.is_empty(), "{failures:#?}");
+        match served.is_empty() {
+            true => eprintln!("skipped: this device reads the case with none of {expected:?}"),
+            false => eprintln!("read the pages as their sequences: {served:?}"),
+        }
     }
 
+    /// The kernels a packed cache is read with at a decode step under round-only keys: the staged
+    /// cube and both hypercube shuffles.
+    const ROUND_ONLY_DECODE_READERS: [AttentionKernel; 3] = [
+        AttentionKernel::Cube(CubeAttentionKernel::Fragment),
+        AttentionKernel::Hypercube(HypercubeAttentionKernel::LastArrivalShuffle),
+        AttentionKernel::Hypercube(HypercubeAttentionKernel::SecondLaunchShuffle),
+    ];
+
     /// A round-only packed cache in pages reads, at a decode step, as the same cache laid out as
-    /// the sequences its table names.
+    /// the sequences its table names. That reference is the packed read of a cache laid out as
+    /// sequences: the staged cube's tests in `cubek-attention-backward`
+    /// (`tests/backward/packed.rs`) check it against the host's attention over the decoded rows;
+    /// the hypercube shuffles' packed read has no host reference in this repository.
     #[test]
     fn round_only_packed_pages_read_as_their_sequences_at_a_decode_step() {
-        let served =
-            packed_pages_read_as_their_sequences(KeyFixup::RoundOnly, PackedQueries::Decode);
-        assert!(!served.is_empty(), "some kernel reads a packed cache");
+        packed_pages_read_as_their_sequences(
+            KeyFixup::RoundOnly,
+            PackedQueries::Decode,
+            &ROUND_ONLY_DECODE_READERS,
+        );
     }
 
     /// A packed cache whose keys carry the QJL fix-up, in pages, reads, at a decode step, as the
-    /// same cache laid out as the sequences its table names.
+    /// same cache laid out as the sequences its table names, by both hypercube shuffles. That
+    /// reference is the packed read of a cache laid out as sequences; its QJL read has no host
+    /// reference in this repository.
     #[test]
     fn qjl_packed_pages_read_as_their_sequences_at_a_decode_step() {
-        let served = packed_pages_read_as_their_sequences(KeyFixup::Qjl, PackedQueries::Decode);
-        assert!(!served.is_empty(), "some kernel reads a packed cache");
+        packed_pages_read_as_their_sequences(
+            KeyFixup::Qjl,
+            PackedQueries::Decode,
+            &ROUND_ONLY_DECODE_READERS[1..],
+        );
     }
 
     /// A round-only packed cache in pages reads, under queries that lie end to end, as the same
-    /// cache laid out as the sequences its table names.
+    /// cache laid out as the sequences its table names, by the staged cube. That reference is the
+    /// staged cube's packed read of a cache laid out as sequences, which its tests in
+    /// `cubek-attention-backward` (`tests/backward/packed.rs`) check against the host's attention
+    /// over the decoded rows, at dense queries.
     #[test]
     fn round_only_packed_pages_read_as_their_sequences_under_query_runs() {
-        let served = packed_pages_read_as_their_sequences(KeyFixup::RoundOnly, PackedQueries::Runs);
-        assert!(!served.is_empty(), "some kernel reads a packed cache");
+        packed_pages_read_as_their_sequences(
+            KeyFixup::RoundOnly,
+            PackedQueries::Runs,
+            &ROUND_ONLY_DECODE_READERS[..1],
+        );
     }
 }

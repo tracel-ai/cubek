@@ -46,8 +46,9 @@ is an axis of the attention's space.
 | any | packed | any | a list | declined: `INDEXED_KEYS_UNREAD` |
 
 A packed cache in pages is read where it lies: its words, its norms and the keys' residual lengths
-are each a pool `[pages, kv, page_size, ·]` placed by the one table, the norms paged before the
-words are stated under them, and every read decodes through the table.
+are each a pool `[pages, kv, page_size, ·]` placed by the one table. The norms are paged by the
+table first, then the words are stated under them and paged too, and every read decodes through
+the table.
 
 Packed queries are one launch for every sequence. Each sequence's run of the queries and of the
 output is placed by its entry of `ends` (the tile DSL's `Indexing::Run` along the queries, keyed by

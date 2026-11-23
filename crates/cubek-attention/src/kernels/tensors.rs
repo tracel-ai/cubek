@@ -1013,3 +1013,68 @@ pub struct AttentionSplitSlots {
     /// Each query's running sum of probabilities in every slot, beside the max.
     pub sum: TensorHandle,
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::*;
+    use cubecl::client::Client;
+    use cubecl::prelude::*;
+    use cubecl::zspace::Shape;
+    use cubek_matmul::kernels::tensor::PlainTensor;
+    use cubek_test_utils::TestInput;
+
+    /// The attention of one sequence's three queries of four heads, of head dim eight, over a
+    /// packed cache of four-bit keys and values whose buffers are `[rows, 2, 4, ·]`, but where
+    /// `values` gives the values' words and norms their own shapes.
+    fn attend_packed(rows: usize, values: (&[usize], &[usize])) {
+        let client: Client = cubecl::test_device().client();
+        let tensor = |shape: &[usize], element: ElemType| {
+            PlainTensor::of_handle(
+                TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+                    .dtype(element)
+                    .zeros()
+                    .generate_without_host_data(),
+            )
+        };
+        let (f32, u32) = (f32::elem_type_native(), u32::elem_type_native());
+        let operand = |words: &[usize], norms: &[usize]| PackedAttentionOperand {
+            words: tensor(words, u32),
+            norms: tensor(norms, f32),
+            codebook: tensor(&[16], f32),
+        };
+        let cache = PackedAttentionCache::new(
+            operand(&[rows, 2, 4, 1], &[rows, 2, 4, 1]),
+            operand(values.0, values.1),
+            KvBitWidths { key: 4, value: 4 },
+            None,
+        );
+        let _ = AttentionTensors::packed(
+            &client,
+            tensor(&[1, 4, 3, 8], f32),
+            cache,
+            tensor(&[1], u32),
+            AttentionScoring::standard(AttentionVisibility::Attended, 8),
+        );
+    }
+
+    /// Packed buffers that disagree on their positions state no cache.
+    #[test]
+    #[should_panic(expected = "a packed cache's buffers agree")]
+    fn packed_buffers_of_other_positions_panic() {
+        attend_packed(1, (&[1, 2, 8, 1], &[1, 2, 8, 1]));
+    }
+
+    /// A packed operand's norms of another rank than its words' state no cache.
+    #[test]
+    #[should_panic(expected = "a packed cache's buffers agree")]
+    fn packed_norms_not_of_rank_four_panic() {
+        attend_packed(1, (&[1, 2, 4, 1], &[1, 2, 4]));
+    }
+
+    /// A packed cache laid out as sequences holds one row a sequence of the query.
+    #[test]
+    #[should_panic(expected = "the operands' batch dims agree")]
+    fn packed_sequences_of_another_batch_than_the_query_panic() {
+        attend_packed(2, (&[2, 2, 4, 1], &[2, 2, 4, 1]));
+    }
+}
