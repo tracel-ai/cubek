@@ -12,7 +12,9 @@ use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings, PlaneShuffleMicrokernel,
     PlaneShuffleMicrokernelSettings, plane_fragment_microkernel, plane_shuffle_microkernel,
+    plane_window_microkernel,
 };
+use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_microkernel::matmul::{
     MatmulDimensions, MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
     MatmulStage,
@@ -68,6 +70,7 @@ impl PlaneFragmentLaunch {
                 item.elements,
                 microkernel.orders,
                 MatmulOperands::all(MatmulRead::AsBound),
+                MatmulOperands::all(None),
             ),
             plane_width as usize,
         );
@@ -324,5 +327,113 @@ fn plane_shuffle_kernel<EA: Numeric, E: Numeric>(
             plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);
         }
         sum.drained_into(&c);
+    }
+}
+
+/// How a plane window launch deals its work: `blocks` blocks along the columns to `units` units,
+/// `depth` deep along `K`.
+#[derive(Debug, Clone, Copy)]
+pub struct PlaneWindowShape {
+    pub blocks: usize,
+    pub units: u32,
+    pub depth: usize,
+}
+
+/// One plane window microkernel ready to launch on one plane's block of the output: `blocks` blocks
+/// along the columns dealt to `units` units, `depth` deep along `K`, every operand one value a
+/// line.
+#[derive(Debug, Clone)]
+pub struct PlaneWindowLaunch {
+    pub microkernel: UnitRegistersMicrokernel,
+    pub elements: MatmulElements,
+    units: u32,
+    one_cube: OneCube,
+}
+
+impl PlaneWindowLaunch {
+    /// The launch of the best plane window microkernel `hw` offers for `settings`.
+    ///
+    /// # Errors
+    ///
+    /// Why the device runs none.
+    pub fn new(
+        hw: &Hardware,
+        elements: MatmulElements,
+        settings: &UnitRegistersMicrokernelSettings,
+        shape: PlaneWindowShape,
+    ) -> Result<Self, Decline> {
+        let microkernel = UnitRegistersMicrokernel::best(hw, &elements.work_item(), settings)?;
+        let levels = microkernel
+            .block_tiling()
+            .units_distributed(N, shape.blocks)
+            .launch_planes(&[M, N], PlaneOrder::new(&[], CubeOrder::RowMajor))
+            .build();
+        Ok(Self {
+            microkernel,
+            elements,
+            units: shape.units,
+            one_cube: OneCube::deep(levels, ComputeScope::Plane, shape.depth),
+        })
+    }
+}
+
+impl MatmulLaunch for PlaneWindowLaunch {
+    fn elements(&self) -> MatmulElements {
+        self.elements
+    }
+
+    fn shape(&self) -> [usize; 3] {
+        self.one_cube.shape
+    }
+
+    fn launch(
+        &self,
+        client: &Client,
+        lhs: TensorArg,
+        rhs: TensorArg,
+        out: TensorArg,
+    ) -> Result<(), Decline> {
+        let launcher = self.one_cube.launcher(client, self.units)?;
+        let [lhs, rhs, out] =
+            self.elements
+                .bound([lhs, rhs, out], self.rhs_layout(), MatmulOperands::all(1));
+        // SAFETY: every operand is bound through the launcher at the problem's own extents, and
+        // the kernel indexes no buffer but through its tiles; it holds no shared memory.
+        unsafe {
+            plane_window_kernel::launch_unchecked(
+                client,
+                launcher.cube_count(),
+                launcher.cube_dim(),
+                lhs,
+                rhs,
+                out,
+                launcher.partitioning_arg(),
+                self.microkernel.software_matmul().split_edge(),
+                [self.elements.sum, self.elements.out],
+            );
+        }
+        Ok(())
+    }
+}
+
+/// The plane's units writing their blocks of `out`.
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "each element is defined from its operand at launch, which the kernel is compiled for"
+)]
+#[cube(launch_unchecked)]
+fn plane_window_kernel<EA: Numeric, E: Numeric>(
+    lhs: &TileTensor<'_>,
+    rhs: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] block: SoftwareMatmul,
+    #[define(EA, E)] _elements: [ElemType; 2],
+) {
+    let a = lhs.tile(&partitioning);
+    let b = rhs.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
+    for plane in &partitioning {
+        plane_window_microkernel(plane, &a, &b, &c, block);
     }
 }

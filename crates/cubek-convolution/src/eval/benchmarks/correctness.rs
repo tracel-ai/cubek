@@ -8,7 +8,7 @@ use cubek_test_utils::{HostData, Progress};
 use crate::{
     Strategy,
     eval::{
-        benchmarks::problem::Conv2dProblem,
+        benchmarks::problem::{Conv2dElement, Conv2dProblem},
         cpu_reference::{ConvSpec, cpu_reference_result, strategy_result},
     },
 };
@@ -31,8 +31,15 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
     ) -> Result<HostData, String> {
         let device = cubecl::test_device();
         let client = device.client();
-        let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
-        strategy_result(client, spec, strategy.clone(), dtypes, seeds[0], seeds[1])
+        let (spec, dtypes) = spec_and_dtypes(problem);
+        strategy_result(
+            client,
+            spec,
+            problem.operation,
+            strategy.clone(),
+            dtypes,
+            [seeds[0], seeds[1]],
+        )
     }
 
     fn reference_result(
@@ -43,14 +50,28 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
     ) -> Result<HostData, String> {
         let device = cubecl::test_device();
         let client = device.client();
-        let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
-        cpu_reference_result(client, spec, dtypes, seeds[0], seeds[1], progress)
+        let (spec, dtypes) = spec_and_dtypes(problem);
+        cpu_reference_result(
+            client,
+            spec,
+            problem.operation,
+            dtypes,
+            [seeds[0], seeds[1]],
+            progress,
+        )
     }
 }
 
-fn build_spec_and_dtypes<MP: MatmulPrecision>(p: &Conv2dProblem) -> (ConvSpec, MatmulElems) {
-    let [n, c_in, h_in, w_in] = p.input_shape;
-    let [c_out, _, k_h, k_w] = p.weight_shape;
+fn spec_and_dtypes(problem: &Conv2dProblem) -> (ConvSpec, MatmulElems) {
+    match problem.element {
+        Conv2dElement::F16 => build_spec_and_dtypes::<half::f16>(problem),
+        Conv2dElement::F32 => build_spec_and_dtypes::<f32>(problem),
+    }
+}
+
+fn build_spec_and_dtypes<MP: MatmulPrecision>(problem: &Conv2dProblem) -> (ConvSpec, MatmulElems) {
+    let [n, c_in, h_in, w_in] = problem.input_shape;
+    let [c_out, _, k_h, k_w] = problem.weight_shape;
     let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
         lhs: LhsG::<MP>::elem_type_native(),
         rhs: RhsG::<MP>::elem_type_native(),
@@ -62,7 +83,7 @@ fn build_spec_and_dtypes<MP: MatmulPrecision>(p: &Conv2dProblem) -> (ConvSpec, M
         in_w: w_in,
         channels: c_in,
         out_channels: c_out,
-        args: p.args.clone(),
+        args: problem.args,
         kernel_size: [k_h, k_w],
     };
     (spec, dtypes)

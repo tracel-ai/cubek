@@ -77,7 +77,7 @@ impl UnitRegistersMicrokernel {
     /// a unit's registers. An accumulator past them, such as an attention unit's sum over a
     /// 512-wide value dim, walks its cells at runtime.
     pub fn software_matmul(&self) -> SoftwareMatmul {
-        SoftwareMatmul::new(UNIT_REGISTERS as usize)
+        Self::register_budget()
     }
 
     /// [`software_matmul`](Self::software_matmul) with partials: with a col rhs, each cell keeps
@@ -85,7 +85,22 @@ impl UnitRegistersMicrokernel {
     /// horizontal sum every step. Only for an accumulator read solely at its drain, like a matmul's
     /// output; an attention score is read by its softmax first and uses `software_matmul`.
     pub fn drained_software_matmul(&self) -> SoftwareMatmul {
-        SoftwareMatmul::new(UNIT_REGISTERS as usize).partials()
+        Self::register_budget().partials()
+    }
+
+    /// The block alone, `rows × columns` of the output with every contracted axis left whole, for
+    /// a contraction the leaf walks itself: a gathered operand's taps, which a register
+    /// accumulator cannot step.
+    pub fn block_tiling(&self) -> Levels {
+        let [rows, columns, _] = self.extents();
+        let MatmulDimensions { m, n, .. } = self.dimensions;
+        Levels::leaf(&[(m, rows), (n, columns)])
+    }
+
+    /// The software matmul a memory window is accumulated under: unrolled while its cells fit a
+    /// unit's registers.
+    pub fn register_budget() -> SoftwareMatmul {
+        SoftwareMatmul::new(UNIT_REGISTERS as usize)
     }
 
     /// The extent along `dim` of one step of the block.
