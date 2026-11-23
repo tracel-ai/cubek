@@ -213,6 +213,44 @@ mod cube_staged {
     use cubek_std::devices;
     use cubek_std::routine::Routine;
 
+    /// A packed box racing its next stage in registers keeps that ring on every scheme whose
+    /// staged read decodes it, on Strix Halo's matrix instruction: the ring resolves against the
+    /// packings of the problem as stated, which contracting it to the decoded element drops. Along
+    /// `N` no packed box prepares ([`CubeStagedMicrokernel::UNGROUPED_K`]).
+    #[test]
+    fn a_packed_register_ring_is_kept_on_every_scheme_its_read_decodes() {
+        use cubecl::tile::stage::Prefetch;
+        let hw = devices::offering_cmma(
+            devices::strix_halo(),
+            [MmaConfig {
+                a_type: F16,
+                b_type: F16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 16,
+                k: 16,
+            }],
+        );
+        for (name, problem) in problems(512) {
+            let (mut kept, mut asked) = (0, 0);
+            for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
+                if settings.microkernel.ring.prefetch != Prefetch::InRegisters {
+                    continue;
+                }
+                if let Ok((blueprint, _)) =
+                    CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
+                {
+                    asked += 1;
+                    kept += (blueprint.microkernel.ring.prefetch == Prefetch::InRegisters) as usize;
+                }
+            }
+            match name.ends_with("along n") {
+                true => assert_eq!(asked, 0, "{name}"),
+                false => assert!(kept > 0, "{name}: none of {asked} kept its register ring"),
+            }
+        }
+    }
+
     /// Every setting's cube box is whole steps under the instruction its planes run, at a
     /// prompt's rows, where its stages fit the device's shared memory: a stage is whole scale
     /// blocks of `K`, as many as the step covers. An rhs whose scales do not group `K` is

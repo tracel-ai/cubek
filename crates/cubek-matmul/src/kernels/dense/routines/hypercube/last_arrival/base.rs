@@ -228,6 +228,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let resolved = microkernel.cube.resolve(
             hw,
             &microkernel.cube.contracted(&item),
+            item.packings(),
             &view
                 .shared_partitioning(microkernel.cube.tiling(), &dimensions, target)
                 .cube_space(),
