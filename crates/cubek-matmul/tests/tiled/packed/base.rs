@@ -13,7 +13,7 @@ use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
-use cubek_quant::per_row::mxfp4_per_row;
+use cubek_quant::per_row::factor_mxfp4_scales_by_row;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_dimensions::K;
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
@@ -23,8 +23,9 @@ use crate::tiled::upload;
 /// The per-tensor scale a two-level format is built under.
 const GLOBAL_SCALE: f32 = 2.;
 
-/// Powers of two a block's scale falls below the matrix's largest: an MXFP4-row matrix's reach
-/// past the eight its decode into `e4m3` takes exactly, every other's a few.
+/// Powers of two a block's scale falls below the matrix's largest: for MXFP4 with its scales
+/// factored by row, a reach past the eight its decode into `e4m3` takes exactly; for every other
+/// format, a few.
 const SPREAD: i32 = 3;
 const ROW_SPREAD: i32 = 12;
 
@@ -39,10 +40,11 @@ pub(crate) enum PackedFormat {
     Q4,
     Nvfp4,
     Mxfp4,
-    /// MXFP4 restated as MXFP4-row by the load step a caller runs
-    /// ([`mxfp4_per_row`](cubek_quant::per_row::mxfp4_per_row)), its blocks' scales spread wider
+    /// MXFP4 with its scales factored by row, by the step a caller runs
+    /// ([`factor_mxfp4_scales_by_row`](cubek_quant::per_row::factor_mxfp4_scales_by_row)), its
+    /// blocks' scales spread wider
     /// than the decode into `e4m3` takes exactly, so some round and are counted.
-    Mxfp4Row,
+    Mxfp4RowFactored,
     Mxfp8,
 }
 
@@ -58,7 +60,7 @@ impl PackedFormat {
             Self::Q8 => blocks_of_32(QuantValue::Q8S),
             Self::Q4 => blocks_of_32(QuantValue::Q4S),
             Self::Nvfp4 => nvfp4_scheme(),
-            Self::Mxfp4Row => QuantScheme::mxfp4_per_row(),
+            Self::Mxfp4RowFactored => QuantScheme::mxfp4_row_factored(),
             Self::Mxfp4 => QuantScheme::default()
                 .with_value(QuantValue::E2M1)
                 .per_block([32], ScaleDtype::UE8M0)
@@ -89,7 +91,7 @@ pub(crate) struct PackedSlabs {
     spec: PackedSlabsSpec,
     tensor: PackedTensor,
     host: HostSlabs,
-    /// The blocks the MXFP4-row load step counted as rounding in the decode, for that format.
+    /// The blocks factoring the scales by row counted as rounding in the decode, for that format.
     lossy_blocks: Option<TensorHandle>,
 }
 
@@ -125,8 +127,8 @@ impl PackedSlabs {
             (rows, spec.k / block_of(&scheme)),
         );
         let (scales, global, lossy_blocks) = match spec.format {
-            PackedFormat::Mxfp4Row => {
-                let restated = mxfp4_per_row(client, &scales);
+            PackedFormat::Mxfp4RowFactored => {
+                let restated = factor_mxfp4_scales_by_row(client, &scales);
                 let row_scales = TensorHandle::new_contiguous(
                     Shape::from(vec![rows, 1]),
                     restated.row_scales.handle,
@@ -169,7 +171,7 @@ impl PackedSlabs {
         self.tensor.clone()
     }
 
-    /// The blocks the MXFP4-row load step counted as rounding in the decode into `e4m3`; `None` for
+    /// The blocks factoring the scales by row counted as rounding in the decode into `e4m3`; `None` for
     /// every other format.
     pub(crate) fn lossy_blocks(&self, client: &Client) -> Option<u32> {
         let count = self.lossy_blocks.clone()?;
@@ -222,7 +224,7 @@ impl PackedSlabsSpec {
     pub(crate) fn dequantized(&self) -> HostSlabs {
         let scheme = self.format.scheme();
         let exact = self.exact_values(&scheme);
-        // The load step restating MXFP4 as MXFP4-row changes no value.
+        // The load step factoring MXFP4 scales by row changes no value.
         let values = match scheme.tensor_scale().is_some() {
             true => exact.into_iter().map(|v| v * GLOBAL_SCALE).collect(),
             false => exact,
@@ -254,7 +256,7 @@ impl PackedSlabsSpec {
                     _ => MANTISSAS[h % 4],
                 };
                 let spread = match self.format {
-                    PackedFormat::Mxfp4Row => ROW_SPREAD,
+                    PackedFormat::Mxfp4RowFactored => ROW_SPREAD,
                     _ => SPREAD,
                 };
                 let scale = mantissa * 2f32.powi(-headroom - (h / 4) as i32 % spread);

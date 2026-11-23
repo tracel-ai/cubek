@@ -1,7 +1,7 @@
-//! W4A8 with its scales a row, as a prompt runs a model's projections: an MXFP4 weight restated
-//! as MXFP4-row and an activation quantized to FP8-row, both on the device by cubek-quant's
-//! [`per_row`](cubek_quant::per_row) launches, then multiplied through the autotune their inputs
-//! select. The weight's codes decode into `e4m3` as the fill stages them, the product contracts
+//! W4A8 with its scales a row, as a prompt runs a model's projections: an MXFP4 weight with its
+//! scales factored by row and an activation quantized to FP8-row, both on the device by
+//! cubek-quant's [`per_row`](cubek_quant::per_row) launches, then multiplied through the autotune
+//! their inputs select. The weight's codes decode into `e4m3` as the fill stages them, the product contracts
 //! on the device's plain `e4m3` MMA, and both rows' scales come out of the sum.
 //!
 //! ```sh
@@ -30,7 +30,7 @@ use cubek_matmul::kernels::select::problem::MatmulProblem;
 use cubek_matmul::kernels::select::selector::measured_autotune;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, RowScaledTensor, StoredTensor};
 use cubek_matmul::kernels::tune::MatmulAutotuneGroups;
-use cubek_quant::per_row::{quantize_fp8_per_row, quantize_mxfp4_per_row};
+use cubek_quant::per_row::{quantize_fp8_per_row, quantize_mxfp4_row_factored};
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_dimensions::{K, N};
@@ -100,9 +100,10 @@ fn fp8_row_values(
         .collect()
 }
 
-/// `[rows, k]` MXFP4-row values read back, as `f64`: each code under its block's offset and its
+/// `[rows, k]` MXFP4 values with row-factored scales read back, as `f64`: each code under its
+/// block's offset and its
 /// row's scale.
-fn mxfp4_row_values(
+fn row_factored_values(
     client: &Client,
     codes: &TensorHandle,
     offsets: &TensorHandle,
@@ -159,16 +160,16 @@ fn inputs(
     .expect("an FP8-row activation");
 
     let weight = upload(client, &normal(n * k, k, 2 + copy), [n, k]);
-    let mxfp4 = quantize_mxfp4_per_row(client, &weight, F32);
+    let mxfp4 = quantize_mxfp4_row_factored(client, &weight, F32);
     let scales = mxfp4.scales;
-    let rhs_values = mxfp4_row_values(
+    let rhs_values = row_factored_values(
         client,
         &mxfp4.codes,
         &scales.block_scales,
         &scales.row_scales,
         k,
     );
-    let scheme = QuantScheme::mxfp4_per_row();
+    let scheme = QuantScheme::mxfp4_row_factored();
     let rhs = PackedTensor::new(
         PlainTensor::of_handle(mxfp4.codes),
         PlainTensor::of_handle(scales.block_scales),
@@ -249,7 +250,7 @@ fn main() {
             );
             let groups = MatmulAutotuneGroups::default();
             let autotune = measured_autotune(MatmulOpStrategy::Autotune, &problem, &hw)
-                .expect("FP8-row against MXFP4-row selects one autotune");
+                .expect("FP8-row against MXFP4 with row-factored scales selects one autotune");
             // The first launch races the autotune's candidates and settles its winner.
             autotune.launch(&probe, groups);
             let winner = autotune

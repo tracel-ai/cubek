@@ -1,4 +1,5 @@
-//! FP8-row and MXFP4-row: that each launch writes the levels its scheme names, and that the values
+//! FP8-row, and MXFP4 with row-factored scales: that each launch writes the levels its scheme
+//! names, and that the values
 //! they reconstruct are the input's, to the format's rounding.
 
 use cubecl::{
@@ -9,7 +10,8 @@ use cubecl::{
     zspace::shape,
 };
 use cubek_quant::per_row::{
-    EXACT_LOWEST_OFFSET, MXFP4_BLOCK, mxfp4_per_row, quantize_fp8_per_row, quantize_mxfp4_per_row,
+    EXACT_LOWEST_OFFSET, MXFP4_BLOCK, factor_mxfp4_scales_by_row, quantize_fp8_per_row,
+    quantize_mxfp4_row_factored,
 };
 
 use super::harness::f32_tensor;
@@ -113,7 +115,7 @@ fn scale_bytes(client: &Client, rows: &[Vec<u8>]) -> TensorHandle {
 /// the blocks more than [`EXACT_LOWEST_OFFSET`] below are counted, and one past a `ue8m0`'s range
 /// flushes to the smallest offset.
 #[test]
-fn mxfp4_per_row_restates_block_scales_as_offsets() {
+fn factoring_mxfp4_scales_by_row_stores_offsets_below_the_largest() {
     let client = cubecl::test_device().client();
     let rows = vec![
         vec![127, 125, 130, 128, 122, 123, 130, 130],
@@ -122,7 +124,7 @@ fn mxfp4_per_row_restates_block_scales_as_offsets() {
     ];
     let scales = scale_bytes(&client, &rows);
 
-    let restated = mxfp4_per_row(&client, &scales);
+    let restated = factor_mxfp4_scales_by_row(&client, &scales);
 
     let row_scales = read_f32(&client, &restated.row_scales);
     let offsets = read_bytes(&client, &restated.block_scales);
@@ -148,12 +150,13 @@ fn mxfp4_per_row_restates_block_scales_as_offsets() {
     assert_eq!(lossy, vec![expected_lossy]);
 }
 
-/// A float weight straight to MXFP4-row: each block's codes the nearest `e2m1` under its scale,
+/// A float weight straight to MXFP4 with row-factored scales: each block's codes the nearest
+/// `e2m1` under its scale,
 /// its largest landing on `6`, and its value under the two levels the input's to `e2m1`'s
 /// rounding. A block of zeros stays zero, under the smallest scale, which the lossy count takes
 /// for a block that rounds.
 #[test]
-fn quantize_mxfp4_per_row_reconstructs_the_input() {
+fn quantize_mxfp4_row_factored_reconstructs_the_input() {
     let client = cubecl::test_device().client();
     let (rows, k) = (2, 256);
     let mut data = Vec::new();
@@ -167,7 +170,7 @@ fn quantize_mxfp4_per_row_reconstructs_the_input() {
     }
     let input = f32_tensor(&client, &data, shape![rows, k]);
 
-    let quantized = quantize_mxfp4_per_row(&client, &input, f32::elem_type_native());
+    let quantized = quantize_mxfp4_row_factored(&client, &input, f32::elem_type_native());
 
     let codes = read_u32(&client, &quantized.codes);
     let offsets = read_bytes(&client, &quantized.scales.block_scales);

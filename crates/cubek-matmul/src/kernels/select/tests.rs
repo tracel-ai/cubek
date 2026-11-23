@@ -827,18 +827,19 @@ mod float {
     }
 }
 
-/// FP8-row activations against an MXFP4-row weight are streamed, the activation read as stored
+/// FP8-row activations against an MXFP4 weight with row-factored scales are streamed, the
+/// activation read as stored
 /// under its scales a row: past a decode's rows they reach the many-rows autotune. Row-scaled
 /// values anywhere but the lhs are a scheme no kernel reads, which the framework dequantizes.
 #[test]
-fn an_fp8_row_activation_against_an_mxfp4_row_weight_reaches_the_many_rows_autotune() {
+fn an_fp8_row_activation_against_a_row_factored_mxfp4_weight_reaches_the_many_rows_autotune() {
     let hw = devices::h100();
-    let mxfp4_row = QuantScheme::default()
+    let row_factored = QuantScheme::default()
         .with_value(QuantValue::E2M1)
         .per_block([32, 1], ScaleDtype::UE8M0)
         .per_row(ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(1));
-    let w4a8 = with_packed_lhs(quantized(512, mxfp4_row), QuantScheme::fp8_per_row());
+    let w4a8 = with_packed_lhs(quantized(512, row_factored), QuantScheme::fp8_per_row());
     assert_eq!(
         select(Autotune, &w4a8, &hw),
         Ok(fastest(MatmulAutotune::ManyRows))

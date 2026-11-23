@@ -1,14 +1,15 @@
 //! Per-row scales for an 8-bit float product: FP8-row activations
-//! ([`QuantScheme::fp8_per_row`](crate::scheme::QuantScheme::fp8_per_row)) and MXFP4-row weights
-//! ([`QuantScheme::mxfp4_per_row`](crate::scheme::QuantScheme::mxfp4_per_row)).
+//! ([`QuantScheme::fp8_per_row`](crate::scheme::QuantScheme::fp8_per_row)) against MXFP4
+//! weights with row-factored scales
+//! ([`QuantScheme::mxfp4_row_factored`](crate::scheme::QuantScheme::mxfp4_row_factored)).
 //!
 //! A product of the two contracts `e4m3` values on the device's plain `e4m3` instruction: each
-//! row's scale comes out of the sum, applied once to its output, and an MXFP4-row weight's codes
-//! decode into `e4m3` under their block's offset as they load. Each step here is one launch the
-//! caller runs, on a matrix of rows with `k` innermost, and none reads anything back: an MXFP4
-//! weight restated once as it loads ([`mxfp4_per_row`]), a float one quantized straight to MXFP4-row
-//! ([`quantize_mxfp4_per_row`]), an activation quantized a row at a time before each product
-//! ([`quantize_fp8_per_row`]).
+//! row's scale comes out of the sum, applied once to its output, and the weight's codes decode
+//! into `e4m3` under their block's offset as they load. Each step here is one launch the caller
+//! runs, on a matrix of rows with `k` innermost, and none reads anything back: an MXFP4 weight's
+//! scales factored by row once as it loads ([`factor_mxfp4_scales_by_row`]), a float weight
+//! quantized straight to that ([`quantize_mxfp4_row_factored`]), an activation quantized a row at
+//! a time before each product ([`quantize_fp8_per_row`]).
 
 use cubecl::{
     calculate_cube_count_elemwise,
@@ -24,7 +25,8 @@ pub const MXFP4_BLOCK: usize = 32;
 
 /// The lowest offset of a block's scale below its row's, as a power of two, at which every
 /// `e2m1` value of the block stays an `e4m3` one: `0.5 × 2^-8` is `e4m3`'s smallest subnormal.
-/// A block further below rounds as it decodes, and [`Mxfp4PerRow::lossy_blocks`] counts it.
+/// The decode into `e4m3` rounds a block further below, which the values themselves do not, and
+/// [`RowFactoredScales::lossy_blocks`] counts it.
 pub const EXACT_LOWEST_OFFSET: i32 = -8;
 
 /// Units of a cube, a row's: each reads its strided share of the row.
@@ -77,31 +79,38 @@ pub fn quantize_fp8_per_row(
     Fp8PerRow { values, scales }
 }
 
-/// An MXFP4 weight's scales restated as MXFP4-row: its block scales as offsets below its row's
-/// largest, the same byte a block, beside one `f32` scale a row, `2^largest`. The weight's codes
-/// are unchanged, so every value is too, as the product of the two levels.
-pub struct Mxfp4PerRow {
-    /// `ue8m0` offsets, `[rows, k / 32]`, each `2^(s - largest)`: no longer the checkpoint's bytes.
+/// An MXFP4 weight's scales factored by row: the same values as MXFP4. Each row's scale is its
+/// largest block scale, an `f32`, and each block scale is stored as its offset below it, the same
+/// byte a block. It adds no precision; it lets a decode into `e4m3` fold the block scales in
+/// exactly. The weight's codes are unchanged.
+pub struct RowFactoredScales {
+    /// `ue8m0` offsets, `[rows, k / 32]`, each `2^(s - largest)`: no longer the checkpoint's bytes,
+    /// though under the row's scale they are its scales.
     pub block_scales: TensorHandle,
     /// One `f32` a row, its largest block scale.
     pub row_scales: TensorHandle,
-    /// One `u32`: the blocks whose offset is below [`EXACT_LOWEST_OFFSET`], which may round as the
-    /// product decodes them into `e4m3`. Zero for a weight the product takes exactly; a block of
-    /// zeros, under the smallest scale, counts though it decodes exactly.
+    /// One `u32`: the blocks whose offset is below [`EXACT_LOWEST_OFFSET`], which may round as a
+    /// product decodes them into `e4m3`, the decode's limit and not the format's. Zero for a weight
+    /// the decode takes exactly; a block of zeros, under the smallest scale, counts though it
+    /// decodes exactly.
     pub lossy_blocks: TensorHandle,
 }
 
-/// The `ue8m0` block scales of an MXFP4 weight, `[rows, k / 32]` bytes, restated as MXFP4-row
-/// ([`Mxfp4PerRow`]).
+/// The `ue8m0` block scales of an MXFP4 weight, `[rows, k / 32]` bytes, factored by row
+/// ([`RowFactoredScales`]): the same values, each row's largest block scale beside each block's
+/// offset below it.
 ///
 /// # Panics
 ///
 /// Where a row's scales are not whole words of four, `k` a multiple of 128.
-pub fn mxfp4_per_row(client: &Client, block_scales: &TensorHandle) -> Mxfp4PerRow {
+pub fn factor_mxfp4_scales_by_row(
+    client: &Client,
+    block_scales: &TensorHandle,
+) -> RowFactoredScales {
     let (rows, blocks) = rows_of(block_scales.shape());
     assert!(
         blocks.is_multiple_of(4),
-        "mxfp4_per_row: a row's {blocks} block scales are whole words of four"
+        "factor_mxfp4_scales_by_row: a row's {blocks} block scales are whole words of four"
     );
     let words = |handle: &TensorHandle| {
         TensorHandle::new_contiguous(
@@ -114,7 +123,7 @@ pub fn mxfp4_per_row(client: &Client, block_scales: &TensorHandle) -> Mxfp4PerRo
     let row_scales = TensorHandle::empty(client, [rows], ElemType::Float(FloatKind::F32));
     let lossy_blocks = TensorHandle::zeros(client, [1], ElemType::UInt(UIntKind::U32));
     let cube_count = calculate_cube_count_elemwise(client, rows, CubeDim::new_single());
-    mxfp4_per_row_kernel::launch(
+    factor_scales_by_row_kernel::launch(
         client,
         cube_count,
         CubeDim::new_1d(ROW_UNITS),
@@ -124,7 +133,7 @@ pub fn mxfp4_per_row(client: &Client, block_scales: &TensorHandle) -> Mxfp4PerRo
         lossy_blocks.clone().into_arg().into_buffer_arg(),
         ROW_UNITS as usize,
     );
-    Mxfp4PerRow {
+    RowFactoredScales {
         block_scales: TensorHandle::new_contiguous(
             [rows, blocks],
             offsets.handle,
@@ -135,29 +144,30 @@ pub fn mxfp4_per_row(client: &Client, block_scales: &TensorHandle) -> Mxfp4PerRo
     }
 }
 
-/// A float weight quantized to MXFP4-row: its `e2m1` codes, `[rows, k / 8]` words, eight a word
-/// the lowest first, and its scales ([`Mxfp4PerRow`]).
-pub struct QuantizedMxfp4PerRow {
+/// A float weight quantized to MXFP4 with its scales factored by row: its `e2m1` codes,
+/// `[rows, k / 8]` words, eight a word the lowest first, and its scales ([`RowFactoredScales`]).
+pub struct QuantizedMxfp4RowFactored {
     pub codes: TensorHandle,
-    pub scales: Mxfp4PerRow,
+    pub scales: RowFactoredScales,
 }
 
 /// `input`, a contiguous float `[rows, k]` of `input_elem`, quantized to MXFP4 as burn's
 /// `quantize_dynamic` does, each block's `ue8m0` scale its largest magnitude over `e2m1`'s
-/// largest rounded up to a power of two, then restated as MXFP4-row ([`mxfp4_per_row`]).
+/// largest rounded up to a power of two, then its scales factored by row
+/// ([`factor_mxfp4_scales_by_row`]).
 ///
 /// # Panics
 ///
 /// Where `k` is not a multiple of 128, whole words of four block scales.
-pub fn quantize_mxfp4_per_row(
+pub fn quantize_mxfp4_row_factored(
     client: &Client,
     input: &TensorHandle,
     input_elem: ElemType,
-) -> QuantizedMxfp4PerRow {
+) -> QuantizedMxfp4RowFactored {
     let (rows, k) = rows_of(input.shape());
     assert!(
         k.is_multiple_of(4 * MXFP4_BLOCK),
-        "quantize_mxfp4_per_row: k ({k}) holds whole words of four block scales"
+        "quantize_mxfp4_row_factored: k ({k}) holds whole words of four block scales"
     );
     let codes = TensorHandle::empty(client, [rows, k / 8], ElemType::UInt(UIntKind::U32));
     let scales = TensorHandle::empty(
@@ -183,9 +193,9 @@ pub fn quantize_mxfp4_per_row(
         scales.handle,
         ElemType::UInt(UIntKind::U8),
     );
-    QuantizedMxfp4PerRow {
+    QuantizedMxfp4RowFactored {
         codes,
-        scales: mxfp4_per_row(client, &block_scales),
+        scales: factor_mxfp4_scales_by_row(client, &block_scales),
     }
 }
 
@@ -243,7 +253,7 @@ fn fp8_per_row_kernel<F: Float>(
 /// One cube a row of block scales: its largest, then each word of four offsets below it, the
 /// blocks past [`EXACT_LOWEST_OFFSET`] counted once a unit.
 #[cube(launch)]
-fn mxfp4_per_row_kernel(
+fn factor_scales_by_row_kernel(
     scales: &Tensor<u32>,
     offsets: &mut Tensor<u32>,
     row_scales: &mut Tensor<f32>,

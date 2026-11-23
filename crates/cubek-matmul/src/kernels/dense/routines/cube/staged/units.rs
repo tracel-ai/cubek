@@ -104,8 +104,8 @@ impl CubeStagedMatmulRoutine {
     /// stored in one ([`RowScaledTensor`](crate::kernels::tensor::RowScaledTensor)), `(grid,
     /// planes)`, a second stage in flight: four by four fragments on four by two planes, one step
     /// deep and two. On an R9700 the first was the fastest box of every grid raced on Qwen3.8
-    /// 27B's projections at 512 and 2048 rows (FP8-row against MXFP4-row, 156 to 187 TFLOP/s),
-    /// but at its output projection at 512 rows, which the second took.
+    /// 27B's projections at 512 and 2048 rows (FP8-row against MXFP4 with row-factored scales,
+    /// 156 to 187 TFLOP/s), but at its output projection at 512 rows, which the second took.
     const EIGHT_BIT_BOXES: [((usize, usize, usize), (usize, usize)); 2] =
         [((4, 4, 1), (4, 2)), ((4, 4, 2), (4, 2))];
 

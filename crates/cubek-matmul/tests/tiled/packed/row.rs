@@ -1,4 +1,5 @@
-//! FP8-row activations against an MXFP4-row weight, W4A8 with its scales a row: the activation's
+//! FP8-row activations against an MXFP4 weight with row-factored scales, W4A8 with its scales a
+//! row: the activation's
 //! `e4m3` values contract as they are stored, the weight's codes decode into `e4m3` under their
 //! block's offset as the fill stages them, and both rows' scales come out of the sum, applied
 //! once to its output.
@@ -27,7 +28,7 @@ fn products() -> Vec<PackedProduct> {
     let w4a8 = PackedProduct::of(
         Stored::Fp8Row { seed: 1 },
         Stored::Packed {
-            format: PackedFormat::Mxfp4Row,
+            format: PackedFormat::Mxfp4RowFactored,
             seed: 2,
         },
     );
@@ -38,42 +39,49 @@ fn products() -> Vec<PackedProduct> {
     ]
 }
 
-/// Every setting of every routine staging a packed weight for a matrix instruction: the units',
-/// the copy engine's and the hypercube's. A device whose instructions take no `e4m3` product
-/// declines them all, which skips.
+/// Every setting of the units' staged routine against a packed weight, each launched apart, so a
+/// device whose instructions take no `e4m3` product declines them all, which skips.
 #[test]
-fn an_fp8_row_activation_against_an_mxfp4_row_weight_answers_at_every_setting() {
-    let products = products();
+fn an_fp8_row_activation_against_a_row_factored_mxfp4_weight_answers_on_the_units() {
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
     let settings = [
         CubeStagedMatmulRoutine.packed_settings(staged.hw()),
         vec![CubeStagedMatmulRoutineSettings::DEFAULT],
     ]
     .concat();
-    staged.check(staged.at(settings, &products));
+    staged.check(staged.at(settings, &products()));
+}
 
+/// The same on the copy engine's staged routine, on a device that has one.
+#[test]
+fn an_fp8_row_activation_against_a_row_factored_mxfp4_weight_answers_on_the_copy_engine() {
     let async_copy = ByRoutine::new(CubeStagedAsyncCopyMatmulRoutine, Declines::AsItStates);
     async_copy.check(async_copy.at(
         CubeStagedAsyncCopyMatmulRoutine.packed_settings(async_copy.hw()),
-        &products,
+        &products(),
     ));
+}
 
+/// The same on the hypercube, its cubes sharing each box along `K`: each run's part is parked
+/// under both rows' scales, which the sum took out of the decode, and the last run adds them up.
+#[test]
+fn an_fp8_row_activation_against_a_row_factored_mxfp4_weight_answers_on_the_hypercube() {
     let hypercube = ByRoutine::new(HypercubeLastArrivalMatmulRoutine, Declines::AsItStates);
     hypercube.check(hypercube.at(
         HypercubeLastArrivalMatmulRoutine.packed_settings(hypercube.hw()),
-        &products,
+        &products(),
     ));
 }
 
 /// The weight the products above read spreads its block scales further below its rows' largest
 /// than the decode into `e4m3` takes exactly, and the load step counts those blocks.
 #[test]
-fn the_mxfp4_row_load_step_counts_the_blocks_the_decode_rounds() {
+fn factoring_mxfp4_scales_by_row_counts_the_blocks_the_decode_rounds() {
     let client = cubecl::test_device().client();
     let weight = PackedSlabs::new(
         &client,
         PackedSlabsSpec {
-            format: PackedFormat::Mxfp4Row,
+            format: PackedFormat::Mxfp4RowFactored,
             operand: MatmulOperand::Rhs,
             slabs: 1,
             rows: 96,
@@ -81,7 +89,9 @@ fn the_mxfp4_row_load_step_counts_the_blocks_the_decode_rounds() {
             seed: 2,
         },
     );
-    let lossy = weight.lossy_blocks(&client).expect("an MXFP4-row weight");
+    let lossy = weight
+        .lossy_blocks(&client)
+        .expect("an MXFP4 weight with row-factored scales");
     assert!(lossy > 0, "no block of the spread weight was counted");
     assert!(lossy < 96 * 1024 / 32, "every block was counted");
 }
@@ -105,10 +115,10 @@ fn e4m3_zeros(rows: usize, k: usize) -> PlainTensor {
     ))
 }
 
-fn mxfp4_row_weight(n: usize, k: usize) -> StoredTensor {
+fn row_factored_weight(n: usize, k: usize) -> StoredTensor {
     let client = cubecl::test_device().client();
     let spec = PackedSlabsSpec {
-        format: PackedFormat::Mxfp4Row,
+        format: PackedFormat::Mxfp4RowFactored,
         operand: MatmulOperand::Rhs,
         slabs: 1,
         rows: n,
@@ -136,18 +146,18 @@ fn e4m3_values_beside_a_packed_input_are_read_only_as_a_row_scaled_lhs() {
     assert_eq!(
         declined(
             StoredTensor::Plain(e4m3_zeros(m, k)),
-            mxfp4_row_weight(n, k)
+            row_factored_weight(n, k)
         ),
         named(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED)
     );
-    assert_eq!(declined(row_scaled(m, k), mxfp4_row_weight(n, k)), None);
+    assert_eq!(declined(row_scaled(m, k), row_factored_weight(n, k)), None);
     let bf16_weight = StoredTensor::Plain(upload(&client, &[k, n], &vec![half::bf16::ZERO; k * n]));
     assert_eq!(
         declined(row_scaled(m, k), bf16_weight),
         named(ROW_SCALED_UNSERVED)
     );
     assert_eq!(
-        declined(mxfp4_row_weight(m, k), row_scaled(k, n)),
+        declined(row_factored_weight(m, k), row_scaled(k, n)),
         named(ROW_SCALED_UNSERVED)
     );
 }
