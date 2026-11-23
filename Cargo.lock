@@ -1438,6 +1438,7 @@ dependencies = [
  "cubecl-ir",
  "cubek-convolution",
  "cubek-matmul",
+ "cubek-microkernel",
  "cubek-std",
  "cubek-test-utils",
  "half",
