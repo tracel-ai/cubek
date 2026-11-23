@@ -80,6 +80,8 @@ fn a_query_held_in_registers_matches_the_host() {
         }
     });
     forward.check(forward.at(held, &[PROMPT_WIDE, PROMPT_HEAD_DIM_256]));
+    // The query cast as it loads, beside e4m3 keys, and the probabilities cast to e4m3 values' own.
+    forward.check(forward.at(held, &PROMPTS_WIDE_FP8));
 }
 
 /// Every setting the routine lists at a head dim of 256, where the output's rows a correction
