@@ -1,7 +1,7 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
-    each_microkernel_with, estimate_reduce, microkernel_widths, prepared_from_key, split_launch,
+    each_microkernel_with, estimate_reduce, microkernel_widths, split_launch,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -85,39 +85,36 @@ impl Routine for HypercubeAtomicReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        // Inside, `problem` is the problem the call's Tune Key stands for.
-        prepared_from_key::<Self, _>(hw, problem, |problem| {
-            if problem.operation != ReduceOperation::Sum {
-                return Err(Decline::Unserved {
-                    why: "the atomic hypercube adds its parts, which only a sum's parts make whole",
-                });
-            }
-            if !hw
-                .properties
-                .atomic_type_usage(Type::atomic(problem.elements.out))
-                .contains(AtomicUsage::Add)
-            {
-                return Err(Decline::Unserved {
-                    why: "the device has no atomic add for the output's element",
-                });
-            }
-            let microkernel =
-                CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-            let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-            let (partitioning, grid) = split_launch(
-                hw,
-                problem,
-                |_| problem.space(),
-                microkernel.units(),
-                settings.unit_lines,
-                widths[0],
-                microkernel.shared_memory_bytes_at_width(widths[0]),
-            )?;
-            Ok((
-                ReduceBlueprint::new(microkernel, partitioning, widths),
-                grid,
-            ))
-        })
+        if problem.operation != ReduceOperation::Sum {
+            return Err(Decline::Unserved {
+                why: "the atomic hypercube adds its parts, which only a sum's parts make whole",
+            });
+        }
+        if !hw
+            .properties
+            .atomic_type_usage(Type::atomic(problem.elements.out))
+            .contains(AtomicUsage::Add)
+        {
+            return Err(Decline::Unserved {
+                why: "the device has no atomic add for the output's element",
+            });
+        }
+        let microkernel =
+            CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line())?;
+        let (partitioning, grid) = split_launch(
+            hw,
+            problem,
+            |_| problem.space(),
+            microkernel.units(),
+            settings.unit_lines,
+            widths[0],
+            microkernel.shared_memory_bytes_at_width(widths[0]),
+        )?;
+        Ok((
+            ReduceBlueprint::new(microkernel, partitioning, widths),
+            grid,
+        ))
     }
 
     fn estimate(
@@ -147,10 +144,7 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
 
     /// `tensors` reduced on `grid`, each cube's total added into the output.
     fn launch(tensors: &ReduceTensors, blueprint: HypercubeAtomicReduceBlueprint, grid: Grid) {
-        let space = Self::space(tensors.problem(), &blueprint);
-        let binding = tensors
-            .bind(&blueprint, &grid, space)
-            .map(Bound::arg, identity);
+        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, identity);
         launch_atomic::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
@@ -168,8 +162,7 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) {
-        let space = Self::space(tensors.problem(), &blueprint);
-        let binding = tensors.bind(&blueprint, &grid, space).map(input, identity);
+        let binding = tensors.bind(&blueprint, &grid).map(input, identity);
         launch_atomic::<I>(
             tensors.problem(),
             tensors.client(),

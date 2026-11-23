@@ -9,14 +9,14 @@ use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::Hardware;
 
-/// Why a routine that splits a row across cubes declines a call whose caller gave it less scratch
-/// than it needs ([`ReduceWorkspace::bytes_for`]).
+/// Why the last-arrival hypercube declines a call whose caller gave it less scratch than it needs
+/// ([`ReduceWorkspace::bytes_for`]).
 pub const WORKSPACE_TOO_SMALL: Decline = Decline::Unserved {
     why: "the routine needs more scratch than the workspace its caller gave",
 };
 
-/// The scratch of a reduction that splits its rows across cubes, which its caller allocates and
-/// owns: each cube's partial, its indices where the carrier keeps any, and one arrival counter a
+/// The scratch of a reduction whose last cube merges a row split across cubes, which its caller
+/// allocates and owns: each cube's partial, its indices where the carrier keeps any, and one arrival counter a
 /// box of rows. The counters hold zero when the caller first gives them, and every launch leaves
 /// them at zero, so one workspace serves every launch that runs after the one before it ends.
 #[derive(Debug, Clone)]
@@ -40,8 +40,8 @@ pub struct ReduceWorkspaceBytes {
 impl ReduceWorkspace {
     /// The bytes a workspace takes for reducing an input of `shape` along `axis` by `operation`
     /// in `elements` on `client`'s device, with the indices written beside the values where
-    /// `with_indices`: enough for every setting of every routine that splits a row across cubes,
-    /// at every width, so it serves whichever the strategy picks.
+    /// `with_indices`: enough for every setting of the last-arrival hypercube, at every width, so it
+    /// serves whichever the strategy picks.
     ///
     /// # Panics
     ///

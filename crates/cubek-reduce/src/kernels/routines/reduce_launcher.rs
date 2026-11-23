@@ -1,12 +1,10 @@
 //! The trait every reduce routine implements: how it launches what it prepared.
 
-use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceRoutineProblem, ReduceTensors, ReduceWorkspaceBytes,
-};
+use crate::kernels::{ReduceBinding, ReduceBlueprint, ReduceRoutineProblem, ReduceTensors};
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Bound, StoredTileOperand, TileOperand, Unbound};
-use cubecl::tile::{Geometry, Space, TileTensorLaunch};
+use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubek_std::routine::{Grid, Routine};
 
 /// A reduce routine around microkernel `M`, as a launcher: it launches the
@@ -30,27 +28,9 @@ pub(crate) trait ReduceLauncher<M>:
         grid: Grid,
     );
 
-    /// The space `blueprint` partitions for `problem`: its dimensions at `problem`'s own extents,
-    /// where the Blueprint states those of the problem its Tune Key stands for.
-    fn space(problem: &ReduceRoutineProblem, _blueprint: &ReduceBlueprint<M>) -> Space {
-        problem.space()
-    }
-
-    /// The scratch `blueprint`'s launch of `problem` takes from its caller's workspace: none, but
-    /// for a routine that splits a row across cubes.
-    fn workspace(
-        _problem: &ReduceRoutineProblem,
-        _blueprint: &ReduceBlueprint<M>,
-    ) -> ReduceWorkspaceBytes {
-        ReduceWorkspaceBytes::default()
-    }
-
     /// `tensors` bound as `blueprint` states them and reduced on `grid`.
     fn launch(tensors: &ReduceTensors, blueprint: ReduceBlueprint<M>, grid: Grid) {
-        let space = Self::space(tensors.problem(), &blueprint);
-        let binding = tensors
-            .bind(&blueprint, &grid, space)
-            .map(Bound::arg, Bound::arg);
+        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, Bound::arg);
         Self::dispatch::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
@@ -69,10 +49,7 @@ pub(crate) trait ReduceLauncher<M>:
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) {
-        let space = Self::space(tensors.problem(), &blueprint);
-        let binding = tensors
-            .bind(&blueprint, &grid, space)
-            .map(input, Bound::arg);
+        let binding = tensors.bind(&blueprint, &grid).map(input, Bound::arg);
         Self::dispatch::<I>(
             tensors.problem(),
             tensors.client(),

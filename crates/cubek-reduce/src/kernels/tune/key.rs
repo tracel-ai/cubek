@@ -11,11 +11,14 @@ use cubek_microkernel::reduce::{REDUCED, ReduceOperation};
 use serde::{Deserialize, Serialize};
 
 /// What tells one reduction from another for the autotune: its elements, its operation, how its
-/// lines lie, the widest line each buffer takes, how long a row is and how many rows there are.
-/// How many axes the rows run along is not: every routine places its owners along one dimension
-/// of rows whatever the rank. Every reduce routine prepares its Blueprint from the problem a key
-/// stands for ([`ReduceRoutineProblem::keyed`]), so the widths a key holds are ones every call
-/// of it reads at.
+/// lines lie, the widest line each buffer takes, how long a row is, how many rows there are and
+/// whether its caller gave scratch. How many axes the rows run along is not: every routine places
+/// its owners along one dimension of rows whatever the rank.
+///
+/// **The rows are bucketed in powers of two, whatever the autotune level.** cubecl's anchor scales
+/// its base by the level, so a bucket would be a power of three or five, which no line of a key
+/// divides: the problem a key stands for would be read a value a line, and the candidates ranked
+/// at a width its calls do not run.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct ReduceKey {
     elements: ReduceElements,
@@ -26,10 +29,37 @@ pub struct ReduceKey {
     input_line: usize,
     /// The widest line, a power of two, the output's buffer takes, and the indices' beside it.
     out_line: usize,
-    #[autotune(anchor(exp(min = 16, max = 1048576, base = 4)))]
+    /// How many values a row holds, at its bucket ([`reduced_bucket`](Self::reduced_bucket)).
     reduced: usize,
-    #[autotune(anchor(exp(max = 1048576, base = 8)))]
+    /// How many rows there are, at their bucket ([`rows_bucket`](Self::rows_bucket)).
     rows: usize,
+    /// Whether the caller gave scratch: a call given none cannot run a winner that takes it.
+    scratch: bool,
+}
+
+impl ReduceKey {
+    /// The extent a key holds for rows of `values` values: the power of four at or above them,
+    /// from 16 to 2^20.
+    fn reduced_bucket(values: usize) -> usize {
+        power_at_or_above(4, values).clamp(16, LARGEST_BUCKET)
+    }
+
+    /// The extent a key holds for `rows` rows: the power of eight at or above them, at most 2^20.
+    fn rows_bucket(rows: usize) -> usize {
+        power_at_or_above(8, rows).min(LARGEST_BUCKET)
+    }
+}
+
+/// The extent past which every call shares a bucket.
+const LARGEST_BUCKET: usize = 1 << 20;
+
+/// The power of `base` at or above `extent`, one for none.
+fn power_at_or_above(base: usize, extent: usize) -> usize {
+    let below = base.pow(extent.max(1).ilog(base));
+    match below < extent {
+        true => below * base,
+        false => below,
+    }
 }
 
 /// The widest line a key tells apart: past every device's vector width.
@@ -74,11 +104,8 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
         let out_line = problem.indices.map_or(widest_line_of(out), |indices| {
             widest_line_of(out).min(widest_line_of(indices.elem_alignment))
         });
-        // Lines along the reduced axis run within a row, whatever the buffer's alignment says.
-        let input_line = match problem.lines_along() == REDUCED {
-            true => widest_line_of(input).min(widest_line_within(problem.reduced_extent())),
-            false => widest_line_of(input),
-        };
+        // A line runs within its axis, whatever the buffer's alignment says.
+        let input_line = widest_line_of(input).min(widest_line_within(problem.line_stays_in()));
         Self::new(
             problem.elements,
             problem.indices.map(|indices| indices.element),
@@ -86,8 +113,9 @@ impl From<&ReduceRoutineProblem> for ReduceKey {
             problem.lines_along(),
             input_line,
             out_line,
-            problem.reduced_extent(),
-            problem.row_count(),
+            Self::reduced_bucket(problem.reduced_extent()),
+            Self::rows_bucket(problem.row_count()),
+            problem.workspace != ReduceWorkspaceBytes::default(),
         )
     }
 }
@@ -114,8 +142,10 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
                 element,
                 elem_alignment: out_alignment,
             }),
-            // It stands for calls whose caller gave the scratch they need.
-            workspace: ReduceWorkspaceBytes::UNBOUNDED,
+            workspace: match key.scratch {
+                true => ReduceWorkspaceBytes::UNBOUNDED,
+                false => ReduceWorkspaceBytes::default(),
+            },
         }
     }
 }
@@ -141,6 +171,41 @@ mod tests {
             ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
         );
         assert_eq!(ReduceKey::from(&problem).input_line, 1);
+    }
+
+    /// A row length's bucket is the power of four at or above it.
+    #[test]
+    fn a_row_length_is_keyed_by_a_power_of_four() {
+        assert_eq!(ReduceKey::reduced_bucket(4097), 16384);
+    }
+
+    /// A power of four is its own bucket.
+    #[test]
+    fn a_row_length_a_power_of_four_is_its_own_bucket() {
+        assert_eq!(ReduceKey::reduced_bucket(4096), 4096);
+    }
+
+    /// A row count's bucket is the power of eight at or above it.
+    #[test]
+    fn a_row_count_is_keyed_by_a_power_of_eight() {
+        assert_eq!(ReduceKey::rows_bucket(65), 512);
+    }
+
+    /// Past the largest bucket, every row count shares it.
+    #[test]
+    fn a_row_count_past_the_largest_bucket_is_keyed_by_it() {
+        assert_eq!(ReduceKey::rows_bucket(LARGEST_BUCKET + 1), LARGEST_BUCKET);
+    }
+
+    /// A call given no scratch is keyed apart from one given some, whose winner it may not run.
+    #[test]
+    fn calls_with_and_without_scratch_are_keyed_apart() {
+        let without = ReduceRoutineProblem::dense(&[4, 300], 1, ReduceOperation::Sum);
+        let with = ReduceRoutineProblem {
+            workspace: ReduceWorkspaceBytes::UNBOUNDED,
+            ..without.clone()
+        };
+        assert_ne!(ReduceKey::from(&without), ReduceKey::from(&with));
     }
 
     /// The problem a key stands for has that key, for rows along the reduced dim.

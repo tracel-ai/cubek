@@ -1,7 +1,7 @@
 use super::kernel::{cube_staged_reduce_kernel, cube_staged_reduce_with_indices_kernel};
 use crate::kernels::{
     BATCH, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
-    microkernel_widths, prepared_from_key,
+    microkernel_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
@@ -15,9 +15,10 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// Every owner a cube, whose units reduce its rows together: few long rows, a cube each. The
-/// cube's units are its `x`, as many as its microkernel's planes hold, and the hardware splits them
-/// into its planes. Its cubes run along [`BATCH`].
+/// Every owner a cube, whose units reduce its rows together: few long rows, a cube each. Where its
+/// units all read one line of rows, they are the cube's `x`, as many as its microkernel's planes
+/// hold, which the hardware splits into planes; where they spread across several, its `x` is a
+/// plane. Its cubes run along [`BATCH`].
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CubeStagedReduceRoutine;
 
@@ -63,29 +64,26 @@ impl Routine for CubeStagedReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        // Inside, `problem` is the problem the call's Tune Key stands for.
-        prepared_from_key::<Self, _>(hw, problem, |problem| {
-            let microkernel =
-                CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-            let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-            let microkernel = microkernel.across_rows(hw, widths[0], problem.row_count());
-            let partitioning = Partitioning::new(
-                problem.space(),
-                microkernel
-                    .levels(&problem.owner_box_at_width(widths[0]))
-                    .cubes(&[BATCH])
-                    .build(),
-            );
-            let cube = CubeResources {
-                plane_width: microkernel.launch_plane_width() as u32,
-                shared_memory: microkernel.shared_memory_bytes_at_width(widths[0]),
-            };
-            let grid = Grid::new(hw, &partitioning, cube)?;
-            Ok((
-                ReduceBlueprint::new(microkernel, partitioning, widths),
-                grid,
-            ))
-        })
+        let microkernel =
+            CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line())?;
+        let microkernel = microkernel.across_rows(hw, widths[0], problem.row_count());
+        let partitioning = Partitioning::new(
+            problem.space(),
+            microkernel
+                .levels(&problem.owner_box_at_width(widths[0]))
+                .cubes(&[BATCH])
+                .build(),
+        );
+        let cube = CubeResources {
+            plane_width: microkernel.launch_plane_width() as u32,
+            shared_memory: microkernel.shared_memory_bytes_at_width(widths[0]),
+        };
+        let grid = Grid::new(hw, &partitioning, cube)?;
+        Ok((
+            ReduceBlueprint::new(microkernel, partitioning, widths),
+            grid,
+        ))
     }
 
     fn estimate(

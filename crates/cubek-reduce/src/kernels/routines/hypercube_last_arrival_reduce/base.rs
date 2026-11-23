@@ -4,8 +4,8 @@ use super::kernel::{
 };
 use crate::kernels::{
     PARTIALS, REDUCED, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
-    ReduceWorkspaceBytes, bound_at, each_microkernel_with, estimate_reduce, microkernel_widths,
-    prepared_from_key, split_launch,
+    ReduceWorkspaceBytes, WORKSPACE_TOO_SMALL, bound_at, each_microkernel_with, estimate_reduce,
+    microkernel_widths, split_launch,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -13,7 +13,7 @@ use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Partitioning, Space, TileTensorLaunch};
+use cubecl::tile::{Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
@@ -88,43 +88,21 @@ impl HypercubeLastArrivalReduceRoutine {
     }
 }
 
-impl HypercubeLastArrivalReduceRoutine {
-    /// The launch of `problem`, the problem a call's Tune Key stands for, at `settings`.
-    fn prepare_keyed(
-        hw: &Hardware,
-        problem: &ReduceRoutineProblem,
-        settings: &HypercubeLastArrivalReduceSettings,
-    ) -> Result<(HypercubeLastArrivalReduceBlueprint, Grid), Decline> {
-        let microkernel = HypercubeLastArrivalReduceMicrokernel::best(
-            hw,
-            &problem.work_item(),
-            &settings.microkernel,
-        )?;
-        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-        let (partitioning, grid) = split_launch(
-            hw,
-            problem,
-            |part| {
-                problem.split_space_with_partial_extent(partial_extent(problem, part, widths[0]))
-            },
-            microkernel.part().units(),
-            settings.unit_lines,
-            widths[0],
-            microkernel.shared_memory_bytes_at_width(widths[0]),
-        )?;
-        Ok((
-            ReduceBlueprint::new(microkernel, partitioning, widths),
-            grid,
-        ))
-    }
-}
-
 /// The values of a row each of `blueprint`'s cubes reduces.
 fn part_of(blueprint: &HypercubeLastArrivalReduceBlueprint) -> usize {
     blueprint
         .partitioning
         .box_of(ComputeScope::Cube)
         .extent(REDUCED)
+}
+
+/// The scratch `blueprint`'s launch of `problem` takes from its caller's workspace: the partials,
+/// their indices and the counters of the rows in its cubes' parts.
+fn workspace_of(
+    problem: &ReduceRoutineProblem,
+    blueprint: &HypercubeLastArrivalReduceBlueprint,
+) -> ReduceWorkspaceBytes {
+    workspace_at(problem, part_of(blueprint), blueprint.width)
 }
 
 /// Every power of two from one to `widest`.
@@ -188,9 +166,28 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        prepared_from_key::<Self, _>(hw, problem, |keyed| {
-            Self::prepare_keyed(hw, keyed, settings)
-        })
+        let microkernel = HypercubeLastArrivalReduceMicrokernel::best(
+            hw,
+            &problem.work_item(),
+            &settings.microkernel,
+        )?;
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line())?;
+        let (partitioning, grid) = split_launch(
+            hw,
+            problem,
+            |part| {
+                problem.split_space_with_partial_extent(partial_extent(problem, part, widths[0]))
+            },
+            microkernel.part().units(),
+            settings.unit_lines,
+            widths[0],
+            microkernel.shared_memory_bytes_at_width(widths[0]),
+        )?;
+        let blueprint = ReduceBlueprint::new(microkernel, partitioning, widths);
+        if !problem.workspace.holds(&workspace_of(problem, &blueprint)) {
+            return Err(WORKSPACE_TOO_SMALL);
+        }
+        Ok((blueprint, grid))
     }
 
     fn estimate(
@@ -205,24 +202,6 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
 
 impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArrivalReduceRoutine {
     const NAME: &'static str = "hypercube-last-arrival-reduce";
-
-    /// The problem's space and the partials of its own reduced extent, cut in the parts
-    /// `blueprint`'s cubes own.
-    fn space(
-        problem: &ReduceRoutineProblem,
-        blueprint: &HypercubeLastArrivalReduceBlueprint,
-    ) -> Space {
-        let part = part_of(blueprint);
-        problem.split_space_with_partial_extent(partial_extent(problem, part, blueprint.width))
-    }
-
-    /// The partials, their indices and the counters of `problem`'s rows in `blueprint`'s parts.
-    fn workspace(
-        problem: &ReduceRoutineProblem,
-        blueprint: &HypercubeLastArrivalReduceBlueprint,
-    ) -> ReduceWorkspaceBytes {
-        workspace_at(problem, part_of(blueprint), blueprint.width)
-    }
 
     fn dispatch<I: TileOperand>(
         problem: &ReduceRoutineProblem,
@@ -241,7 +220,7 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
             .workspace
             .clone()
             .expect("prepare declines a launch whose caller gave no workspace");
-        let partial_extent = Self::space(problem, &blueprint).extent(PARTIALS);
+        let partial_extent = blueprint.partitioning.space().extent(PARTIALS);
         let partial_shape = problem.shape_with_reduced_extent(partial_extent);
         let counter = ElemType::UInt(UIntKind::U32);
         let partials = TensorHandle::new_contiguous(
@@ -341,8 +320,6 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::WORKSPACE_TOO_SMALL;
-    use cubecl::tile::launch::Decline;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
@@ -428,7 +405,7 @@ mod tests {
             .expect("it lists settings");
         let (blueprint, _) = HypercubeLastArrivalReduceRoutine::prepare(&hw, &problem, &settings)
             .expect("an M2 Pro serves it");
-        let needs = HypercubeLastArrivalReduceRoutine::workspace(&problem, &blueprint);
+        let needs = workspace_of(&problem, &blueprint);
         let bound = HypercubeLastArrivalReduceRoutine::workspace_bound(&hw, &problem);
         assert!(bound.holds(&needs), "{bound:?} against {needs:?}");
     }
