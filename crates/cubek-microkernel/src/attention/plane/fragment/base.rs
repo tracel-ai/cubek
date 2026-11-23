@@ -2,7 +2,7 @@ use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, QueryHolder, ScoreHolder,
 };
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
@@ -73,17 +73,19 @@ impl PlaneFragmentAttentionMicrokernel {
     }
 
     /// Whether a plane keeping its score in `holder` keeps `item`'s query, read in `read`, where
-    /// `settings` ask: registers hold only the `A` of a score in fragments, as it is stored.
+    /// `settings` ask: registers hold only the `A` of a score in fragments, loaded from the values
+    /// as they are stored, so not from a wide query bound as its words.
     fn holds_query(
         settings: &PlaneFragmentAttentionMicrokernelSettings,
         holder: ScoreHolder,
         item: &AttentionWorkItem,
         read: AttentionRead,
     ) -> bool {
+        let stored = item.elements.query;
         match settings.query {
             QueryHolder::Stage => true,
             QueryHolder::Registers => {
-                holder == ScoreHolder::Fragments && item.elements.query == read.score
+                holder == ScoreHolder::Fragments && (stored == read.score || stored.size() < 4)
             }
         }
     }
@@ -125,6 +127,18 @@ impl PlaneFragmentAttentionMicrokernel {
     /// both multiplications' fragments: at most every row's, which a window's state keeps.
     fn softmax_registers(&self, item: &AttentionWorkItem) -> u32 {
         (2 * self.seq_q() * item.sum.size()).div_ceil(4) as u32
+    }
+
+    /// 32-bit registers one unit keeps its part of the query in: a row of its head dim a lane's
+    /// fragment holds, none where the query is staged.
+    fn query_registers(&self, item: &AttentionWorkItem, units: usize) -> u32 {
+        match self.query_holder() {
+            QueryHolder::Stage => 0,
+            QueryHolder::Registers => {
+                let bytes = self.seq_q() * item.head_dim * self.read.score.size();
+                bytes.div_ceil(units * 4) as u32
+            }
+        }
     }
 
     /// The score as the shared microkernel is handed it: summed into the plane's window.
@@ -318,7 +332,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             .estimate(&Self::value_item(item), &(), planes, estimate);
         let softmax = UnitWork {
             instruction: ArithmeticInstruction::Matrix,
-            registers: self.softmax_registers(item),
+            registers: self.softmax_registers(item)
+                + self.query_registers(item, planes.width),
         };
 
         estimate.work = score
@@ -333,9 +348,20 @@ impl AttentionMicrokernel for PlaneFragmentAttentionMicrokernel {
         self.score.orders().rhs
     }
 
-    /// Its operands in the element its instruction reads them in.
+    /// Its operands in the element its instruction reads them in, a query held in registers as it
+    /// is stored: its planes cast it as they load it, where a staged one is converted ahead.
     fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
-        item.read_as(self.read)
+        let read = item.read_as(self.read);
+        match self.query_holder() {
+            QueryHolder::Stage => read,
+            QueryHolder::Registers => AttentionWorkItem {
+                elements: AttentionOperands {
+                    query: item.elements.query,
+                    ..read.elements
+                },
+                ..read
+            },
+        }
     }
 }
 

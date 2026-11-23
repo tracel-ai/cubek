@@ -91,10 +91,10 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         let query = match microkernel.query_holder() {
             QueryHolder::Stage => query.clone(),
             QueryHolder::Registers => {
-                let held = score.held_query(query);
+                let held = score.held_query(query, microkernel);
                 for plane in walk.planes() {
                     let mut fragments = held.at(&plane);
-                    fragments.copy_from(&query.at(&plane));
+                    fragments.copy_cast_from(&query.at(&plane));
                 }
                 held
             }
@@ -266,11 +266,14 @@ impl StageScore {
                 Tile::scratch::<EA>(walk, comptime!(vec![G, Q, S]), StageStorage::Strided),
                 Tile::scratch::<E>(walk, comptime!(vec![G, Q, S]), StageStorage::Strided),
             ),
-            ScoreHolder::Fragments => StageScore::new_Fragments(Tile::stage_accumulator::<EA>(
-                walk,
-                comptime!(vec![G, Q, S]),
-                query,
-            )),
+            ScoreHolder::Fragments => {
+                let define!(Score) = microkernel.read.score;
+                StageScore::new_Fragments(Tile::stage_accumulator_in::<EA, Score>(
+                    walk,
+                    comptime!(vec![G, Q, S]),
+                    query,
+                ))
+            }
         }
     }
 
@@ -303,9 +306,14 @@ impl StageScore {
 
     /// The fragments each plane holds of `query` in its registers, as this score's fragments
     /// contract them, unfilled ([`Tile::held_for`]).
-    pub fn held_query(&self, query: &Tile) -> Tile {
+    pub fn held_query(
+        &self,
+        query: &Tile,
+        #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
+    ) -> Tile {
+        let define!(Score) = microkernel.read.score;
         match self {
-            StageScore::Fragments(logits) => query.held_for(logits),
+            StageScore::Fragments(logits) => query.held_for::<Score>(logits),
             StageScore::Window(_, _) => {
                 unreachable!("a query is held in registers beside a score kept in fragments")
             }
@@ -526,8 +534,8 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
     let query = match microkernel.query_holder() {
         QueryHolder::Stage => staged,
         QueryHolder::Registers => {
-            let mut held = score.held_query(&staged);
-            held.copy_from(&staged);
+            let mut held = score.held_query(&staged, microkernel);
+            held.copy_cast_from(&staged);
             held
         }
     };

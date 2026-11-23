@@ -1,7 +1,7 @@
 use crate::attention::cube::CubeAttentionPlaneSettings;
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
-    ScoreHolder,
+    QueryHolder, ScoreHolder,
 };
 use crate::matmul::cube::CubeStagedDelivery;
 use core::num::NonZeroUsize;
@@ -88,7 +88,11 @@ impl CubeAttentionMicrokernelSettings {
     /// ([`laid_as_named`](Self::laid_as_named)).
     pub fn listed(self, hw: &Hardware) -> Vec<Self> {
         let listed = match self.plane {
-            CubeAttentionPlaneSettings::Fragment(plane) => Self::fragments_listed(self, plane),
+            CubeAttentionPlaneSettings::Fragment(plane) => {
+                let mut listed = Self::fragments_listed(self, plane);
+                listed.extend(Self::held_queries_listed(self, plane, hw));
+                listed
+            }
             CubeAttentionPlaneSettings::Shuffle(plane) => Self::shuffles_listed(self, plane),
         };
         listed
@@ -341,6 +345,46 @@ impl CubeAttentionMicrokernelSettings {
             .chain(pipelined)
             .chain(four_small_planes)
             .collect()
+    }
+
+    /// A cube sharing each stage with every head of the group, four planes along each head's
+    /// queries, every plane holding its query in registers, so the cube's shared memory holds
+    /// stages of keys and values alone: three key fragments a step or one, the next stage's loads
+    /// waiting in the registers of the cube's many units, a line or a few each, while the planes
+    /// contract this one, or in a second slot. A device whose manual `mma` is `16 × 16` holds a
+    /// query of a head dim of 256 in 64 registers a unit beside the 128 of its output, so it lists
+    /// them; on another a fragment of rows is narrower, and the planes that fit a cube's shared
+    /// memory are fewer.
+    fn held_queries_listed(
+        lead: Self,
+        plane: PlaneFragmentAttentionMicrokernelSettings,
+        hw: &Hardware,
+    ) -> Vec<Self> {
+        if !manual_mma(hw).any(|config| config.n == 16 && config.m == 16) {
+            return Vec::new();
+        }
+        let count = |count: usize| NonZeroUsize::new(count).unwrap();
+        [
+            (3, StageRing::SINGLE_THROUGH_REGISTERS),
+            (1, StageRing::SINGLE_THROUGH_REGISTERS),
+            (1, StageRing::DOUBLE),
+            (3, StageRing::SINGLE),
+        ]
+        .into_iter()
+        .map(|(keys, ring)| Self {
+            plane: CubeAttentionPlaneSettings::Fragment(
+                PlaneFragmentAttentionMicrokernelSettings {
+                    seq_kv: count(keys),
+                    ..plane.querying(QueryHolder::Registers)
+                },
+            ),
+            heads: count(8),
+            planes_along_queries: count(4),
+            ring,
+            layout: StageLayout::PaddedRows,
+            ..lead
+        })
+        .collect()
     }
 
     /// A star off `lead`: two and eight planes along a head's keys, eight rows a plane,

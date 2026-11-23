@@ -17,8 +17,10 @@ mod fragment {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
-    use cubek_microkernel::attention::cube::CubeAttentionPlane;
-    use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
+    use cubek_microkernel::attention::cube::{CubeAttentionPlane, CubeAttentionPlaneSettings};
+    use cubek_microkernel::attention::plane::{
+        PlaneFragmentAttentionMicrokernelSettings, QueryHolder, ROW_STATE_HELD_BY_UNIT, ScoreHolder,
+    };
     use cubek_microkernel::attention::{AttentionMicrokernel, D, G, Q, S};
     use cubek_microkernel::matmul::MatmulDim;
     use cubek_std::microkernel::{StageLayout, StageRing};
@@ -236,6 +238,81 @@ mod fragment {
             bytes(StageLayout::PaddedBlocks),
             strided + padded_block_rows * chunk
         );
+    }
+
+    /// A device whose manual `mma` is `16 × 16 × 16` in `f16` and lays its accumulator as its `A`, as
+    /// RDNA4 does.
+    fn offering_square_mma() -> Hardware {
+        let square = MmaConfig {
+            a_type: F16,
+            b_type: F16,
+            cd_type: F32,
+            m: 16,
+            n: 16,
+            k: 16,
+        };
+        devices::offering_mma(offering(devices::h100(), 16), [square])
+    }
+
+    /// Planes holding their query in registers take its stage's bytes out of the cube's shared
+    /// memory, so every head of a group of six shares each stage with four planes a head at a head
+    /// dim of 256, where staging those planes' query does not fit.
+    #[test]
+    fn a_held_query_leaves_the_shared_memory_to_the_keys() {
+        let hw = offering_square_mma();
+        let problem = AttentionRoutineProblem::dense((1, 24, 4), (2048, 4096), (256, 256), F16);
+        let item = problem.work_item();
+        let shared = |query, heads, planes| {
+            let lead = Settings::DEFAULT;
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    plane: CubeAttentionPlaneSettings::Fragment(
+                        PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1).querying(query),
+                    ),
+                    heads: NonZeroUsize::new(heads).unwrap(),
+                    planes_along_queries: NonZeroUsize::new(planes).unwrap(),
+                    ..lead.microkernel
+                },
+                ..lead
+            };
+            let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)?;
+            Ok::<_, Decline>(
+                blueprint
+                    .microkernel
+                    .shared_memory(&hw, &item, &blueprint.shared_memory),
+            )
+        };
+        let query = 16 * 256 * F16.size();
+        assert_eq!(
+            shared(QueryHolder::Stage, 1, 1).expect("one plane's query fits")
+                - shared(QueryHolder::Registers, 1, 1).expect("a held query fits"),
+            query
+        );
+        assert!(shared(QueryHolder::Registers, 6, 4).is_ok());
+        assert!(matches!(
+            shared(QueryHolder::Stage, 6, 4),
+            Err(Decline::SharedMemoryPastDevice { .. })
+        ));
+    }
+
+    /// A query held in registers is the `A` of a score in fragments: where the device gives no such
+    /// score, as RDNA3's transposed accumulator, the setting is declined, not read some other way.
+    #[test]
+    fn a_held_query_asks_for_a_score_in_fragments() {
+        let hw = offering(devices::m2_pro(), 8);
+        let [_, _, problem, _] = problems();
+        let lead = Settings::DEFAULT;
+        let held = Settings {
+            microkernel: CubeAttentionMicrokernelSettings {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
+                        .querying(QueryHolder::Registers),
+                ),
+                ..lead.microkernel
+            },
+            ..lead
+        };
+        assert!(CubeStagedAttentionRoutine::prepare(&hw, &problem, &held).is_err());
     }
 
     /// A swizzled stage is one a cmma fragment cannot read, which takes its tiles off a pointer
