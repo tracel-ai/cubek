@@ -18,10 +18,11 @@ use std::time::Duration;
 use cubecl::CubeTuneId;
 use cubecl::client::Client;
 use cubecl::future::block_on;
-use cubecl::ir::{ElemType, FloatKind};
+use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::*;
-use cubecl::quant::scheme::QuantScheme;
+use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::kind::Field;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::plan::{MatmulCall, MatmulCallInput};
@@ -30,14 +31,27 @@ use cubek_matmul::kernels::select::problem::MatmulProblem;
 use cubek_matmul::kernels::select::selector::measured_autotune;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, RowScaledTensor, StoredTensor};
 use cubek_matmul::kernels::tune::MatmulAutotuneGroups;
+use cubek_matmul::kernels::{
+    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulRoutine,
+};
+use cubek_matmul::tiled::storage;
+use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
 use cubek_quant::per_row::{quantize_fp8_per_row, quantize_mxfp4_row_factored};
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
+use cubek_std::layout::tile_order;
 use cubek_std::matmul_dimensions::{K, N};
+use cubek_std::microkernel::StageRing;
 use half::f16;
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
 const F32: ElemType = ElemType::Float(FloatKind::F32);
+const WORD: ElemType = ElemType::UInt(UIntKind::U32);
+
+/// Values of `k` a block scale covers.
+const BLOCK: usize = 32;
 
 /// Bytes of weights a timing cycles through, past the R9700's 64 MiB cache.
 const ROTATION: usize = 256 << 20;
@@ -142,15 +156,19 @@ fn e4m3(code: u8) -> f64 {
     }
 }
 
-/// The inputs of an `m × n × k` product, quantized on the device, and their values on the host.
+/// The inputs of an `m × n × k` product, quantized on the device, the weight stored as `layout`
+/// says, and, where `host` asks, their values on the host.
 fn inputs(
     client: &Client,
+    hw: &Hardware,
     (m, n, k): (usize, usize, usize),
     copy: u64,
-) -> (Inputs, Vec<f64>, Vec<f64>) {
+    layout: Layout,
+    host: bool,
+) -> (Inputs, Option<(Vec<f64>, Vec<f64>)>) {
     let activation = upload(client, &normal(m * k, k, 1), [m, k]);
     let fp8 = quantize_fp8_per_row(client, &activation, F32);
-    let lhs_values = fp8_row_values(client, &fp8.values, &fp8.scales, k);
+    let lhs_values = host.then(|| fp8_row_values(client, &fp8.values, &fp8.scales, k));
     let row_scales = TensorHandle::new_contiguous(Shape::new([m, 1]), fp8.scales.handle, F32);
     let lhs = RowScaledTensor::new(
         PlainTensor::of_handle(fp8.values),
@@ -162,37 +180,143 @@ fn inputs(
     let weight = upload(client, &normal(n * k, k, 2 + copy), [n, k]);
     let mxfp4 = quantize_mxfp4_row_factored(client, &weight, F32);
     let scales = mxfp4.scales;
-    let rhs_values = row_factored_values(
-        client,
-        &mxfp4.codes,
-        &scales.block_scales,
-        &scales.row_scales,
-        k,
-    );
-    let scheme = QuantScheme::mxfp4_row_factored();
-    let rhs = PackedTensor::new(
-        PlainTensor::of_handle(mxfp4.codes),
-        PlainTensor::of_handle(scales.block_scales),
-        Some(PlainTensor::of_handle(TensorHandle::new_contiguous(
-            Shape::new([n, 1]),
-            scales.row_scales.handle,
-            F32,
-        ))),
-        scheme,
-        Operand::of_scheme(&scheme, K, [N, K]).expect("blocks along k"),
-        [(N, n), (K, k)],
-    );
+    let rhs_values = host.then(|| {
+        row_factored_values(
+            client,
+            &mxfp4.codes,
+            &scales.block_scales,
+            &scales.row_scales,
+            k,
+        )
+    });
     let lossy = read::<u32>(client, &scales.lossy_blocks)[0];
-    if copy == 0 && lossy > 0 {
+    if host && lossy > 0 {
         println!("  {lossy} blocks of the weight round as they decode into e4m3");
     }
+    let row_scales = PlainTensor::of_handle(TensorHandle::new_contiguous(
+        Shape::new([n, 1]),
+        scales.row_scales.handle,
+        F32,
+    ));
+    let rhs = match layout {
+        Layout::Tiles => in_tile_order(
+            client,
+            hw,
+            &mxfp4.codes,
+            &scales.block_scales,
+            row_scales,
+            (n, k),
+        ),
+        Layout::Rows => {
+            let scheme = QuantScheme::mxfp4_row_factored();
+            PackedTensor::new(
+                PlainTensor::of_handle(mxfp4.codes),
+                PlainTensor::of_handle(scales.block_scales),
+                Some(row_scales),
+                scheme,
+                Operand::of_scheme(&scheme, K, [N, K]).expect("blocks along k"),
+                [(N, n), (K, k)],
+            )
+        }
+    };
     let out = TensorHandle::zeros(client, [m, n], F16);
     let inputs = Inputs {
         lhs: StoredTensor::RowScaled(lhs),
         rhs: StoredTensor::Packed(rhs),
         out,
     };
-    (inputs, lhs_values, rhs_values)
+    (inputs, lhs_values.zip(rhs_values))
+}
+
+/// Where the weight's words and block scales lie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// Each row's words and scales along `k`, as a checkpoint stores them.
+    Rows,
+    /// The tile order a load stores the weight in on this device, its scales beside it.
+    Tiles,
+}
+
+/// The weight, `[n, k]` codes and block scales in rows, restored in the tile order a load stores
+/// it in on `hw` ([`MatmulStep::stored_on`], [`storage::tile_order_on`]): its codes as the kernel
+/// names them, `[n, k / 32, 32]`, and its block scales in tiles of their own where the order keeps
+/// them there, else in their rows, under its scale a row.
+fn in_tile_order(
+    client: &Client,
+    hw: &Hardware,
+    codes: &TensorHandle,
+    block_scales: &TensorHandle,
+    row_scales: PlainTensor,
+    (n, k): (usize, usize),
+) -> PackedTensor {
+    let in_rows = QuantScheme::mxfp4_row_factored();
+    // The step a load stores the weight in, under the instruction that contracts it against an
+    // `e4m3` activation.
+    let contracted = ElemType::Float(FloatKind::E4M3);
+    let read = Operand::of_scheme(&in_rows, K, [N, K]).expect("one block along k");
+    let values = cubek_std::value_element(in_rows.value).expect("float codes");
+    let step = MatmulStep::stored_on(hw, MatmulOperand::Rhs, read, values, contracted)
+        .expect("the device contracts the weight");
+    let tile = (step.along(K), step.along(N));
+    // The same bytes stated over `[k, n]`, its words down `k`: the statement tile order stores.
+    let scheme = QuantScheme::default()
+        .with_value(in_rows.value)
+        .per_block([BLOCK as u8, 1], ScaleDtype::UE8M0)
+        .per_row(ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(1));
+    let order =
+        storage::tile_order_on(hw, &scheme, tile, (k, n)).expect("tile order stores the weight");
+    let words_per_load = hw.load_values(WORD);
+    let blocks = k / BLOCK;
+    let bound = |handle: &cubecl::server::Handle, meta: Metadata| TensorBinding {
+        handle: handle.clone().binding(),
+        strides: meta.strides,
+        shape: meta.shape,
+        tiling: meta.tiling,
+    };
+    let values = storage::tile(
+        client,
+        bound(
+            &codes.handle,
+            Metadata::new([n, blocks, BLOCK], [k, BLOCK, 1]),
+        ),
+        &tile_order::values_dimensions(N),
+        WORD,
+        Some(Field::from(scheme.value)),
+        order.values_storage(N, words_per_load),
+    )
+    .expect("the values tile");
+    let scales = match order.scales_storage(N, order.rows_a_load(N, words_per_load)) {
+        Some(laid) => {
+            let tiled = storage::tile(
+                client,
+                bound(
+                    &block_scales.handle,
+                    Metadata::new([n, blocks], [blocks, 1]),
+                ),
+                &tile_order::scales_dimensions(N),
+                WORD,
+                Some(Field::of_scale(ScaleDtype::UE8M0)),
+                laid,
+            )
+            .expect("the scales tile");
+            PlainTensor::new(bound(&tiled.handle, *tiled.metadata), WORD)
+        }
+        None => PlainTensor::of_handle(block_scales.clone()),
+    };
+    let matrix = tile_order::matrix_values(&values.metadata);
+    let sized = [(K, k), (N, n)];
+    let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("one block along k");
+    let operand =
+        PackedTensor::read_in_tiles(hw, sized, operand, &matrix).expect("read in its tiles");
+    PackedTensor::new(
+        PlainTensor::new(bound(&values.handle, matrix), WORD),
+        scales,
+        Some(row_scales),
+        scheme,
+        operand,
+        sized,
+    )
 }
 
 fn call(
@@ -235,13 +359,21 @@ fn main() {
         ("gate/up", 34816, 5120),
         ("down", 5120, 17408),
     ];
+    let layout = match std::env::var("W4A8_LAYOUT").as_deref() {
+        Ok("rows") => Layout::Rows,
+        _ => Layout::Tiles,
+    };
+    println!("weight in {layout:?}");
     for m in rows {
         for (name, n, k) in shapes {
             let dims = (m, n, k);
             let copies = ROTATION.div_ceil(n * k / 2).clamp(2, 8);
-            let (first, lhs, rhs) = inputs(&client, dims, 0);
+            let (first, host) = inputs(&client, &hw, dims, 0, layout, true);
+            let (lhs, rhs) = host.expect("the first copy's values");
             let mut data = vec![first];
-            data.extend((1..copies as u64).map(|copy| inputs(&client, dims, copy).0));
+            data.extend(
+                (1..copies as u64).map(|copy| inputs(&client, &hw, dims, copy, layout, false).0),
+            );
 
             let probe = call(&client, &hw, &data[0], dims);
             let problem = MatmulProblem::new(
@@ -254,9 +386,9 @@ fn main() {
             // The first launch races the autotune's candidates and settles its winner.
             autotune.launch(&probe, groups);
             let winner = autotune
-                .fastest_routine(&probe, groups)
-                .map_or("(no routine)".to_string(), |(settings, _)| {
-                    format!("{settings:?}")
+                .fastest(&probe, groups)
+                .map_or("(none settled)".to_string(), |(identity, _)| {
+                    identity.to_string()
                 });
 
             let got: Vec<f64> = read::<f16>(&client, &data[0].out)
@@ -283,18 +415,65 @@ fn main() {
                 .fold(0f64, f64::max);
 
             let calls: Vec<MatmulCall> = data.iter().map(|d| call(&client, &hw, d, dims)).collect();
-            let time = time(&client, || {
+            let tuned = time(&client, || {
                 for c in &calls {
                     autotune.launch(c, groups);
                 }
             }) / calls.len() as u32;
-            let tflops = 2.0 * (m * n * k) as f64 / time.as_secs_f64() / 1e12;
+            let tflops = |time: Duration| 2.0 * (m * n * k) as f64 / time.as_secs_f64() / 1e12;
+            // The boxes the autotune lists for this product, each launched alone.
+            let boxes = eight_bit_boxes()
+                .into_iter()
+                .filter_map(|settings| {
+                    let launch = |d: &Inputs| {
+                        CubeStagedMatmulRoutine.launch_into(
+                            &hw,
+                            &client,
+                            d.lhs.clone(),
+                            d.rhs.clone(),
+                            PlainTensor::of_handle(d.out.clone()),
+                            &settings,
+                        )
+                    };
+                    launch(&data[0]).ok()?;
+                    let time = time(&client, || {
+                        for d in &data {
+                            launch(d).expect("launched once already");
+                        }
+                    }) / data.len() as u32;
+                    Some((tflops(time), settings))
+                })
+                .max_by(|a, b| a.0.total_cmp(&b.0));
             println!(
-                "{name:<8} m={m:<5} {tflops:>6.1} TFLOP/s {:>8.1} µs  err {error:.1e}  {winner}",
-                time.as_secs_f64() * 1e6
+                "{name:<8} m={m:<5} {:>6.1} TFLOP/s {:>8.1} µs  err {error:.1e}  autotune: {winner}",
+                tflops(tuned),
+                tuned.as_secs_f64() * 1e6
             );
+            if let Some((best, settings)) = boxes {
+                println!(
+                    "{:<16} {best:>6.1} TFLOP/s  best 8-bit box alone: {settings}",
+                    ""
+                );
+            }
         }
     }
+}
+
+/// The units' boxes the packed autotune lists for an 8-bit float product on a device whose
+/// manual MMA multiplies `e4m3`: four by four fragments on four by two planes, one step deep and
+/// two, a second stage in flight.
+fn eight_bit_boxes() -> Vec<CubeStagedMatmulRoutineSettings> {
+    [(4, 4, 1), (4, 4, 2)]
+        .map(|(along_m, along_n, depth)| {
+            CubeStagedMatmulRoutineSettings::on_grid(
+                CubeStagedMicrokernelSettings::boxed(
+                    PlaneFragmentMicrokernelSettings::grid(along_m, along_n, depth),
+                    MatmulPlaneLayout::new(4, 2),
+                )
+                .ringed(StageRing::DOUBLE),
+            )
+        })
+        .to_vec()
 }
 
 /// The device time of `launch`, the best of a few rounds, each launching it several times.
