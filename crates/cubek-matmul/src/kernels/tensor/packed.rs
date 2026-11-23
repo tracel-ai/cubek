@@ -1,19 +1,19 @@
 //! A packed tensor bound as one tile: its words, under its block scales, under its per-tensor scale
 //! where its scheme has one. Every kernel that reads a packed operand reads it through
-//! [`PackedTensor::bind`], whichever family it belongs to; the family names the operand's axes and
-//! how its block scales are read ([`BlockScales`]), nothing else.
+//! [`PackedTensor::bind`], whichever family it belongs to; the family names the operand's
+//! dimensions and how its block scales are read ([`BlockScales`]), nothing else.
 
 use super::PlainTensor;
 use core::marker::PhantomData;
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
+use cubecl::ir::{ElemType, IntKind, UIntKind};
 use cubecl::prelude::{TensorBinding, TensorMapArg, TensorMapSwizzle};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
-use cubecl::tile::launch::{Arg, Delivery, Labelled, Refusal, TmaCoordinates, TmaLanding, TmaTerm};
+use cubecl::tile::launch::{Arg, Decline, Delivery, Labelled, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
-    Axis, Launcher, Projection, TileTensorLaunch,
+    Dimension, Launcher, Projection, TileTensorLaunch,
     kind::Field,
-    layout::{DimsBuilder, Offset, PhysicalAxisMap, split},
+    layout::{AxesBuilder, Offset, PhysicalAxisMap, split},
 };
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
@@ -25,33 +25,33 @@ use cubek_std::launch::tma::{
 };
 use cubek_std::layout::stored::{BlockScales, Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
-use cubek_std::matmul_axes::{EXPERT, K, blocked};
+use cubek_std::matmul_dimensions::{EXPERT, K, blocked};
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// The element a packed matrix's words and scales are bound in: whole `u32` words.
 const WORD: ElemType = ElemType::UInt(UIntKind::U32);
 
-/// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the axis its
-/// words run along.
-pub const SCALES_NOT_ALONG_WORDS: Refusal = Refusal::Declined {
-    why: "the packed routines read block scales along the axis the words run along",
+/// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the dimension
+/// its words run along.
+pub const SCALES_NOT_ALONG_WORDS: Decline = Decline::Unserved {
+    why: "the packed routines read block scales along the dimension the words run along",
 };
 
 /// What [`PackedTensor::of_quantized`] declines: a batch of matrices, or values stored other than
 /// in contiguous rows.
-pub const PACKED_NOT_ONE_MATRIX_IN_ROWS: Refusal = Refusal::Declined {
+pub const PACKED_NOT_ONE_MATRIX_IN_ROWS: Decline = Decline::Unserved {
     why: "the packed routines read one quantized matrix in row-major rows",
 };
 
 /// What a read of a packed tensor declines: anything but one packed, block-scaled matrix.
-pub const TENSOR_NOT_PACKED: Refusal = Refusal::Declined {
+pub const TENSOR_NOT_PACKED: Decline = Decline::Unserved {
     why: "a packed read takes one packed, block-scaled matrix",
 };
 
 /// What reading a packed tensor as a stack of slabs declines: slabs that split one read of its
 /// words, one block of its scales or one word of block scales; and for words stored in tiles,
 /// slabs along anything but its rows, or that split a strip of its tiles.
-pub const PACKED_STACK_UNREAD: Refusal = Refusal::Declined {
+pub const PACKED_STACK_UNREAD: Decline = Decline::Unserved {
     why: "a packed stack is read slab by slab, each slab whole reads, whole scale blocks and \
           whole words of block scales, and in tiles whole strips of its rows",
 };
@@ -59,24 +59,25 @@ pub const PACKED_STACK_UNREAD: Refusal = Refusal::Declined {
 /// What reading a packed tensor as a batch of matrices, or a window of its rows, declines: words
 /// stored in tiles, a two-level scheme, whose per-tensor scale is the whole tensor's, a read
 /// already stacked or windowed, rows a batch does not divide, or rows past the matrix's.
-pub const PACKED_BATCH_UNREAD: Refusal = Refusal::Declined {
+pub const PACKED_BATCH_UNREAD: Decline = Decline::Unserved {
     why: "a packed batch or window is read from words in rows under a one-level scheme, once, \
           over rows the matrix holds",
 };
 
 /// What a read of a packed tensor declines: values stored in tiles it reads no whole load of.
-pub const STORED_TILES_UNREAD: Refusal = Refusal::Declined {
+pub const STORED_TILES_UNREAD: Decline = Decline::Unserved {
     why: "a packed read takes values stored in tiles shaped [n, k / block, block] from a \
               whole word, a load one run along k and one along n",
 };
 
 /// A packed matrix as a kernel reads it: its words, in the order their buffer steps, its block
-/// scales, and its per-tensor scale where its scheme has one, over two axes, each with its extent.
-/// The words and scales are read where they lie, in rows or in the tiles they are stored in.
+/// scales, and its per-tensor scale where its scheme has one, over two dimensions, each with its
+/// extent. The words and scales are read where they lie, in rows or in the tiles they are stored
+/// in.
 ///
-/// Its scales split each axis into blocks and the position inside one
-/// ([`Operand::axes`]); it binds over that block-split space, and restates the dense rows of the
-/// tensors read beside it over the same space.
+/// Its scales split each dimension into blocks and the position inside one
+/// ([`Operand::dimensions`]); it binds over that block-split space, and restates the dense rows of
+/// the tensors read beside it over the same space.
 #[derive(Debug, Clone)]
 pub struct PackedTensor {
     words: PlainTensor,
@@ -84,14 +85,15 @@ pub struct PackedTensor {
     global_scale: Option<PlainTensor>,
     scheme: QuantScheme,
     operand: Operand,
-    axes: [(Axis, usize); 2],
+    dimensions: [(Dimension, usize); 2],
     stack: Option<PackedStack>,
     window: Option<RowWindow>,
 }
 
 /// A run of a packed matrix's rows read where they lie: the matrix's extent along its rows is the
-/// run's, its words and scales bound over every row `stored` holds, and the axis its rows split
-/// into shifted by `at`, a dynamic offset, so one compiled launch reads every run of its length.
+/// run's, its words and scales bound over every row `stored` holds, and the dimension its rows
+/// split into shifted by `at`, a dynamic offset, so one compiled launch reads every run of its
+/// length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RowWindow {
     at: usize,
@@ -102,27 +104,27 @@ struct RowWindow {
 /// scales.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PackedStack {
-    /// `slabs` matrices end to end along one of its axes, `along`: the words and scales of each
-    /// slab one slab's extent further along it, or in tiles one slab's strips of them
+    /// `slabs` matrices end to end along one of its dimensions, `along`: the words and scales of
+    /// each slab one slab's extent further along it, or in tiles one slab's strips of them
     /// ([`tile_order::stacked`]), bound as a leading [`EXPERT`] dim a table's entry picks one of.
-    Slabs { slabs: usize, along: Axis },
-    /// `batches` matrices end to end along its rows, each `pitch` rows of its words and scales
-    /// past the one before, bound as a leading dim over `axis`, which the launch walks as it walks
-    /// the matrix's own axes.
+    Slabs { slabs: usize, along: Dimension },
+    /// `batches` matrices end to end along its rows, each `pitch` rows of its words and scales past
+    /// the one before, bound as a leading dim over `dimension`, which the launch walks as it walks
+    /// the matrix's own dimensions.
     Batch {
         batches: usize,
         pitch: usize,
-        axis: Axis,
+        dimension: Dimension,
     },
 }
 
 impl PackedTensor {
-    /// A packed matrix over `axes`, each with its extent, read as `operand` says under `scheme`:
-    /// its words in the order their buffer steps, where the operand's
-    /// [tile order](Operand::tile_order) lays them or in rows, its block scales as whole words
-    /// where they lie (rows of them, or for words laid block by block the tiles tile order stores
-    /// them in), and its per-tensor scale, as whole words, where `scheme` has one. Its caller reads
-    /// these parts off however it stores a packed tensor, and states `operand` as
+    /// A packed matrix over `dimensions`, each with its extent, read as `operand` says under
+    /// `scheme`: its words in the order their buffer steps, where the operand's [tile
+    /// order](Operand::tile_order) lays them or in rows, its block scales as whole words where they
+    /// lie (rows of them, or for words laid block by block the tiles tile order stores them in),
+    /// and its per-tensor scale, as whole words, where `scheme` has one. Its caller reads these
+    /// parts off however it stores a packed tensor, and states `operand` as
     /// [`read_in_tiles`](Self::read_in_tiles) returns it for a matrix in tiles.
     ///
     /// # Panics
@@ -135,7 +137,7 @@ impl PackedTensor {
         global_scale: Option<PlainTensor>,
         scheme: QuantScheme,
         operand: Operand,
-        axes: [(Axis, usize); 2],
+        dimensions: [(Dimension, usize); 2],
     ) -> Self {
         assert_eq!(
             global_scale.is_some(),
@@ -148,20 +150,21 @@ impl PackedTensor {
             global_scale,
             scheme,
             operand,
-            axes,
+            dimensions,
             stack: None,
             window: None,
         }
     }
 
-    /// A quantized matrix over `axes`, in the order its shape states them, as a framework stores
-    /// one: `values`, its buffer bound under its logical shape and strides, its values packed as
-    /// `scheme` stores them, and its block scales and its per-tensor scale, where `scheme` has one,
-    /// each bound where it lies. The words and the block scales are read as their buffers lie
-    /// ([`PlainTensor::in_buffer_order`]): a transposed view of a packed matrix, a tied embedding
-    /// read as a head, is the matrix it views, its rows along the axis its words do not run
-    /// along. The scales are laid in rows and bound on whole words, as [`new`](Self::new) takes
-    /// them. Values laid in tile order are read in tile order ([`of_tile_order`](Self::of_tile_order)).
+    /// A quantized matrix over `dimensions`, in the order its shape states them, as a framework
+    /// stores one: `values`, its buffer bound under its logical shape and strides, its values
+    /// packed as `scheme` stores them, and its block scales and its per-tensor scale, where
+    /// `scheme` has one, each bound where it lies. The words and the block scales are read as their
+    /// buffers lie ([`PlainTensor::in_buffer_order`]): a transposed view of a packed matrix, a tied
+    /// embedding read as a head, is the matrix it views, its rows along the dimension its words do
+    /// not run along. The scales are laid in rows and bound on whole words, as [`new`](Self::new)
+    /// takes them. Values laid in tile order are read in tile order
+    /// ([`of_tile_order`](Self::of_tile_order)).
     ///
     /// # Errors
     ///
@@ -178,10 +181,10 @@ impl PackedTensor {
         scheme: QuantScheme,
         block_scales: PlainTensor,
         global_scale: Option<PlainTensor>,
-        axes: [Axis; 2],
-    ) -> Result<Self, Refusal> {
-        let operand = Operand::axis_of(&scheme, axes)
-            .and_then(|axis| Operand::of_scheme(&scheme, axis, axes))
+        dimensions: [Dimension; 2],
+    ) -> Result<Self, Decline> {
+        let operand = Operand::dimension_of(&scheme, dimensions)
+            .and_then(|dimension| Operand::of_scheme(&scheme, dimension, dimensions))
             .ok_or(SCALES_NOT_ALONG_WORDS)?;
         if values.tiling.is_tiled() {
             let words = PlainTensor::new(values, WORD);
@@ -192,7 +195,7 @@ impl PackedTensor {
                 global_scale,
                 scheme,
                 operand,
-                axes,
+                dimensions,
             );
         }
         let shape = values.shape.clone();
@@ -211,7 +214,7 @@ impl PackedTensor {
             global_scale.map(in_rows_of_words),
             scheme,
             operand,
-            [(axes[0], shape[0]), (axes[1], shape[1])],
+            [(dimensions[0], shape[0]), (dimensions[1], shape[1])],
         ))
     }
 
@@ -232,13 +235,13 @@ impl PackedTensor {
         global_scale: Option<PlainTensor>,
         scheme: QuantScheme,
         operand: Operand,
-        axes: [Axis; 2],
-    ) -> Result<Self, Refusal> {
+        dimensions: [Dimension; 2],
+    ) -> Result<Self, Decline> {
         let shape = words.shape();
         if shape.rank() != 2 {
             return Err(STORED_TILES_UNREAD);
         }
-        let sized = [(axes[0], shape[0]), (axes[1], shape[1])];
+        let sized = [(dimensions[0], shape[0]), (dimensions[1], shape[1])];
         let hw = Hardware::from_client(client);
         let operand = Self::read_in_tiles(&hw, sized, operand, &words.meta())?;
         let in_rows_of_words =
@@ -266,7 +269,7 @@ impl PackedTensor {
     ///
     /// [`PACKED_STACK_UNREAD`]: slabs that split a read, a scale's block, or a word of block
     /// scales; and for words stored in tiles, slabs along `K`, or that split a strip of tiles.
-    pub fn stacked(self, slabs: usize, along: Axis) -> Result<Self, Refusal> {
+    pub fn stacked(self, slabs: usize, along: Dimension) -> Result<Self, Decline> {
         let extent = self.extent(along);
         if slabs == 0 || !extent.is_multiple_of(slabs) {
             return Err(PACKED_STACK_UNREAD);
@@ -283,16 +286,16 @@ impl PackedTensor {
         // In tiles, a slab is a run of whole strips of its rows, a fixed step from the next.
         let strips_whole = operand.tile_order().is_none_or(|order| {
             let (_, tile_rows) = order.tile();
-            along == self.rows_axis() && slab.is_multiple_of(tile_rows)
+            along == self.rows_dimension() && slab.is_multiple_of(tile_rows)
         });
         if !slab.is_multiple_of(operand.read(along)) || !blocks_whole || !strips_whole {
             return Err(PACKED_STACK_UNREAD);
         }
-        let axes = self
-            .axes
-            .map(|(axis, extent)| (axis, if axis == along { slab } else { extent }));
+        let dimensions = self
+            .dimensions
+            .map(|(dimension, extent)| (dimension, if dimension == along { slab } else { extent }));
         Ok(Self {
-            axes,
+            dimensions,
             stack: Some(PackedStack::Slabs { slabs, along }),
             ..self
         })
@@ -304,20 +307,20 @@ impl PackedTensor {
     /// time, and where the order keeps them in tiles of their own ([`TileWords::BlockByBlock`]),
     /// its scales a read at a time beside them. The operand keeps the order.
     ///
-    /// The tile order stores a matrix over `K` and the axis it lies across
-    /// ([`values_axes`](tile_order::values_axes)): a weight states it `[k, n]`, an activation
-    /// `[m, k]`, which is read swapped ([`swapped`](tile_order::swapped)).
+    /// The tile order stores a matrix over `K` and the dimension it lies across
+    /// ([`values_dimensions`](tile_order::values_dimensions)): a weight states it `[k, n]`, an
+    /// activation `[m, k]`, which is read swapped ([`swapped`](tile_order::swapped)).
     ///
     /// # Errors
     ///
-    /// [`STORED_TILES_UNREAD`]: a matrix not over `K` and one other axis, values in rows or at another block than
-    /// this matrix's, or in tiles no read takes whole.
+    /// [`STORED_TILES_UNREAD`]: a matrix not over `K` and one other dimension, values in rows or at
+    /// another block than this matrix's, or in tiles no read takes whole.
     pub fn read_in_tiles(
         hw: &Hardware,
-        sized: [(Axis, usize); 2],
+        sized: [(Dimension, usize); 2],
         operand: Operand,
         matrix: &Metadata,
-    ) -> Result<Operand, Refusal> {
+    ) -> Result<Operand, Decline> {
         // Tile order reads a matrix stated `[k, rows]`; an `[m, k]` input states it swapped.
         let (k, across, matrix) = match sized {
             [(K, k), (across, _)] => (k, across, matrix.clone()),
@@ -334,9 +337,9 @@ impl PackedTensor {
             .ok_or(STORED_TILES_UNREAD)
     }
 
-    /// This matrix read as `batches` matrices laid end to end along its rows, each its rows
-    /// divided by `batches`, its rows those of the axis its words do not run along: a leading dim
-    /// over `axis` the launch walks, as every head of a cache is one matrix of its positions.
+    /// This matrix read as `batches` matrices laid end to end along its rows, each its rows divided
+    /// by `batches`, its rows those of the dimension its words do not run along: a leading dim over
+    /// `dimension` the launch walks, as every head of a cache is one matrix of its positions.
     /// [`stacked`](Self::stacked)'s split, walked rather than picked by a table, so the words and
     /// scales stay bound over the whole matrix. Read before a [`window`](Self::window) of it.
     ///
@@ -344,9 +347,9 @@ impl PackedTensor {
     ///
     /// [`PACKED_BATCH_UNREAD`]: words stored in tiles, a two-level scheme, a stack or a window
     /// already, or rows `batches` does not divide.
-    pub fn batched(self, batches: usize, axis: Axis) -> Result<Self, Refusal> {
-        let rows_axis = self.rows_axis();
-        let rows = self.extent(rows_axis);
+    pub fn batched(self, batches: usize, dimension: Dimension) -> Result<Self, Decline> {
+        let rows_dimension = self.rows_dimension();
+        let rows = self.extent(rows_dimension);
         let unread = self.operand.tile_order().is_some()
             || self.global_scale.is_some()
             || self.stack.is_some()
@@ -357,33 +360,33 @@ impl PackedTensor {
             return Err(PACKED_BATCH_UNREAD);
         }
         let pitch = rows / batches;
-        let axes = self
-            .axes
-            .map(|(own, extent)| (own, if own == rows_axis { pitch } else { extent }));
+        let dimensions = self
+            .dimensions
+            .map(|(own, extent)| (own, if own == rows_dimension { pitch } else { extent }));
         Ok(Self {
-            axes,
+            dimensions,
             stack: Some(PackedStack::Batch {
                 batches,
                 pitch,
-                axis,
+                dimension,
             }),
             ..self
         })
     }
 
-    /// This matrix's rows `at..at + count` read where they lie, of the axis its words do not run
-    /// along: a matrix of `count` rows whose launch reads `at` as a dynamic offset, so one compiled
-    /// launch reads every run of `count`, as a cache's write and read land at any position. Every
-    /// matrix of a batch is read at the same rows. Its block scales are read as fields
-    /// ([`BlockScales::Fields`]).
+    /// This matrix's rows `at..at + count` read where they lie, of the dimension its words do not
+    /// run along: a matrix of `count` rows whose launch reads `at` as a dynamic offset, so one
+    /// compiled launch reads every run of `count`, as a cache's write and read land at any
+    /// position. Every matrix of a batch is read at the same rows. Its block scales are read as
+    /// fields ([`BlockScales::Fields`]).
     ///
     /// # Errors
     ///
     /// [`PACKED_BATCH_UNREAD`]: words stored in tiles, a two-level scheme, slabs or a window
     /// already, or rows past the matrix's.
-    pub fn window(self, at: usize, count: usize) -> Result<Self, Refusal> {
-        let rows_axis = self.rows_axis();
-        let stored = self.extent(rows_axis);
+    pub fn window(self, at: usize, count: usize) -> Result<Self, Decline> {
+        let rows_dimension = self.rows_dimension();
+        let stored = self.extent(rows_dimension);
         let unread = self.operand.tile_order().is_some()
             || self.global_scale.is_some()
             || matches!(self.stack, Some(PackedStack::Slabs { .. }))
@@ -393,11 +396,18 @@ impl PackedTensor {
         if unread {
             return Err(PACKED_BATCH_UNREAD);
         }
-        let axes = self
-            .axes
-            .map(|(axis, extent)| (axis, if axis == rows_axis { count } else { extent }));
+        let dimensions = self.dimensions.map(|(dimension, extent)| {
+            (
+                dimension,
+                if dimension == rows_dimension {
+                    count
+                } else {
+                    extent
+                },
+            )
+        });
         Ok(Self {
-            axes,
+            dimensions,
             window: Some(RowWindow { at, stored }),
             ..self
         })
@@ -435,18 +445,19 @@ impl PackedTensor {
         self.scheme
     }
 
-    /// What one read of it brings and what one of its scales covers, over its axes.
+    /// What one read of it brings and what one of its scales covers, over its dimensions.
     pub fn operand(&self) -> Operand {
         self.operand
     }
 
-    /// This matrix read a scale block at a time ([`Packing::by_block`]), its block scales bound
-    /// one to a read. The same bytes; `None` where its packing reads no block so.
-    pub fn by_block(&self) -> Option<Self> {
-        Some(Self {
-            operand: self.packing().by_block()?.operand,
+    /// This matrix read as `operand` states, a launch's planned reads of the same bytes
+    /// ([`MatmulMicrokernel::planned_space`](cubek_microkernel::matmul::MatmulMicrokernel::planned_space)):
+    /// its words a load at a time, its block scales bound a word or one to a read.
+    pub fn read_as(&self, operand: Operand) -> Self {
+        Self {
+            operand,
             ..self.clone()
-        })
+        }
     }
 
     /// How it is packed: its reads and scales, and its scheme.
@@ -457,18 +468,20 @@ impl PackedTensor {
         }
     }
 
-    /// The matrix's two axes, in the order its caller stated them.
-    pub fn axes(&self) -> [Axis; 2] {
-        self.axes.map(|(axis, _)| axis)
+    /// The matrix's two dimensions, in the order its caller stated them.
+    pub fn dimensions(&self) -> [Dimension; 2] {
+        self.dimensions.map(|(dimension, _)| dimension)
     }
 
-    /// This matrix with its axis `from` named `to`: the same bytes, read by a kernel that names
-    /// the matrix's axes otherwise.
-    pub fn renamed(self, from: Axis, to: Axis) -> Self {
-        let rename = |axis: Axis| if axis == from { to } else { axis };
+    /// This matrix with its dimension `from` named `to`: the same bytes, read by a kernel that
+    /// names the matrix's dimensions otherwise.
+    pub fn renamed(self, from: Dimension, to: Dimension) -> Self {
+        let rename = |dimension: Dimension| if dimension == from { to } else { dimension };
         Self {
             operand: self.operand.renamed(from, to),
-            axes: self.axes.map(|(axis, extent)| (rename(axis), extent)),
+            dimensions: self
+                .dimensions
+                .map(|(dimension, extent)| (rename(dimension), extent)),
             stack: self.stack.map(|stack| match stack {
                 PackedStack::Slabs { slabs, along } => PackedStack::Slabs {
                     slabs,
@@ -477,11 +490,11 @@ impl PackedTensor {
                 PackedStack::Batch {
                     batches,
                     pitch,
-                    axis,
+                    dimension,
                 } => PackedStack::Batch {
                     batches,
                     pitch,
-                    axis: rename(axis),
+                    dimension: rename(dimension),
                 },
             }),
             ..self
@@ -498,49 +511,51 @@ impl PackedTensor {
         (order.words() == TileWords::RowByRow).then_some(MatmulStoredTile { rows, columns })
     }
 
-    /// What `axis` of the matrix measures.
+    /// What `dimension` of the matrix measures.
     ///
     /// # Panics
     ///
-    /// On an axis the matrix does not have.
-    pub fn extent(&self, axis: Axis) -> usize {
-        self.axes
+    /// On a dimension the matrix does not have.
+    pub fn extent(&self, dimension: Dimension) -> usize {
+        self.dimensions
             .iter()
-            .find(|&&(own, _)| own == axis)
+            .find(|&&(own, _)| own == dimension)
             .map(|&(_, extent)| extent)
-            .unwrap_or_else(|| panic!("{axis:?} is not one of the packed matrix's axes"))
+            .unwrap_or_else(|| panic!("{dimension:?} is not one of the packed matrix's dimensions"))
     }
 
     /// The dims [`restated`](Self::restated) states dense rows of `rows` by `columns`, each with
-    /// its extent, `step` apart, in: one for each axis of the block-split space, `(axis, extent,
-    /// stride)`, coarsest first. A dim's blocks are left out where there is one.
+    /// its extent, `step` apart, in: one for each dimension of the block-split space, `(dimension,
+    /// extent, stride)`, coarsest first. A dim's blocks are left out where there is one.
     pub fn restated_dims(
         &self,
-        rows: (Axis, usize),
-        columns: (Axis, usize),
+        rows: (Dimension, usize),
+        columns: (Dimension, usize),
         step: usize,
-    ) -> Vec<(Axis, usize, usize)> {
+    ) -> Vec<(Dimension, usize, usize)> {
         let mut dims = Vec::new();
-        for ((dim, extent), dim_step) in [(rows, step), (columns, 1)] {
-            let [(blocks, block_count), (inside, inside_count)] = self.operand.axes(dim, extent);
+        for ((dimension, extent), dimension_step) in [(rows, step), (columns, 1)] {
+            let [(blocks, block_count), (inside, inside_count)] =
+                self.operand.dimensions(dimension, extent);
             if block_count > 1 {
-                dims.push((blocks, block_count, inside_count * dim_step));
+                dims.push((blocks, block_count, inside_count * dimension_step));
             }
-            dims.push((inside, inside_count, dim_step));
+            dims.push((inside, inside_count, dimension_step));
         }
         dims
     }
 
-    /// `tensor`, dense rows of `rows` by `columns`, each with its extent, restated over the axes
-    /// each is in the block-split space, and those axes: the same bytes, a dim an axis, which the
-    /// tile engine stages and masks as it lies. A dim's blocks are left out where there is one, the
-    /// tensor constant along them; its inside always stays, so the tensor is a matrix.
+    /// `tensor`, dense rows of `rows` by `columns`, each with its extent, restated over the
+    /// dimensions each is in the block-split space, and those dimensions: the same bytes, a dim a
+    /// dimension, which the tile engine stages and masks as it lies. A dim's blocks are left out
+    /// where there is one, the tensor constant along them; its inside always stays, so the tensor
+    /// is a matrix.
     pub fn restated(
         &self,
         tensor: &PlainTensor,
-        rows: (Axis, usize),
-        columns: (Axis, usize),
-    ) -> (PlainTensor, Vec<Axis>) {
+        rows: (Dimension, usize),
+        columns: (Dimension, usize),
+    ) -> (PlainTensor, Vec<Dimension>) {
         let dense = tensor.as_rows(rows.1, columns.1);
         let dims = self.restated_dims(rows, columns, dense.binding.strides[0]);
         let meta = Metadata::new(
@@ -553,7 +568,7 @@ impl PackedTensor {
         );
         (
             dense.viewed(meta),
-            dims.iter().map(|&(axis, _, _)| axis).collect(),
+            dims.iter().map(|&(dimension, _, _)| dimension).collect(),
         )
     }
 
@@ -573,26 +588,27 @@ impl PackedTensor {
         let operand = &self.operand;
         let lined = operand.lined();
         // The buffer steps its rows before its words, so its dims are named that way.
-        let rows_along = self.other_axis(lined);
+        let rows_along = self.other_dimension(lined);
         // Bound over every row it stores; a window reads its run of them.
         let rows = self.stored_rows();
-        let axes = self
+        let dimensions = self
             .stack_dim()
-            .dim(self.rows_dim(rows_along))
-            .dim(self.dim(lined))
+            .axis(self.rows_dim(rows_along))
+            .axis(self.dim(lined))
             .build();
-        let across = self.other_axis(K);
-        let values_axes = tile_order::values_axes(across);
-        // The axes the words in tiles are bound over, led by the slabs where it holds several.
-        let values_bound = self.stacked_axes(&values_axes);
-        // The axes the bound words carry: every split axis of both axes in rows, the stored dims'
-        // in tiles.
-        let (words_axes, words): (Vec<Axis>, _) = match operand.tile_order() {
+        let across = self.other_dimension(K);
+        let values_dimensions = tile_order::values_dimensions(across);
+        // The dimensions the words in tiles are bound over, led by the slabs where it holds
+        // several.
+        let values_bound = self.stacked_dimensions(&values_dimensions);
+        // The dimensions the bound words carry: every split dimension of both dimensions in rows,
+        // the stored dims' in tiles.
+        let (words_dimensions, words): (Vec<Dimension>, _) = match operand.tile_order() {
             None => (
                 [rows_along, lined]
                     .into_iter()
-                    .flat_map(|axis| {
-                        let (blocks, within) = blocked(axis);
+                    .flat_map(|dimension| {
+                        let (blocks, within) = blocked(dimension);
                         [blocks, within]
                     })
                     .collect(),
@@ -607,12 +623,12 @@ impl PackedTensor {
                         )),
                         WORD,
                     )
-                    .gathered(axes.clone()),
+                    .gathered(dimensions.clone()),
             ),
             // Stated for the read the launch takes, in the tile the matrix is stored in: the
             // same bytes at every read.
             Some(order) => (
-                values_axes.to_vec(),
+                values_dimensions.to_vec(),
                 launcher
                     .arg(
                         self.words.bound_as(
@@ -627,19 +643,19 @@ impl PackedTensor {
                         ),
                         WORD,
                     )
-                    .axes(&values_bound),
+                    .dimensions(&values_bound),
             ),
         };
         let words = words.vectorize(width).delivery(delivery);
-        // The scales count the blocks of the axis they are constant inside.
+        // The scales count the blocks of the dimension they are constant inside.
         let tiled_along = operand
             .scaled_along()
-            .expect("a block-scaled matrix groups one of its axes");
-        let (blocks_axis, inside) = blocked(tiled_along);
+            .expect("a block-scaled matrix groups one of its dimensions");
+        let (blocks_dimension, inside) = blocked(tiled_along);
         let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
-        // A scale is looked up at its value's coordinates, so it names only the axes the values
-        // carry: values in tiles carry the position inside the rows' axis, not its blocks, which
-        // no scale groups.
+        // A scale is looked up at its value's coordinates, so it names only the dimensions the
+        // values carry: values in tiles carry the position inside the rows' dimension, not its
+        // blocks, which no scale groups.
         let scale_rows = match operand.tile_order() {
             None => self.rows_dim(rows_along),
             Some(_) => PhysicalAxisMap::of(blocked(rows_along).1),
@@ -647,41 +663,28 @@ impl PackedTensor {
         let global = self.global_scale.as_ref().map(|scale| {
             launcher
                 .arg(scale.rows(1, 1), WORD)
-                .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
+                .gathered(Self::over_whole_matrix(&words_dimensions, tiled_along))
         });
         match scales {
-            // A read taking its one `ue4m3` scale alone ([`Packing::by_block`]): each a byte of
-            // its own, bound as the `e4m3` byte it is with its sign clear, so a unit loads the byte
-            // it uses rather than the word around it.
-            BlockScales::Fields if self.packing().reads_scale_bytes() => {
-                let e4m3 = ElemType::Float(FloatKind::E4M3);
-                let scales_axes = self.stacked_axes(&tile_order::scales_axes(across));
-                // In the tiles tile order stores them in, where it does, stated a row a read: a
-                // statement counted in scales, which bound as bytes is counted in bytes.
-                let in_tiles = operand.tile_order().and_then(|order| {
-                    self.in_tiles(|rows| {
-                        order.kernel_scales_read(self.extent(K), (across, rows), 1)
-                    })
-                });
-                let block_scales = match in_tiles {
-                    None => launcher
-                        .arg(self.per_slab(self.block_scale_bytes(rows, blocks)), e4m3)
-                        .gathered(
-                            self.stack_dim()
-                                .dim(scale_rows)
-                                .dim(self.dim(lined))
-                                .build()
-                                .scales_per(blocks_axis),
-                        ),
-                    Some(stated) => launcher
-                        .arg(self.block_scales.bound_as(stated), e4m3)
-                        .axes(&scales_axes),
-                }
-                .vectorize(1);
+            // A read taking its one scale alone ([`Packing::by_block`]): each bound as the element
+            // it is, a `ue4m3` the `e4m3` byte with its sign clear, so a unit loads the scale it
+            // uses rather than the word around it.
+            BlockScales::Fields if self.packing().reads_scales_alone() => {
+                let scales_dimensions =
+                    self.stacked_dimensions(&tile_order::scales_dimensions(across));
+                let block_scales = self.scales_alone(
+                    launcher,
+                    rows,
+                    blocks,
+                    scale_rows,
+                    blocks_dimension,
+                    &scales_dimensions,
+                );
                 self.under_scale_bytes(words, block_scales, global)
             }
             BlockScales::Fields => {
-                let scales_axes = self.stacked_axes(&tile_order::scales_axes(across));
+                let scales_dimensions =
+                    self.stacked_dimensions(&tile_order::scales_dimensions(across));
                 // In the tiles tile order stores them in beside the words, where it does, stated
                 // for the read the operand takes of them, which they are bound at below: the rows
                 // a read of the words spans, side by side.
@@ -699,14 +702,14 @@ impl PackedTensor {
                         .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
                         .gathered(
                             self.stack_dim()
-                                .dim(scale_rows)
-                                .dim(self.dim(lined))
+                                .axis(scale_rows)
+                                .axis(self.dim(lined))
                                 .build()
-                                .scales_per(blocks_axis),
+                                .scales_per(blocks_dimension),
                         ),
                     Some(stated) => launcher
                         .arg(self.block_scales.bound_as(stated), WORD)
-                        .axes(&scales_axes),
+                        .dimensions(&scales_dimensions),
                 }
                 // A whole read of the scales at once: the scales of every row a read spans.
                 .vectorize(operand.scale_read_values());
@@ -728,7 +731,7 @@ impl PackedTensor {
                     !operand.tile_order().is_some_and(TileOrder::scales_in_tiles),
                     "bind: block scales are bound as words of their rows, and these lie in tiles"
                 );
-                self.scale_words(launcher, scale_rows, blocks_axis, blocks, None)
+                self.scale_words(launcher, scale_rows, blocks_dimension, blocks, None)
                     .and_then(|block_scales| self.under_scale_words(words, block_scales, global))
             }
         }
@@ -762,12 +765,12 @@ impl PackedTensor {
         swizzle: TensorMapSwizzle,
         scales: BlockScales,
     ) -> TileTensorLaunch {
-        let across = self.other_axis(K);
-        let values_axes = tile_order::values_axes(across);
+        let across = self.other_dimension(K);
+        let values_dimensions = tile_order::values_dimensions(across);
         let words = match self.operand.tile_order() {
-            None => self.words_by_tma_in_rows(stage_rows, stage_k, swizzle, &values_axes),
+            None => self.words_by_tma_in_rows(stage_rows, stage_k, swizzle, &values_dimensions),
             Some(order) if order.words() == TileWords::RowByRow => {
-                self.words_by_tma_in_tiles(order, stage_rows, stage_k, swizzle, &values_axes)
+                self.words_by_tma_in_tiles(order, stage_rows, stage_k, swizzle, &values_dimensions)
             }
             Some(_) => panic!("bind_by_tma: words in rows, or in tiles laid row by row"),
         }
@@ -775,26 +778,45 @@ impl PackedTensor {
         .packed(Field::from(self.scheme.value).read_on(launcher.client()));
         let operand = &self.operand;
         let lined = operand.lined();
-        let rows_along = self.other_axis(lined);
+        let rows_along = self.other_dimension(lined);
         let rows = self.extent(rows_along);
-        let words_axes = values_axes.to_vec();
+        let words_dimensions = values_dimensions.to_vec();
         let tiled_along = operand
             .scaled_along()
-            .expect("a block-scaled matrix groups one of its axes");
-        let (blocks_axis, inside) = blocked(tiled_along);
+            .expect("a block-scaled matrix groups one of its dimensions");
+        let (blocks_dimension, inside) = blocked(tiled_along);
         let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
         let scale_rows = PhysicalAxisMap::of(blocked(rows_along).1);
         let global = self.global_scale.as_ref().map(|scale| {
             launcher
                 .arg(scale.rows(1, 1), WORD)
-                .gathered(Self::over_whole_matrix(&words_axes, tiled_along))
+                .gathered(Self::over_whole_matrix(&words_dimensions, tiled_along))
         });
         match scales {
+            // Each scale read alone, as `bind` binds it, beside the words the engine lands.
+            BlockScales::Fields if self.packing().reads_scales_alone() => {
+                let scales_dimensions = tile_order::scales_dimensions(across);
+                let block_scales = self
+                    .scales_alone(
+                        launcher,
+                        rows,
+                        blocks,
+                        scale_rows,
+                        blocks_dimension,
+                        &scales_dimensions,
+                    )
+                    .delivery(Delivery::AsyncPerUnit)
+                    .build()
+                    .expect(ADMITTED_PLAN_RUNS)
+                    .arg();
+                self.under_global(words.scales(block_scales), global)
+                    .expect(ADMITTED_PLAN_RUNS)
+            }
             BlockScales::Fields => {
                 // In the tiles tile order stores them in, where it does, stated for the read the
                 // operand takes of them, as `bind` states them: read as rows, only a tile's first
                 // strip of rows would find its own scales.
-                let scales_axes = tile_order::scales_axes(across);
+                let scales_dimensions = tile_order::scales_dimensions(across);
                 let in_tiles = operand.tile_order().and_then(|order| {
                     order.kernel_scales_read(
                         self.extent(K),
@@ -807,14 +829,14 @@ impl PackedTensor {
                         .arg(self.per_slab(self.block_scales.rows(rows, blocks)), WORD)
                         .gathered(
                             self.stack_dim()
-                                .dim(scale_rows)
-                                .dim(self.dim(lined))
+                                .axis(scale_rows)
+                                .axis(self.dim(lined))
                                 .build()
-                                .scales_per(blocks_axis),
+                                .scales_per(blocks_dimension),
                         ),
                     Some(stated) => launcher
                         .arg(self.block_scales.bound_as(stated), WORD)
-                        .axes(&scales_axes),
+                        .dimensions(&scales_dimensions),
                 }
                 .vectorize(operand.scale_read_values())
                 .delivery(Delivery::AsyncPerUnit);
@@ -842,7 +864,7 @@ impl PackedTensor {
                 let block_scales = self.scale_words_by_tma_in_tiles(
                     order,
                     stage_rows,
-                    [blocked(rows_along).1, blocks_axis],
+                    [blocked(rows_along).1, blocks_dimension],
                     blocks,
                 );
                 self.scaled_by_words(words, block_scales, global)
@@ -854,7 +876,7 @@ impl PackedTensor {
                 .scale_words(
                     launcher,
                     scale_rows,
-                    blocks_axis,
+                    blocks_dimension,
                     blocks,
                     Some(Delivery::AsyncPerUnit),
                 )
@@ -865,14 +887,14 @@ impl PackedTensor {
 
     /// The words stored in `order`'s tiles laid row by row, through a descriptor over the tiles
     /// ([`TileOrder::words_in_tiles`]): a box of `stage_rows` rows by `stage_k` values of `k`,
-    /// landing row by row, swizzled as `swizzle` says, over `values_axes`.
+    /// landing row by row, swizzled as `swizzle` says, over `values_dimensions`.
     fn words_by_tma_in_tiles(
         &self,
         order: TileOrder,
         stage_rows: usize,
         stage_k: usize,
         swizzle: TensorMapSwizzle,
-        values_axes: &[Axis; 3],
+        values_dimensions: &[Dimension; 3],
     ) -> TileTensorLaunch {
         assert!(
             self.stack.is_none(),
@@ -880,7 +902,7 @@ impl PackedTensor {
         );
         let tile = order.tile();
         let (tile_k, tile_rows) = tile;
-        let across = self.other_axis(K);
+        let across = self.other_dimension(K);
         let (k, rows_across) = (self.extent(K), self.extent(across));
         assert!(
             (stage_k.is_multiple_of(tile_k) || tile_k.is_multiple_of(stage_k))
@@ -899,16 +921,16 @@ impl PackedTensor {
         // The descriptor after a row landing: the strips of rows, a row in the strip, the
         // tiles along `k`, a word in the tile; a box starts on whole tiles both ways.
         let coordinates = TmaCoordinates {
-            dims: vec![
-                vec![TmaTerm::axis(0).over(tile_rows as u32)],
+            axes: vec![
+                vec![TmaTerm::dimension(0).over(tile_rows as u32)],
                 vec![],
                 vec![
-                    TmaTerm::axis(1)
+                    TmaTerm::dimension(1)
                         .times(order.block() as u32)
                         .over(tile_k as u32),
                 ],
                 vec![
-                    TmaTerm::axis(1)
+                    TmaTerm::dimension(1)
                         .times(order.block() as u32)
                         .modulo(tile_k as u32)
                         .over(order.values_per_word() as u32),
@@ -917,7 +939,7 @@ impl PackedTensor {
         };
         TileTensorLaunch::tensor_map_folded(
             map,
-            values_axes,
+            values_dimensions,
             &[
                 rows_across as u32,
                 (k / order.block()) as u32,
@@ -930,8 +952,8 @@ impl PackedTensor {
     /// The block scales laid row by row in `order`'s tiles, as the words a block-scaled instruction
     /// takes, through a descriptor over the tiles ([`tma_scale_words_in_tiles`]): a box of
     /// `stage_rows` rows one tile deep, landing a row's words of the tile one run, the rows one
-    /// after another, as a stage of scales holds them. Over `scale_axes`, the rows and `KB`, the
-    /// latter `blocks` long.
+    /// after another, as a stage of scales holds them. Over `scale_dimensions`, the rows and `KB`,
+    /// the latter `blocks` long.
     ///
     /// # Panics
     ///
@@ -940,7 +962,7 @@ impl PackedTensor {
         &self,
         order: TileOrder,
         stage_rows: usize,
-        scale_axes: [Axis; 2],
+        scale_dimensions: [Dimension; 2],
         blocks: usize,
     ) -> TileTensorLaunch {
         assert!(
@@ -952,7 +974,7 @@ impl PackedTensor {
             stage_rows.is_multiple_of(tile_rows),
             "bind_by_tma: a stage of {stage_rows} rows is not whole strips of {tile_rows}"
         );
-        let across = self.other_axis(K);
+        let across = self.other_dimension(K);
         let (k, rows_across) = (self.extent(K), self.extent(across));
         let scales = self
             .block_scales
@@ -961,9 +983,9 @@ impl PackedTensor {
         // The descriptor's dims: the strips of rows, the tiles along `k`, a tile's words; a box
         // starts on a whole strip and a whole tile, and takes the tile's words whole.
         let coordinates = TmaCoordinates {
-            dims: vec![
-                vec![TmaTerm::axis(0).over(tile_rows as u32)],
-                vec![TmaTerm::axis(1).over((tile_k / order.block()) as u32)],
+            axes: vec![
+                vec![TmaTerm::dimension(0).over(tile_rows as u32)],
+                vec![TmaTerm::dimension(1).over((tile_k / order.block()) as u32)],
                 vec![],
             ],
         };
@@ -971,10 +993,10 @@ impl PackedTensor {
         // the compacted window of words the box lands.
         let per_word = self.operand.scales_per_word();
         let projection = Projection::new(
-            &scale_axes,
+            &scale_dimensions,
             &[
-                PhysicalAxisMap::of(scale_axes[0]),
-                PhysicalAxisMap::of(scale_axes[1]).over(per_word),
+                PhysicalAxisMap::of(scale_dimensions[0]),
+                PhysicalAxisMap::of(scale_dimensions[1]).over(per_word),
             ],
         );
         TileTensorLaunch::tensor_map_with_coordinates_through(
@@ -989,7 +1011,7 @@ impl PackedTensor {
     /// The words stored in rows, through a descriptor over the rows: `k`'s words cut into rows of
     /// the swizzle's span, so a box of `stage_rows` rows by `stage_k` values of `k` lands a
     /// stage's blocks of `K` side by side, as a float operand's descriptor lands them, over
-    /// `values_axes`.
+    /// `values_dimensions`.
     ///
     /// # Panics
     ///
@@ -1000,13 +1022,13 @@ impl PackedTensor {
         stage_rows: usize,
         stage_k: usize,
         swizzle: TensorMapSwizzle,
-        values_axes: &[Axis; 3],
+        values_dimensions: &[Dimension; 3],
     ) -> TileTensorLaunch {
         assert!(
             self.stack.is_none(),
             "bind_by_tma: a stack is read slab by slab"
         );
-        let across = self.other_axis(K);
+        let across = self.other_dimension(K);
         let (k, rows) = (self.extent(K), self.extent(across));
         let per_word = self.scheme.num_quants();
         let block = self
@@ -1040,10 +1062,10 @@ impl PackedTensor {
         };
         // A box starts on a stage's first block of `K`, a whole number of rows in.
         let coordinates = TmaCoordinates {
-            dims: vec![
-                vec![TmaTerm::axis(0)],
+            axes: vec![
+                vec![TmaTerm::dimension(0)],
                 vec![
-                    TmaTerm::axis(1)
+                    TmaTerm::dimension(1)
                         .times((block / per_word) as u32)
                         .over(row as u32),
                 ],
@@ -1052,7 +1074,7 @@ impl PackedTensor {
         };
         TileTensorLaunch::tensor_map_folded(
             map,
-            values_axes,
+            values_dimensions,
             &[rows as u32, (k / block) as u32, block as u32],
             coordinates,
         )
@@ -1068,7 +1090,7 @@ impl PackedTensor {
         words: Arg<'_, Labelled>,
         block_scales: TileTensorLaunch,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         let words = words.packed(self.scheme.value).build()?.arg();
         self.scaled_by_words(words, block_scales, global)
     }
@@ -1081,9 +1103,46 @@ impl PackedTensor {
         words: TileTensorLaunch,
         block_scales: TileTensorLaunch,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         let tile = words.scales(block_scales);
         self.under_global(tile, global)
+    }
+
+    /// Its block scales bound one to a read ([`Packing::by_block`]), each as the element it is, a
+    /// `ue4m3` the `e4m3` byte with its sign clear, so a unit loads the scale it uses rather than
+    /// the word around it: in the tiles tile order stores them in, where it does, stated a row a
+    /// read, counted in scales; gathered over `scale_rows` and the blocks otherwise. What every
+    /// engine that moves the words binds them as.
+    fn scales_alone<'l>(
+        &self,
+        launcher: &'l Launcher,
+        rows: usize,
+        blocks: usize,
+        scale_rows: PhysicalAxisMap,
+        blocks_dimension: Dimension,
+        scales_dimensions: &'l [Dimension],
+    ) -> Arg<'l, Labelled> {
+        let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype());
+        let across = self.other_dimension(K);
+        let lined = self.operand.lined();
+        let in_tiles = self.operand.tile_order().and_then(|order| {
+            self.in_tiles(|rows| order.kernel_scales_read(self.extent(K), (across, rows), 1))
+        });
+        match in_tiles {
+            None => launcher
+                .arg(self.per_slab(self.block_scale_bytes(rows, blocks)), scale)
+                .gathered(
+                    self.stack_dim()
+                        .axis(scale_rows)
+                        .axis(self.dim(lined))
+                        .build()
+                        .scales_per(blocks_dimension),
+                ),
+            Some(stated) => launcher
+                .arg(self.block_scales.bound_as(stated), scale)
+                .dimensions(scales_dimensions),
+        }
+        .vectorize(1)
     }
 
     /// `words` under `block_scales`, bound a byte a scale as plain `e4m3` elements, under
@@ -1095,7 +1154,7 @@ impl PackedTensor {
         words: Arg<'_, Labelled>,
         block_scales: Arg<'_, Labelled>,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         let offsets = self.runtime_offsets();
         let shifted = |arg: TileTensorLaunch| match offsets.is_empty() {
             true => arg,
@@ -1112,7 +1171,7 @@ impl PackedTensor {
         &self,
         tile: TileTensorLaunch,
         global: Option<Arg<'_, Labelled>>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         match (global, self.scheme.tensor_scale()) {
             (Some(global), Some(field)) => {
                 Ok(tile.scales(global.packed(Field::of_scale(field)).build()?.arg()))
@@ -1124,11 +1183,13 @@ impl PackedTensor {
     /// The block scales a byte apiece, `blocks` a row, each row stepped at its stride counted in
     /// scales: a buffer holding them in wider elements steps its rows in those.
     fn block_scale_bytes(&self, rows: usize, blocks: usize) -> TensorBinding {
+        // Counted in scales: a row's run of stored elements, each so many scales.
+        let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype()).size();
         let per_element = self.block_scales.elem.size();
         let step = self
             .block_scales
             .row_step()
-            .map_or(blocks, |step| step * per_element);
+            .map_or(blocks, |step| step * per_element / scale);
         self.block_scales
             .bound_as(Metadata::new([rows, blocks], [step, 1]))
     }
@@ -1141,10 +1202,10 @@ impl PackedTensor {
         &self,
         launcher: &Launcher,
         scale_rows: PhysicalAxisMap,
-        blocks_axis: Axis,
+        blocks_dimension: Dimension,
         blocks: usize,
         delivery: Option<Delivery>,
-    ) -> Result<TileTensorLaunch, Refusal> {
+    ) -> Result<TileTensorLaunch, Decline> {
         let per_word = self.operand.scales_per_word();
         let rows = self.stored_rows();
         let arg = launcher
@@ -1154,8 +1215,8 @@ impl PackedTensor {
             )
             .gathered(
                 self.stack_dim()
-                    .dim(scale_rows)
-                    .dim(PhysicalAxisMap::of(blocks_axis).over(per_word))
+                    .axis(scale_rows)
+                    .axis(PhysicalAxisMap::of(blocks_dimension).over(per_word))
                     .build(),
             );
         let arg = match delivery {
@@ -1182,30 +1243,30 @@ impl PackedTensor {
         Field::of_scale(block.dtype)
     }
 
-    /// The axis the matrices it holds past its first are bound along: the slabs' [`EXPERT`], or a
-    /// batch's own. `None` for one matrix.
-    fn stack_axis(&self) -> Option<Axis> {
+    /// The dimension the matrices it holds past its first are bound along: the slabs' [`EXPERT`],
+    /// or a batch's own. `None` for one matrix.
+    fn stack_dimension(&self) -> Option<Dimension> {
         match self.stack {
             Some(PackedStack::Slabs { .. }) => Some(EXPERT),
-            Some(PackedStack::Batch { axis, .. }) => Some(axis),
+            Some(PackedStack::Batch { dimension, .. }) => Some(dimension),
             None => None,
         }
     }
 
     /// The dims a binding of words or scales starts with: the slabs, where this tensor is a stack.
-    fn stack_dim(&self) -> DimsBuilder {
-        match self.stack_axis() {
-            Some(axis) => Projection::dims().dim(PhysicalAxisMap::of(axis)),
-            None => Projection::dims(),
+    fn stack_dim(&self) -> AxesBuilder {
+        match self.stack_dimension() {
+            Some(dimension) => Projection::axes().axis(PhysicalAxisMap::of(dimension)),
+            None => Projection::axes(),
         }
     }
 
-    /// `axes`, the axes one matrix's words or scales in tiles are bound over, led by the
-    /// [`stack_axis`](Self::stack_axis) where it holds several.
-    fn stacked_axes(&self, axes: &[Axis]) -> Vec<Axis> {
-        self.stack_axis()
+    /// `dimensions`, the dimensions one matrix's words or scales in tiles are bound over, led by
+    /// the [`stack_dimension`](Self::stack_dimension) where it holds several.
+    fn stacked_dimensions(&self, dimensions: &[Dimension]) -> Vec<Dimension> {
+        self.stack_dimension()
             .into_iter()
-            .chain(axes.iter().copied())
+            .chain(dimensions.iter().copied())
             .collect()
     }
 
@@ -1214,7 +1275,7 @@ impl PackedTensor {
     /// slab's rows stated as the one matrix they are stored as and split into its slabs
     /// ([`tile_order::stacked`]).
     fn in_tiles(&self, stated: impl Fn(usize) -> Option<Metadata>) -> Option<Metadata> {
-        let rows = self.extent(self.rows_axis());
+        let rows = self.extent(self.rows_dimension());
         match self.stack {
             Some(PackedStack::Slabs { slabs, .. }) => stated(slabs * rows).map(|whole| {
                 tile_order::stacked(&whole, slabs)
@@ -1224,9 +1285,9 @@ impl PackedTensor {
         }
     }
 
-    /// `binding`, words or scales of one matrix over its two axes in the order the buffer steps
-    /// them, rows then line, once per matrix where this tensor holds several: a leading dim, each
-    /// slab one slab's run of the dim the stack lies along further, each matrix of a batch its
+    /// `binding`, words or scales of one matrix over its two dimensions in the order the buffer
+    /// steps them, rows then line, once per matrix where this tensor holds several: a leading dim,
+    /// each slab one slab's run of the dim the stack lies along further, each matrix of a batch its
     /// pitch of rows. As it is otherwise.
     fn per_slab(&self, binding: TensorBinding) -> TensorBinding {
         let (count, step) = match self.stack {
@@ -1247,19 +1308,19 @@ impl PackedTensor {
         }
     }
 
-    /// The axis the matrix's rows run along: the one its words do not.
-    fn rows_axis(&self) -> Axis {
-        self.other_axis(self.operand.lined())
+    /// The dimension the matrix's rows run along: the one its words do not.
+    fn rows_dimension(&self) -> Dimension {
+        self.other_dimension(self.operand.lined())
     }
 
     /// The rows its words and scales are bound over: every row stored, past a window's.
     fn stored_rows(&self) -> usize {
         self.window
-            .map_or(self.extent(self.rows_axis()), |window| window.stored)
+            .map_or(self.extent(self.rows_dimension()), |window| window.stored)
     }
 
     /// The rows' dim, as [`dim`](Self::dim), shifted by a window's dynamic offset where it has one.
-    fn rows_dim(&self, rows_along: Axis) -> PhysicalAxisMap {
+    fn rows_dim(&self, rows_along: Dimension) -> PhysicalAxisMap {
         match self.window {
             Some(_) => self.dim(rows_along).shifted(Offset::Dynamic),
             None => self.dim(rows_along),
@@ -1273,32 +1334,32 @@ impl PackedTensor {
             .unwrap_or_default()
     }
 
-    /// The matrix's axis other than `axis`.
-    fn other_axis(&self, axis: Axis) -> Axis {
-        match self.axes {
-            [(first, _), (second, _)] if first == axis => second,
+    /// The matrix's dimension other than `dimension`.
+    fn other_dimension(&self, dimension: Dimension) -> Dimension {
+        match self.dimensions {
+            [(first, _), (second, _)] if first == dimension => second,
             [(first, _), _] => first,
         }
     }
 
-    /// `axis` of the matrix as one dim over the two axes it is split into, the blocks and the position inside
-    /// one.
-    fn dim(&self, axis: Axis) -> PhysicalAxisMap {
-        split(&self.operand.axes(axis, self.extent(axis)))
+    /// `dimension` of the matrix as one dim over the two dimensions it is split into, the blocks
+    /// and the position inside one.
+    fn dim(&self, dimension: Dimension) -> PhysicalAxisMap {
+        split(&self.operand.dimensions(dimension, self.extent(dimension)))
     }
 
-    /// One value over the whole matrix: every axis of `words_axes`, the axes the bound words
-    /// carry, that its block scales span, none addressed. A factor is looked up at the values'
-    /// coordinates, so it spans no axis they do not carry.
-    fn over_whole_matrix(words_axes: &[Axis], tiled_along: Axis) -> Projection {
+    /// One value over the whole matrix: every dimension of `words_dimensions`, the dimensions the
+    /// bound words carry, that its block scales span, none addressed. A factor is looked up at the
+    /// values' coordinates, so it spans no dimension they do not carry.
+    fn over_whole_matrix(words_dimensions: &[Dimension], tiled_along: Dimension) -> Projection {
         let inside = blocked(tiled_along).1;
-        let axes: Vec<Axis> = words_axes
+        let dimensions: Vec<Dimension> = words_dimensions
             .iter()
             .copied()
-            .filter(|&axis| axis != inside)
+            .filter(|&dimension| dimension != inside)
             .collect();
         Projection::new(
-            &axes,
+            &dimensions,
             &[PhysicalAxisMap::broadcast(), PhysicalAxisMap::broadcast()],
         )
     }
@@ -1329,8 +1390,8 @@ impl PackedTensor {
     }
 
     /// `tensor`, its binding ending on the `u32` word that holds its last element, the gaps between
-    /// its rows or its tiles included: the routines read scales a word at a time. A quantized buffer
-    /// starts each region on a word, so the word's tail is allocated.
+    /// its rows or its tiles included: the routines read scales a word at a time. A quantized
+    /// buffer starts each region on a word, so the word's tail is allocated.
     fn bound_to_whole_words(mut tensor: PlainTensor) -> PlainTensor {
         let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
         let elements = match shape.num_elements() {

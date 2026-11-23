@@ -1,13 +1,13 @@
 //! The pooling routines against the crate's host reference: a forward case ([`Pooled`]) and a
-//! backward one ([`Unpooled`]), of two or three spatial axes, and the scope each runs through. A
-//! max pool that returns its indices writes them as a second output, checked exactly.
+//! backward one ([`Unpooled`]), of two or three spatial dimensions, and the scope each runs
+//! through. A max pool that returns its indices writes them as a second output, checked exactly.
 
 use core::ops::Range;
 
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, IntKind};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_pool::definition::{PoolBackwardProblem, PoolError, PoolForwardProblem, PoolMode};
 use cubek_pool::eval::cpu_reference::{
     cpu_reference_max_pool_indices, cpu_reference_pool, cpu_reference_pool_backward,
@@ -44,7 +44,7 @@ pub(crate) trait PoolEntry<const N: usize> {
     ) -> Result<(), PoolError>;
 }
 
-/// The two- and three-axis entry points, chosen by the mode's rank.
+/// The two- and three-dimension entry points, chosen by the mode's rank.
 pub(crate) struct Entries;
 
 impl PoolEntry<2> for Entries {
@@ -106,7 +106,7 @@ impl PoolEntry<2> for Entries {
 impl PoolEntry<3> for Entries {
     /// # Panics
     ///
-    /// With indices, which no three-axis pool writes.
+    /// With indices, which no three-dimension pool writes.
     fn forward(
         client: &Client,
         input: &TensorHandle,
@@ -114,7 +114,10 @@ impl PoolEntry<3> for Entries {
         indices: Option<&TensorHandle>,
         mode: PoolMode<3>,
     ) -> Result<(), PoolError> {
-        assert!(indices.is_none(), "a three-axis pool writes no indices");
+        assert!(
+            indices.is_none(),
+            "a three-dimension pool writes no indices"
+        );
         let dtype = input.dtype;
         pool3d(
             client,
@@ -127,7 +130,7 @@ impl PoolEntry<3> for Entries {
 
     /// # Panics
     ///
-    /// With indices, which no three-axis pool reads.
+    /// With indices, which no three-dimension pool reads.
     fn backward(
         client: &Client,
         input: &TensorHandle,
@@ -136,7 +139,7 @@ impl PoolEntry<3> for Entries {
         in_grad: &TensorHandle,
         mode: PoolMode<3>,
     ) -> Result<(), PoolError> {
-        assert!(indices.is_none(), "a three-axis pool reads no indices");
+        assert!(indices.is_none(), "a three-dimension pool reads no indices");
         let dtype = input.dtype;
         pool3d_backward(
             client,
@@ -214,8 +217,8 @@ impl<const N: usize> Pooled<N> {
     }
 }
 
-/// The forward pool of `N` spatial axes, against the host: the output, and the indices where the
-/// case asks for them.
+/// The forward pool of `N` spatial dimensions, against the host: the output, and the indices where
+/// the case asks for them.
 pub(crate) struct PoolForward<const N: usize>;
 
 impl<const N: usize> ScopeUnderTest for PoolForward<N>
@@ -224,7 +227,7 @@ where
 {
     type Case = Pooled<N>;
 
-    fn launch(&self, client: &Client, case: &Pooled<N>) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Pooled<N>) -> Result<Vec<Written>, Decline> {
         let (input, _) = case.input.of(&case.problem.input_shape);
         let shape = case.output_shape();
         let output = Seeded::poisoned(client, &shape, input.dtype);
@@ -306,8 +309,8 @@ impl<const N: usize> Unpooled<N> {
     }
 }
 
-/// The backward pool of `N` spatial axes, against the host: the input's gradient, and the indices
-/// the forward pool wrote for it where the case reads them.
+/// The backward pool of `N` spatial dimensions, against the host: the input's gradient, and the
+/// indices the forward pool wrote for it where the case reads them.
 pub(crate) struct PoolBackward<const N: usize>;
 
 impl<const N: usize> ScopeUnderTest for PoolBackward<N>
@@ -316,7 +319,7 @@ where
 {
     type Case = Unpooled<N>;
 
-    fn launch(&self, client: &Client, case: &Unpooled<N>) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Unpooled<N>) -> Result<Vec<Written>, Decline> {
         let input_shape = case.input_shape();
         let grad_shape = case.problem.out_grad_shape.to_vec();
         let (input, _) = case.input.of(&input_shape);

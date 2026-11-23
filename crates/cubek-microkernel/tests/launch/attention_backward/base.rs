@@ -3,9 +3,9 @@
 
 use core::fmt::Debug;
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::{
-    Axis, Launcher, Level, Partitioning, Space, StageStorage, TileSpec, TileTensorLaunch,
+    Dimension, Launcher, Level, Partitioning, Space, StageStorage, TileSpec, TileTensorLaunch,
 };
 use cubek_microkernel::attention::{AttentionVisibility, B, D, DV, G, KV, Q, S};
 use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
@@ -13,10 +13,10 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::{StageRing, StagedOperand};
 
 /// Every operand of attention's backward as a launch argument, each laid out as
-/// [`AttentionBackwardOperand::axes`](cubek_microkernel::attention_backward::AttentionBackwardOperand::axes)
-/// says: the forward's query, keys, values, output and logsumexp, the output's gradient, the
-/// dot products of the output with it, and the three gradients. A launch reads and writes the
-/// ones its microkernel does.
+/// [`AttentionBackwardOperand::dimensions`](cubek_microkernel::attention_backward::AttentionBackwardOperand::dimensions)
+/// says: the forward's query, keys, values, output and logsumexp, the output's gradient, the dot
+/// products of the output with it, and the three gradients. A launch reads and writes the ones its
+/// microkernel does.
 pub struct AttentionBackwardOperandArgs {
     pub query: TensorArg,
     pub key: TensorArg,
@@ -61,7 +61,7 @@ pub trait AttentionBackwardLaunch: Debug {
         args: AttentionBackwardOperandArgs,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal>;
+    ) -> Result<(), Decline>;
 }
 
 /// A launch over one sequence of `seq` queries and keys of one head.
@@ -81,7 +81,7 @@ impl OneSequence {
         client: &Client,
         levels: Vec<Level>,
         plane_width: u32,
-    ) -> Result<Launcher, Refusal> {
+    ) -> Result<Launcher, Decline> {
         let [queries, keys] = self.seq;
         let space = Space::new(&[
             (B, 1),
@@ -111,13 +111,13 @@ impl OneSequence {
     pub(crate) fn ring(
         &self,
         hw: &Hardware,
-        walked: Axis,
+        walked: Dimension,
         extent: usize,
         window_bytes: usize,
         body_bytes: usize,
         plane_width: u32,
-    ) -> Result<StageRing, Refusal> {
-        let operand = |row: Axis, width: usize| {
+    ) -> Result<StageRing, Decline> {
+        let operand = |row: Dimension, width: usize| {
             StagedOperand::new(
                 self.item.element,
                 Space::new(&[(walked, extent), (row, width)]),
@@ -136,14 +136,14 @@ impl OneSequence {
         if ring.bytes(stage_bytes) + window_bytes + ring.bodies() * body_bytes
             > hw.shared_memory_budget()
         {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the walk's stage holds more shared memory than the device has",
             });
         }
         Ok(ring)
     }
 
-    /// `arg` bound along `operand`'s axes, one element a line.
+    /// `arg` bound along `operand`'s dimensions, one element a line.
     pub(crate) fn bound(
         &self,
         arg: TensorArg,
@@ -154,6 +154,6 @@ impl OneSequence {
             Operand::Logsumexp | Operand::Delta => self.item.sum,
             _ => self.item.element,
         };
-        TileTensorLaunch::new(arg, element, 1, TileSpec::direct(operand.axes()))
+        TileTensorLaunch::new(arg, element, 1, TileSpec::direct(operand.dimensions()))
     }
 }

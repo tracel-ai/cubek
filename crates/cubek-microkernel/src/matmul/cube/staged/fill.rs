@@ -4,11 +4,11 @@ use crate::matmul::{
     MatmulBlocks, MatmulBuffers, MatmulLayout, MatmulOperand, MatmulStage, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Scratch, Space, StageStorage};
+use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
+use cubecl::tile::{Dimension, Scratch, Space, StageStorage};
 use cubek_std::TMA_ALIGNMENT_BYTES;
 use cubek_std::launch::tma::swizzle_span_bytes;
-use cubek_std::matmul_axes::{K, KB, KI, M, N};
+use cubek_std::matmul_dimensions::{K, KB, KI, M, N};
 use cubek_std::microkernel::StageRing;
 
 /// Who fills the cube microkernel's stages: the cube's units, the copy engine their lines are
@@ -47,21 +47,31 @@ impl CubeStagedDelivery {
             Self::AsyncCopy => Delivery::AsyncPerUnit,
         }
     }
+
+    /// The delivery that fills the stages, which a stage is arranged for as its instruction
+    /// reads it: the units' own loads, the copy engine, or the TMA engine.
+    pub fn fills(self) -> Delivery {
+        match self {
+            Self::Copy => Delivery::SyncPerUnit,
+            Self::AsyncCopy => Delivery::AsyncPerUnit,
+            Self::Tma => Delivery::Tma,
+        }
+    }
 }
 
 /// Why the TMA engine cannot fill a cube microkernel's stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CubeStagedTmaRefusal {
+pub enum CubeStagedTmaDecline {
     /// A descriptor addresses one matrix, and the problem holds several.
     Batched,
-    /// The rhs is contiguous along neither of its axes, and a descriptor's innermost stride is
-    /// one element.
+    /// The rhs is contiguous along neither of its dimensions, and a descriptor's innermost stride
+    /// is one element.
     StridedWeight,
     /// An operand is stored in tiles a descriptor cannot land a stage of row by row: a stage not
     /// whole tiles along its rows, or whose depth does not divide a tile's, stage rows that are not
     /// whole 16-byte lines, or tiles the buffers do not state ([`MatmulBuffers::stored_tiles`]).
     StoredInTiles(MatmulOperand),
-    /// An operand's rows are not whole 16-byte lines contiguous along their own axis, which a
+    /// An operand's rows are not whole 16-byte lines contiguous along their own dimension, which a
     /// descriptor's strides must be: a transposed lhs, among others.
     Misaligned(MatmulOperand),
     /// An operand's view starts partway into its buffer at an address a descriptor cannot
@@ -84,11 +94,15 @@ pub enum CubeStagedTmaRefusal {
     /// the rows of scales a stage holds; a stage deeper than one tile would land them a tile
     /// after another, each row's words apart.
     ScalesDeeperThanATile(MatmulOperand),
+    /// An input's block scales are read one at a time, its stage's window holding part of a word
+    /// of them: the engine lands values as they lie beside the words of scales a stage keeps,
+    /// and keeps no scale alone (the tile DSL's tensor map rides words of scales only).
+    ScalesReadAlone(MatmulOperand),
 }
 
 /// Why a cube microkernel cannot set planes aside to only fill its stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CubeStagedFillingRefusal {
+pub enum CubeStagedFillingDecline {
     /// The units copy the stages, or hand them to the copy engine, distributing a stage's lines
     /// over every unit of the cube: planes set aside would leave their share unwritten.
     CopiedByUnits,
@@ -102,7 +116,7 @@ pub enum CubeStagedFillingRefusal {
     SplitAlongK,
 }
 
-impl CubeStagedTmaRefusal {
+impl CubeStagedTmaDecline {
     /// Why the TMA engine cannot deliver the stages `microkernel` walks through the space
     /// `cube_space` of `item`'s product, over buffers as `buffers` states them, its stages held as
     /// its instruction reads a landed one (`PlaneFragmentMicrokernel::landed_stage_storage`);
@@ -126,7 +140,7 @@ impl CubeStagedTmaRefusal {
         let lands_tiles = |operand: MatmulOperand| {
             let space = stage.operand_space(operand, microkernel.orders);
             buffers.stored_tiles.get(operand).is_some_and(|tile| {
-                space.axis_at(1) == K
+                space.dimension_at(1) == K
                     && space.extent_at(0).is_multiple_of(tile.rows)
                     && tile.columns.is_multiple_of(space.extent_at(1))
                     && (space.extent_at(1) * bits(operand) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES)
@@ -189,7 +203,7 @@ impl CubeStagedTmaRefusal {
     }
 }
 
-impl CubeStagedTmaRefusal {
+impl CubeStagedTmaDecline {
     /// Why a stage of a product in the block-split space `blocks`, over buffers as `buffers`
     /// states them, held as `storage`, is not one the engine lands for `microkernel`; `None`
     /// where it is. A float lhs lands through a descriptor over the matrix its blocks split, a
@@ -207,11 +221,11 @@ impl CubeStagedTmaRefusal {
         storage: &StageStorage,
         microkernel: &PlaneFragmentMicrokernel,
     ) -> Option<Self> {
-        let axes = stage.axes();
-        let rows_of = |operand: MatmulOperand| -> Axis {
+        let dimensions = stage.dimensions();
+        let rows_of = |operand: MatmulOperand| -> Dimension {
             match operand {
-                MatmulOperand::Lhs => axes.m,
-                _ => axes.n,
+                MatmulOperand::Lhs => dimensions.m,
+                _ => dimensions.n,
             }
         };
         let landed = |operand: MatmulOperand| {
@@ -302,6 +316,13 @@ impl CubeStagedTmaRefusal {
             .find(|&operand| scales_deeper_than_a_tile(operand))
         {
             Some(Self::ScalesDeeperThanATile(operand))
+        } else if let Some(operand) = MatmulOperand::INPUTS.into_iter().find(|&operand| {
+            blocks
+                .packings
+                .get(operand)
+                .is_some_and(|packing| packing.reads_scales_alone())
+        }) {
+            Some(Self::ScalesReadAlone(operand))
         } else if [&lhs, &rhs]
             .into_iter()
             .any(|space| Delivery::Tma.moves(space).is_err())
@@ -313,7 +334,7 @@ impl CubeStagedTmaRefusal {
     }
 }
 
-impl CubeStagedFillingRefusal {
+impl CubeStagedFillingDecline {
     /// Why a stage `delivery` fills through `ring`, its fragments draining
     /// through `scratch` and its planes split `planes_along_k` ways along `K`, keeps every plane
     /// contracting; `None` where planes may be set aside to fill it. The barriers the two sets
@@ -356,60 +377,63 @@ impl CubeStagedFill {
     }
 }
 
-impl From<CubeStagedTmaRefusal> for Refusal {
-    fn from(refusal: CubeStagedTmaRefusal) -> Self {
-        let why = match refusal {
-            CubeStagedTmaRefusal::Batched => {
+impl From<CubeStagedTmaDecline> for Decline {
+    fn from(decline: CubeStagedTmaDecline) -> Self {
+        let why = match decline {
+            CubeStagedTmaDecline::Batched => {
                 "a descriptor addresses one matrix, and the problem holds several"
             }
-            CubeStagedTmaRefusal::StridedWeight => {
-                "the rhs is contiguous along neither axis, and a descriptor's innermost stride is one element"
+            CubeStagedTmaDecline::StridedWeight => {
+                "the rhs is contiguous along neither dimension, and a descriptor's innermost stride is one element"
             }
-            CubeStagedTmaRefusal::StoredInTiles(_) => {
+            CubeStagedTmaDecline::StoredInTiles(_) => {
                 "an operand is stored in tiles a descriptor cannot land a stage of row by row"
             }
-            CubeStagedTmaRefusal::Misaligned(_) => {
-                "an operand's rows are not whole 16-byte lines contiguous along their own axis"
+            CubeStagedTmaDecline::Misaligned(_) => {
+                "an operand's rows are not whole 16-byte lines contiguous along their own dimension"
             }
-            CubeStagedTmaRefusal::UnalignedStart(_) => {
+            CubeStagedTmaDecline::UnalignedStart(_) => {
                 "an operand's view starts at an address a descriptor cannot encode"
             }
-            CubeStagedTmaRefusal::Unlanded(_) => {
+            CubeStagedTmaDecline::Unlanded(_) => {
                 "one box cannot land an operand's stage as its instruction reads it"
             }
-            CubeStagedTmaRefusal::BoxPastDescriptor => {
+            CubeStagedTmaDecline::BoxPastDescriptor => {
                 "a stage's edge is past what one descriptor's box holds"
             }
-            CubeStagedTmaRefusal::Decoded => {
+            CubeStagedTmaDecline::Decoded => {
                 "the stage holds a packed operand decoded, and the TMA engine lands words as stored"
             }
-            CubeStagedTmaRefusal::TileRowsUnderSwizzle(_) => {
+            CubeStagedTmaDecline::TileRowsUnderSwizzle(_) => {
                 "a stage is deeper than one of an input's tiles whose rows are shorter than the stage's swizzle, which the engine pads"
             }
-            CubeStagedTmaRefusal::ScalesDeeperThanATile(_) => {
+            CubeStagedTmaDecline::ScalesReadAlone(_) => {
+                "an input's block scales are read one at a time, and the engine lands values beside words of scales only"
+            }
+            CubeStagedTmaDecline::ScalesDeeperThanATile(_) => {
                 "a stage is deeper than one of an input's tiles, and its block scales lie in tiles a box lands one tile deep"
             }
         };
-        Refusal::Declined { why }
+        Decline::Unserved { why }
     }
 }
 
-impl From<CubeStagedFillingRefusal> for Refusal {
-    fn from(refusal: CubeStagedFillingRefusal) -> Self {
-        let why = match refusal {
-            CubeStagedFillingRefusal::CopiedByUnits => {
+impl From<CubeStagedFillingDecline> for Decline {
+    fn from(decline: CubeStagedFillingDecline) -> Self {
+        let why = match decline {
+            CubeStagedFillingDecline::CopiedByUnits => {
                 "planes set aside to fill need the TMA engine: the units' fill spreads a stage over every unit"
             }
-            CubeStagedFillingRefusal::OneStage => {
+            CubeStagedFillingDecline::OneStage => {
                 "planes set aside to fill need two stages in flight to run ahead of the reads"
             }
-            CubeStagedFillingRefusal::Bounces => {
+            CubeStagedFillingDecline::Bounces => {
                 "the fragments bounce through a scratch, whose cube barriers the filling planes never reach"
             }
-            CubeStagedFillingRefusal::SplitAlongK => {
+            CubeStagedFillingDecline::SplitAlongK => {
                 "the planes split K and merge behind a cube barrier, which the filling planes never reach"
             }
         };
-        Refusal::Declined { why }
+        Decline::Unserved { why }
     }
 }

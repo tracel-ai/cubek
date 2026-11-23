@@ -2,9 +2,9 @@
 //! or contracting stages the cube's units fill.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, StageStorage, Tile, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, SoftwareMatmul, StageStorage, Tile, TileTensor};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::matmul::cube::{
     CubeMeet, CubeShuffleMicrokernel, CubeShuffleMicrokernelSettings, CubeStagedMicrokernel,
@@ -15,7 +15,7 @@ use cubek_microkernel::matmul::{
     MatmulLayout, MatmulMicrokernel, MatmulOperands, MatmulRead, MatmulRows,
 };
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{M, N};
+use cubek_std::matmul_dimensions::{M, N};
 use cubek_std::microkernel::Microkernel;
 
 use super::{MatmulElements, MatmulLaunch, OneCube, WholeRows};
@@ -48,7 +48,7 @@ impl CubeShuffleLaunch {
         rows: WholeRows,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item_of(MatmulRows::Whole(rows.0), Self::RHS);
         let microkernel = CubeShuffleMicrokernel::best(hw, &item, settings)?;
         let mut vectorization = Vectorization::new();
@@ -83,7 +83,7 @@ impl MatmulLaunch for CubeShuffleLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let microkernel = &self.microkernel;
         let launcher = self
             .one_cube
@@ -128,18 +128,18 @@ impl MatmulLaunch for CubeShuffleLaunch {
 fn cube_shuffle_kernel<EA: Numeric, E: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] block: Option<SoftwareMatmul>,
     #[comptime] meet: CubeMeet,
-    #[comptime] split: Axis,
+    #[comptime] split: Dimension,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
     for cube in &partitioning {
         cube_shuffle_microkernel::<EA, Tile>(
             &cube,
@@ -178,14 +178,14 @@ impl CubeStagedLaunch {
         settings: &CubeStagedMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item();
         CubeStagedMicrokernel::admits(&item)?;
         // A stage the fill decodes binds its input as words, which this launch's plain bindings
         // do not: the first candidate staging its inputs as they lie.
         let microkernel = CubeStagedMicrokernel::candidates(hw, &item, settings)
             .find(|candidate| candidate.walk().decoded().is_none())
-            .ok_or(Refusal::Declined {
+            .ok_or(Decline::Unserved {
                 why: "every cube staged candidate decodes its stages, which bind words",
             })?;
         let contracted = microkernel.contracted(&item);
@@ -196,7 +196,7 @@ impl CubeStagedLaunch {
         );
         let resolved = microkernel.resolve(hw, &contracted, &placed.cube_space())?;
         if resolved.shared_memory > hw.shared_memory_budget() {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the cube's stages hold more shared memory than the device has",
             });
         }
@@ -234,7 +234,7 @@ impl MatmulLaunch for CubeStagedLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self.one_cube.launcher(client, self.plane_width)?;
         let [lhs, rhs, out] = self
             .elements
@@ -268,7 +268,7 @@ impl MatmulLaunch for CubeStagedLaunch {
 fn cube_staged_kernel<EA: Numeric, EL: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
@@ -276,7 +276,7 @@ fn cube_staged_kernel<EA: Numeric, EL: Numeric>(
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
     for cube in &partitioning {
         let b = b.at(&cube);
         cube_staged_microkernel::<EA, Tile>(

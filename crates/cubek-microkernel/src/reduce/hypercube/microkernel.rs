@@ -1,25 +1,25 @@
-use super::base::HypercubeReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
-use cubecl::tile::space::UnitShare;
-use cubecl::tile::{Indexed, Tile, TopK, TopValues};
+use super::base::HypercubeLastArrivalReduceMicrokernel;
+use crate::reduce::write::{UnitCarrierWriteMicrokernel, unit_carrier_write_microkernel};
+use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier};
+use cubecl::tile::{Indexed, TOP_K_UNROLL_BUDGET, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's part of a row its `parts` cubes split: the cube reduces `input`, its window of the
-/// part, as the cube's microkernel reduces a row, each line indexed `first_line` lines further, its
-/// place in the whole row; a part the row's end cuts short reads no line past it. Its first unit
-/// stores the partial as partial `part` of the row's `partials` and `partial_indices`
-/// ([`ReduceAccumulator::store`]), and the cube counts itself in at the row's `counter` of
+/// part, with the cube's microkernel, each line indexed `first_line` lines further, its place in
+/// the whole row; a part the row's end cuts short reads the edge monoid's identity past it. Its first unit
+/// stores the partial as partial `part` of the row's `partials` and `partial_indices`, its
+/// carrier's lines a slot apart, and the cube counts itself in at the row's `counter` of
 /// `arrivals`. The row's last cube to count merges every partial and writes the
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
 /// a row, a mean dividing by `values`, the values the whole row holds.
 ///
-/// `arrivals` holds a counter for every row, at zero; the row's last cube leaves it at zero again.
+/// `arrivals` holds a counter for every row, or box of rows, its caller counts apart, at zero; the
+/// row's last cube sets it back to zero once it has merged, so the caller's counters serve its
+/// next launch.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.
-///
-/// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub fn hypercube_reduce_microkernel<
+pub(crate) fn hypercube_last_arrival_reduce_microkernel<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -28,49 +28,20 @@ pub fn hypercube_reduce_microkernel<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     partials: &mut Tile,
-    partial_indices: &mut Tile,
+    partial_indices: &ComptimeOption<Tile>,
     arrivals: &[Atomic<u32>],
     counter: usize,
     part: usize,
     parts: usize,
     first_line: usize,
     values: usize,
-    #[comptime] microkernel: HypercubeReduceMicrokernel,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
 ) {
-    match microkernel.item.operation.carrier() {
-        ReduceCarrier::Values => hypercube_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
-            input,
-            out,
-            indices,
-            partials,
-            partial_indices,
-            arrivals,
-            counter,
-            part,
-            parts,
-            first_line,
-            values,
-            microkernel,
-        ),
-        ReduceCarrier::Indexed => hypercube_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
-            input,
-            out,
-            indices,
-            partials,
-            partial_indices,
-            arrivals,
-            counter,
-            part,
-            parts,
-            first_line,
-            values,
-            microkernel,
-        ),
-        ReduceCarrier::TopK { k } => {
-            let size!(K) = k;
-            hypercube_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
+    match microkernel.part().item().operation.carrier() {
+        ReduceCarrier::Values => {
+            hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
                 input,
                 out,
                 indices,
@@ -85,9 +56,8 @@ pub fn hypercube_reduce_microkernel<
                 microkernel,
             )
         }
-        ReduceCarrier::TopValues { k } => {
-            let size!(K) = k;
-            hypercube_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+        ReduceCarrier::Indexed => {
+            hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
                 input,
                 out,
                 indices,
@@ -100,13 +70,45 @@ pub fn hypercube_reduce_microkernel<
                 first_line,
                 values,
                 microkernel,
+            )
+        }
+        ReduceCarrier::TopK { k } => hypercube_last_arrival_reduce_top_k::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            partials,
+            partial_indices,
+            arrivals,
+            counter,
+            part,
+            parts,
+            first_line,
+            values,
+            microkernel,
+            k,
+        ),
+        ReduceCarrier::TopValues { k } => {
+            hypercube_last_arrival_reduce_top_values::<In, Acc, Out, Idx, N>(
+                input,
+                out,
+                indices,
+                partials,
+                partial_indices,
+                arrivals,
+                counter,
+                part,
+                parts,
+                first_line,
+                values,
+                microkernel,
+                k,
             )
         }
     }
 }
 
 #[cube]
-fn hypercube_reduce<
+fn hypercube_last_arrival_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -116,82 +118,193 @@ fn hypercube_reduce<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
+    indices: &ComptimeOption<Tile>,
     partials: &mut Tile,
-    partial_indices: &mut Tile,
+    partial_indices: &ComptimeOption<Tile>,
     arrivals: &[Atomic<u32>],
     counter: usize,
     part: usize,
     parts: usize,
     first_line: usize,
     values: usize,
-    #[comptime] microkernel: HypercubeReduceMicrokernel,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
 ) {
-    let operation = microkernel.item.operation;
-    let monoid = operation.monoid();
-    let layout = microkernel.item.layout;
-    let units = microkernel.lanes * microkernel.planes;
+    let cube_part = microkernel.part();
+    let item = cube_part.item();
+    let monoid = item.operation.monoid();
+    // A partial is its carrier's lines, a slot's apart, the indices beside where it keeps any.
+    let slots = item.operation.written_per_row();
+    let with_indices = item.operation.carrier().carries_indices();
+    let unrolled = comptime!(slots <= TOP_K_UNROLL_BUDGET);
 
-    let unit = PLANE_POS as usize * microkernel.lanes + UNIT_POS_PLANE as usize;
+    // Past the row's end the input reads the identity of the operation's edge monoid, which
+    // leaves the carrier as it is: every line of the window is read.
+    let count = input.flat::<In, N>().shape();
+    let load = input.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
 
-    let lines = input.flat::<In, N>();
-    // The tile reads zero past the row's end, which no carrier holds as its identity.
-    let row_lines = match layout {
-        ReduceLayout::Along => values / N::value(),
-        ReduceLayout::Across => values,
-    };
-    let count = lines.shape().min(row_lines - first_line);
+    let total = cube_part
+        .runtime()
+        .reduce_part::<In, Acc, N, C>(input, first_line, count);
 
-    let mut acc = C::identity(monoid);
-    for step in 0..count.div_ceil(units) {
-        let line = unit + step * units;
-        if line < count {
-            let read = read_mapped::<Acc, N>(
-                Vector::<Acc, N>::cast_from(lines.read(line)),
-                operation.read_map(),
-            );
-            C::accumulate(&mut acc, read, first_line + line, layout, monoid);
+    // The cube's first unit stores its partial as partial `part` of the row.
+    if UNIT_POS == 0 {
+        let mut value_lines = partials.flat_mut::<Acc, N>();
+        #[unroll(unrolled)]
+        for slot in 0..slots {
+            value_lines.write(part * slots + slot, C::value_line(&total, slot));
         }
-    }
-
-    let plane = C::across(acc, UnitShare::Plane, monoid);
-    let total = C::across_planes(plane, microkernel.planes, monoid);
-
-    if unit == 0 {
-        C::store(total, partials, partial_indices, part);
+        if with_indices {
+            let mut index_tile = partial_indices.clone().unwrap();
+            let mut index_lines = index_tile.flat_mut::<u32, N>();
+            #[unroll(unrolled)]
+            for slot in 0..slots {
+                index_lines.write(part * slots + slot, C::index_line(&total, slot));
+            }
+        }
     }
 
     // The partial lands at device scope before the cube counts itself in.
     sync_storage();
 
-    let mut arrived = Shared::<[u32]>::new_slice(1usize);
-    if unit == 0 {
-        arrived[0] = arrivals[counter].fetch_add(1u32);
-    }
-
-    sync_cube();
+    let arrived = count_in(arrivals, counter);
 
     // Uniform across the cube: only the row's last cube merges.
-    if arrived[0] as usize + 1 == parts {
+    if arrived as usize + 1 == parts {
         // What every other cube of the row stored is acquired before it is read.
         sync_storage();
 
-        if unit == 0 {
-            let (stored, stored_indices) = (partials.clone(), partial_indices.clone());
+        if UNIT_POS == 0 {
+            let value_lines = partials.flat::<Acc, N>();
             let mut merged = C::identity(monoid);
             for at in 0..parts {
-                merged = C::combine(merged, C::load(&stored, &stored_indices, at), monoid);
+                let mut stored = C::identity(monoid);
+                #[unroll(unrolled)]
+                for slot in 0..slots {
+                    let line = at * slots + slot;
+                    let index = match with_indices {
+                        true => {
+                            let index_tile = partial_indices.clone().unwrap();
+                            index_tile.flat::<u32, N>().read(line)
+                        }
+                        false => Vector::new(0u32),
+                    };
+                    C::set_line(&mut stored, slot, value_lines.read(line), index);
+                }
+                merged = C::combine(merged, stored, monoid);
             }
-            C::write::<Out, Idx>(
+            unit_carrier_write_microkernel::<Out, Idx, Acc, N, C>(
                 merged,
                 out,
                 indices,
                 values,
-                layout,
-                operation,
-                microkernel.item.writes(),
+                comptime!(UnitCarrierWriteMicrokernel::new(item, row_lanes)),
             );
-            arrivals[counter].store(0u32);
         }
+        reset_count(arrivals, counter);
     }
+}
+
+/// How many of its row's cubes had counted themselves in at `counter` of `arrivals` before this
+/// one: its first unit counts it in, and the cube meets so every unit reads the count.
+#[cube]
+fn count_in(arrivals: &[Atomic<u32>], counter: usize) -> u32 {
+    let mut arrived = Shared::<[u32]>::new_slice(1usize);
+    if UNIT_POS == 0 {
+        arrived[0] = arrivals[counter].fetch_add(1u32);
+    }
+
+    sync_cube();
+    arrived[0]
+}
+
+/// The counter at `counter` of `arrivals` set back to zero by the row's last cube, which every
+/// other cube of the row counted in before: nothing counts there again in this launch.
+#[cube]
+fn reset_count(arrivals: &[Atomic<u32>], counter: usize) {
+    if UNIT_POS == 0 {
+        arrivals[counter].store(0u32);
+    }
+}
+
+/// [`hypercube_last_arrival_reduce`] into a top-k of `k` slots, `K` bound in the function that uses
+/// it.
+#[cube]
+fn hypercube_last_arrival_reduce_top_k<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    partials: &mut Tile,
+    partial_indices: &ComptimeOption<Tile>,
+    arrivals: &[Atomic<u32>],
+    counter: usize,
+    part: usize,
+    parts: usize,
+    first_line: usize,
+    values: usize,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
+        input,
+        out,
+        indices,
+        partials,
+        partial_indices,
+        arrivals,
+        counter,
+        part,
+        parts,
+        first_line,
+        values,
+        microkernel,
+    )
+}
+
+/// [`hypercube_last_arrival_reduce`] into a top-k of `k` values without their indices, `K` bound in
+/// the function that uses it.
+#[cube]
+fn hypercube_last_arrival_reduce_top_values<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    partials: &mut Tile,
+    partial_indices: &ComptimeOption<Tile>,
+    arrivals: &[Atomic<u32>],
+    counter: usize,
+    part: usize,
+    parts: usize,
+    first_line: usize,
+    values: usize,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+        input,
+        out,
+        indices,
+        partials,
+        partial_indices,
+        arrivals,
+        counter,
+        part,
+        parts,
+        first_line,
+        values,
+        microkernel,
+    )
 }

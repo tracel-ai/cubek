@@ -4,7 +4,7 @@
 
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{MatmulIndex, MatmulIndexTable, MatmulRoutine};
@@ -236,7 +236,7 @@ impl RoutineProduct for Routed {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,
@@ -251,7 +251,7 @@ impl RoutineProduct for Routed {
             Some(spec) => {
                 let laid = PackedSlabs::new(client, spec).laid(client, self.stack.laid());
                 StoredTensor::Packed(
-                    laid.stacked(self.slabs, cubek_std::matmul_axes::N)
+                    laid.stacked(self.slabs, cubek_std::matmul_dimensions::N)
                         .expect("whole slabs of whole blocks and strips"),
                 )
             }
@@ -326,7 +326,7 @@ impl RoutineProduct for RunsOfK {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,
@@ -405,7 +405,7 @@ impl RoutineProduct for Chunked {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,

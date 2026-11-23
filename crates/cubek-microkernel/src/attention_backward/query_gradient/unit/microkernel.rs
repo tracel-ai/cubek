@@ -37,7 +37,7 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
         bias,
         key,
         microkernel.query_gradient.software_matmul(),
-        Semiring::SUM_PROD,
+        Semiring::SumProd,
     );
 
     sum.zero();
@@ -49,7 +49,7 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
             &query,
             &key,
             microkernel.score.software_matmul(),
-            Semiring::SUM_PROD,
+            Semiring::SumProd,
         );
 
         score.zero();
@@ -63,7 +63,7 @@ pub fn unit_query_gradient_microkernel<EA: Float>(
             &out_gradient,
             &value,
             microkernel.score_gradient.software_matmul(),
-            Semiring::SUM_PROD,
+            Semiring::SumProd,
         );
 
         gradient.zero();

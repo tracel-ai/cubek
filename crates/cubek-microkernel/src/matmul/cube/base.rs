@@ -1,9 +1,9 @@
-use crate::matmul::{MatmulAxes, MatmulAxesKind, MatmulWorkItem};
-use cubecl::tile::launch::Refusal;
-use cubecl::tile::{Axis, Space};
+use crate::matmul::{MatmulDimensions, MatmulDimensionsKind, MatmulWorkItem};
+use cubecl::tile::launch::Decline;
+use cubecl::tile::{Dimension, Space};
 
 /// The space a cube microkernel is handed: the part of the problem one cube covers, and what of
-/// its routine's placement its refusals read. The placement itself is the routine's; how the cube
+/// its routine's placement its declines read. The placement itself is the routine's; how the cube
 /// walks its space is the microkernel's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulCubeSpace {
@@ -12,36 +12,36 @@ pub struct MatmulCubeSpace {
     pub space: Space,
     /// The innermost box: what one instruction, or one unit's block, covers.
     pub leaf: Space,
-    /// The axes the problem, and so this space, is stated over.
-    pub axes_kind: MatmulAxesKind,
+    /// The dimensions the problem, and so this space, is stated over.
+    pub dimensions_kind: MatmulDimensionsKind,
     /// Whether the boxes overhang the output: a box the output's edge cuts short, which a write
     /// that cannot be masked would reach past.
     pub overhangs_output: bool,
-    /// Whether the problem has batch axes, a cube handed one batch along each.
+    /// Whether the problem has batch dimensions, a cube handed one batch along each.
     pub batched: bool,
 }
 
 impl MatmulCubeSpace {
-    /// Its extent along `axis`.
-    pub fn extent(&self, axis: Axis) -> usize {
-        self.space.extent(axis)
+    /// Its extent along `dimension`.
+    pub fn extent(&self, dimension: Dimension) -> usize {
+        self.space.extent(dimension)
     }
 
-    /// What a cube microkernel declines an item on other axes with: it places and stages in
+    /// What a cube microkernel declines an item on other dimensions with: it places and stages in
     /// matmul's own `M`, `N` and `K`.
-    pub(crate) const OTHER_AXES: Refusal = Refusal::Declined {
+    pub(crate) const OTHER_DIMENSIONS: Decline = Decline::Unserved {
         why: "a cube microkernel works in matmul's own M, N and K",
     };
 
-    /// Whether `item` lies along matmul's own axes, which a cube's box is stated in.
+    /// Whether `item` lies along matmul's own dimensions, which a cube's box is stated in.
     ///
     /// # Errors
     ///
-    /// `OTHER_AXES`, for an item on other axes.
-    pub fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
-        match item.axes == MatmulAxes::MNK {
+    /// `OTHER_DIMENSIONS`, for an item on other dimensions.
+    pub fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
+        match item.dimensions == MatmulDimensions::MNK {
             true => Ok(()),
-            false => Err(Self::OTHER_AXES),
+            false => Err(Self::OTHER_DIMENSIONS),
         }
     }
 }

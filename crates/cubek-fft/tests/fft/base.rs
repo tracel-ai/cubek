@@ -7,7 +7,7 @@ use cubecl::features::TypeUsage;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_fft::eval::cpu_reference::{irfft_ref, rfft_ref};
 use cubek_fft::{
@@ -17,7 +17,7 @@ use cubek_fft::{
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
 
 /// What a refused or failed launch is skipped as, the policy deciding.
-const DECLINED: Refusal = Refusal::Declined {
+const DECLINED: Decline = Decline::Unserved {
     why: "the transform runs no such launch on this device",
 };
 
@@ -192,10 +192,10 @@ impl ScopeUnderTest for RfftLaunch {
 
     /// Declines an element the device does no arithmetic in, as Metal `f64`: building the signal
     /// alone reads it back.
-    fn launch(&self, client: &Client, case: &Rfft) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Rfft) -> Result<Vec<Written>, Decline> {
         let usage = client.properties().features.type_usage(case.element);
         if !usage.contains(TypeUsage::Arithmetic) {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the device does no arithmetic in the element",
             });
         }
@@ -316,7 +316,7 @@ pub(crate) struct IrfftLaunch;
 impl ScopeUnderTest for IrfftLaunch {
     type Case = Irfft;
 
-    fn launch(&self, client: &Client, case: &Irfft) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Irfft) -> Result<Vec<Written>, Decline> {
         let element = f32::elem_type_native();
         let [re, im] = case.spectrum(client);
         let signal =
@@ -375,7 +375,7 @@ pub(crate) struct CfftRoundTripLaunch;
 impl ScopeUnderTest for CfftRoundTripLaunch {
     type Case = CfftRoundTrip;
 
-    fn launch(&self, client: &Client, case: &CfftRoundTrip) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &CfftRoundTrip) -> Result<Vec<Written>, Decline> {
         let element = f32::elem_type_native();
         let [(input_re, _), (input_im, _)] = case.input(client);
         let shape = case.axis.shape.clone();

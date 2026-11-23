@@ -5,7 +5,7 @@ use cubecl::client::Client;
 use cubecl::ir::FloatKind;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_convolution::{ConvolutionArgs, Im2colTensors, launch_im2col};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
@@ -58,7 +58,7 @@ struct Im2col<const N: usize>;
 impl<const N: usize> ScopeUnderTest for Im2col<N> {
     type Case = Lowering<N>;
 
-    fn launch(&self, client: &Client, lowering: &Lowering<N>) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, lowering: &Lowering<N>) -> Result<Vec<Written>, Decline> {
         let conv = &lowering.conv;
         let (rows, width) = lowering.extents();
         let row_stride = (width * lowering.gap + 1).next_multiple_of(16);

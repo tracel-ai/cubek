@@ -102,7 +102,7 @@ fn every_unit_setting_matches_the_reference() {
     for settings in strategy.settings(&hw) {
         let gradients = strategy
             .launch_on(&hw, reference.tensors.clone(), &settings)
-            .unwrap_or_else(|refusal| panic!("{settings}: {refusal:?}"));
+            .unwrap_or_else(|decline| panic!("{settings}: {decline:?}"));
         reference.check(&client, gradients, 1e-4);
     }
 }

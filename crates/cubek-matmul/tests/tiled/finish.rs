@@ -35,11 +35,11 @@ impl Destination for Counted {
     type Served<E: Numeric> = CountedServed;
 
     fn serve<E: Numeric, V: Size>(
-        arg: &Self::Arg<E>,
+        arg: &mut Self::Arg<E>,
         partitioning: &Partitioning,
     ) -> CountedServed {
         CountedServed {
-            tile: arg.out.tile(partitioning),
+            tile: arg.out.tile_mut(partitioning),
             units: arg.units,
         }
     }
@@ -118,9 +118,8 @@ where
     )
     .expect("dense float operands bind");
     let hw = Hardware::from_client(&client);
-    let (blueprint, grid) = routine
-        .prepare_first_served(&hw, &tensors.problem())
-        .map_err(|why| format!("{name}: {why}"))?;
+    let (blueprint, grid) =
+        R::prepare_first_served(&hw, &tensors.problem()).map_err(|why| format!("{name}: {why}"))?;
     let CubeCount::Static(x, y, z) = grid.launch.cube_count.clone() else {
         panic!("a prepared grid is static");
     };
@@ -129,6 +128,7 @@ where
     let counter = client.create_from_slice(u32::as_bytes(&[0]));
     let binding = tensors
         .bind(&blueprint, &grid)
+        .expect("the counted product binds as it prepared")
         .map_out(|out| CountedOperand {
             out,
             // SAFETY: one `u32` the kernel only adds into.

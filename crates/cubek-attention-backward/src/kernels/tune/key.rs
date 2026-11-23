@@ -3,8 +3,8 @@
 
 use crate::kernels::AttentionBackwardProblem;
 use cubecl::ir::ElemType;
-use cubecl::tile::Axis;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::Dimension;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::attention::{AttentionVisibility, D, DV};
@@ -50,7 +50,7 @@ impl From<&AttentionBackwardProblem> for AttentionBackwardKey {
 /// The problem a tuning key describes, at its bucket's extents: dense operands of the key's
 /// element, viewed whole.
 impl TryFrom<&AttentionBackwardKey> for AttentionBackwardProblem {
-    type Error = Refusal;
+    type Error = Decline;
 
     /// # Errors
     ///
@@ -58,10 +58,10 @@ impl TryFrom<&AttentionBackwardKey> for AttentionBackwardProblem {
     /// its key heads.
     ///
     /// [`ATTENTION_BACKWARD_GROUP_UNEVEN`]: crate::kernels::ATTENTION_BACKWARD_GROUP_UNEVEN
-    fn try_from(key: &AttentionBackwardKey) -> Result<Self, Refusal> {
+    fn try_from(key: &AttentionBackwardKey) -> Result<Self, Decline> {
         let group = Self::group_of(key.heads, key.kv_heads)?;
-        // Each operand dense, its rows as long as its innermost axis.
-        let row = |axis: Axis| match axis {
+        // Each operand dense, its rows as long as its innermost dimension.
+        let row = |dimension: Dimension| match dimension {
             D => key.head_dim,
             DV => key.val_dim,
             _ => 1,

@@ -5,7 +5,7 @@ use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -25,7 +25,7 @@ use cubek_std::routine::{Grid, Routine};
 /// slot's barrier after the fill returns ([`CubeStagedDelivery::AsyncCopy`]). Its planes store
 /// their own fragments.
 ///
-/// Refused where the device has no copy engine, where the ring holds its next stage in registers,
+/// Declined where the device has no copy engine, where the ring holds its next stage in registers,
 /// which the engine never passes through, and where a line it would copy is not 4, 8 or 16 bytes,
 /// as the delivery itself answers ([`Delivery::runs_on`](cubecl::tile::launch::Delivery::runs_on),
 /// [`holds`](cubecl::tile::launch::Delivery::holds),
@@ -57,14 +57,19 @@ impl CubeStagedAsyncCopyMatmulRoutine {
         CubeStagedMicrokernelSettings::in_steps((4, 2), (2, 4), StageRing::DOUBLE);
 
     /// The settings a product against a packed input races on `hw`: the box handing its float
-    /// input to the engine (`PACKED_FLOAT_ON_ENGINE`), then the boxes staged as stored
-    /// (`CubeStagedMatmulRoutine::STORED`), which by the units never were the fastest. None
-    /// without a copy engine. Its cubes in the grid's order.
+    /// input to the engine (`PACKED_FLOAT_ON_ENGINE`) at every count of steps of `K` a stage
+    /// holds ([`CubeStagedMatmulRoutine::PACKED_STAGE_STEPS`]), then the boxes staged as stored (`CubeStagedMatmulRoutine::STORED`), which by the
+    /// units never were the fastest. None without a copy engine. Its cubes in the grid's order.
+    ///
+    /// On an RTX PRO 6000 at Qwen3.8 27B's down projection at 512 rows, the box two steps a stage
+    /// took MXFP4 to 381 µs, as NVFP4's four, where MXFP4's four outgrew shared memory.
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedAsyncCopyMatmulRoutineSettings> {
         if !hw.unit_async_copy() {
             return Vec::new();
         }
-        [Self::PACKED_FLOAT_ON_ENGINE]
+        let decoding = Self::PACKED_FLOAT_ON_ENGINE;
+        CubeStagedMatmulRoutine::PACKED_STAGE_STEPS
+            .map(|steps| decoding.stage_steps(steps))
             .into_iter()
             .chain(CubeStagedMatmulRoutine::STORED)
             .map(|microkernel| CubeStagedAsyncCopyMatmulRoutineSettings {
@@ -101,7 +106,7 @@ impl CubeStagedAsyncCopyMatmulRoutine {
             shape((1, 1, 1), (1, 1), 4, double),
             shape((1, 2, 4), (1, 2), 2, double),
         ];
-        block_scaled::block_scaled_settings(hw, *self, &shapes, |microkernel| {
+        block_scaled::block_scaled_settings::<Self>(hw, &shapes, |microkernel| {
             CubeStagedAsyncCopyMatmulRoutineSettings {
                 microkernel,
                 cube_order: CubeOrder::RowMajor,
@@ -132,7 +137,7 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     /// stages handed to the engine: whether it beats the units' loads moves with the box, by a few
     /// percent either way on an L4. A ring that prefetches through registers is not listed, which
     /// the engine refuses. None without a copy engine.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if !hw.unit_async_copy() {
             return Vec::new();
         }
@@ -162,7 +167,6 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -171,7 +175,6 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -183,18 +186,26 @@ impl Routine for CubeStagedAsyncCopyMatmulRoutine {
     /// As [`CubeStagedMatmulRoutine`]'s, the copy engine checked against the ring, then against
     /// the widths the blueprint binds.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let placement = CubeStagedPlacement::new(
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let (read, picked) = CubeStagedPlacement::planned(
             hw,
             problem,
+            &settings.microkernel,
+            Self::FILL,
+            CubeStagedStore::Fragments,
+        )?;
+        let placement = CubeStagedPlacement::new(
+            hw,
+            &read,
             &settings.microkernel,
             settings.cube_order,
             Self::FILL,
             CubeStagedStore::Fragments,
+            picked,
         )?;
         placement.check_copy_engine(hw)?;
         let contracted = placement.contracted;

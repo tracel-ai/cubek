@@ -8,7 +8,7 @@ use crate::kernels::{
     HypercubeKeyWalkSettings, KeyGradientSums, KeyHeads, KeyHeadsBlueprint, PlaneDeltaBlueprint,
     PlaneDeltaRoutine, PlaneDeltaRoutineSettings, QueryGradientSum,
 };
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::delta::plane::PlaneDeltaMicrokernelSettings;
 use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
@@ -124,7 +124,7 @@ impl AttentionBackwardLaunch for HypercubeAttentionBackward {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<Self::Blueprint, Refusal> {
+    ) -> Result<Self::Blueprint, Decline> {
         let keys = HypercubeKeyWalkSettings {
             microkernel: settings.key_gradient,
             ring: settings.ring,

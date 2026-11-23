@@ -18,12 +18,19 @@ pub struct CubeStagedMicrokernelSettings {
     pub scratch: Scratch,
     /// How it holds the stages its planes contract.
     pub ring: StageRing,
-    /// How a stage lays out the rows its fragments load: as the setting names, or as the
-    /// instruction reads its own stage where it names none
-    /// ([`PlaneFragmentInstruction::stage_layout`](crate::matmul::plane::PlaneFragmentInstruction::stage_layout)).
-    /// Which reads faster depends on the device and on which way the operands run, so it is a
-    /// setting a table races rather than a rule.
-    pub stage_layout: Option<StageLayout>,
+    /// How a stage its units copy lays out the rows its fragments load, the tile arranging its
+    /// rows as the instruction reads them: swizzled tiles are padded under `cmma`, which reads a
+    /// tile off a pointer and a stride (`PlaneFragmentMicrokernel::stage_storage`). A box the TMA
+    /// engine lands lies as the instruction reads it whatever this says. Which reads faster
+    /// depends on the device and on which way the operands run, so it is a setting a table races
+    /// rather than a rule.
+    pub stage_layout: StageLayout,
+    /// Steps of `K` one stage holds against a packed input its units decode, each a step of the
+    /// inputs' finest reads: a scale block where scales are bytes, a word of scales otherwise. The
+    /// stage then reads each input as widely as it holds whole: four steps over byte scales are a
+    /// word of them, read a word at a time; two MXFP4 blocks are 64 of `K`, read a scale at a time.
+    /// Against float inputs a stage is its planes' step, which holds no scale block to count.
+    pub stage_steps: NonZeroUsize,
 }
 
 impl CubeStagedMicrokernelSettings {
@@ -34,8 +41,22 @@ impl CubeStagedMicrokernelSettings {
         planes_along_k: NonZeroUsize::MIN,
         scratch: Scratch::OneTile,
         ring: StageRing::SINGLE,
-        stage_layout: None,
+        stage_layout: Self::SWIZZLED,
+        stage_steps: NonZeroUsize::MIN,
     };
+
+    /// The layout a stage takes where a table names none: tiles of the instruction, their rows'
+    /// chunks swizzled, which `cmma` reads padded. Both keep the rows a fragment load reads at
+    /// once on distinct banks, each the way its transport can read; the swizzle spends no shared
+    /// memory. A block-scaled instruction's stage holds the stored words in the same tiles: a row
+    /// of its tile is the instruction's `k` of words, read eight rows at a time as a 16-bit
+    /// instruction's are.
+    ///
+    /// Measured against padding under the manual `mma`: an L4's shared loads go from conflicted to
+    /// conflict-free at a level time; gfx1151's bank conflicts fall to zero, 8 to 20% faster on
+    /// four of six boxes, the others within noise (a stage 64 deep along a col rhs's `K` up to
+    /// about 10% slower).
+    pub const SWIZZLED: StageLayout = StageLayout::SwizzledBlocks;
 
     /// One tile a cube, four planes splitting its `K`: what a problem with too few output tiles to
     /// fill the device wants, each tile getting a cube's planes rather than one plane. The tile is
@@ -69,7 +90,8 @@ impl CubeStagedMicrokernelSettings {
             planes_along_k: NonZeroUsize::MIN,
             scratch: Scratch::None,
             ring,
-            stage_layout: None,
+            stage_layout: Self::SWIZZLED,
+            stage_steps: NonZeroUsize::MIN,
         }
     }
 
@@ -97,14 +119,15 @@ impl CubeStagedMicrokernelSettings {
             planes_along_k: NonZeroUsize::MIN,
             scratch: Scratch::OneTile,
             ring,
-            stage_layout: None,
+            stage_layout: Self::SWIZZLED,
+            stage_steps: NonZeroUsize::MIN,
         }
     }
 
     /// Eight by one steps on each of one by two planes, one stage at a time: on the M2, eight by
     /// two instructions a plane in tile order, the float staged routine's fastest box on the
     /// Qwen3-4B projections at a prompt's rows, whose planes contract the same stages these hold.
-    pub const PACKED: Self = Self::in_steps((8, 1), (1, 2), StageRing::SINGLE);
+    pub const PACKED: Self = Self::in_steps((8, 1), (1, 2), StageRing::SINGLE).stage_steps(4);
 
     /// These settings with their planes' instruction laying its rows along `rows_along`.
     pub const fn rows_along(self, rows_along: PlaneFragmentRowsAlong) -> Self {
@@ -135,6 +158,18 @@ impl CubeStagedMicrokernelSettings {
         }
     }
 
+    /// These settings with each stage holding `steps` steps of `K` against a packed input.
+    ///
+    /// # Panics
+    ///
+    /// On a count of zero.
+    pub const fn stage_steps(self, steps: usize) -> Self {
+        Self {
+            stage_steps: NonZeroUsize::new(steps).unwrap(),
+            ..self
+        }
+    }
+
     /// These settings holding their stages in `ring`.
     pub const fn ringed(self, ring: StageRing) -> Self {
         Self { ring, ..self }
@@ -155,8 +190,9 @@ impl CubeStagedMicrokernelSettings {
     }
 }
 
-/// Nothing for one plane along `K`, a one-fragment scratch or the instruction's own stage layout,
-/// so the settings that hold them keep their names.
+/// Nothing for one plane along `K`, a one-fragment scratch, the swizzled stage layout or a stage
+/// of one step, so the settings that hold them keep their
+/// names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} {}", self.plane, self.planes)?;
@@ -167,8 +203,11 @@ impl core::fmt::Display for CubeStagedMicrokernelSettings {
             write!(f, " scratch={}", self.scratch)?;
         }
         write!(f, "{}", self.ring)?;
-        if let Some(layout) = self.stage_layout {
-            write!(f, "{layout}")?;
+        if self.stage_layout != Self::SWIZZLED {
+            write!(f, "{}", self.stage_layout)?;
+        }
+        if self.stage_steps.get() > 1 {
+            write!(f, " stage_steps={}", self.stage_steps)?;
         }
         Ok(())
     }

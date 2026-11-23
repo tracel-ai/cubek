@@ -5,10 +5,10 @@ use cubecl::bytes::Bytes;
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_matmul::kernels::indexed::m_grouped::MGroupedSettings;
 use cubek_matmul::kernels::indexed::routed::{RoutedMatmulTensors, launch_tuned};
-use cubek_matmul::kernels::indexed::stack::SlabAxis;
+use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::{PACKED_STACK_UNREAD, PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
     CubeStagedMatmulRoutine, PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
@@ -16,7 +16,7 @@ use cubek_matmul::kernels::{
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::autotune::GroupPriority;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
 
 use crate::matmul::{Declines, skip_unless_matrix_instruction};
@@ -41,11 +41,16 @@ fn every_unit_registers_setting_reads_each_route_s_slab() {
 #[test]
 fn every_packed_plane_shuffle_setting_reads_each_route_s_packed_slab() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
-    let products: Vec<Routed> = [PackedFormat::Q8, PackedFormat::Q4, PackedFormat::Nvfp4]
-        .into_iter()
-        .flat_map(|format| [Routed::MOE.packed(format), Routed::NARROW.packed(format)])
-        .collect();
-    shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine.packed_settings(), &products));
+    let products: Vec<Routed> = [
+        PackedFormat::Q8,
+        PackedFormat::Q4,
+        PackedFormat::Nvfp4,
+        PackedFormat::Mxfp4,
+    ]
+    .into_iter()
+    .flat_map(|format| [Routed::MOE.packed(format), Routed::NARROW.packed(format)])
+    .collect();
+    shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine::packed_settings(), &products));
 }
 
 /// The routed products of a stack laid in each tile order: a slab of several strips, its `n` a
@@ -65,7 +70,7 @@ fn in_tile_order() -> Vec<Routed> {
 fn every_packed_plane_shuffle_setting_reads_each_route_s_slab_of_a_stack_in_tile_order() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
     shuffle.check_some(shuffle.at(
-        PlaneShuffleMatmulRoutine.packed_settings(),
+        PlaneShuffleMatmulRoutine::packed_settings(),
         &in_tile_order(),
     ));
 }
@@ -112,6 +117,7 @@ fn a_stack_in_tile_order_whose_slabs_split_a_strip_is_refused() {
     }
 }
 
+
 /// The routed autotune, against a stack laid either way it takes: a col float stack, its buffer
 /// `[slabs · n, k]` behind the `[k, slabs · n]` view, and a stack packed in each format.
 #[test]
@@ -156,8 +162,8 @@ impl ScopeUnderTest for TunedRouted {
     ///
     /// # Panics
     ///
-    /// On any other refusal: the autotune always reaches a floor that answers.
-    fn launch(&self, client: &Client, routed: &Routed) -> Result<Vec<Written>, Refusal> {
+    /// On any other decline: the autotune always reaches a floor that answers.
+    fn launch(&self, client: &Client, routed: &Routed) -> Result<Vec<Written>, Decline> {
         let Routed {
             tokens,
             picks,
@@ -188,7 +194,7 @@ impl ScopeUnderTest for TunedRouted {
             stored,
             upload(client, &[tokens, picks], &routed.routes()),
             slabs,
-            SlabAxis::Output,
+            SlabDimension::Output,
         )
         .expect("a stack of whole slabs derives a routed launch");
         let hw = Hardware::from_client(client);
@@ -199,7 +205,7 @@ impl ScopeUnderTest for TunedRouted {
                 tensor: out,
                 host: HostDataType::F32,
             }]),
-            Err(why @ Refusal::CubePastDevice { .. }) => Err(why),
+            Err(why @ Decline::CubePastDevice { .. }) => Err(why),
             Err(why) if stack != Stack::Float && no_matrix_instruction => Err(why),
             Err(why) => panic!("{routed:?} refused: {why:?}"),
         }

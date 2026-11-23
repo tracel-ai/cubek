@@ -1,7 +1,7 @@
 //! The plane key gradient microkernel alone: one plane's keys, their gradient and their values' over every query.
 
 use crate::launch::attention_backward::PlaneKeyGradientLaunch;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_microkernel::attention_backward::key_gradient::plane::{
     PlaneKeyGradientMicrokernel, PlaneKeyGradientMicrokernelSettings,
@@ -20,7 +20,7 @@ impl BackwardSettings for PlaneKeyGradientMicrokernelSettings {
         hw: &Hardware,
         item: AttentionBackwardWorkItem,
         steps: usize,
-    ) -> Result<PlaneKeyGradientLaunch, Refusal> {
+    ) -> Result<PlaneKeyGradientLaunch, Decline> {
         PlaneKeyGradientLaunch::new(hw, item, self, steps)
     }
 }

@@ -7,7 +7,7 @@ use cubecl::prelude::Scalar;
 use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::tile::kind::Field;
 use cubecl::tile::layout::Stagger;
 use cubecl::zspace::Shape;
@@ -20,7 +20,7 @@ use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
 
 use crate::tiled::upload;
@@ -39,6 +39,7 @@ pub(crate) enum PackedFormat {
     Q4,
     Nvfp4,
     Mxfp4,
+    Mxfp8,
 }
 
 impl PackedFormat {
@@ -57,6 +58,10 @@ impl PackedFormat {
                 .with_value(QuantValue::E2M1)
                 .per_block([32], ScaleDtype::UE8M0)
                 .with_store(QuantStore::PackedU32(0)),
+            Self::Mxfp8 => QuantScheme::default()
+                .with_value(QuantValue::E4M3)
+                .per_block([32], ScaleDtype::UE8M0)
+                .with_store(QuantStore::PackedU32(0)),
         }
     }
 }
@@ -69,7 +74,8 @@ pub(crate) enum Laid {
     InTiles(TileWords, (usize, usize)),
 }
 
-/// `slabs` matrices of `rows` rows of `k` values, laid one after the other along the axis of
+
+/// `slabs` matrices of `rows` rows of `k` values, laid one after the other along the dimension of
 /// `operand` beside `K`, packed along `k` in `format`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedSlabsSpec {
@@ -82,7 +88,7 @@ pub(crate) struct PackedSlabsSpec {
 }
 
 /// A packed matrix of slabs with the dequantized values it holds. Its words run along `k`, a row
-/// each, as a checkpoint stores them whichever axis the rows are.
+/// each, as a checkpoint stores them whichever dimension the rows are.
 pub(crate) struct PackedSlabs {
     spec: PackedSlabsSpec,
     tensor: PackedTensor,
@@ -152,6 +158,7 @@ impl PackedSlabs {
         }
     }
 
+
     /// The matrix read as the stack of its slabs.
     pub(crate) fn stack(&self) -> StoredTensor {
         let stack = self
@@ -191,8 +198,8 @@ impl PackedSlabs {
         let word = ElemType::UInt(UIntKind::U32);
         let words_per_load = hw.load_values(word);
         let blocks = k / order.block();
-        let relayout = |source: TensorBinding, axes: &[Axis], field, storage| {
-            storage::tile(client, source, axes, word, Some(field), storage)
+        let relayout = |source: TensorBinding, dimensions: &[Dimension], field, storage| {
+            storage::tile(client, source, dimensions, word, Some(field), storage)
                 .unwrap_or_else(|err| panic!("the stack lays out in tile order: {err:?}"))
         };
         // The values as the kernel names them, `[n, k/block, block]`, counted in values.
@@ -207,7 +214,7 @@ impl PackedSlabs {
         ));
         let values = relayout(
             values,
-            &tile_order::values_axes(N),
+            &tile_order::values_dimensions(N),
             Field::from(scheme.value),
             order.values_storage(N, words_per_load),
         );
@@ -223,7 +230,7 @@ impl PackedSlabs {
             None => scales,
             Some(storage) => PlainTensor::of_handle(relayout(
                 scales.bound_as(Metadata::new([n, blocks], [blocks, 1])),
-                &tile_order::scales_axes(N),
+                &tile_order::scales_dimensions(N),
                 Field::of_scale(scheme.scale_dtype()),
                 storage,
             )),
@@ -243,6 +250,7 @@ impl PackedSlabs {
             sized,
         )
     }
+
 
     /// The dequantized value at `k` and row `row` of slab `slab`.
     pub(crate) fn cell(&self, slab: usize, k: usize, row: usize) -> f32 {
@@ -298,6 +306,7 @@ impl PackedSlabsSpec {
         let peak = scheme.value.range().1;
         let codes: Vec<f32> = match scheme.value {
             QuantValue::E2M1 => vec![0., 0.5, 1., 1.5, 2., 3., 4., 6.],
+            QuantValue::E4M3 => e4m3_codes(),
             _ => (0..=peak as usize).map(|code| code as f32).collect(),
         };
         let headroom = peak.log2().ceil() as i32 + 2;
@@ -320,6 +329,20 @@ impl PackedSlabsSpec {
             })
             .collect()
     }
+}
+
+/// Every finite non-negative value `e4m3` holds: its 127 codes below the NaN, so a block of them
+/// quantizes to itself. The integers up to its peak do not: 17 already rounds.
+fn e4m3_codes() -> Vec<f32> {
+    (0..0x7f_u8)
+        .map(|code| {
+            let (exponent, mantissa) = (i32::from(code >> 3), f32::from(code & 0b111));
+            match exponent {
+                0 => mantissa / 8. * 2f32.powi(-6),
+                _ => (1. + mantissa / 8.) * 2f32.powi(exponent - 7),
+            }
+        })
+        .collect()
 }
 
 /// A well-mixed number from `i` and `seed`, so no pattern of the indices repeats at a slab, a row
@@ -345,13 +368,13 @@ pub(crate) fn block_of(scheme: &QuantScheme) -> usize {
         .to_dim_vec(1)[0] as usize
 }
 
-/// The axis of `operand` beside `K`, which a packed matrix's rows run along.
-fn across(operand: MatmulOperand) -> Axis {
+/// The dimension of `operand` beside `K`, which a packed matrix's rows run along.
+fn across(operand: MatmulOperand) -> Dimension {
     operand
-        .axes()
+        .dimensions()
         .into_iter()
-        .find(|&axis| axis != K)
-        .expect("an operand has an axis beside K")
+        .find(|&dimension| dimension != K)
+        .expect("an operand has a dimension beside K")
 }
 
 /// `scheme` as the reference quantizer takes it, which has no per-tensor level and no `ue4m3`:

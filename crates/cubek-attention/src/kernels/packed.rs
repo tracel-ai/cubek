@@ -3,7 +3,7 @@
 
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::tile::kind::Field;
-use cubecl::tile::{Axis, Launcher, TileSpec, TileTensorLaunch};
+use cubecl::tile::{Dimension, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{B, D, DV, KV, S};
@@ -177,8 +177,8 @@ pub struct PackedCacheBinding {
     pub fixup: Option<TileTensorLaunch>,
 }
 
-/// The axis of a codebook's table, its positions: outside every kernel's space.
-const CODEBOOK: Axis = Axis(7);
+/// The dimension of a codebook's table, its positions: outside every kernel's space.
+const CODEBOOK: Dimension = Dimension(7);
 
 /// What every packed binding rests on, checked by [`PackedAttentionCache::new`].
 const CHECKED_BY_NEW: &str =
@@ -188,9 +188,9 @@ impl PackedAttentionOperand {
     /// The operand bound under `launcher` along `[B, KV, S, head]`: its words' `bits`-wide fields
     /// indices into its codebook, each vector under its norm. Bound a word a line, the width a
     /// decoding read takes.
-    fn bind(&self, launcher: &Launcher, bits: u32, head: Axis) -> TileTensorLaunch {
+    fn bind(&self, launcher: &Launcher, bits: u32, head: Dimension) -> TileTensorLaunch {
         const TABLE: ElemType = ElemType::Float(FloatKind::F32);
-        let axes = [B, KV, S, head];
+        let dimensions = [B, KV, S, head];
         // A norm per vector, `[b, kv, s, 1]`, scales the vector along `[b, kv, s]`.
         let binding = &self.norms.binding;
         let rows = self.norms.viewed(Metadata::new(
@@ -199,7 +199,7 @@ impl PackedAttentionOperand {
         ));
         let norms = launcher
             .arg(rows.binding, TABLE)
-            .axes(&axes[..3])
+            .dimensions(&dimensions[..3])
             .build()
             .expect(CHECKED_BY_NEW)
             .arg();
@@ -222,7 +222,7 @@ impl PackedAttentionOperand {
         let values = self.words.viewed(Metadata::new(shape, strides));
         launcher
             .arg(values.binding, ElemType::UInt(UIntKind::U32))
-            .axes(&axes)
+            .dimensions(&dimensions)
             .vectorize(1)
             .packed(Field::Index {
                 bits: bits as usize,

@@ -9,14 +9,14 @@ use cubek_microkernel::attention::G;
 pub fn cast_key_gradient_kernel(
     key_sum: &TileTensor<'_>,
     value_sum: &TileTensor<'_>,
-    key_gradient: &TileTensor<'_>,
-    value_gradient: &TileTensor<'_>,
+    key_gradient: &mut TileTensor<'_>,
+    value_gradient: &mut TileTensor<'_>,
     partitioning: Partitioning,
 ) {
     let (key_sum, value_sum) = (key_sum.tile(&partitioning), value_sum.tile(&partitioning));
     let (d_k, d_v) = (
-        key_gradient.tile(&partitioning),
-        value_gradient.tile(&partitioning),
+        key_gradient.tile_mut(&partitioning),
+        value_gradient.tile_mut(&partitioning),
     );
 
     for plane in &partitioning {
@@ -34,10 +34,13 @@ pub fn cast_key_gradient_kernel(
 #[cube(launch_unchecked)]
 pub fn cast_query_gradient_kernel(
     sum: &TileTensor<'_>,
-    query_gradient: &TileTensor<'_>,
+    query_gradient: &mut TileTensor<'_>,
     partitioning: Partitioning,
 ) {
-    let (sum, d_q) = (sum.tile(&partitioning), query_gradient.tile(&partitioning));
+    let (sum, d_q) = (
+        sum.tile(&partitioning),
+        query_gradient.tile_mut(&partitioning),
+    );
 
     for plane in &partitioning {
         let mut d_q = d_q.at(&plane);

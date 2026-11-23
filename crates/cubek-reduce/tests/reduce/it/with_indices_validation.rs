@@ -1,129 +1,63 @@
-//! Argument validation for `reduce_with_indices`.
-//!
-//! The launch derives vectorization and write positions from the values tensor
-//! alone, so an indices tensor with a different layout would be written *as if*
-//! it had the values layout, producing silently wrong data. These tests pin
-//! that such calls are rejected before launch instead.
+//! `Reduce::execute_with_indices` writes its indices at their own strides, whatever the values'.
+//! The calls outside its Domain are Small Tests in `kernels/operation.rs`, and the values and
+//! indices it writes at matching strides are checked in `reduce_dim.rs`.
 
-use cubecl::{config::autotune::AutotuneLevel, prelude::*, zspace::Shape};
-use cubek_reduce::{
-    ReduceError, ReduceStrategy, ReduceWithIndicesDtypes,
-    components::instructions::ReduceOperationConfig,
-    launch::{RoutineStrategy, VectorizationStrategy},
-    reduce_with_indices,
-    routines::{BlueprintStrategy, unit::UnitStrategy},
-};
-use cubek_test_utils::{StridedLayout, TestInput};
+use cubecl::{prelude::*, zspace::Shape};
+use cubek_reduce::ReduceOperation;
+use cubek_reduce::eval::cpu_reference::reference;
+use cubek_reduce::kernels::{Reduce, ReduceElements};
+use cubek_test_utils::{HostData, HostDataType, StridedLayout, TestInput, assert_equals_approx};
 
-/// Run the fused top-k on a `[4, 8]` input with the given indices output
-/// shape/strides and return the validation result. Values output is always the
-/// valid contiguous `[4, 2]`.
-fn try_launch(indices_shape: [usize; 2], indices_strides: Vec<usize>) -> Result<(), ReduceError> {
-    try_launch_config(
-        ReduceOperationConfig::TopK(2),
-        2,
-        indices_shape,
-        indices_strides,
-    )
-}
+use crate::reduce::it::test_case::UNIT;
 
-/// Run the fused `operation` on a `[4, 8]` input with the given indices output
-/// shape/strides and return the validation result. Values output is always the
-/// valid contiguous `[4, out_len]`.
-fn try_launch_config(
-    operation: ReduceOperationConfig,
-    out_len: usize,
-    indices_shape: [usize; 2],
-    indices_strides: Vec<usize>,
-) -> Result<(), ReduceError> {
+/// A top-2 of `[4, 8]` rows counting up, its indices column-major beside row-major values: the
+/// indices are the reference's, read at their own strides.
+#[test]
+fn writes_indices_at_their_own_strides() {
+    const ROWS: usize = 4;
+    const ROW_LEN: usize = 8;
+    const K: usize = 2;
     let client = cubecl::test_device().client();
-
     let input_dtype = f32::elem_type_native();
     let u32_dtype = u32::elem_type_native();
 
-    let input = TestInput::builder(client.clone(), Shape::new([4, 8]))
+    let (input, input_host) = TestInput::builder(client.clone(), Shape::new([ROWS, ROW_LEN]))
         .dtype(input_dtype)
-        .layout(StridedLayout::Explicit(vec![8, 1]))
+        .layout(StridedLayout::Explicit(vec![ROW_LEN, 1]))
+        .arange()
+        .generate_with_f32_host_data();
+    let values = TestInput::builder(client.clone(), Shape::new([ROWS, K]))
+        .dtype(input_dtype)
+        .layout(StridedLayout::Explicit(vec![K, 1]))
         .zeros()
         .generate_without_host_data();
-    let values = TestInput::builder(client.clone(), Shape::new([4, out_len]))
-        .dtype(input_dtype)
-        .layout(StridedLayout::Explicit(vec![out_len, 1]))
-        .zeros()
-        .generate_without_host_data();
-    let indices = TestInput::builder(client.clone(), Shape::new(indices_shape))
+    let indices = TestInput::builder(client.clone(), Shape::new([ROWS, K]))
         .dtype(u32_dtype)
-        .layout(StridedLayout::Explicit(indices_strides))
+        .layout(StridedLayout::Explicit(vec![1, ROWS]))
         .zeros()
         .generate_without_host_data();
 
-    let strategy = ReduceStrategy {
-        routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization: false,
-        },
-        autotune_level: AutotuneLevel::Full,
-    };
-    let dtypes = ReduceWithIndicesDtypes {
-        input: input_dtype,
-        values: input_dtype,
-        indices: u32_dtype,
-        accumulation: input_dtype,
-    };
+    Reduce::new(UNIT)
+        .execute_with_indices(
+            &client,
+            &cubecl::test_device(),
+            input.binding(),
+            values.binding(),
+            indices.clone().binding(),
+            1,
+            ReduceOperation::TopK { k: K },
+            ReduceElements {
+                input: input_dtype,
+                accumulator: input_dtype,
+                out: input_dtype,
+            },
+            u32_dtype,
+        )
+        .expect("a top-k writes its indices at their own strides");
 
-    reduce_with_indices(
-        &client,
-        input.binding(),
-        values.binding(),
-        indices.binding(),
-        1,
-        strategy,
-        operation,
-        dtypes,
-    )
-}
-
-#[test]
-fn rejects_indices_with_mismatched_strides() {
-    // Same shape and element count as the values output, but column-major.
-    let result = try_launch([4, 2], vec![1, 4]);
-    assert!(
-        matches!(result, Err(ReduceError::MismatchIndicesStrides { .. })),
-        "expected MismatchIndicesStrides, got {result:?}"
-    );
-}
-
-#[test]
-fn rejects_indices_with_mismatched_shape() {
-    let result = try_launch([2, 4], vec![4, 1]);
-    assert!(
-        matches!(result, Err(ReduceError::MismatchIndicesShape { .. })),
-        "expected MismatchIndicesShape, got {result:?}"
-    );
-}
-
-#[test]
-fn accepts_matching_outputs() {
-    let result = try_launch([4, 2], vec![2, 1]);
-    assert!(result.is_ok(), "expected Ok, got {result:?}");
-}
-
-#[test]
-fn accepts_min_and_max() {
-    for operation in [ReduceOperationConfig::Min, ReduceOperationConfig::Max] {
-        let result = try_launch_config(operation, 1, [4, 1], vec![1, 1]);
-        assert!(
-            result.is_ok(),
-            "expected Ok for {operation:?}, got {result:?}"
-        );
-    }
-}
-
-#[test]
-fn rejects_operation_without_indices() {
-    let result = try_launch_config(ReduceOperationConfig::Sum, 1, [4, 1], vec![1, 1]);
-    assert!(
-        matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
-        "expected IndicesUnsupported, got {result:?}"
-    );
+    let written = HostData::from_tensor_handle(&client, indices, HostDataType::from(u32_dtype));
+    let expected = reference(&input_host, 1, ReduceOperation::ArgTopK { k: K }, None);
+    assert_equals_approx(&written, &expected, 0.0)
+        .as_test_outcome()
+        .enforce();
 }

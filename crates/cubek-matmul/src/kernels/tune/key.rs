@@ -1,11 +1,11 @@
 //! How a product is told apart from another, for the autotunes — and what an autotune
 //! reads off it when it prioritizes its candidates.
 //!
-//! The key is a description of the *problem* — what the operands are, how big
-//! they are, how they are laid out — so it lives beside the plans rather than
-//! beside the autotunes that consume it. A caller builds the autotunes; it is the
-//! kernels that know what makes two products the same product, and the fused matmul asks the many-rows autotune's tuner for its election
-//! under this key too.
+//! The key is a description of the *problem* — what the operands are, how big they are, how they
+//! are laid out — so it lives beside the plans rather than beside the autotunes that consume it. A
+//! caller builds the autotunes; it is the kernels that know what makes two products the same
+//! product, and the fused matmul asks the many-rows autotune's tuner for its election under this
+//! key too.
 //!
 //! [`MatmulShape`] is the second half: the key read as extents, which is what a
 //! candidate list is prioritized against. Both arms prioritize against it, and
@@ -15,7 +15,7 @@
 use crate::kernels::MatmulRoutineProblem;
 use crate::kernels::select::problem::{MatmulProblem, OperandKind};
 use cubecl::ir::ElemType;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand, MatmulOperands};
 use cubek_std::autotune::CandidatePriority;
@@ -52,7 +52,7 @@ pub struct OperandKey {
 /// `k` and `n` are **exact**: they are a projection's dimensions, fixed by the
 /// model config, so the key space is that architecture's handful of shapes and
 /// anchoring would merge problems whose winners differ. `m` is anchored — it is
-/// the axis a caller varies freely (batch × sequence), and it is the axis the
+/// the dimension a caller varies freely (batch × sequence), and it is the dimension the
 /// crossovers actually live on, so its buckets are where candidates trade
 /// places. `batches` is anchored for the same reason and is 1 almost
 /// everywhere: `Linear` merges before projecting.
@@ -89,51 +89,52 @@ pub struct MatmulTuneKey {
 /// How an operand lies in its buffer, as a key tells two products apart: two of one shape laid
 /// out differently are read differently, and want different winners.
 ///
-/// An autotune record is named by the key's [`Debug`], and `Axis`'s own prints the index it wraps,
-/// `Axis(0)` where a reader wants `M`. So a layout prints the same letter
-/// [`axis_name`](cubek_std::matmul_axes::axis_name) gives the printed space.
+/// An autotune record is named by the key's [`Debug`], and `Dimension`'s own prints the index it
+/// wraps, `Dimension(0)` where a reader wants `M`. So a layout prints the same letter
+/// [`dimension_name`](cubek_std::matmul_dimensions::dimension_name) gives the printed space.
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum OperandLayout {
-    /// Contiguous along this axis: a row or a col view.
-    Along(Axis),
-    /// Contiguous along neither axis: a strided or broadcast view, read one element at a time.
+    /// Contiguous along this dimension: a row or a col view.
+    Along(Dimension),
+    /// Contiguous along neither dimension: a strided or broadcast view, read one element at a time.
     Strided,
-    /// Contiguous along this axis inside tiles of these extents over the operand's two axes, the
-    /// tiles' words lying as the order says: a buffer stored a tile at a time. One of one value a
-    /// tile is [`Along`](Self::Along). A float buffer's tiles, and a packed one's laid row by
-    /// row, are a row's run a tile row; a packed one's laid block by block are not, and a kernel may
-    /// decline one where it reads the other.
-    Tiles(Axis, (usize, usize), TileWords),
+    /// Contiguous along this dimension inside tiles of these extents over the operand's two
+    /// dimensions, the tiles' words lying as the order says: a buffer stored a tile at a time. One
+    /// of one value a tile is [`Along`](Self::Along). A float buffer's tiles, and a packed one's
+    /// laid row by row, are a row's run a tile row; a packed one's laid block by block are not, and
+    /// a kernel may decline one where it reads the other.
+    Tiles(Dimension, (usize, usize), TileWords),
 }
 
 impl OperandLayout {
-    /// Contiguous along `axis`, or strided where there is none.
-    pub fn along(axis: Option<Axis>) -> Self {
-        axis.map_or(Self::Strided, Self::Along)
+    /// Contiguous along `dimension`, or strided where there is none.
+    pub fn along(dimension: Option<Dimension>) -> Self {
+        dimension.map_or(Self::Strided, Self::Along)
     }
 
-    /// How an operand over `axes` lies, `meta` its metadata and `kind` what it is: the axis it is
-    /// contiguous along, the tile it is stored in and the order the tile's words lie in, so a
-    /// winner elected on one layout is never served to another, which its kernel may decline.
-    pub fn of(meta: &Metadata, kind: OperandKind, axes: [Axis; 2]) -> Self {
+    /// How an operand over `dimensions` lies, `meta` its metadata and `kind` what it is: the
+    /// dimension it is contiguous along, the tile it is stored in and the order the tile's words lie
+    /// in, so a winner elected on one layout is never served to another, which its kernel may
+    /// decline.
+    pub fn of(meta: &Metadata, kind: OperandKind, dimensions: [Dimension; 2]) -> Self {
         let words = match kind {
             OperandKind::Quantized(scheme) => {
                 TileOrder::of_matrix(&scheme, meta).map_or(TileWords::RowByRow, TileOrder::words)
             }
             _ => TileWords::RowByRow,
         };
-        match (contiguous(meta, axes), layout::tile(meta)) {
+        match (contiguous(meta, dimensions), layout::tile(meta)) {
             (None, _) => Self::Strided,
-            (Some(axis), (1, 1)) => Self::Along(axis),
-            (Some(axis), tile) => Self::Tiles(axis, tile, words),
+            (Some(dimension), (1, 1)) => Self::Along(dimension),
+            (Some(dimension), tile) => Self::Tiles(dimension, tile, words),
         }
     }
 
-    /// The axis the operand is read along: the one it is contiguous along, or the one its stored
-    /// pieces run along; `None` for a strided one.
-    pub fn axis(self) -> Option<Axis> {
+    /// The dimension the operand is read along: the one it is contiguous along, or the one its
+    /// stored pieces run along; `None` for a strided one.
+    pub fn dimension(self) -> Option<Dimension> {
         match self {
-            Self::Along(axis) | Self::Tiles(axis, ..) => Some(axis),
+            Self::Along(dimension) | Self::Tiles(dimension, ..) => Some(dimension),
             Self::Strided => None,
         }
     }
@@ -142,13 +143,15 @@ impl OperandLayout {
 impl core::fmt::Debug for OperandLayout {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Along(axis) => f.write_str(cubek_std::matmul_axes::axis_name(*axis)),
+            Self::Along(dimension) => {
+                f.write_str(cubek_std::matmul_dimensions::dimension_name(*dimension))
+            }
             Self::Strided => f.write_str("strided"),
-            Self::Tiles(axis, (first, second), words) => {
+            Self::Tiles(dimension, (first, second), words) => {
                 write!(
                     f,
                     "{} in {first}x{second} tiles",
-                    cubek_std::matmul_axes::axis_name(*axis)
+                    cubek_std::matmul_dimensions::dimension_name(*dimension)
                 )?;
                 // Row by row is the tiles every key named before the order did.
                 match words {
@@ -184,7 +187,7 @@ impl MatmulTuneKey {
     }
 
     /// The power of two at or above `extent`, capped at `max`: the bucket a free
-    /// axis is keyed by, so a record stands for the range under its representative
+    /// dimension is keyed by, so a record stands for the range under its representative
     /// and the representative is a shape every block tiles.
     pub fn anchored(extent: usize, max: usize) -> usize {
         extent.next_power_of_two().clamp(1, max)
@@ -204,23 +207,23 @@ pub struct MatmulShape {
     pub n: usize,
     pub k: usize,
     /// Broadcast batches, `1` when unbatched. Work the grid carries **whole**:
-    /// a batch axis is never spent on planes, so it multiplies the cubes a
+    /// a batch dimension is never spent on planes, so it multiplies the cubes a
     /// block leaves rather than changing their shape.
     pub batch: usize,
     pub elem: ElemType,
     pub lhs: OperandKey,
-    /// The rhs, the axis it is contiguous along deciding which axis a memory-bound kernel's
-    /// instances follow.
+    /// The rhs, the dimension it is contiguous along deciding which dimension a memory-bound
+    /// kernel's instances follow.
     pub rhs: OperandKey,
 }
 
 impl OperandKey {
-    /// A float input contiguous along `axis`, strided where it names none, batched as `batching`
-    /// says.
-    pub fn float(axis: Option<Axis>, batching: MatmulBatching) -> Self {
+    /// A float input contiguous along `dimension`, strided where it names none, batched as
+    /// `batching` says.
+    pub fn float(dimension: Option<Dimension>, batching: MatmulBatching) -> Self {
         Self {
             kind: OperandKind::Float,
-            layout: OperandLayout::along(axis),
+            layout: OperandLayout::along(dimension),
             batching,
         }
     }
@@ -273,10 +276,10 @@ pub enum GridCoverage {
     /// else, so no device spreads this candidate over more than one worker per
     /// batch.
     Whole,
-    /// The block hangs off an output axis, and the grid pays for the share of
+    /// The block hangs off an output dimension, and the grid pays for the share of
     /// every cube that falls outside the problem.
     Masked,
-    /// The block tiles both output axes: every cube it distributes is full.
+    /// The block tiles both output dimensions: every cube it distributes is full.
     Tiled,
 }
 
@@ -286,7 +289,7 @@ impl MatmulShape {
         self.m * self.n * self.batch
     }
 
-    /// Cubes a grid of `block` holds: whole blocks along each output axis,
+    /// Cubes a grid of `block` holds: whole blocks along each output dimension,
     /// partial ones counted, and the batch riding on top.
     pub fn cubes(&self, block: CubeBlock) -> usize {
         self.m.div_ceil(block.m.max(1)) * self.n.div_ceil(block.n.max(1)) * self.batch
@@ -352,9 +355,10 @@ pub enum MaskedCells {
 
 /// The problem a tuning **key** describes: dense operands of the key's element, the batch held by
 /// the output, and by each input unless the key says it is shared, the output row-major and each
-/// input contiguous along the axis the key names. A col input, its buffer the view's transpose,
-/// is read where it lies ([`MatmulTensors`](crate::kernels::MatmulTensors)), so its widths are
-/// its own; an input the key names no axis for, a strided view, is aligned to one element.
+/// input contiguous along the dimension the key names. A col input, its buffer the view's
+/// transpose, is read where it lies ([`MatmulTensors`](crate::kernels::MatmulTensors)), so its
+/// widths are its own; an input the key names no dimension for, a strided view, is aligned to one
+/// element.
 impl From<&MatmulShape> for MatmulRoutineProblem {
     fn from(shape: &MatmulShape) -> Self {
         let held = |batching| match batching {
@@ -374,11 +378,11 @@ impl From<&MatmulShape> for MatmulRoutineProblem {
             ..Self::dense(shape.m, shape.n, shape.k, shape.elem)
                 .laid(
                     MatmulOperand::Lhs,
-                    MatmulLayout::along(shape.lhs.layout.axis(), MatmulOperand::Lhs),
+                    MatmulLayout::along(shape.lhs.layout.dimension(), MatmulOperand::Lhs),
                 )
                 .laid(
                     MatmulOperand::Rhs,
-                    MatmulLayout::along(shape.rhs.layout.axis(), MatmulOperand::Rhs),
+                    MatmulLayout::along(shape.rhs.layout.dimension(), MatmulOperand::Rhs),
                 )
         }
     }
@@ -403,7 +407,7 @@ pub fn create_key(
         "the batch dims are read pairwise off operands of one rank"
     );
     // The broadcast batch volume is one number, since the tuner only needs to know how much work
-    // rides the leading axes, not how it is spread.
+    // rides the leading dimensions, not how it is spread.
     let MatmulProblem {
         m, k, n, batches, ..
     } = MatmulProblem::new((&lhs_shape, lhs_kind), (&rhs_shape, rhs_kind));
@@ -411,7 +415,7 @@ pub fn create_key(
         let shape = logical(meta);
         OperandKey {
             kind,
-            layout: OperandLayout::of(meta, kind, operand.axes()),
+            layout: OperandLayout::of(meta, kind, operand.dimensions()),
             batching: MatmulBatching::new(&shape.as_slice()[..shape.rank() - 2]),
         }
     };
@@ -435,12 +439,12 @@ mod tests {
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
-    /// A free axis keys by the power of two above it, whatever the autotune
+    /// A free dimension keys by the power of two above it, whatever the autotune
     /// level: the priority and the plan-time proof read the key's `m`, and a
     /// bucket represented by 87 rows would derive blocks nothing at 64 rows
     /// runs.
     #[test]
-    fn a_free_axis_keys_by_the_power_of_two_above_it() {
+    fn a_free_dimension_keys_by_the_power_of_two_above_it() {
         assert_eq!(MatmulTuneKey::anchored(1, 8192), 1);
         assert_eq!(MatmulTuneKey::anchored(64, 8192), 64);
         assert_eq!(MatmulTuneKey::anchored(65, 8192), 128);

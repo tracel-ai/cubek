@@ -4,13 +4,13 @@
 //! tiles, finest first, then the grid of tiles. Its binding carries how many pieces each dim is
 //! stored in (its `tiling`) and the order they follow one another in (its strides).
 //!
-//! Tiling is a relayout on the tile DSL: a space over the named axes with one level, the
+//! Tiling is a relayout on the tile DSL: a space over the named dimensions with one level, the
 //! outermost stored tile, one cube per tile. Whichever side is storage-tiled is read or written
 //! through its layout, however many levels lie inside that tile.
 
 use cubecl::tile::{
-    Geometry, Launcher, Level, Levels, Partitioning, Space, TileTensor, kind::Field, launch::Grid,
-    launch::Refusal,
+    Geometry, Launcher, Level, Levels, Partitioning, Space, TileTensor, kind::Field,
+    launch::Decline, launch::Grid,
 };
 use cubecl::{
     client::Client,
@@ -28,7 +28,7 @@ use cubek_std::layout::{
     stored::Operand,
     tile_order::{TileOrder, TileWords},
 };
-use cubek_std::{Hardware, matmul_axes::K, value_element};
+use cubek_std::{Hardware, matmul_dimensions::K, value_element};
 
 use crate::definition::MatmulSetupError;
 
@@ -38,13 +38,13 @@ use crate::definition::MatmulSetupError;
 #[cube(launch)]
 fn relayout<E: Numeric, V: Size>(
     src: &TileTensor<'_>,
-    dst: &TileTensor<'_>,
+    dst: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(&space);
-    let dst = dst.tile(&space);
+    let dst = dst.tile_mut(&space);
     let rank = comptime!(space.space().rank());
     for cube in space.over(&level) {
         let s = src.at(&cube);
@@ -59,7 +59,7 @@ fn relayout<E: Numeric, V: Size>(
         }
         let mut i = UNIT_POS;
         while i < total {
-            // The cell's coordinates, the last axis fastest.
+            // The cell's coordinates, the last dimension fastest.
             let mut pos = CoordsDyn::new();
             #[unroll]
             for p in 0..rank {
@@ -76,22 +76,15 @@ fn relayout<E: Numeric, V: Size>(
     }
 }
 
-/// What [`tile`] is told: how the matrix is laid down in memory, stated leaf-up over axes the
+/// What [`tile`] is told: how the matrix is laid down in memory, stated leaf-up over dimensions the
 /// caller names.
 pub use cubecl::tile::{
-    Axis,
+    Dimension,
     layout::{StorageLevels, StoragePartitioning},
 };
 
-/// A matmul input's values as they lie, which the tile it is stored in depends on: elements of one
-/// type, or codes packed under a quantization scheme.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredValues {
-    /// One element of this type a value.
-    Elements(ElemType),
-    /// Codes packed under this scheme.
-    Packed(QuantScheme),
-}
+/// A matmul input's values as they lie, which the tile it is stored in depends on.
+pub use cubek_std::layout::stored::StoredValues;
 
 /// The order a packed matrix's tiles lie in on `hw` ([`TileWords`]), which its writer stores and
 /// every reader binds: row by row where a reader takes a row's run whole, the TMA engine filling
@@ -126,8 +119,8 @@ pub fn tile_order_on(
     Some(order.staggered(transaction).for_matrix(k, rows))
 }
 
-/// The tile a load stores matmul input `input` in on `hw`, over the input's two axes: the step a
-/// product against it takes under the largest instruction `hw` offers
+/// The tile a load stores matmul input `input` in on `hw`, over the input's two dimensions: the
+/// step a product against it takes under the largest instruction `hw` offers
 /// ([`MatmulStep::stored_on`]), the other input contracted at `contracted`.
 ///
 /// `None` where no tile is worth storing: no instruction contracts the input on `hw`; codes under
@@ -147,7 +140,7 @@ pub fn stored_tile(
             if !TileOrder::stores(&scheme) {
                 return None;
             }
-            let operand = Operand::of_scheme(&scheme, K, input.axes())?;
+            let operand = Operand::of_scheme(&scheme, K, input.dimensions())?;
             (operand, value_element(scheme.value)?)
         }
         StoredValues::Elements(_) if hw.bulk_tensor_copy() => return None,
@@ -155,7 +148,9 @@ pub fn stored_tile(
     };
     let step = MatmulStep::stored_on(hw, input, operand, element, contracted)?;
     Some(Space::new(
-        &input.axes().map(|axis| (axis, step.along(axis))),
+        &input
+            .dimensions()
+            .map(|dimension| (dimension, step.along(dimension))),
     ))
 }
 
@@ -167,7 +162,7 @@ pub fn stored_tile(
 pub fn matrix_storage(
     client: &Client,
     element: ElemType,
-    [(rows, tile_rows), (columns, tile_columns)]: [(Axis, usize); 2],
+    [(rows, tile_rows), (columns, tile_columns)]: [(Dimension, usize); 2],
 ) -> StoragePartitioning {
     let read = client
         .io_optimized_vector_sizes(element.size())
@@ -198,44 +193,46 @@ struct StoredLayout {
 }
 
 impl StoredLayout {
-    /// The layout of a tensor of `shape`, its trailing dims named by `axes` (the dims ahead stay
-    /// plain and coarsest, one batch each), stored as `storage` states, `packed` saying the values
-    /// sit `field.per_word()` to a `u32` along the last of `axes`, so its `dtype` is `u32`.
+    /// The layout of a tensor of `shape`, its trailing dims named by `dimensions` (the dims ahead
+    /// stay plain and coarsest, one batch each), stored as `storage` states, `packed` saying the
+    /// values sit `field.per_word()` to a `u32` along the last of `dimensions`, so its `dtype` is
+    /// `u32`.
     ///
     /// # Errors
     ///
-    /// A shape of fewer dims than the axes it is stated over, a packed statement over no axes, of
-    /// words that are not `u32`, or whose word is not its finest stored tile, or a partitioning
-    /// that does not close the tensor in whole tiles or is deeper than a tiling records.
+    /// A shape of fewer dims than the dimensions it is stated over, a packed statement over no
+    /// dimensions, of words that are not `u32`, or whose word is not its finest stored tile, or a
+    /// partitioning that does not close the tensor in whole tiles or is deeper than a tiling
+    /// records.
     #[allow(clippy::result_large_err)]
     fn new(
         shape: &[usize],
-        axes: &[Axis],
+        dimensions: &[Dimension],
         dtype: ElemType,
         packed: Option<Field>,
         storage: &StoragePartitioning,
         refused: impl Fn(String) -> MatmulSetupError,
     ) -> Result<Self, MatmulSetupError> {
         let rank = shape.len();
-        let Some(batches) = rank.checked_sub(axes.len()) else {
+        let Some(batches) = rank.checked_sub(dimensions.len()) else {
             return Err(refused(format!(
-                "a shape of {rank} dims is stated over {} axes",
-                axes.len()
+                "a shape of {rank} dims is stated over {} dimensions",
+                dimensions.len()
             )));
         };
-        let values: Vec<(Axis, usize)> = axes
+        let values: Vec<(Dimension, usize)> = dimensions
             .iter()
             .copied()
             .zip(shape[batches..].iter().copied())
             .collect();
         // A packed tensor is relaid out as its words: the same statement with the word dropped,
-        // the packed axis counted in words.
+        // the packed dimension counted in words.
         let (per_word, words_storage) = match packed {
             None => (1, storage.clone()),
             Some(field) => {
-                let Some(&packed_axis) = axes.last() else {
+                let Some(&packed_dimension) = dimensions.last() else {
                     return Err(refused(
-                        "a packed tensor names the axis it packs along".into(),
+                        "a packed tensor names the dimension it packs along".into(),
                     ));
                 };
                 if dtype != u32::elem_type_native() {
@@ -244,9 +241,9 @@ impl StoredLayout {
                     )));
                 }
                 let per_word = field.per_word();
-                if storage.tiles().first() != Some(&(packed_axis, per_word)) {
+                if storage.tiles().first() != Some(&(packed_dimension, per_word)) {
                     return Err(refused(format!(
-                        "a {field:?} word is {per_word} values along {packed_axis:?}, so it is \
+                        "a {field:?} word is {per_word} values along {packed_dimension:?}, so it is \
                          the finest stored tile; the statement starts with {:?}",
                         storage.tiles().first()
                     )));
@@ -264,14 +261,16 @@ impl StoredLayout {
                 (per_word, words)
             }
         };
-        let word_extents: Vec<(Axis, usize)> = values
+        let word_extents: Vec<(Dimension, usize)> = values
             .iter()
-            .map(|&(axis, extent)| match Some(&axis) == axes.last() {
-                true => (axis, extent / per_word),
-                false => (axis, extent),
-            })
+            .map(
+                |&(dimension, extent)| match Some(&dimension) == dimensions.last() {
+                    true => (dimension, extent / per_word),
+                    false => (dimension, extent),
+                },
+            )
             .collect();
-        let misfit = |misfit: Refusal| refused(misfit.to_string());
+        let misfit = |misfit: Decline| refused(misfit.to_string());
         let in_values = storage.physical(&values).map_err(misfit)?;
         let in_words = words_storage.physical(&word_extents).map_err(misfit)?;
         let batch_dims: Vec<usize> = shape[..batches].to_vec();
@@ -290,22 +289,22 @@ impl StoredLayout {
             let fragments: Vec<usize> = batch_dims
                 .iter()
                 .map(|_| 1)
-                .chain(stored.tiling().fragments(axes.len()))
+                .chain(stored.tiling().fragments(dimensions.len()))
                 .collect();
             Metadata::new(Shape::from(shape), Strides::from(strides))
                 .with_tiling(Tiling::new(&fragments).map_err(config)?)
                 .map_err(config)
         };
-        let tiles: Vec<(Axis, usize)> = word_extents
+        let tiles: Vec<(Dimension, usize)> = word_extents
             .iter()
-            .map(|&(axis, _)| {
+            .map(|&(dimension, _)| {
                 let tile: usize = words_storage
                     .tiles()
                     .iter()
-                    .filter(|&&(a, _)| a == axis)
+                    .filter(|&&(a, _)| a == dimension)
                     .map(|&(_, count)| count)
                     .product();
-                (axis, tile)
+                (dimension, tile)
             })
             .collect();
         let word_count = padded_len(&in_words) * batch_dims.iter().product::<usize>();
@@ -340,26 +339,26 @@ fn padded_len(stored: &Geometry) -> usize {
         .unwrap_or(1)
 }
 
-/// A fresh storage-tiled tensor of `shape`, its trailing dims named by `axes`, stored as `storage`
-/// states and as [`tile`] would store a tensor of that shape: the buffer allocated, its contents
-/// unwritten. What a kernel writing its output straight into storage tiles is handed, so no
-/// relayout of a tensor in rows follows it. `packed` and the result's units are [`tile`]'s.
+/// A fresh storage-tiled tensor of `shape`, its trailing dims named by `dimensions`, stored as
+/// `storage` states and as [`tile`] would store a tensor of that shape: the buffer allocated, its
+/// contents unwritten. What a kernel writing its output straight into storage tiles is handed, so
+/// no relayout of a tensor in rows follows it. `packed` and the result's units are [`tile`]'s.
 ///
 /// # Errors
 ///
-/// As [`tile`], but for a source: a shape of fewer dims than its axes, a packed statement over
-/// no axes, of words that are not `u32`, or whose word is not its finest stored tile, or a
-/// partitioning that does not close the tensor in whole tiles or is deeper than a tiling records.
+/// As [`tile`], but for a source: a shape of fewer dims than its dimensions, a packed statement
+/// over no dimensions, of words that are not `u32`, or whose word is not its finest stored tile, or
+/// a partitioning that does not close the tensor in whole tiles or is deeper than a tiling records.
 #[allow(clippy::result_large_err)]
 pub fn empty(
     client: &Client,
     shape: &[usize],
-    axes: &[Axis],
+    dimensions: &[Dimension],
     dtype: ElemType,
     packed: Option<Field>,
     storage: StoragePartitioning,
 ) -> Result<TensorHandle, MatmulSetupError> {
-    let stored = StoredStatement::new(shape, axes, dtype, packed, storage)?;
+    let stored = StoredStatement::new(shape, dimensions, dtype, packed, storage)?;
     let handle = client.empty(stored.elements * dtype.size());
     Ok(TensorHandle::from_metadata(handle, stored.values, dtype))
 }
@@ -384,14 +383,14 @@ impl StoredStatement {
     #[allow(clippy::result_large_err)]
     pub fn new(
         shape: &[usize],
-        axes: &[Axis],
+        dimensions: &[Dimension],
         dtype: ElemType,
         packed: Option<Field>,
         storage: StoragePartitioning,
     ) -> Result<Self, MatmulSetupError> {
         let refused =
             |why: String| MatmulSetupError::InvalidConfig(Box::new(format!("stored: {why}")));
-        let layout = StoredLayout::new(shape, axes, dtype, packed, &storage, refused)?;
+        let layout = StoredLayout::new(shape, dimensions, dtype, packed, &storage, refused)?;
         Ok(Self {
             values: layout.values,
             elements: layout.word_count,
@@ -399,9 +398,9 @@ impl StoredStatement {
     }
 }
 
-/// Store a tensor as `storage` states, its trailing dims named by `axes` (the dims ahead stay
+/// Store a tensor as `storage` states, its trailing dims named by `dimensions` (the dims ahead stay
 /// plain and coarsest, one batch each). `packed` says the values sit `field.per_word()` to a `u32`
-/// along the last of `axes`: the word must then be the finest stored tile, and the words move
+/// along the last of `dimensions`: the word must then be the finest stored tile, and the words move
 /// whole. `src` and the result are stated in values, as every packed binding is.
 ///
 /// ```ignore
@@ -412,15 +411,15 @@ impl StoredStatement {
 ///
 /// # Errors
 ///
-/// A source already storage-tiled or of fewer dims than its axes, a packed source over no axes,
-/// of words that are not `u32`, whose word is not the finest stored tile or whose last named dim
-/// is not its contiguous one, or a partitioning that does not close the tensor in whole tiles or
-/// is deeper than a tiling records.
+/// A source already storage-tiled or of fewer dims than its dimensions, a packed source over no
+/// dimensions, of words that are not `u32`, whose word is not the finest stored tile or whose last
+/// named dim is not its contiguous one, or a partitioning that does not close the tensor in whole
+/// tiles or is deeper than a tiling records.
 #[allow(clippy::result_large_err)]
 pub fn tile(
     client: &Client,
     src: TensorBinding,
-    axes: &[Axis],
+    dimensions: &[Dimension],
     dtype: ElemType,
     packed: Option<Field>,
     storage: StoragePartitioning,
@@ -431,13 +430,14 @@ pub fn tile(
             "the source is already storage-tiled; untile it first".to_string(),
         ));
     }
-    let layout = StoredLayout::new(&src.shape, axes, dtype, packed, &storage, refused)?;
-    // The layout refuses a source of fewer dims than its axes, and a packed one over no axes.
+    let layout = StoredLayout::new(&src.shape, dimensions, dtype, packed, &storage, refused)?;
+    // The layout refuses a source of fewer dims than its dimensions, and a packed one over no
+    // dimensions.
     let rank = src.shape.len();
     if packed.is_some() && src.strides[rank - 1] != 1 {
         return Err(refused(format!(
             "the words pack along {:?}, which is not the source's contiguous dim",
-            axes[axes.len() - 1]
+            dimensions[dimensions.len() - 1]
         )));
     }
     let handle = client.empty(layout.word_count * dtype.size());
@@ -479,12 +479,12 @@ pub fn untile(
     // tiling lists first.
     let fragments = src.tiling.fragments(logical.len());
     let batches = fragments.iter().take_while(|&&f| f == 1).count();
-    let extents: Vec<(Axis, usize)> = (batches..logical.len())
-        .map(|d| (Axis(d as u8), logical[d]))
+    let extents: Vec<(Dimension, usize)> = (batches..logical.len())
+        .map(|d| (Dimension(d as u8), logical[d]))
         .collect();
-    let tiles: Vec<(Axis, usize)> = extents
+    let tiles: Vec<(Dimension, usize)> = extents
         .iter()
-        .map(|&(axis, extent)| (axis, extent / src.shape[axis.0 as usize]))
+        .map(|&(dimension, extent)| (dimension, extent / src.shape[dimension.0 as usize]))
         .collect();
     let relayout = Relayout {
         batches: logical[..batches].to_vec(),
@@ -496,15 +496,15 @@ pub fn untile(
     Ok(dst)
 }
 
-/// The relayout both directions share: a space over the named axes (and one cell of each batch)
-/// cut by one level, the outermost stored tile, a cube of one plane per tile.
+/// The relayout both directions share: a space over the named dimensions (and one cell of each
+/// batch) cut by one level, the outermost stored tile, a cube of one plane per tile.
 struct Relayout {
-    /// The batch dims ahead of the named axes, plain and coarsest.
+    /// The batch dims ahead of the named dimensions, plain and coarsest.
     batches: Vec<usize>,
-    /// The named axes and their extents.
-    extents: Vec<(Axis, usize)>,
-    /// The outermost stored tile along each named axis.
-    tiles: Vec<(Axis, usize)>,
+    /// The named dimensions and their extents.
+    extents: Vec<(Dimension, usize)>,
+    /// The outermost stored tile along each named dimension.
+    tiles: Vec<(Dimension, usize)>,
 }
 
 impl Relayout {
@@ -522,14 +522,14 @@ impl Relayout {
             extents,
             tiles,
         } = self;
-        let named: Vec<Axis> = extents.iter().map(|&(axis, _)| axis).collect();
-        // Batch axes the named ones leave free.
-        let batch_axes: Vec<Axis> = (0..=u8::MAX)
-            .map(Axis)
-            .filter(|axis| !named.contains(axis))
+        let named: Vec<Dimension> = extents.iter().map(|&(dimension, _)| dimension).collect();
+        // Batch dimensions the named ones leave free.
+        let batch_dimensions: Vec<Dimension> = (0..=u8::MAX)
+            .map(Dimension)
+            .filter(|dimension| !named.contains(dimension))
             .take(batches.len())
             .collect();
-        let batch: Vec<(Axis, usize)> = batch_axes
+        let batch: Vec<(Dimension, usize)> = batch_dimensions
             .iter()
             .copied()
             .zip(batches.iter().copied())
@@ -554,7 +554,7 @@ impl Relayout {
                 cube_dim,
             },
         )?;
-        // A line runs along the innermost named axis when both sides end with it.
+        // A line runs along the innermost named dimension when both sides end with it.
         let innermost = named[named.len() - 1];
         let (src_geometry, dst_geometry) = (Geometry::from(&src), Geometry::from(&dst));
         let (src_labels, dst_labels) = (src_geometry.labels(&named), dst_geometry.labels(&named));
@@ -569,8 +569,8 @@ impl Relayout {
         let bind = |binding| {
             launch
                 .arg(binding, dtype)
-                .axes(&named)
-                .batches(&batch_axes)
+                .dimensions(&named)
+                .batches(&batch_dimensions)
                 .vectorize(v)
                 .build()
         };
@@ -594,6 +594,7 @@ impl Relayout {
 mod tests {
     use super::tile_words;
     use cubecl::features::MmaConfig;
+    use cubecl::ir::EnumSet;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
     use cubek_std::layout::tile_order::TileWords;
@@ -618,11 +619,11 @@ mod tests {
     fn a_line_reader_keeps_its_tiles_line_by_line() {
         assert_eq!(tile_words(&devices::h100()), TileWords::RowByRow);
         assert_eq!(tile_words(&devices::rtx_pro_6000()), TileWords::RowByRow);
+        let mut without_tma =
+            devices::offering_mma(devices::rtx_pro_6000(), [plane_fragment_mma()]);
+        devices::features(&mut without_tma).tma = EnumSet::empty();
         assert_eq!(
-            tile_words(&devices::offering_mma(
-                devices::m2_pro(),
-                [plane_fragment_mma()]
-            )),
+            tile_words(&without_tma),
             TileWords::RowByRow,
             "a tensor-core plane without TMA"
         );

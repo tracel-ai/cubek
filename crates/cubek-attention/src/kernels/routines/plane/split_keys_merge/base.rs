@@ -1,6 +1,6 @@
 use super::kernel::plane_split_keys_merge_kernel;
 use crate::kernels::{AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::{self as cubecl, prelude::*};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
@@ -38,7 +38,7 @@ impl PlaneSplitKeysMergeRoutine {
         problem: &AttentionRoutineProblem,
         merge: HypercubeMergeShape,
         slot_width: usize,
-    ) -> Result<PlaneSplitKeysMergeBlueprint, Refusal> {
+    ) -> Result<PlaneSplitKeysMergeBlueprint, Decline> {
         let launch = LaunchSettings {
             cube_dim: CubeDim::new_1d(merge.slots.units as u32),
             cube_count: CubeCount::new_3d(

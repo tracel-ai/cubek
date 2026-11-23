@@ -16,7 +16,7 @@ mod candidate {
     use cubek_std::autotune::{CandidatePriority, TuneCandidate};
     use cubek_std::devices;
     use cubek_std::layout::BindingOrder;
-    use cubek_std::matmul_axes::{K, N};
+    use cubek_std::matmul_dimensions::{K, N};
     use cubek_std::routine::Routine;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -57,7 +57,7 @@ mod candidate {
             .iter()
             .map(|candidate| *candidate.strategy())
             .collect();
-        assert_eq!(listed, CubeStagedMatmulRoutine.settings(&hw));
+        assert_eq!(listed, CubeStagedMatmulRoutine::settings(&hw));
     }
 
     /// A setting the device declines is tried after every candidate that runs, and claims no
@@ -150,9 +150,9 @@ mod candidate {
     }
 
     /// On devices a dev machine cannot show: the unit routine, this kind's floor, prepares
-    /// everywhere; a routine that declines a device is tried last and claims no launch, and one that
-    /// prepares is placed by its block. A CPU holds fewer units a cube than one cube routine's cube
-    /// of planes, so there the cube routine declines.
+    /// everywhere; a routine that declines a device is tried last and claims no launch, and one
+    /// that prepares is placed by its block. A CPU holds fewer units a cube than one cube routine's
+    /// cube of planes, so there the cube routine declines.
     #[test]
     fn every_device_keeps_the_floor_and_a_decline_claims_nothing() {
         let key = key(1, 2048, 2048, 2048);
@@ -194,18 +194,25 @@ mod candidate {
         assert_ne!(single.0.partitioning, batched.0.partitioning);
     }
 
-    /// The few-rows autotune's candidates: the shuffle routines, every packed rhs launched as stored.
+    /// The few-rows autotune's candidates: the shuffle routines, every packed rhs launched as
+    /// stored.
     mod few_rows {
         use super::*;
         use crate::kernels::CubeShuffleMatmulRoutine;
         use crate::kernels::PlaneShuffleMatmulRoutine;
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-        use cubecl::tile::Axis;
+        use cubecl::tile::Dimension;
         use cubek_std::devices;
 
         /// A key over an `f16` product of `batch` batches of `m` rows against a `k × n` rhs whose
-        /// buffer runs along `rhs`, or along neither axis for `None`.
-        fn key(batch: usize, m: usize, n: usize, k: usize, rhs: Option<Axis>) -> MatmulTuneKey {
+        /// buffer runs along `rhs`, or along neither dimension for `None`.
+        fn key(
+            batch: usize,
+            m: usize,
+            n: usize,
+            k: usize,
+            rhs: Option<Dimension>,
+        ) -> MatmulTuneKey {
             MatmulTuneKey::new(
                 F16,
                 k,
@@ -244,7 +251,7 @@ mod candidate {
                 .iter()
                 .map(|candidate| *candidate.strategy())
                 .collect();
-            assert_eq!(listed, PlaneShuffleMatmulRoutine.settings(&hw));
+            assert_eq!(listed, PlaneShuffleMatmulRoutine::settings(&hw));
         }
 
         /// A key's batches are read as rows against one rhs, as the whole-rows tensors merge an
@@ -260,9 +267,10 @@ mod candidate {
             assert_eq!(blueprint.microkernel.rows, 8);
         }
 
-        /// Where no shuffle routine serves such a product, or the device runs none of it, a candidate
-        /// is tried last and claims no launch: a quantized rhs, an rhs lined along neither axis,
-        /// more rows than a work item holds, a device that commits to no plane width.
+        /// Where no shuffle routine serves such a product, or the device runs none of it, a
+        /// candidate is tried last and claims no launch: a quantized rhs, an rhs lined along
+        /// neither dimension, more rows than a work item holds, a device that commits to no plane
+        /// width.
         #[test]
         fn a_candidate_serving_nothing_is_tried_last_and_claims_no_launch() {
             let cases = [
@@ -285,8 +293,8 @@ mod candidate {
             }
         }
 
-        /// A candidate is placed by the one rule: a cube's run of columns tiles a decode projection,
-        /// so both routines are tried first.
+        /// A candidate is placed by the one rule: a cube's run of columns tiles a decode
+        /// projection, so both routines are tried first.
         #[test]
         fn the_priority_reads_the_block_one_cube_covers() {
             let hw = devices::strix_halo();
@@ -314,7 +322,8 @@ mod candidate {
         const F16: ElemType = ElemType::Float(FloatKind::F16);
         const F32: ElemType = ElemType::Float(FloatKind::F32);
 
-        /// The dev machine's Radeon 8060S offering the `16×16×16` `f16` instruction summed in `f32`.
+        /// The dev machine's Radeon 8060S offering the `16×16×16` `f16` instruction summed in
+        /// `f32`.
         fn strix_halo() -> Hardware {
             devices::offering_cmma(
                 devices::strix_halo(),
@@ -329,23 +338,21 @@ mod candidate {
             )
         }
 
-        /// Every part of `routine`'s estimate at every setting it lists, on an aligned product and
+        /// Every part of `R`'s estimate at every setting it lists, on an aligned product and
         /// a ragged one: each owner set its own, and the cubes perform at least what the problem
         /// asks.
-        fn assert_every_estimate_is_whole<M: MatmulMicrokernel, SM, R: MatmulRoutine<M, SM>>(
-            routine: R,
-        ) {
+        fn assert_every_estimate_is_whole<M: MatmulMicrokernel, SM, R: MatmulRoutine<M, SM>>() {
             let hw = &strix_halo();
             let mut prepared = 0;
-            for settings in routine.settings(hw) {
+            for settings in R::settings(hw) {
                 for (m, n, k) in [(2048, 2048, 6144), (37, 29, 19)] {
                     let problem = MatmulRoutineProblem::dense(m, n, k, F16);
-                    let Ok((blueprint, grid)) = routine.prepare(hw, &problem, &settings) else {
+                    let Ok((blueprint, grid)) = R::prepare(hw, &problem, &settings) else {
                         continue;
                     };
                     prepared += 1;
                     let mut estimate = KernelEstimate::from(&grid);
-                    routine.estimate(&problem, &blueprint, &grid, &mut estimate);
+                    R::estimate(&problem, &blueprint, &grid, &mut estimate);
                     let (staging, cubes) = (estimate.staging.as_ref(), estimate.cubes);
                     assert!(estimate.work.is_some(), "{settings}: no work");
                     let staging = staging.unwrap_or_else(|| panic!("{settings}: no staging"));
@@ -363,9 +370,10 @@ mod candidate {
 
         #[test]
         fn every_routine_estimates_every_setting_whole() {
-            assert_every_estimate_is_whole(UnitRegistersMatmulRoutine);
-            assert_every_estimate_is_whole(CubeStagedMatmulRoutine);
-            assert_every_estimate_is_whole(crate::kernels::HypercubeLastArrivalMatmulRoutine);
+            assert_every_estimate_is_whole::<_, _, UnitRegistersMatmulRoutine>();
+            assert_every_estimate_is_whole::<_, _, CubeStagedMatmulRoutine>();
+            assert_every_estimate_is_whole::<_, _, crate::kernels::HypercubeLastArrivalMatmulRoutine>(
+            );
         }
     }
 
@@ -396,23 +404,23 @@ mod candidate {
             hw
         }
 
-        /// Every part of `routine`'s estimate at every setting it lists, on decode projections and
+        /// Every part of `R`'s estimate at every setting it lists, on decode projections and
         /// a ragged product: each owner set its own, and the cubes perform at least what the
         /// problem asks.
-        fn assert_every_estimate_is_whole<Mk: MatmulMicrokernel, R: MatmulRoutine<Mk>>(routine: R) {
+        fn assert_every_estimate_is_whole<Mk: MatmulMicrokernel, R: MatmulRoutine<Mk>>() {
             let hw = &rtx2060();
             let mut prepared = 0;
-            for settings in routine.settings(hw) {
+            for settings in R::settings(hw) {
                 for (m, n, k) in [(1, 2048, 6144), (8, 4096, 2048), (3, 29, 1024)] {
                     for rhs_layout in [MatmulLayout::Col, MatmulLayout::Row] {
                         let problem = MatmulRoutineProblem::dense(m, n, k, F16)
                             .laid(MatmulOperand::Rhs, rhs_layout);
-                        let Ok((blueprint, grid)) = routine.prepare(hw, &problem, &settings) else {
+                        let Ok((blueprint, grid)) = R::prepare(hw, &problem, &settings) else {
                             continue;
                         };
                         prepared += 1;
                         let mut estimate = KernelEstimate::from(&grid);
-                        routine.estimate(&problem, &blueprint, &grid, &mut estimate);
+                        R::estimate(&problem, &blueprint, &grid, &mut estimate);
                         let (staging, cubes) = (estimate.staging.as_ref(), estimate.cubes);
                         assert!(estimate.work.is_some(), "{settings}: no work");
                         let staging = staging.unwrap_or_else(|| panic!("{settings}: no staging"));
@@ -431,8 +439,8 @@ mod candidate {
 
         #[test]
         fn every_routine_estimates_every_setting_whole() {
-            assert_every_estimate_is_whole(PlaneShuffleMatmulRoutine);
-            assert_every_estimate_is_whole(CubeShuffleMatmulRoutine);
+            assert_every_estimate_is_whole::<_, PlaneShuffleMatmulRoutine>();
+            assert_every_estimate_is_whole::<_, CubeShuffleMatmulRoutine>();
         }
     }
 }

@@ -24,3 +24,5 @@ mod rms_norm;
 mod split_keys_merge;
 #[cfg(feature = "swiglu")]
 mod swiglu;
+#[cfg(feature = "zero")]
+mod zero;

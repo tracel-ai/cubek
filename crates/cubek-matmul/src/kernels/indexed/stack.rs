@@ -1,16 +1,16 @@
-//! A stacked rhs: slabs laid end to end along one axis of a product, as the routed and grouped
+//! A stacked rhs: slabs laid end to end along one dimension of a product, as the routed and grouped
 //! products read it.
 
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::client::Client;
-use cubecl::tile::Axis;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::Dimension;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulLayout;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 use serde::{Deserialize, Serialize};
 
-/// The axis of a product along which the slabs of its stacked rhs lie end
+/// The dimension of a product along which the slabs of its stacked rhs lie end
 /// to end.
 ///
 /// A model stores its experts along the output, a `[k, experts · n]` stack
@@ -19,23 +19,23 @@ use serde::{Deserialize, Serialize};
 /// handed the `[experts · n, k]` view and finds the slabs along its
 /// contraction. Both are one stack read where it lies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SlabAxis {
+pub enum SlabDimension {
     /// Slab `e` owns the view's columns `e · n..(e + 1) · n`.
     Output,
     /// Slab `e` owns the view's rows `e · k..(e + 1) · k`.
     Contraction,
 }
 
-impl SlabAxis {
-    /// The product's axis the slabs lie along.
-    pub fn axis(self) -> Axis {
+impl SlabDimension {
+    /// The product's dimension the slabs lie along.
+    pub fn dimension(self) -> Dimension {
         match self {
             Self::Output => N,
             Self::Contraction => K,
         }
     }
 
-    /// The axis the same slabs lie along in the view's transpose: a stack's
+    /// The dimension the same slabs lie along in the view's transpose: a stack's
     /// output becomes its transpose's contraction, and back.
     pub fn transposed(self) -> Self {
         match self {
@@ -45,7 +45,7 @@ impl SlabAxis {
     }
 
     /// One slab's `[k, n]` out of a `[k, n]` view holding `slabs` of them
-    /// along this axis.
+    /// along this dimension.
     ///
     /// # Panics
     ///
@@ -54,7 +54,7 @@ impl SlabAxis {
         let whole = |extent: usize| {
             assert!(
                 extent.is_multiple_of(slabs),
-                "a stack of {slabs} slabs has whole slabs along its {self:?} axis, got {extent}"
+                "a stack of {slabs} slabs has whole slabs along its {self:?} dimension, got {extent}"
             );
             extent / slabs
         };
@@ -65,16 +65,19 @@ impl SlabAxis {
     }
 
     /// One slab's `[k, n]` out of `stack`, float or packed, holding `slabs` of them along this
-    /// axis.
+    /// dimension.
     ///
     /// # Panics
     ///
     /// As [`slab_of`](Self::slab_of).
     pub(crate) fn slab_shape(self, stack: &StoredTensor, slabs: usize) -> [usize; 2] {
-        self.slab_of([K, N].map(|axis| stack.extent([K, N], axis)), slabs)
+        self.slab_of(
+            [K, N].map(|dimension| stack.extent([K, N], dimension)),
+            slabs,
+        )
     }
 
-    /// `stack`, holding `slabs` along this axis, as the product reads it: a float one as its
+    /// `stack`, holding `slabs` along this dimension, as the product reads it: a float one as its
     /// slabs, `[slabs, k, n]` over the buffer it lies in, a packed one its words and scales read
     /// slab by slab.
     ///
@@ -85,10 +88,10 @@ impl SlabAxis {
         self,
         stack: &StoredTensor,
         slabs: usize,
-    ) -> Result<StoredTensor, Refusal> {
+    ) -> Result<StoredTensor, Decline> {
         match stack {
             StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
-                packed.clone().stacked(slabs, self.axis())?,
+                packed.clone().stacked(slabs, self.dimension())?,
             )),
             StoredTensor::Plain(stack) => {
                 let view = SlabView::new(stack, slabs, self);
@@ -111,19 +114,19 @@ pub struct SlabView {
 impl SlabView {
     /// `stack`, a `[k, n]` view holding `groups` slabs laid along `along`, one slab a batch. A slab
     /// steps within itself as the stack's view does, whichever way its buffer lies, and the next
-    /// slab starts one slab's extent further along the axis the slabs lie along.
+    /// slab starts one slab's extent further along the dimension the slabs lie along.
     ///
     /// # Panics
     ///
-    /// As [`SlabAxis::slab_of`], on a stack that is not whole slabs.
-    pub fn new(stack: &PlainTensor, groups: usize, along: SlabAxis) -> Self {
+    /// As [`SlabDimension::slab_of`], on a stack that is not whole slabs.
+    pub fn new(stack: &PlainTensor, groups: usize, along: SlabDimension) -> Self {
         let meta = stack.meta();
         let (shape, strides) = (meta.shape(), meta.strides());
         let [k, n] = along.slab_of([shape[0], shape[1]], groups);
         let [k_stride, n_stride] = [strides[0], strides[1]];
         let slab_stride = match along {
-            SlabAxis::Output => n * n_stride,
-            SlabAxis::Contraction => k * k_stride,
+            SlabDimension::Output => n * n_stride,
+            SlabDimension::Contraction => k * k_stride,
         };
         Self {
             shape: [groups, k, n],
@@ -136,9 +139,9 @@ impl SlabView {
         stack.viewed(Metadata::new(self.shape, self.strides))
     }
 
-    /// `stack` as a grouped or routed product reads it: where it lies where it is contiguous
-    /// along one of its axes ([`MatmulLayout::lines`]), a row-major copy on `client` where it is
-    /// not, since every routine reads a slab along one of its axes.
+    /// `stack` as a grouped or routed product reads it: where it lies where it is contiguous along
+    /// one of its dimensions ([`MatmulLayout::lines`]), a row-major copy on `client` where it is
+    /// not, since every routine reads a slab along one of its dimensions.
     pub fn readable(client: &Client, stack: PlainTensor) -> PlainTensor {
         let meta = stack.meta();
         let lined = match (&meta.shape()[..], &meta.strides()[..]) {

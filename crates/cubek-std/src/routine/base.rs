@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Display};
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tune::Work;
 
 use crate::Hardware;
@@ -13,11 +13,14 @@ pub const ADMITTED_PLAN_RUNS: &str =
 
 /// What [`Routine::prepare_first_served`] declines with for a routine listing no
 /// setting.
-pub const ROUTINE_LISTS_NO_SETTING: Refusal = Refusal::Declined {
+pub const ROUTINE_LISTS_NO_SETTING: Decline = Decline::Unserved {
     why: "the routine lists no setting on this device",
 };
 
-/// A whole kernel written around one microkernel.
+/// How a family prepares a kernel written around one microkernel: the settings worth measuring
+/// on a device, the widths its operands bind at, and for a problem at one setting the Blueprint
+/// and Grid of one launch, or a Decline, and what that launch is estimated to cost. Its
+/// implementors are field-less markers, so its functions take no `self`.
 pub trait Routine {
     /// The problem, as the host describes it.
     type Problem: Debug + Clone + EstimatedProblem;
@@ -32,13 +35,12 @@ pub trait Routine {
     type Partitioning: Debug + Clone;
 
     /// The settings worth measuring on this device, the one a caller gets by default first.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings>;
+    fn settings(hw: &Hardware) -> Vec<Self::Settings>;
 
     /// Enqueue what the accesses this routine's own code makes under `partitioning` require of
     /// the operands' widths, then hand `vectorization` to `microkernel` with what it is placed
     /// in: the pass walks down as the kernel does.
     fn vectorize(
-        &self,
         microkernel: &Self::Microkernel,
         partitioning: &Self::Partitioning,
         vectorization: &mut Vectorization<<Self::Microkernel as Microkernel>::Operand>,
@@ -51,11 +53,10 @@ pub trait Routine {
     ///
     /// Why it cannot run here.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &Self::Problem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal>;
+    ) -> Result<(Self::Blueprint, Grid), Decline>;
 
     /// The launch for `problem` at the first of the routine's own [`settings`](Self::settings)
     /// that prepares one on this device: what a caller naming the routine and no setting runs. A
@@ -67,13 +68,12 @@ pub trait Routine {
     /// The last setting's decline, where none serves; [`ROUTINE_LISTS_NO_SETTING`] where the
     /// routine lists none.
     fn prepare_first_served(
-        &self,
         hw: &Hardware,
         problem: &Self::Problem,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let mut declined = ROUTINE_LISTS_NO_SETTING;
-        for settings in self.settings(hw) {
-            match self.prepare(hw, problem, &settings) {
+        for settings in Self::settings(hw) {
+            match Self::prepare(hw, problem, &settings) {
                 Ok(prepared) => return Ok(prepared),
                 Err(why) => declined = why,
             }
@@ -85,7 +85,6 @@ pub trait Routine {
     /// for `problem`, then hand `estimate` to its microkernel: the pass walks down as the kernel
     /// does, every component setting its own part.
     fn estimate(
-        &self,
         problem: &Self::Problem,
         blueprint: &Self::Blueprint,
         grid: &Grid,

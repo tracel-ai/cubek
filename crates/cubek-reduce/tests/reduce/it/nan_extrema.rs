@@ -1,279 +1,256 @@
-use cubecl::{
-    config::autotune::AutotuneLevel,
-    features::Plane,
-    zspace::{Shape, Strides},
-};
-use cubek_reduce::{
-    ReduceStrategy,
-    launch::{RoutineStrategy, VectorizationStrategy},
-    routines::{BlueprintStrategy, plane::PlaneStrategy, unit::UnitStrategy},
-};
+use cubecl::zspace::{Shape, Strides};
+use cubek_test_utils::skip_unless_f16_arithmetic;
 
-use super::test_case::TestCase;
+use super::test_case::{CUBE, PLANE, TestCase, UNIT};
 
-fn supports_plane() -> bool {
-    let client = cubecl::test_device().client();
-    client.properties().features.plane.contains(Plane::Ops)
+/// `case` holding the values `data` lays out for its shape and axis.
+fn with_values(case: TestCase, data: fn(&Shape, usize) -> Vec<f32>) -> TestCase {
+    let values = data(&case.shape, case.axis.unwrap());
+    case.with_data(values)
 }
 
-fn supports_f16_arithmetic() -> bool {
-    cubek_test_utils::supports_f16_arithmetic(&cubecl::test_device().client())
-}
+/// A test for each extremum of `case` over the values `data` lays out, each one launch; with
+/// `unless`, a skip where that check of the device says so.
+macro_rules! extrema_tests {
+    ($case:expr, $data:expr $(, unless $skip:path)?) => {
+        use super::*;
 
-fn run_extrema(case: TestCase, data: Vec<f32>) {
-    let case = case.with_data(data);
-    case.test_max();
-    case.test_min();
-    case.test_max_abs();
-    case.test_argmax();
-    case.test_argmin();
-    case.test_max_with_indices();
-    case.test_min_with_indices();
-}
+        #[test]
+        fn max() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            with_values($case, $data).test_max();
+        }
 
-fn run_nan_extrema(case: TestCase) {
-    let data = nan_extrema_data(&case.shape, case.axis.unwrap());
-    run_extrema(case, data);
-}
+        #[test]
+        fn min() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            with_values($case, $data).test_min();
+        }
 
-fn run_mixed_nan_extrema(case: TestCase) {
-    let data = mixed_nan_extrema_data(&case.shape, case.axis.unwrap());
-    run_extrema(case, data);
-}
+        #[test]
+        fn max_abs() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            with_values($case, $data).test_max_abs();
+        }
 
-fn run_signed_zero_extrema(case: TestCase) {
-    let data = signed_zero_data(&case.shape, case.axis.unwrap());
-    run_extrema(case, data);
-}
+        #[test]
+        fn arg_max() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            with_values($case, $data).test_argmax();
+        }
 
-fn strategy(routine: RoutineStrategy, parallel_output_vectorization: bool) -> ReduceStrategy {
-    ReduceStrategy {
-        autotune_level: AutotuneLevel::Full,
-        vectorization: VectorizationStrategy {
-            parallel_output_vectorization,
-        },
-        routine,
-    }
+        #[test]
+        fn arg_min() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            with_values($case, $data).test_argmin();
+        }
+
+        #[test]
+        fn max_with_indices() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            with_values($case, $data).test_max_with_indices();
+        }
+
+        #[test]
+        fn min_with_indices() {
+            $(if $skip(&cubecl::test_device().client()) { return; })?
+            with_values($case, $data).test_min_with_indices();
+        }
+    };
 }
 
 fn unit_case(shape: Shape, strides: Strides, axis: usize) -> TestCase {
-    TestCase::new::<f32>(
-        shape,
-        strides,
-        Some(axis),
-        strategy(
-            RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
-            false,
-        ),
-    )
+    TestCase::new::<f32>(shape, strides, Some(axis), UNIT)
 }
 
-fn plane_case(
-    shape: Shape,
-    strides: Strides,
-    axis: usize,
-    independent: bool,
-    vectorize_output: bool,
-) -> TestCase {
-    TestCase::new::<f32>(
-        shape,
-        strides,
-        Some(axis),
-        strategy(
-            RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy { independent })),
-            vectorize_output,
-        ),
-    )
+fn plane_case(shape: Shape, strides: Strides, axis: usize) -> TestCase {
+    TestCase::new::<f32>(shape, strides, Some(axis), PLANE)
 }
 
-#[test]
-fn unit_parallel_f32() {
-    run_nan_extrema(unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
+fn cube_case(shape: Shape, strides: Strides, axis: usize) -> TestCase {
+    TestCase::new::<f32>(shape, strides, Some(axis), CUBE)
 }
 
-#[test]
-fn plane_parallel_f32() {
-    if !supports_plane() {
-        return;
-    }
-    run_nan_extrema(plane_case(
-        Shape::new([9, 64]),
-        Strides::new(&[64, 1]),
-        1,
-        false,
-        true,
-    ));
-}
-
-#[test]
-fn unit_parallel_mixed_nan_f32() {
-    run_mixed_nan_extrema(unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
-}
-
-#[test]
-fn plane_parallel_mixed_nan_f32() {
-    if !supports_plane() {
-        return;
-    }
-    run_mixed_nan_extrema(plane_case(
-        Shape::new([9, 64]),
-        Strides::new(&[64, 1]),
-        1,
-        false,
-        true,
-    ));
-}
-
-#[test]
-fn unit_seed_valued_topk_f32() {
-    // Every value equals the value a slot is seeded with, so each one reaches
-    // the weakest slot without passing it. A ranked insert that asks only for
-    // strictly better leaves all three slots holding the seed's `u32::MAX`
-    // coordinate instead of 0, 1 and 2.
-    let case =
-        unit_case(Shape::new([2, 64]), Strides::new(&[64, 1]), 1).with_data(vec![f32::MIN; 128]);
-
-    case.test_topk_with_indices(3);
-    case.test_argmax();
-}
-
-#[test]
-fn unit_parallel_signed_zero_f32() {
-    run_signed_zero_extrema(unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
-}
-
-#[test]
-fn plane_parallel_signed_zero_f32() {
-    if !supports_plane() {
-        return;
-    }
-    run_signed_zero_extrema(plane_case(
-        Shape::new([9, 64]),
-        Strides::new(&[64, 1]),
-        1,
-        false,
-        true,
-    ));
-}
-
-#[test]
-fn plane_perpendicular_f32() {
-    if !supports_plane() {
-        return;
-    }
-    run_nan_extrema(plane_case(
-        Shape::new([64, 9]),
-        Strides::new(&[9, 1]),
-        0,
-        false,
-        true,
-    ));
-}
-
-#[test]
-fn plane_strided_f32() {
-    if !supports_plane() {
-        return;
-    }
-    run_nan_extrema(plane_case(
-        Shape::new([9, 64]),
-        Strides::new(&[128, 2]),
-        1,
-        true,
-        false,
-    ));
-}
-
-#[test]
-fn plane_parallel_f16() {
-    if !supports_plane() || !supports_f16_arithmetic() {
-        return;
-    }
-    run_nan_extrema(TestCase::new::<half::f16>(
-        Shape::new([9, 64]),
-        Strides::new(&[64, 1]),
-        Some(1),
-        strategy(
-            RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
-                independent: true,
-            })),
-            true,
-        ),
-    ));
-}
-
-#[test]
-fn integer_extrema_control_i32() {
-    if !supports_plane() {
-        return;
-    }
-    let shape = Shape::new([9, 64]);
-    let data = integer_extrema_data(&shape);
-    let case = TestCase::new::<i32>(
-        shape,
-        Strides::new(&[64, 1]),
-        Some(1),
-        strategy(
-            RoutineStrategy::Plane(BlueprintStrategy::Inferred(PlaneStrategy {
-                independent: true,
-            })),
-            true,
-        ),
+mod unit_parallel_f32 {
+    extrema_tests!(
+        unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        nan_extrema_data
     );
-    run_extrema(case, data);
 }
 
-#[test]
-fn unit_singleton_f32() {
-    run_nan_extrema(unit_case(Shape::new([9, 1]), Strides::new(&[1, 1]), 1));
+mod plane_parallel_f32 {
+    extrema_tests!(
+        plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        nan_extrema_data
+    );
 }
 
-#[test]
-fn unit_infinite_identities_f32() {
-    let case = |value| {
+mod cube_parallel_f32 {
+    extrema_tests!(
+        cube_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        nan_extrema_data
+    );
+}
+
+mod cube_parallel_mixed_nan_f32 {
+    extrema_tests!(
+        cube_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        mixed_nan_extrema_data
+    );
+}
+
+mod unit_parallel_mixed_nan_f32 {
+    extrema_tests!(
+        unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        mixed_nan_extrema_data
+    );
+}
+
+mod plane_parallel_mixed_nan_f32 {
+    extrema_tests!(
+        plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        mixed_nan_extrema_data
+    );
+}
+
+/// Every value equals the value a slot is seeded with, so each one reaches the weakest slot
+/// without passing it. A ranked insert that asks only for strictly better leaves all three slots
+/// holding the seed's `u32::MAX` coordinate instead of 0, 1 and 2.
+mod unit_seed_valued_f32 {
+    use super::*;
+
+    fn case() -> TestCase {
+        unit_case(Shape::new([2, 64]), Strides::new(&[64, 1]), 1).with_data(vec![f32::MIN; 128])
+    }
+
+    #[test]
+    fn top_3_with_indices() {
+        case().test_topk_with_indices(3);
+    }
+
+    #[test]
+    fn arg_max() {
+        case().test_argmax();
+    }
+}
+
+mod unit_parallel_signed_zero_f32 {
+    extrema_tests!(
+        unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        signed_zero_data
+    );
+}
+
+mod plane_parallel_signed_zero_f32 {
+    extrema_tests!(
+        plane_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1),
+        signed_zero_data
+    );
+}
+
+mod plane_perpendicular_f32 {
+    extrema_tests!(
+        plane_case(Shape::new([64, 9]), Strides::new(&[9, 1]), 0),
+        nan_extrema_data
+    );
+}
+
+mod plane_strided_f32 {
+    extrema_tests!(
+        plane_case(Shape::new([9, 64]), Strides::new(&[128, 2]), 1),
+        nan_extrema_data
+    );
+}
+
+mod plane_parallel_f16 {
+    extrema_tests!(
+        TestCase::new::<half::f16>(Shape::new([9, 64]), Strides::new(&[64, 1]), Some(1), PLANE),
+        nan_extrema_data,
+        unless skip_unless_f16_arithmetic
+    );
+}
+
+mod integer_extrema_control_i32 {
+    extrema_tests!(
+        TestCase::new::<i32>(Shape::new([9, 64]), Strides::new(&[64, 1]), Some(1), PLANE),
+        integer_extrema_data
+    );
+}
+
+mod unit_singleton_f32 {
+    extrema_tests!(
+        unit_case(Shape::new([9, 1]), Strides::new(&[1, 1]), 1),
+        nan_extrema_data
+    );
+}
+
+/// Rows of `-inf` for a max and of `inf` for a min: the identity each starts from is a real value
+/// here, and the first coordinate must win.
+mod unit_infinite_identities_f32 {
+    use super::*;
+
+    fn case(value: f32) -> TestCase {
         unit_case(Shape::new([2, 64]), Strides::new(&[64, 1]), 1).with_data(vec![value; 128])
-    };
+    }
 
-    let max = case(f32::NEG_INFINITY);
-    max.test_max();
-    max.test_argmax();
-    max.test_max_with_indices();
+    #[test]
+    fn max() {
+        case(f32::NEG_INFINITY).test_max();
+    }
 
-    let min = case(f32::INFINITY);
-    min.test_min();
-    min.test_argmin();
-    min.test_min_with_indices();
+    #[test]
+    fn arg_max() {
+        case(f32::NEG_INFINITY).test_argmax();
+    }
+
+    #[test]
+    fn max_with_indices() {
+        case(f32::NEG_INFINITY).test_max_with_indices();
+    }
+
+    #[test]
+    fn min() {
+        case(f32::INFINITY).test_min();
+    }
+
+    #[test]
+    fn arg_min() {
+        case(f32::INFINITY).test_argmin();
+    }
+
+    #[test]
+    fn min_with_indices() {
+        case(f32::INFINITY).test_min_with_indices();
+    }
 }
 
 #[cfg(feature = "heavy")]
-mod heavy {
-    use cubek_reduce::routines::cube::CubeStrategy;
+mod cube_f32 {
+    use super::super::test_case::CUBE;
+    extrema_tests!(
+        TestCase::new::<f32>(Shape::new([9, 256]), Strides::new(&[256, 1]), Some(1), CUBE),
+        nan_extrema_data
+    );
+}
 
+/// A row of three holding a NaN: its magnitude is a NaN too.
+mod max_abs_short_axis_nan {
     use super::*;
 
-    fn case(use_planes: bool) -> TestCase {
-        TestCase::new::<f32>(
-            Shape::new([9, 256]),
-            Strides::new(&[256, 1]),
-            Some(1),
-            strategy(
-                RoutineStrategy::Cube(BlueprintStrategy::Inferred(CubeStrategy { use_planes })),
-                true,
-            ),
-        )
+    const VALUES: [f32; 6] = [1.0, f32::NAN, -3.0, 1.0, -4.0, 3.0];
+
+    #[test]
+    fn unit() {
+        unit_case(Shape::new([2, 3]), Strides::new(&[3, 1]), 1)
+            .with_data(VALUES.to_vec())
+            .test_max_abs();
     }
 
     #[test]
-    fn cube_f32() {
-        run_nan_extrema(case(false));
-    }
-
-    #[test]
-    fn cube_with_planes_f32() {
-        if !supports_plane() {
-            return;
-        }
-        run_nan_extrema(case(true));
+    fn plane() {
+        plane_case(Shape::new([2, 3]), Strides::new(&[3, 1]), 1)
+            .with_data(VALUES.to_vec())
+            .test_max_abs();
     }
 }
 
@@ -353,30 +330,8 @@ fn signed_zero_data(shape: &Shape, axis: usize) -> Vec<f32> {
         .collect()
 }
 
-fn integer_extrema_data(shape: &Shape) -> Vec<f32> {
+fn integer_extrema_data(shape: &Shape, _axis: usize) -> Vec<f32> {
     (0..shape.iter().product())
         .map(|linear| ((linear * 17) % 31) as f32 - 15.0)
         .collect()
-}
-
-#[test]
-fn max_abs_short_axis_nan() {
-    let shape = Shape::new([2, 3]);
-    let strides = Strides::new(&[3, 1]);
-    let mut cases = vec![unit_case(shape.clone(), strides.clone(), 1)];
-    if supports_plane() {
-        for independent in [false, true] {
-            cases.push(plane_case(
-                shape.clone(),
-                strides.clone(),
-                1,
-                independent,
-                false,
-            ));
-        }
-    }
-    for case in cases {
-        case.with_data(vec![1.0, f32::NAN, -3.0, 1.0, -4.0, 3.0])
-            .test_max_abs();
-    }
 }

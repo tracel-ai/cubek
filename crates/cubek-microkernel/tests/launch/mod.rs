@@ -24,7 +24,7 @@ pub mod random;
 pub mod reduce;
 #[cfg(feature = "rms-norm")]
 pub mod rms_norm;
-#[cfg(feature = "row-store")]
+#[cfg(any(feature = "rms-norm", feature = "swiglu"))]
 mod row_batch;
 #[cfg(feature = "attention")]
 pub mod split_keys_merge;
@@ -32,8 +32,10 @@ pub mod split_keys_merge;
 pub mod swiglu;
 #[cfg(any(feature = "pool", feature = "interpolate"))]
 mod window;
+#[cfg(feature = "zero")]
+pub mod zero;
 
 #[cfg(any(feature = "matmul", feature = "attention"))]
 pub use lines::Lines;
-#[cfg(feature = "row-store")]
+#[cfg(any(feature = "rms-norm", feature = "swiglu"))]
 pub use row_batch::RowBatch;

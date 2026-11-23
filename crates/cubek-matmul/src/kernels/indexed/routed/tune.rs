@@ -5,7 +5,7 @@
 
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::{LocalTuner, Tunable, TuneGroup, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeTuneId};
 use cubecl_common::device::Device;
@@ -15,7 +15,7 @@ use cubek_std::autotune::{Autotune, GroupPriority};
 use serde::{Deserialize, Serialize};
 
 use crate::kernels::indexed::routed::{RoutedCandidates, RoutedFloors, RoutedMatmulTensors};
-use crate::kernels::indexed::stack::SlabAxis;
+use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
@@ -43,10 +43,10 @@ pub struct RoutedMatmulKey {
     /// Whether the stack is float or packed, and how: a packed stack is read packed, by other
     /// kernels than a float one.
     stack: OperandKind,
-    /// Which axis the stack lines along.
+    /// Which dimension the stack lines along.
     lines: OperandLayout,
-    /// Which axis the slabs lie along.
-    slabs: SlabAxis,
+    /// Which dimension the slabs lie along.
+    slabs: SlabDimension,
 }
 
 /// The routed product `tensors` states, through whichever setting measures fastest for it on
@@ -61,7 +61,7 @@ pub fn launch_tuned(
     device: &impl Device,
     tensors: RoutedMatmulTensors,
     routines: GroupPriority,
-) -> Result<TensorHandle, Refusal> {
+) -> Result<TensorHandle, Decline> {
     if tensors.rows() == 0 {
         return Ok(tensors.output());
     }
@@ -189,7 +189,7 @@ where
         move |tensors: RoutedMatmulTensors| {
             listed
                 .admits(tensors.product())
-                .map_err(|refusal| format!("{settings} {refusal:?}"))?;
+                .map_err(|decline| format!("{settings} {decline:?}"))?;
             let hw = Hardware::from_client(tensors.client());
             tensors
                 .launch(&hw, &routine, &settings)

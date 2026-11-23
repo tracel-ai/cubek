@@ -1,16 +1,16 @@
 use cubecl::tile::{
-    Axis, Partitioning, Space, TileSpec,
+    Dimension, Partitioning, Space, TileSpec,
     space::{ComputeScope, Coverage, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
-use cubek_microkernel::matmul::{MatmulAxesKind, MatmulRowsKind, MatmulStage};
-use cubek_std::matmul_axes::{M, MB, MI, N, NB, NI};
+use cubek_microkernel::matmul::{MatmulDimensionsKind, MatmulRowsKind, MatmulStage};
+use cubek_std::matmul_dimensions::{M, MB, MI, N, NB, NI};
 
 /// How a matmul product places its microkernel's work items over a problem: the tile DSL's levels,
 /// which the kernel launches and walks, and the box each cube is handed. Each product builds one
 /// from its problem; a cube microkernel is handed the space its cube covers
-/// ([`cube_space`](Self::cube_space)). Stated along
-/// matmul's own `M`, `N` and `K`, or over a packed product's block-split space ([`MatmulAxesKind`]).
+/// ([`cube_space`](Self::cube_space)). Stated along matmul's own `M`, `N` and `K`, or over a packed
+/// product's block-split space ([`MatmulDimensionsKind`]).
 ///
 /// Its outermost level is the cubes, and the one inside it the walk a cube takes through its box;
 /// or, for a routine whose planes share nothing, the launch's planes, which a plane order groups
@@ -21,46 +21,47 @@ pub struct MatmulPartitioning {
     partitioning: Partitioning,
     /// The box one cube covers, its `k` a cube's run of the walk where several share a box.
     cube: Space,
-    batch_axes: Vec<Axis>,
+    batch_dimensions: Vec<Dimension>,
     rows_kind: MatmulRowsKind,
-    axes_kind: MatmulAxesKind,
+    dimensions_kind: MatmulDimensionsKind,
 }
 
 impl MatmulPartitioning {
-    /// `partitioning`, its cubes each covering `cube`, one batch along each of `batch_axes`, the
-    /// rows held as `rows_kind` says.
+    /// `partitioning`, its cubes each covering `cube`, one batch along each of `batch_dimensions`,
+    /// the rows held as `rows_kind` says.
     pub fn new(
         partitioning: Partitioning,
         cube: Space,
-        batch_axes: Vec<Axis>,
+        batch_dimensions: Vec<Dimension>,
         rows_kind: MatmulRowsKind,
     ) -> Self {
-        let axes_kind = MatmulAxesKind::of(partitioning.space());
+        let dimensions_kind = MatmulDimensionsKind::of(partitioning.space());
         Self {
             partitioning,
             cube,
-            batch_axes,
+            batch_dimensions,
             rows_kind,
-            axes_kind,
+            dimensions_kind,
         }
     }
 
     /// `partitioning`, its cubes each handed the box its cube level cuts.
     pub fn of_cubes(
         partitioning: Partitioning,
-        batch_axes: Vec<Axis>,
+        batch_dimensions: Vec<Dimension>,
         rows_kind: MatmulRowsKind,
     ) -> Self {
         let cube = partitioning.box_of(ComputeScope::Cube);
-        Self::new(partitioning, cube, batch_axes, rows_kind)
+        Self::new(partitioning, cube, batch_dimensions, rows_kind)
     }
 
     /// `partitioning`, whose outermost level spans the launch's planes in `order`: a cube's box is
-    /// one block of that order, a plane's box wider by the tiles the block holds along each axis.
+    /// one block of that order, a plane's box wider by the tiles the block holds along each
+    /// dimension.
     pub fn of_launch_planes(
         partitioning: Partitioning,
         order: &PlaneOrder,
-        batch_axes: Vec<Axis>,
+        batch_dimensions: Vec<Dimension>,
         rows_kind: MatmulRowsKind,
     ) -> Self {
         let plane = partitioning.box_of(ComputeScope::Plane);
@@ -68,10 +69,10 @@ impl MatmulPartitioning {
             &plane
                 .extents()
                 .into_iter()
-                .map(|(axis, extent)| (axis, extent * order.block_along(axis)))
+                .map(|(dimension, extent)| (dimension, extent * order.block_along(dimension)))
                 .collect::<Vec<_>>(),
         );
-        Self::new(partitioning, cube, batch_axes, rows_kind)
+        Self::new(partitioning, cube, batch_dimensions, rows_kind)
     }
 
     /// How the launch it places reads the rows.
@@ -91,20 +92,20 @@ impl MatmulPartitioning {
     }
 
     /// [`kernel`](Self::kernel) with the extents of `compiled` compiled in rather than freed: what
-    /// a launch whose operands carry a factor over blocks of an axis needs of that axis, since
-    /// the tile engine windows such a factor through extents it knows at expansion. One kernel a
-    /// distinct extent of those axes.
-    pub fn kernel_compiling(&self, compiled: &[Axis]) -> Partitioning {
-        let dynamic: Vec<Axis> = match self.axes_kind {
-            MatmulAxesKind::Plain => self
-                .batch_axes
+    /// a launch whose operands carry a factor over blocks of a dimension needs of that dimension,
+    /// since the tile engine windows such a factor through extents it knows at expansion. One
+    /// kernel a distinct extent of those dimensions.
+    pub fn kernel_compiling(&self, compiled: &[Dimension]) -> Partitioning {
+        let dynamic: Vec<Dimension> = match self.dimensions_kind {
+            MatmulDimensionsKind::Plain => self
+                .batch_dimensions
                 .iter()
-                .chain(self.rows_kind.dynamic_axes())
+                .chain(self.rows_kind.dynamic_dimensions())
                 .copied()
-                .filter(|axis| !compiled.contains(axis))
+                .filter(|dimension| !compiled.contains(dimension))
                 .collect(),
-            MatmulAxesKind::BlockSplit => {
-                let rows_free = self.rows_kind.dynamic_axes().contains(&M)
+            MatmulDimensionsKind::BlockSplit => {
+                let rows_free = self.rows_kind.dynamic_dimensions().contains(&M)
                     && self.partitioning.space().extent(MB) == 1
                     && !compiled.contains(&MI);
                 rows_free.then_some(MI).into_iter().collect()
@@ -123,40 +124,42 @@ impl MatmulPartitioning {
         match self.rows_kind {
             MatmulRowsKind::Tiled => space.clone(),
             MatmulRowsKind::Whole => {
-                let rows = self.axes_kind.rows_axis();
+                let rows = self.dimensions_kind.rows_dimension();
                 let held = self.cube.extent(rows);
                 Space::new(
                     &space
                         .extents()
                         .into_iter()
-                        .map(|(axis, extent)| (axis, if axis == rows { held } else { extent }))
+                        .map(|(dimension, extent)| {
+                            (dimension, if dimension == rows { held } else { extent })
+                        })
                         .collect::<Vec<_>>(),
                 )
             }
         }
     }
 
-    /// The batch axes a cube is handed one of: the problem's longer than one.
-    pub fn batch_axes(&self) -> &[Axis] {
-        &self.batch_axes
+    /// The batch dimensions a cube is handed one of: the problem's longer than one.
+    pub fn batch_dimensions(&self) -> &[Dimension] {
+        &self.batch_dimensions
     }
 
     /// The space one cube covers: one batch of the output's `m × n` box, and the whole of `k`, or
     /// its run of it where several cubes share the box; with what of this placement a cube
-    /// microkernel's refusals read.
+    /// microkernel's declines read.
     pub fn cube_space(&self) -> MatmulCubeSpace {
         MatmulCubeSpace {
             space: self.cube.clone(),
             leaf: self.leaf(),
-            axes_kind: self.axes_kind,
+            dimensions_kind: self.dimensions_kind,
             overhangs_output: self.overhangs_output(),
-            batched: !self.batch_axes.is_empty(),
+            batched: !self.batch_dimensions.is_empty(),
         }
     }
 
-    /// The axes it is stated over.
-    pub fn axes_kind(&self) -> MatmulAxesKind {
-        self.axes_kind
+    /// The dimensions it is stated over.
+    pub fn dimensions_kind(&self) -> MatmulDimensionsKind {
+        self.dimensions_kind
     }
 
     /// The output's cells one cube's box covers: its [`rows`](Self::rows) by its
@@ -165,20 +168,22 @@ impl MatmulPartitioning {
         (self.rows() * self.columns()) as usize
     }
 
-    /// The output's rows one cube's box covers, over both axes `M` is split into in a block-split space.
+    /// The output's rows one cube's box covers, over both dimensions `M` is split into in a
+    /// block-split space.
     pub fn rows(&self) -> u64 {
-        let rows = match self.axes_kind {
-            MatmulAxesKind::Plain => self.cube.extent(M),
-            MatmulAxesKind::BlockSplit => self.cube.extent(MB) * self.cube.extent(MI),
+        let rows = match self.dimensions_kind {
+            MatmulDimensionsKind::Plain => self.cube.extent(M),
+            MatmulDimensionsKind::BlockSplit => self.cube.extent(MB) * self.cube.extent(MI),
         };
         rows as u64
     }
 
-    /// The output's columns one cube's box covers, over both axes `N` is split into in a block-split space.
+    /// The output's columns one cube's box covers, over both dimensions `N` is split into in a
+    /// block-split space.
     pub fn columns(&self) -> u64 {
-        let columns = match self.axes_kind {
-            MatmulAxesKind::Plain => self.cube.extent(N),
-            MatmulAxesKind::BlockSplit => self.cube.extent(NB) * self.cube.extent(NI),
+        let columns = match self.dimensions_kind {
+            MatmulDimensionsKind::Plain => self.cube.extent(N),
+            MatmulDimensionsKind::BlockSplit => self.cube.extent(NB) * self.cube.extent(NI),
         };
         columns as u64
     }
@@ -186,7 +191,7 @@ impl MatmulPartitioning {
     /// Boxes of the output the cubes cover along `m` and along `n`, one batch of it.
     pub fn cubes(&self) -> (usize, usize) {
         let (space, cube) = (self.partitioning.space(), self.cube.clone());
-        let boxes = |axis| space.extent(axis).div_ceil(cube.extent(axis));
+        let boxes = |dimension| space.extent(dimension).div_ceil(cube.extent(dimension));
         (boxes(M), boxes(N))
     }
 
@@ -220,8 +225,10 @@ impl MatmulPartitioning {
         };
         for level in &self.partitioning.levels()[1..] {
             let tile = level.child(&enclosing);
-            if level.coverage() == Coverage::Walk && level.tile(self.axes_kind.walked()).is_some() {
-                return MatmulStage::new(tile, self.axes_kind.stage_axes());
+            if level.coverage() == Coverage::Walk
+                && level.tile(self.dimensions_kind.walked()).is_some()
+            {
+                return MatmulStage::new(tile, self.dimensions_kind.stage_dimensions());
             }
             enclosing = tile;
         }
@@ -233,12 +240,12 @@ impl MatmulPartitioning {
         self.partitioning.leaf()
     }
 
-    /// Whether the tiles overhang `axis`: a tile the problem's edge cuts short along it.
-    pub fn overhangs(&self, axis: Axis) -> bool {
-        self.partitioning.overhangs(axis)
+    /// Whether the tiles overhang `dimension`: a tile the problem's edge cuts short along it.
+    pub fn overhangs(&self, dimension: Dimension) -> bool {
+        self.partitioning.overhangs(dimension)
     }
 
-    /// The problem's space: every axis at its extent, or dynamic where a launch states it.
+    /// The problem's space: every dimension at its extent, or dynamic where a launch states it.
     pub fn space(&self) -> &Space {
         self.partitioning.space()
     }
@@ -246,10 +253,10 @@ impl MatmulPartitioning {
     /// Whether the tiles overhang the output: a tile the output's edge cuts short, which a write
     /// that cannot be masked would reach past.
     pub fn overhangs_output(&self) -> bool {
-        self.axes_kind
-            .output_axes()
+        self.dimensions_kind
+            .output_dimensions()
             .into_iter()
-            .any(|axis| self.overhangs(axis))
+            .any(|dimension| self.overhangs(dimension))
     }
 
     /// Checks that the engine masks `out`'s writes exactly where the tiles overhang it, which is
@@ -267,10 +274,10 @@ impl MatmulPartitioning {
         );
     }
 
-    /// Tiles along `axis` a level distributes its units in turns, where one does
+    /// Tiles along `dimension` a level distributes its units in turns, where one does
     /// ([`Partitioning::distributed`]).
-    pub fn distributed(&self, axis: Axis) -> Option<usize> {
-        self.partitioning.distributed(axis)
+    pub fn distributed(&self, dimension: Dimension) -> Option<usize> {
+        self.partitioning.distributed(dimension)
     }
 
     /// Whether its cubes share the boxes as one flat index, each walking a run of them
@@ -293,7 +300,7 @@ impl MatmulPartitioning {
 mod tests {
     use super::*;
     use cubecl::tile::Levels;
-    use cubek_std::matmul_axes::{KB, KI};
+    use cubek_std::matmul_dimensions::{KB, KI};
 
     /// A packed product of `rows` in `row_blocks` blocks along `M`, its rows tiled.
     fn packed(row_blocks: usize, rows: usize) -> MatmulPartitioning {

@@ -1,3 +1,4 @@
+use crate::matmul::MatmulBlocks;
 use crate::matmul::cube::{
     CubeStagedDrain, CubeStagedMicrokernel, CubeStagedMicrokernelSettings, MatmulCubeSpace,
     MatmulPlaneLayout,
@@ -5,12 +6,12 @@ use crate::matmul::cube::{
 use crate::matmul::plane::PlaneFragmentMicrokernelSettings;
 use crate::matmul::{MatmulMicrokernel, MatmulOperand, MatmulOperands, MatmulWorkItem};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Delivery, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, Vectorization};
 use cubecl::tile::{Levels, Scratch};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
-use cubek_std::matmul_axes::{M, N};
+use cubek_std::matmul_dimensions::{M, N};
 use cubek_std::microkernel::{
     CubePlanes, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
 };
@@ -95,7 +96,7 @@ impl HypercubeStagedMicrokernelSettings {
     pub const fn rows_in_order(self) -> Self {
         Self {
             cube: CubeStagedMicrokernelSettings {
-                stage_layout: Some(StageLayout::Blocks),
+                stage_layout: StageLayout::Blocks,
                 ..self.cube
             },
         }
@@ -154,7 +155,7 @@ impl Microkernel for HypercubeStagedMicrokernel {
     }
 
     /// Its cubes' items.
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         CubeStagedMicrokernel::admits(item)
     }
 
@@ -241,20 +242,25 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
     fn decoded_stage(&self) -> Option<ElemType> {
         self.cube.decoded_stage()
     }
+
+    /// Its cubes': the space they planned on.
+    fn planned_space(&self) -> Option<MatmulBlocks> {
+        self.cube.planned_space()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::matmul::{
-        MatmulAxes, MatmulBlocks, MatmulDestination, MatmulLayout, MatmulReading, MatmulRows,
+        MatmulBlocks, MatmulDestination, MatmulDimensions, MatmulLayout, MatmulReading, MatmulRows,
     };
     use cubecl::features::MmaConfig;
     use cubecl::ir::FloatKind;
     use cubek_std::devices;
     use cubek_std::layout::stored::{Operand, Packing};
     use cubek_std::layout::tile_order;
-    use cubek_std::matmul_axes::K;
+    use cubek_std::matmul_dimensions::K;
 
     /// A packed input stages decoded, as each of its cubes reads it: bound as it lies, the cubes'
     /// instruction never expands and the launch leaves the output unwritten.
@@ -298,7 +304,7 @@ mod tests {
             }),
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::INSIDE_BLOCKS,
+            dimensions: MatmulDimensions::INSIDE_BLOCKS,
             reading: MatmulReading::AsStored,
         };
         let hypercube = HypercubeStagedMicrokernel::best(

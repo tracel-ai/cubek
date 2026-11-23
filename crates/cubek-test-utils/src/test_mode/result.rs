@@ -17,6 +17,7 @@
 //! 4. **Policy Decision**  
 //!    - Applies test mode to decide if the test passes [`TestDecision`].
 //!      - `Accept`: test passes.  
+//!      - `Skip(String)`: test passes without checking anything, and says why on stderr.  
 //!      - `Reject(String)`: test fails.  
 //!    - Call [`TestDecision::enforce`] to actually fail the test.
 
@@ -50,6 +51,21 @@ pub fn skip_unless_plane_holds(client: &Client, units: u32) -> bool {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
             "needs a plane of at least {units} units; this runtime reports {plane}"
         )))
+        .enforce();
+        return true;
+    }
+    false
+}
+
+/// A test in a half-precision element needs a device that computes in it. Records a `Skipped`
+/// outcome and returns `true` when `client`'s device has no `f16` arithmetic, so the caller can
+/// bail out of the test.
+#[track_caller]
+pub fn skip_unless_f16_arithmetic(client: &Client) -> bool {
+    if !crate::supports_f16_arithmetic(client) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "needs f16 arithmetic; this device has none".to_string(),
+        ))
         .enforce();
         return true;
     }
@@ -114,6 +130,9 @@ impl TestOutcome {
 pub enum TestDecision {
     /// The test is accepted (passes)
     Accept,
+    /// The test checked nothing, because the device cannot run it or its routine declines it:
+    /// it passes, and reports the skip on stderr
+    Skip(String),
     /// The test is rejected (fails)
     Reject(String),
 }
@@ -125,9 +144,20 @@ impl TestDecision {
     pub fn enforce(self) {
         match self {
             TestDecision::Accept => {}
+            TestDecision::Skip(reason) => report_skip(&reason),
             TestDecision::Reject(reason) => panic!("Test failed: {}", reason),
         }
     }
+}
+
+/// `reason` reported on the process's own stderr, which the test harness does not capture as it
+/// does `eprintln!`, so a skip shows in a run that passes.
+fn report_skip(reason: &str) {
+    use std::io::Write;
+    let test = std::thread::current();
+    let line = format!("SKIPPED {}: {reason}\n", test.name().unwrap_or("a test"));
+    // A skip that cannot be reported still passes.
+    let _ = std::io::stderr().write_all(line.as_bytes());
 }
 
 impl ValidationResult {

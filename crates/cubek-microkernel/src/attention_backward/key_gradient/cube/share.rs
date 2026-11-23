@@ -1,9 +1,7 @@
 use crate::attention::{D, DV, Q, S};
 use crate::attention_backward::{ScoreWindows, scale_rows};
 use crate::matmul::MatmulOperands;
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, plane_fragment_microkernel,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, plane_fragment_microkernel};
 use cubecl::tile::kind::PlanesOutput;
 use cubecl::tile::{Level, Region, Scratch, Semiring, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -120,15 +118,15 @@ impl<EA: Float> StageQueryGradientShare<EA> {
         #[comptime] scratch: Scratch,
         #[comptime] rows: usize,
     ) {
-        let scratch = comptime!(match self.product.instruction.drain() {
-            PlaneFragmentDrain::Bounce => scratch,
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        let scratch = comptime!(match self.product.cost.bounced_cell {
+            Some(_) => scratch,
+            None => Scratch::None,
         });
 
         let mut part = self
             .sum
             .at(plane)
-            .accumulator::<EA>(score_gradient, key, Semiring::SUM_PROD)
+            .accumulator::<EA>(score_gradient, key, Semiring::SumProd)
             .with_scratch(scratch);
         part.zero();
 

@@ -1,21 +1,22 @@
-//! The problem a routine computes, and the axis its queries are read along.
+//! The problem a routine computes, and the dimension its queries are read along.
 
 use crate::kernels::{AttentionVisibility, PackedLayout, QueryPlacement};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Space;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{
-    AttentionOperand, AttentionOperands, AttentionReading, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionCacheKind, AttentionOperand, AttentionOperands, AttentionReading, AttentionWorkItem,
+    B, D, DV, G, KV, Q, S,
 };
 use cubek_std::routine::EstimatedProblem;
 
-/// `out[b, q, h] = softmax(query[b, h, q] · key[b, h / group]ᵀ · scale) · value[b, h / group]`,
-/// as the host describes it, its queries along the axis [`QueryAxis`] says: a single position's
-/// `group` heads are `group` queries of one head.
+/// `out[b, q, h] = softmax(query[b, h, q] · key[b, h / group]ᵀ · scale) · value[b, h / group]`, as
+/// the host describes it, its queries along the dimension [`QueryDimension`] says: a single
+/// position's `group` heads are `group` queries of one head.
 ///
 /// The queries are the last `queries` positions of the attended keys, whose count `len` only the
 /// device holds: `keys` is the capacity the key and value buffers are allocated to, of which the
@@ -35,7 +36,7 @@ pub struct AttentionRoutineProblem {
     pub visibility: AttentionVisibility,
     /// The element each operand is stored in.
     pub elements: AttentionOperands<ElemType>,
-    /// The alignment of each operand's buffer in elements, over the axes this kind names.
+    /// The alignment of each operand's buffer in elements, over the dimensions this kind names.
     pub elem_alignments: AttentionOperands<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
     pub start_bytes: AttentionOperands<u64>,
@@ -58,6 +59,18 @@ pub enum AttentionCacheLayout {
     Packed(PackedLayout),
 }
 
+impl AttentionCacheLayout {
+    /// How a microkernel sees the keys and values lie: a packed cache's bit widths and fix-up are
+    /// its kernel's to read.
+    pub fn kind(&self) -> AttentionCacheKind {
+        match *self {
+            Self::Sequences => AttentionCacheKind::Sequences,
+            Self::Pages { page_size } => AttentionCacheKind::Pages { page_size },
+            Self::Packed(_) => AttentionCacheKind::Packed,
+        }
+    }
+}
+
 impl AttentionRoutineProblem {
     /// The element every microkernel of this kind sums in, whatever it reads and writes.
     pub const SUM: ElemType = ElemType::Float(FloatKind::F32);
@@ -76,10 +89,11 @@ impl AttentionRoutineProblem {
     /// power of two from 2 to [`WIDEST_CAPACITY_CLASS`](Self::WIDEST_CAPACITY_CLASS), the last
     /// one inside `limit` standing for it.
     ///
-    /// A routine's launch compiles apart where the capacity is not a multiple of its step of
-    /// keys, the walk's last step then bounded. Two is a multiple of no step wider than it, and
-    /// the widest class of every step, so a walk over the classes compiles both launches of every
-    /// setting; the powers between land the tuning key's buckets ([`AttentionKey`](crate::kernels::tune::key::AttentionKey)).
+    /// A routine's launch compiles apart where the capacity is not a multiple of its step of keys,
+    /// the walk's last step then bounded. Two is a multiple of no step wider than it, and the
+    /// widest class of every step, so a walk over the classes compiles both launches of every
+    /// setting; the powers between land the tuning key's buckets
+    /// ([`AttentionKey`](crate::kernels::tune::key::AttentionKey)).
     pub fn capacity_classes(limit: usize) -> Vec<usize> {
         let mut classes = Vec::new();
         for class in std::iter::successors(Some(2usize), |class| Some(class * 2)) {
@@ -102,10 +116,7 @@ impl AttentionRoutineProblem {
                     AttentionReading::Rounded
                 }
             },
-            page_size: match self.cache {
-                AttentionCacheLayout::Pages { page_size } => Some(page_size),
-                AttentionCacheLayout::Sequences | AttentionCacheLayout::Packed(_) => None,
-            },
+            cache: self.cache.kind(),
             group: self.group,
             head_dim: self.head_dim,
             val_dim: self.val_dim,
@@ -117,7 +128,7 @@ impl AttentionRoutineProblem {
         self.num_kv_heads * self.group
     }
 
-    /// Every axis of the problem at its extent: what a routine partitions.
+    /// Every dimension of the problem at its extent: what a routine partitions.
     pub fn space(&self) -> Space {
         Space::new(&[
             (B, self.batch),
@@ -206,12 +217,12 @@ impl EstimatedProblem for AttentionRoutineProblem {
 }
 
 /// What a routine that reads float keys and values declines on a packed cache.
-pub const ATTENTION_PACKED_UNREAD: Refusal = Refusal::Declined {
+pub const ATTENTION_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "this attention routine reads float keys and values, not a packed cache",
 };
 
-/// What a problem's query axis `Q` walks: the query positions of one head, or the heads of one key
-/// head's group at a single position.
+/// What a problem's query dimension `Q` walks: the query positions of one head, or the heads of one
+/// key head's group at a single position.
 ///
 /// A single position of a group of heads is the same attention as each head at that position: it
 /// sees every attended key, or the last of them a window spans, and the heads of a group read the
@@ -219,17 +230,17 @@ pub const ATTENTION_PACKED_UNREAD: Refusal = Refusal::Declined {
 /// empty, and its keys are walked once for all of it; the heads are read at their own stride, so
 /// nothing is copied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum QueryAxis {
+pub enum QueryDimension {
     /// The query positions of one head, the heads of a group beside them.
     Positions,
     /// A single position's group of heads.
     GroupHeads,
 }
 
-impl QueryAxis {
-    /// The query axis of an attention of `queries` positions seeing the keys `visibility` says.
-    /// Only a position that is the last attended one reads the group's heads along the query
-    /// axis: a causal query placed first sees the first key alone, which no visibility of a
+impl QueryDimension {
+    /// The query dimension of an attention of `queries` positions seeing the keys `visibility`
+    /// says. Only a position that is the last attended one reads the group's heads along the query
+    /// dimension: a causal query placed first sees the first key alone, which no visibility of a
     /// group's heads states.
     pub fn new(queries: usize, visibility: AttentionVisibility) -> Self {
         match (queries, visibility.queries()) {
@@ -239,7 +250,7 @@ impl QueryAxis {
     }
 
     /// An attention of `group` heads a key head and `queries` positions seeing the keys
-    /// `visibility` says, as a problem along this axis states it: the heads beside each query,
+    /// `visibility` says, as a problem along this dimension states it: the heads beside each query,
     /// the queries, and which keys a query sees.
     pub fn read(
         self,
@@ -254,9 +265,9 @@ impl QueryAxis {
     }
 
     /// `tensor`'s heads split into a group per key head over the same buffer, the queries along
-    /// this axis: `[b, kv, g, q, x]`, or where it walks the group's heads `[b, kv, q, g, x]`, the
-    /// single position and the heads trading places. `dims` names which of the tensor's four dims
-    /// are the batch, the heads, the queries and the last.
+    /// this dimension: `[b, kv, g, q, x]`, or where it walks the group's heads `[b, kv, q, g, x]`,
+    /// the single position and the heads trading places. `dims` names which of the tensor's four
+    /// dims are the batch, the heads, the queries and the last.
     pub(crate) fn view(self, tensor: &PlainTensor, group: usize, dims: [usize; 4]) -> PlainTensor {
         let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
         let [batch, heads, queries, last] = dims;
@@ -332,21 +343,19 @@ mod tests {
         let prepared = [
             fleet
                 .iter()
-                .map(|hw| assert_steps_divide(UnitAttentionRoutine, hw))
+                .map(assert_steps_divide::<_, _, UnitAttentionRoutine>)
                 .sum::<usize>(),
             fleet
                 .iter()
-                .map(|hw| assert_steps_divide(CubeStagedAttentionRoutine, hw))
+                .map(assert_steps_divide::<_, _, CubeStagedAttentionRoutine>)
                 .sum(),
             fleet
                 .iter()
-                .map(|hw| {
-                    assert_steps_divide(HypercubeLastArrivalShuffleAttentionRoutine::new(), hw)
-                })
+                .map(assert_steps_divide::<_, _, HypercubeLastArrivalShuffleAttentionRoutine>)
                 .sum(),
             fleet
                 .iter()
-                .map(|hw| assert_steps_divide(HypercubeShufflePartialAttentionRoutine::new(), hw))
+                .map(assert_steps_divide::<_, _, HypercubeShufflePartialAttentionRoutine>)
                 .sum(),
         ];
         assert!(
@@ -384,18 +393,16 @@ mod tests {
             cache: AttentionCacheLayout::Pages { page_size },
             ..dense
         };
-        let shuffle = &CubeShuffleAttentionRoutine.settings(&hw)[0];
+        let shuffle = &CubeShuffleAttentionRoutine::settings(&hw)[0];
         let page_steps = |problem: &AttentionRoutineProblem| {
-            let (blueprint, _) = CubeShuffleAttentionRoutine
-                .prepare(&hw, problem, shuffle)
+            let (blueprint, _) = CubeShuffleAttentionRoutine::prepare(&hw, problem, shuffle)
                 .expect("the decode step prepares");
             blueprint
                 .microkernel
                 .page_steps
                 .map(core::num::NonZeroUsize::get)
         };
-        let keys = CubeShuffleAttentionRoutine
-            .prepare(&hw, &dense, shuffle)
+        let keys = CubeShuffleAttentionRoutine::prepare(&hw, &dense, shuffle)
             .expect("the decode step prepares")
             .0
             .microkernel
@@ -406,11 +413,10 @@ mod tests {
         assert_eq!(page_steps(&paged(3 * keys / 2)), None);
         // The M2 as Metal reports it, offering its plane fragments their simdgroup matrix.
         let fragments = offering(hw, 8);
-        let staged = CubeStagedAttentionRoutine;
-        let staged_settings = &staged.settings(&fragments)[0];
-        let (blueprint, _) = staged
-            .prepare(&fragments, &paged(4 * keys), staged_settings)
-            .expect("the decode step prepares");
+        let staged_settings = &CubeStagedAttentionRoutine::settings(&fragments)[0];
+        let (blueprint, _) =
+            CubeStagedAttentionRoutine::prepare(&fragments, &paged(4 * keys), staged_settings)
+                .expect("the decode step prepares");
         assert_eq!(blueprint.microkernel.page_steps, None);
     }
 
@@ -419,23 +425,20 @@ mod tests {
     #[test]
     fn only_the_hypercube_shuffles_and_the_staged_cube_read_a_packed_cache() {
         fn reads<R: Routine<Problem = AttentionRoutineProblem>>(
-            routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
         ) -> bool {
-            routine
-                .settings(hw)
+            R::settings(hw)
                 .iter()
-                .any(|settings| routine.prepare(hw, problem, settings).is_ok())
+                .any(|settings| R::prepare(hw, problem, settings).is_ok())
         }
         fn declines<R: Routine<Problem = AttentionRoutineProblem>>(
-            routine: R,
             hw: &Hardware,
             problem: &AttentionRoutineProblem,
         ) {
-            for settings in routine.settings(hw) {
+            for settings in R::settings(hw) {
                 assert_eq!(
-                    routine.prepare(hw, problem, &settings).err(),
+                    R::prepare(hw, problem, &settings).err(),
                     Some(ATTENTION_PACKED_UNREAD),
                     "{settings}"
                 );
@@ -450,20 +453,16 @@ mod tests {
             cache: AttentionCacheLayout::Packed(layout),
             ..qwen(1, 4096)
         };
-        assert!(reads(
-            HypercubeLastArrivalShuffleAttentionRoutine::new(),
-            &hw,
-            &packed
+        assert!(reads::<HypercubeLastArrivalShuffleAttentionRoutine>(
+            &hw, &packed
         ));
-        assert!(reads(
-            HypercubeShufflePartialAttentionRoutine::new(),
-            &hw,
-            &packed
+        assert!(reads::<HypercubeShufflePartialAttentionRoutine>(
+            &hw, &packed
         ));
-        assert!(reads(CubeStagedAttentionRoutine, &hw, &packed));
-        declines(UnitAttentionRoutine, &hw, &packed);
-        declines(CubeShuffleAttentionRoutine, &hw, &packed);
-        declines(HypercubeFragmentPartialAttentionRoutine, &hw, &packed);
+        assert!(reads::<CubeStagedAttentionRoutine>(&hw, &packed));
+        declines::<UnitAttentionRoutine>(&hw, &packed);
+        declines::<CubeShuffleAttentionRoutine>(&hw, &packed);
+        declines::<HypercubeFragmentPartialAttentionRoutine>(&hw, &packed);
 
         // The staged cube stages its keys from one tile, which a QJL fix-up's second is not.
         use cubek_std::routine::Routine;
@@ -474,18 +473,16 @@ mod tests {
             }),
             ..packed
         };
-        for settings in CubeStagedAttentionRoutine.settings(&hw) {
+        for settings in CubeStagedAttentionRoutine::settings(&hw) {
             assert_eq!(
-                CubeStagedAttentionRoutine
-                    .prepare(&hw, &qjl, &settings)
-                    .err(),
+                CubeStagedAttentionRoutine::prepare(&hw, &qjl, &settings).err(),
                 Some(STAGED_FIXUP_UNREAD),
                 "{settings}"
             );
         }
     }
 
-    fn assert_steps_divide<M, SM, R>(routine: R, hw: &Hardware) -> usize
+    fn assert_steps_divide<M, SM, R>(hw: &Hardware) -> usize
     where
         R: Routine<
                 Problem = AttentionRoutineProblem,
@@ -495,9 +492,9 @@ mod tests {
     {
         let problems = [qwen(512, 512), qwen(1, 4096)];
         let mut prepared = 0;
-        for settings in routine.settings(hw) {
+        for settings in R::settings(hw) {
             for problem in &problems {
-                let Ok((blueprint, _)) = routine.prepare(hw, problem, &settings) else {
+                let Ok((blueprint, _)) = R::prepare(hw, problem, &settings) else {
                     continue;
                 };
                 prepared += 1;
@@ -521,11 +518,14 @@ mod tests {
         let last = causal(QueryPlacement::Last);
         let first = causal(QueryPlacement::First);
         assert_eq!(
-            QueryAxis::new(1, last).read(4, 1, last),
+            QueryDimension::new(1, last).read(4, 1, last),
             (1, 4, AttentionVisibility::Attended)
         );
-        assert_eq!(QueryAxis::new(7, last).read(4, 7, last), (4, 7, last));
-        assert_eq!(QueryAxis::new(1, first).read(4, 1, first), (4, 1, first));
+        assert_eq!(QueryDimension::new(7, last).read(4, 7, last), (4, 7, last));
+        assert_eq!(
+            QueryDimension::new(1, first).read(4, 1, first),
+            (4, 1, first)
+        );
     }
 
     /// A windowed single position keeps its window as rows: every head of the group sees the
@@ -543,11 +543,11 @@ mod tests {
             }
         );
         assert_eq!(
-            QueryAxis::new(1, windowed).read(4, 1, windowed),
+            QueryDimension::new(1, windowed).read(4, 1, windowed),
             (1, 4, AttentionVisibility::Recent { window })
         );
         assert_eq!(
-            QueryAxis::new(7, windowed).read(4, 7, windowed),
+            QueryDimension::new(7, windowed).read(4, 7, windowed),
             (4, 7, windowed)
         );
         assert!(windowed.is_causal());

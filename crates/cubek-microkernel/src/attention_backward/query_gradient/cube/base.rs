@@ -6,7 +6,7 @@ use crate::attention_backward::query_gradient::plane::{
 use crate::attention_backward::{AttentionBackwardOperand, AttentionBackwardWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
-use cubecl::tile::{Axis, Level, Levels, Partitioning};
+use cubecl::tile::{Dimension, Level, Levels, Partitioning};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -106,7 +106,7 @@ impl CubeQueryGradientMicrokernel {
     }
 
     /// Its planes along the heads and the queries.
-    fn planes(&self) -> [(Axis, usize); 2] {
+    fn planes(&self) -> [(Dimension, usize); 2] {
         [
             (G, self.heads),
             (Q, self.settings.planes_along_queries.get()),

@@ -124,7 +124,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     {
         ListedFor::Packed
             .admits(call.product())
-            .map_err(|refusal| format!("{refusal:?}"))?;
+            .map_err(|decline| format!("{decline:?}"))?;
         let settings = &self.settings;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
         let launched = match call.destination {
@@ -141,10 +141,9 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
                 .map(|()| destination),
             None => {
                 MatmulTensors::written_in(&call.client, lhs, rhs, call.out).and_then(|tensors| {
-                    let (blueprint, grid) =
-                        self.routine
-                            .prepare(&self.hw, &tensors.problem(), settings)?;
-                    self.routine.dispatch_into_buffer(&tensors, blueprint, grid);
+                    let (blueprint, grid) = R::prepare(&self.hw, &tensors.problem(), settings)?;
+                    self.routine
+                        .dispatch_into_buffer(&tensors, blueprint, grid)?;
                     Ok(tensors
                         .into_out()
                         .expect("a launch allocating its output hands it back"))
@@ -228,7 +227,7 @@ mod tests {
     use crate::kernels::tune::key::{MatmulBatching, OperandKey};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::devices;
-    use cubek_std::matmul_axes::K;
+    use cubek_std::matmul_dimensions::K;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -269,7 +268,7 @@ mod tests {
                 k: 16,
             }],
         );
-        let settings = CubeShuffleMatmulRoutine.packed_settings(&hw);
+        let settings = CubeShuffleMatmulRoutine::packed_settings(&hw);
         assert!(
             settings
                 .iter()

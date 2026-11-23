@@ -5,7 +5,7 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
@@ -15,15 +15,16 @@ use cubek_microkernel::matmul::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Packing;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, ROUTINE_LISTS_NO_SETTING, Routine};
+use std::borrow::Cow;
 
 /// `out = lhs · rhs` with every cube owning every row of a run of the output's columns, and its
 /// planes splitting the contraction between them: in software sums
-/// ([`PlaneShuffleMicrokernel`](cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel)), or, against a packed rhs, on the tensor cores, where an NVFP4
-/// rhs against a 16-bit lhs holds up to a fragment's sixteen rows at the cost of
-/// reading the rhs
+/// ([`PlaneShuffleMicrokernel`](cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel)), or,
+/// against a packed rhs, on the tensor cores, where an NVFP4 rhs against a 16-bit lhs holds up to a
+/// fragment's sixteen rows at the cost of reading the rhs
 /// ([`PlaneFragmentMicrokernel`](cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel)).
 ///
 /// What a product whose runs of columns are too few to fill the device with planes wants: a
@@ -80,7 +81,7 @@ impl CubeShuffleMatmulRoutine {
     /// ([`LoadingSchedule::MEASURED`]): what the packed few-rows table races, and
     /// what a caller naming the routine and no setting runs against a packed rhs, in this
     /// order.
-    pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
+    pub fn packed_settings(hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
         CubeShuffleMicrokernel::packed_settings(hw)
             .into_iter()
             .map(|microkernel| CubeShuffleMatmulRoutineSettings {
@@ -93,14 +94,14 @@ impl CubeShuffleMatmulRoutine {
 
     /// What a float rhs declines a setting reading by block or capping its launch with: both
     /// read a packed rhs's columns only.
-    pub const PACKED_ONLY: Refusal = Refusal::Declined {
+    pub const PACKED_ONLY: Decline = Decline::Unserved {
         why: "a cube shuffle reads by block, and caps its launch, against a packed rhs only",
     };
 
     /// What a batched product, whose cubes are handed batches beside boxes, declines a capped
     /// launch with.
-    pub const CAPPED_BATCHED: Refusal = Refusal::Declined {
-        why: "a cube shuffle's capped launch walks one axis of boxes, not batches beside them",
+    pub const CAPPED_BATCHED: Decline = Decline::Unserved {
+        why: "a cube shuffle's capped launch walks one dimension of boxes, not batches beside them",
     };
 
     /// [`Routine::estimate`] against a float rhs: each group of units, across the cube's
@@ -109,7 +110,6 @@ impl CubeShuffleMatmulRoutine {
     /// still read down all of `K`. Its drain, every plane adding its partial run into the
     /// accumulator atomically before the cube copies it out. Then its microkernel, for the work.
     fn float_estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeShuffleMatmulRoutineBlueprint,
         grid: &Grid,
@@ -120,7 +120,7 @@ impl CubeShuffleMatmulRoutine {
         let (item, microkernel) = (view.work_item(), &blueprint.microkernel);
         let partitioning = &blueprint.partitioning;
         let (cube, leaf) = (&partitioning.cube_space().space, partitioning.leaf());
-        let [rows, columns, k] = [M, N, K].map(|axis| cube.extent(axis) as u64);
+        let [rows, columns, k] = [M, N, K].map(|dimension| cube.extent(dimension) as u64);
         let groups = columns / leaf.extent(N) as u64;
         let planes_along_k = microkernel.planes_along_k.get() as u64;
         let k_per_stage = microkernel.plane.step_depth(&leaf) as u64 * planes_along_k;
@@ -153,7 +153,6 @@ impl CubeShuffleMatmulRoutine {
     /// blocks. Its drain, every plane adding its partial run into the accumulator. Then its
     /// microkernel, for the work.
     fn packed_estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         packing: &Packing,
         blueprint: &CubeShuffleMatmulRoutineBlueprint,
@@ -204,11 +203,10 @@ impl CubeShuffleMatmulRoutine {
 
     /// [`Routine::prepare`] against a float rhs.
     fn prepare_float(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &CubeShuffleMatmulRoutineSettings,
-    ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
+    ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Decline> {
         problem.check_plain()?;
         if settings.cubes_per_worker.is_some() || settings.microkernel.by_block {
             return Err(Self::PACKED_ONLY);
@@ -223,7 +221,7 @@ impl CubeShuffleMatmulRoutine {
             MatmulView::ONE_CUBE_A_BOX,
         );
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        CubeShuffleMatmulRoutine::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
             MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ());
         let cube = CubeResources {
@@ -235,25 +233,29 @@ impl CubeShuffleMatmulRoutine {
     }
 
     /// [`Routine::prepare`] against `packing`, a packed rhs: every row in each cube, the cubes
-    /// side by side along the axis its planes' columns land on.
+    /// side by side along the dimension its planes' columns land on.
     fn prepare_packed(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         packing: &Packing,
         settings: &CubeShuffleMatmulRoutineSettings,
-    ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Refusal> {
-        // A microkernel reading the rhs a block at a time is planned and bound on the rhs read so.
-        let read = problem.rhs_read(settings.microkernel.by_block)?;
+    ) -> Result<(CubeShuffleMatmulRoutineBlueprint, Grid), Decline> {
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let stated = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?.work_item();
+        let planning = CubeShuffleMicrokernel::best(hw, &stated, &settings.microkernel)?;
+        let read = problem.read_as(planning.planned_space());
         let problem: &MatmulRoutineProblem = &read;
-        let packing = problem.packings.rhs.as_ref().unwrap_or(packing);
+        let packing = &problem.inputs.rhs.packing().unwrap_or(*packing);
         let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
         view.check_steps(hw)?;
         let item = view.work_item();
-        let mut microkernel = CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?;
-        let columns = microkernel.plane.column_axis();
+        let mut microkernel = match read {
+            Cow::Borrowed(_) => planning,
+            Cow::Owned(_) => CubeShuffleMicrokernel::best(hw, &item, &settings.microkernel)?,
+        };
+        let columns = microkernel.plane.column_dimension();
         let partitioning = match (settings.cubes_per_worker, hw.workers()) {
-            (Some(_), _) if !view.distributed_batch_axes().is_empty() => {
+            (Some(_), _) if !view.distributed_batch_dimensions().is_empty() => {
                 return Err(Self::CAPPED_BATCHED);
             }
             (Some(per), Some(workers)) => {
@@ -294,7 +296,7 @@ impl Routine for CubeShuffleMatmulRoutine {
 
     /// Its microkernel's settings ([`CubeShuffleMicrokernel::settings`]): it has no knob of its
     /// own.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         CubeShuffleMicrokernel::settings(hw)
             .into_iter()
             .map(|microkernel| Self::Settings {
@@ -312,17 +314,16 @@ impl Routine for CubeShuffleMatmulRoutine {
     ///
     /// The last setting's decline, where none serves.
     fn prepare_first_served(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        let settings = match problem.packings.rhs {
-            Some(_) => self.packed_settings(hw),
-            None => self.settings(hw),
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
+        let settings = match problem.inputs.rhs.packing() {
+            Some(_) => Self::packed_settings(hw),
+            None => Self::settings(hw),
         };
         let mut declined = ROUTINE_LISTS_NO_SETTING;
         for settings in settings {
-            match self.prepare(hw, problem, &settings) {
+            match Self::prepare(hw, problem, &settings) {
                 Ok(prepared) => return Ok(prepared),
                 Err(why) => declined = why,
             }
@@ -332,7 +333,6 @@ impl Routine for CubeShuffleMatmulRoutine {
 
     /// Nothing of its own: it only walks the cubes, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &CubeShuffleMicrokernel,
         _: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -343,30 +343,28 @@ impl Routine for CubeShuffleMatmulRoutine {
     /// Its walk's reads and its drain, against a float rhs or a packed one; then its
     /// microkernel, for the work.
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeShuffleMatmulRoutineBlueprint,
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        match &problem.packings.rhs {
-            Some(packing) => self.packed_estimate(problem, packing, blueprint, grid, estimate),
-            None => self.float_estimate(problem, blueprint, grid, estimate),
+        match &problem.inputs.rhs.packing() {
+            Some(packing) => Self::packed_estimate(problem, packing, blueprint, grid, estimate),
+            None => Self::float_estimate(problem, blueprint, grid, estimate),
         }
     }
 
     /// Against a float rhs, the cubes over `M` and `N`; against a packed one, over its
     /// block-split space, every row in each cube.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_unindexed()?;
-        match &problem.packings.rhs {
-            Some(packing) => self.prepare_packed(hw, problem, packing, settings),
-            None => self.prepare_float(hw, problem, settings),
+        match &problem.inputs.rhs.packing() {
+            Some(packing) => Self::prepare_packed(hw, problem, packing, settings),
+            None => Self::prepare_float(hw, problem, settings),
         }
     }
 }
@@ -438,7 +436,7 @@ mod tests {
     /// The default leads the list and no setting is listed twice.
     #[test]
     fn the_default_leads_and_no_setting_repeats() {
-        let settings = CubeShuffleMatmulRoutine.settings(&devices::strix_halo());
+        let settings = CubeShuffleMatmulRoutine::settings(&devices::strix_halo());
         assert_eq!(settings[0], CubeShuffleMatmulRoutineSettings::DEFAULT);
         let names: std::collections::HashSet<_> =
             settings.iter().map(ToString::to_string).collect();
@@ -464,13 +462,13 @@ mod tests {
         {
             let problem = projection(1, k, MatmulLayout::Col);
             let adds = hw.plane_size().is_ok();
-            for settings in CubeShuffleMatmulRoutine.settings(&hw) {
+            for settings in CubeShuffleMatmulRoutine::settings(&hw) {
                 match (
-                    CubeShuffleMatmulRoutine.prepare(&hw, &problem, &settings),
+                    CubeShuffleMatmulRoutine::prepare(&hw, &problem, &settings),
                     adds,
                 ) {
                     (Ok(_), true) => {}
-                    (Err(Refusal::Declined { why: details }), false) => {
+                    (Err(Decline::Unserved { why: details }), false) => {
                         assert_eq!(details, CubeShuffleMicrokernel::DECLINE, "{settings}")
                     }
                     (prepared, _) => panic!("{settings} at k={k} on {hw:?}: {prepared:?}"),
@@ -484,13 +482,12 @@ mod tests {
     #[test]
     fn the_planes_split_the_contraction_and_add_in_shared_memory() {
         let hw = devices::strix_halo();
-        let (blueprint, grid) = CubeShuffleMatmulRoutine
-            .prepare(
-                &hw,
-                &projection(8, 6144, MatmulLayout::Col),
-                &CubeShuffleMatmulRoutineSettings::DEFAULT,
-            )
-            .expect("the default prepares on a committed wave32 with shared atomics");
+        let (blueprint, grid) = CubeShuffleMatmulRoutine::prepare(
+            &hw,
+            &projection(8, 6144, MatmulLayout::Col),
+            &CubeShuffleMatmulRoutineSettings::DEFAULT,
+        )
+        .expect("the default prepares on a committed wave32 with shared atomics");
         let (microkernel, partitioning) = (blueprint.microkernel, &blueprint.partitioning);
         let planes_along_k = microkernel.planes_along_k.get();
         assert_eq!(grid.planes().count, planes_along_k);
@@ -509,14 +506,17 @@ mod tests {
     fn a_col_rhs_is_read_in_vectors_and_a_row_rhs_declined() {
         let hw = devices::strix_halo();
         let settings = CubeShuffleMatmulRoutineSettings::DEFAULT;
-        let (blueprint, _) = CubeShuffleMatmulRoutine
-            .prepare(&hw, &projection(1, 2048, MatmulLayout::Col), &settings)
-            .expect("the default prepares on a committed wave32 with shared atomics");
+        let (blueprint, _) = CubeShuffleMatmulRoutine::prepare(
+            &hw,
+            &projection(1, 2048, MatmulLayout::Col),
+            &settings,
+        )
+        .expect("the default prepares on a committed wave32 with shared atomics");
         let widths = blueprint.widths;
         assert_eq!((widths.lhs, widths.rhs, widths.out), (8, 8, 1));
         let row = projection(1, 2048, MatmulLayout::Row);
         assert!(matches!(
-            CubeShuffleMatmulRoutine.prepare(&hw, &row, &settings),
+            CubeShuffleMatmulRoutine::prepare(&hw, &row, &settings),
             Err(error) if error == CubeShuffleMicrokernel::ROW_RHS_UNSUPPORTED
         ));
     }
@@ -528,7 +528,7 @@ mod tests {
         let settings = CubeShuffleMatmulRoutineSettings::DEFAULT;
         for m in [0, PlaneShuffleMicrokernel::MAX_ROWS + 1] {
             assert!(matches!(
-                CubeShuffleMatmulRoutine.prepare(
+                CubeShuffleMatmulRoutine::prepare(
                     &devices::strix_halo(),
                     &projection(m, 2048, MatmulLayout::Col),
                     &settings
@@ -557,7 +557,7 @@ mod tests {
         let scheme = tile_order::nvfp4_scheme();
         let words = hw.load_values(ElemType::UInt(UIntKind::U32));
         let operand = Operand::of_scheme(&scheme, K, [K, N])
-            .expect("one axis a block")
+            .expect("one dimension a block")
             .in_tile_order(
                 tile_order::TileOrder::laid(&scheme, tile_order::TileWords::RowByRow, (128, 8))
                     .expect("NVFP4 is tile order"),
@@ -580,8 +580,7 @@ mod tests {
 
     /// The packed settings whose planes are tensor-core planes, on `hw`.
     fn fragment_settings(hw: &Hardware) -> Vec<CubeShuffleMatmulRoutineSettings> {
-        CubeShuffleMatmulRoutine
-            .packed_settings(hw)
+        CubeShuffleMatmulRoutine::packed_settings(hw)
             .into_iter()
             .filter(|settings| {
                 matches!(
@@ -609,7 +608,7 @@ mod tests {
     /// tensor-core.
     #[test]
     fn the_packed_lead_leads_and_no_packed_setting_repeats() {
-        let packed = CubeShuffleMatmulRoutine.packed_settings(&tensor_cores());
+        let packed = CubeShuffleMatmulRoutine::packed_settings(&tensor_cores());
         assert_eq!(packed[0], CubeShuffleMatmulRoutineSettings::PACKED);
         let names: std::collections::HashSet<_> = packed.iter().map(ToString::to_string).collect();
         assert_eq!(names.len(), packed.len());
@@ -628,20 +627,19 @@ mod tests {
         for m in [1, 3, 8, 11, 16] {
             for (n, k) in shapes {
                 for settings in &fragment_settings {
-                    CubeShuffleMatmulRoutine
-                        .prepare(&hw, &nvfp4(&hw, m, n, k), settings)
+                    CubeShuffleMatmulRoutine::prepare(&hw, &nvfp4(&hw, m, n, k), settings)
                         .unwrap_or_else(|error| panic!("{m}x{n}x{k} at {settings}: {error:?}"));
                 }
             }
         }
         for other in [devices::rdna_range(), devices::h100()] {
             for settings in &fragment_settings {
-                match CubeShuffleMatmulRoutine.prepare(
+                match CubeShuffleMatmulRoutine::prepare(
                     &other,
                     &nvfp4(&other, 8, 2560, 4096),
                     settings,
                 ) {
-                    Err(Refusal::Declined { why }) => {
+                    Err(Decline::Unserved { why }) => {
                         assert_eq!(why, CubeShuffleMicrokernel::FRAGMENT_DECLINE, "{other:?}")
                     }
                     prepared => panic!("{other:?} at {settings}: {prepared:?}"),
@@ -657,20 +655,15 @@ mod tests {
         let hw = tensor_cores();
         let problem = |m| nvfp4(&hw, m, 2560, 4096);
         let fragment = fragments(1, 8);
+        assert!(CubeShuffleMatmulRoutine::prepare(&hw, &problem(17), &fragment).is_err());
+        assert!(CubeShuffleMatmulRoutine::prepare(&hw, &problem(12), &fragment).is_ok());
         assert!(
-            CubeShuffleMatmulRoutine
-                .prepare(&hw, &problem(17), &fragment)
-                .is_err()
-        );
-        assert!(
-            CubeShuffleMatmulRoutine
-                .prepare(&hw, &problem(12), &fragment)
-                .is_ok()
-        );
-        assert!(
-            CubeShuffleMatmulRoutine
-                .prepare(&hw, &problem(12), &CubeShuffleMatmulRoutineSettings::PACKED)
-                .is_err()
+            CubeShuffleMatmulRoutine::prepare(
+                &hw,
+                &problem(12),
+                &CubeShuffleMatmulRoutineSettings::PACKED
+            )
+            .is_err()
         );
     }
 
@@ -679,9 +672,9 @@ mod tests {
     #[test]
     fn the_fragment_settings_narrow_to_what_the_rhs_closes() {
         let hw = tensor_cores();
-        let (blueprint, _) = CubeShuffleMatmulRoutine
-            .prepare(&hw, &nvfp4(&hw, 8, 8 * 3, 512), &fragments(2, 16))
-            .expect("a narrow rhs prepares");
+        let (blueprint, _) =
+            CubeShuffleMatmulRoutine::prepare(&hw, &nvfp4(&hw, 8, 8 * 3, 512), &fragments(2, 16))
+                .expect("a narrow rhs prepares");
         assert_eq!(blueprint.microkernel.plane.columns(), 8);
         assert_eq!(blueprint.microkernel.planes_along_k.get(), 4);
     }

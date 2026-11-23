@@ -58,3 +58,46 @@ fn devices_listed() -> [(&'static str, Hardware); 4] {
         ("wgpu without subgroups", devices::wgpu_no_subgroups()),
     ]
 }
+
+/// **A race runs on the call's buffers.** The few-rows autotune hands its candidates the call's own
+/// lhs and rhs, and a destination the call allocated once at the product's shape, which the winner
+/// then writes too.
+#[test]
+fn a_race_runs_on_the_calls_buffers() {
+    use crate::kernels::plan::{MatmulCall, MatmulCallInput};
+    use crate::kernels::tensor::{PlainTensor, StoredTensor};
+    use cubecl::CubeTuneId;
+    use cubecl::ir::{ElemType, FloatKind};
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+    let client = cubek_test_utils::client();
+    let input = |shape: [usize; 2]| {
+        MatmulCallInput::plain(PlainTensor::zeros(&client, &shape, [shape[1], 1], F32))
+    };
+    let call = MatmulCall {
+        hw: Hardware::from_client(&client),
+        client: client.clone(),
+        tune_id: CubeTuneId::new(&client, &cubecl::test_device()),
+        lhs: input([3, 5]),
+        rhs: input([5, 4]),
+        out: F32,
+        destination: None,
+    }
+    .with_destination();
+    let destination = call.destination.clone().expect("a destination allocated");
+    assert_eq!(destination.shape().as_slice(), [3, 4]);
+
+    let tunables = few_rows::candidates(call.hw.clone(), MatmulAutotuneGroups::default());
+    let raced = tunables.generate_inputs(&call.key(), &call);
+    let memory = |input: &MatmulCallInput| match &input.tensor {
+        StoredTensor::Plain(tensor) => tensor.binding.handle.memory.id(),
+        StoredTensor::Packed(_) => unreachable!("a float call"),
+    };
+    assert_eq!(memory(&raced.lhs), memory(&call.lhs));
+    assert_eq!(memory(&raced.rhs), memory(&call.rhs));
+    let raced_destination = raced.destination.expect("the call's destination");
+    assert!(matches!(
+        raced_destination.handle.overlap(&destination.handle),
+        cubecl::server::Overlap::Same
+    ));
+}

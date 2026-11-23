@@ -1,5 +1,5 @@
 use cubecl::tile::launch::{Destination, ServedDestination, ServedDestinationExpand};
-use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeMeet, cube_shuffle_microkernel};
 use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
@@ -11,11 +11,11 @@ use cubek_microkernel::matmul::{MatmulOperands, MatmulRead};
 pub fn cube_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &O::Arg<E>,
+    out: &mut O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] block: Option<SoftwareMatmul>,
     #[comptime] meet: CubeMeet,
-    #[comptime] split: Axis,
+    #[comptime] split: Dimension,
     #[comptime] planes: usize,
     #[comptime] reads: MatmulOperands<MatmulRead>,
     #[comptime] persistent: bool,

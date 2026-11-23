@@ -1,10 +1,10 @@
 //! Tile order: a block-scaled matrix's values ([`TileOrder`]: NVFP4's, MXFP4's, MXFP8's) stored for
 //! the kernels that read a whole tile in one load — a tile of `k` by some rows of the matrix's
-//! other axis — beside its block scales, as many to a word as the scale type packs.
-//! The matrix is either input of a product: its axes are `K` and the one it is `across`, `N` for
-//! a `[k, n]` input and `M` for an `[m, k]` one. A row is one index of the axis it is across, its
-//! values running down `k`, as the kernel states it ([`values_axes`]); a line, the vector a buffer
-//! is read in, is a different thing.
+//! other dimension — beside its block scales, as many to a word as the scale type packs. The matrix
+//! is either input of a product: its dimensions are `K` and the one it is `across`, `N` for a `[k,
+//! n]` input and `M` for an `[m, k]` one. A row is one index of the dimension it is across, its
+//! values running down `k`, as the kernel states it ([`values_dimensions`]); a line, the vector a
+//! buffer is read in, is a different thing.
 //!
 //! A tile's words lie in one of two orders ([`TileWords`]), and the device decides which: each
 //! row's words down the tile's `k` one run, which the TMA engine copies and a tensor-core plane
@@ -13,11 +13,11 @@
 //! of several rows, its scales stored in tiles of their own beside the values.
 //!
 //! The tile is the writer's: a load picks it for the device from the step of the product
-//! (`MatmulStep`), a whole number of blocks along `k`. Under the block-scaled
-//! instruction, its stages filled by the TMA engine, NVFP4's step is `128 × 8`: two of the
-//! instruction's `16 × 8 × 64` calls deep, so a column's row in a tile is the 64 bytes a box copies
-//! at full speed, and the instruction's eight columns wide. A descriptor over the tiles lands a
-//! stage of them as it lands rows ([`TileOrder::words_in_tiles`]). A reader takes the tile off the matrix
+//! (`MatmulStep`), a whole number of blocks along `k`. Under the block-scaled instruction, its
+//! stages filled by the TMA engine, NVFP4's step is `128 × 8`: two of the instruction's `16 × 8 ×
+//! 64` calls deep, so a column's row in a tile is the 64 bytes a box copies at full speed, and the
+//! instruction's eight columns wide. A descriptor over the tiles lands a stage of them as it lands
+//! rows ([`TileOrder::words_in_tiles`]). A reader takes the tile off the matrix
 //! ([`tile`](crate::layout::tile)), never a constant.
 //!
 //! One memory, stated two ways. The matrix states its values over its own `[k, n]`, as every
@@ -30,23 +30,23 @@
 use crate::NVFP4_BLOCK;
 use crate::layout::stored::Operand;
 use crate::layout::{Fragments, assemble, fragments, fragments_of};
-use crate::matmul_axes::{K, KB, KI, blocked};
+use crate::matmul_dimensions::{K, KB, KI, blocked};
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::tile::layout::{Stagger, StorageLevels, StoragePartitioning};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::{Shape, Strides};
 
-/// The axes the kernel names the values of a matrix `across` an axis by: `[n, k/block, block]`
-/// across `N`, `[m, k/block, block]` across `M`.
-pub fn values_axes(across: Axis) -> [Axis; 3] {
+/// The dimensions the kernel names the values of a matrix `across` a dimension by: `[n, k/block,
+/// block]` across `N`, `[m, k/block, block]` across `M`.
+pub fn values_dimensions(across: Dimension) -> [Dimension; 3] {
     [blocked(across).1, KB, KI]
 }
 
-/// The axes the kernel names the block scales of a matrix `across` an axis by: `[n, k/block]`
-/// across `N`, `[m, k/block]` across `M`.
-pub fn scales_axes(across: Axis) -> [Axis; 2] {
+/// The dimensions the kernel names the block scales of a matrix `across` a dimension by: `[n,
+/// k/block]` across `N`, `[m, k/block]` across `M`.
+pub fn scales_dimensions(across: Dimension) -> [Dimension; 2] {
     [blocked(across).1, KB]
 }
 
@@ -291,15 +291,15 @@ impl TileOrder {
         }
     }
 
-    /// How the values of a matrix `across` an axis are stored in its tile, over [`values_axes`],
-    /// for a device whose load holds `words_per_load` words: a word's values along `KI`, a block's
-    /// words, then as its [`words`](Self::words) order them a row's blocks down the tile's `k` and
-    /// the tile's rows, or a block's rows and the tile's blocks, the tiles ordered `KB` within the
-    /// rows.
+    /// How the values of a matrix `across` a dimension are stored in its tile, over
+    /// [`values_dimensions`], for a device whose load holds `words_per_load` words: a word's values
+    /// along `KI`, a block's words, then as its [`words`](Self::words) order them a row's blocks
+    /// down the tile's `k` and the tile's rows, or a block's rows and the tile's blocks, the tiles
+    /// ordered `KB` within the rows.
     ///
     /// The read is a level of its own because a reader takes a stated tile whole or not at all:
     /// stated as one level, the same bytes are read a word a load.
-    pub fn values_storage(self, across: Axis, words_per_load: usize) -> StoragePartitioning {
+    pub fn values_storage(self, across: Dimension, words_per_load: usize) -> StoragePartitioning {
         let rows = blocked(across).1;
         let storage = stored_in_levels(
             (KI, self.values_per_word),
@@ -313,7 +313,7 @@ impl TileOrder {
     /// A tile's pieces of values above the word, finest first, each a count of the piece below
     /// it: a block's words, then a row's blocks and the rows, or a block's rows and the blocks,
     /// as its [`words`](Self::words) order them.
-    fn values_pieces(self, across: Axis) -> [(Axis, usize); 3] {
+    fn values_pieces(self, across: Dimension) -> [(Dimension, usize); 3] {
         let (tile_k, tile_rows) = self.tile;
         let block = (KI, self.block / self.values_per_word);
         let down_k = (KB, tile_k / self.block);
@@ -327,16 +327,16 @@ impl TileOrder {
     /// The rows one load of values `words_per_load` words wide spans in its tile: one a load row
     /// by row, and block by block as many as a block's words leave room for. The rows a read of
     /// their scales spans, so it brings every scale that load needs and no other reader's.
-    pub fn rows_a_load(self, across: Axis, words_per_load: usize) -> usize {
+    pub fn rows_a_load(self, across: Dimension, words_per_load: usize) -> usize {
         let rows = blocked(across).1;
         let (read, _) = split_at_load(&self.values_pieces(across), words_per_load);
         read.iter()
-            .find(|&&(axis, _)| axis == rows)
+            .find(|&&(dimension, _)| dimension == rows)
             .map_or(1, |&(_, count)| count)
     }
 
-    /// How the block scales of a matrix `across` an axis are stored beside its values, over
-    /// [`scales_axes`], read `rows_a_read` rows a read: in tiles of their own, a word holding
+    /// How the block scales of a matrix `across` a dimension are stored beside its values, over
+    /// [`scales_dimensions`], read `rows_a_read` rows a read: in tiles of their own, a word holding
     /// [`SCALES_PER_WORD`](Self::SCALES_PER_WORD) blocks of one row along `KB`, the tiles ordered
     /// as the values' are. Block by block, the tile's rows' words side by side, then the tile's
     /// further words down `k`: a row's scales of a tile's blocks are one word, so a read of
@@ -348,7 +348,11 @@ impl TileOrder {
     ///
     /// `None` where a tile's `k` is not whole words of block scales, or the tile is one row: its
     /// scales stay in the rows they are packed in.
-    pub fn scales_storage(self, across: Axis, rows_a_read: usize) -> Option<StoragePartitioning> {
+    pub fn scales_storage(
+        self,
+        across: Dimension,
+        rows_a_read: usize,
+    ) -> Option<StoragePartitioning> {
         if !self.scales_in_tiles() {
             return None;
         }
@@ -369,8 +373,8 @@ impl TileOrder {
         Some(self.strips(storage, u8::BITS as usize))
     }
 
-    /// Whether its block scales lie in tiles of their own ([`scales_storage`](Self::scales_storage))
-    /// rather than in the rows they are packed in.
+    /// Whether its block scales lie in tiles of their own
+    /// ([`scales_storage`](Self::scales_storage)) rather than in the rows they are packed in.
     pub fn scales_in_tiles(self) -> bool {
         let (tile_k, tile_rows) = self.tile;
         tile_k.is_multiple_of(self.block * Self::SCALES_PER_WORD) && tile_rows > 1
@@ -410,14 +414,14 @@ impl TileOrder {
         )
     }
 
-    /// The kernel's statement of the block scales of a matrix `k` deep and `across` an axis of some
-    /// extent, over [`scales_axes`], read `rows_a_read` rows a read
+    /// The kernel's statement of the block scales of a matrix `k` deep and `across` a dimension of
+    /// some extent, over [`scales_dimensions`], read `rows_a_read` rows a read
     /// ([`scales_storage`](Self::scales_storage)), counted in scales. `None` where they are not
     /// stored in tiles of their own.
     pub fn kernel_scales_read(
         self,
         k: usize,
-        (across, rows): (Axis, usize),
+        (across, rows): (Dimension, usize),
         rows_a_read: usize,
     ) -> Option<Metadata> {
         let storage = self.scales_storage(across, rows_a_read)?;
@@ -427,14 +431,14 @@ impl TileOrder {
         ))
     }
 
-    /// The kernel's statement of the values of a matrix `k` deep and `across` an axis of some
-    /// extent, over [`values_axes`], read `words_per_load` words a load
-    /// ([`values_storage`](Self::values_storage)). The bytes are the same at every read, so a reader
-    /// states the one it takes over a matrix stored for another.
+    /// The kernel's statement of the values of a matrix `k` deep and `across` a dimension of some
+    /// extent, over [`values_dimensions`], read `words_per_load` words a load
+    /// ([`values_storage`](Self::values_storage)). The bytes are the same at every read, so a
+    /// reader states the one it takes over a matrix stored for another.
     pub fn kernel_values_read(
         self,
         k: usize,
-        (across, rows): (Axis, usize),
+        (across, rows): (Dimension, usize),
         words_per_load: usize,
     ) -> Metadata {
         stated(
@@ -448,9 +452,9 @@ impl TileOrder {
     }
 
     /// A tile-order matrix `k` deep and `rows` across stored in its tiles' words as the tiles a
-    /// descriptor reads: the strips of rows, the tiles along `k` in a strip, then a tile's rows, each
-    /// row's words in a tile one run. A descriptor landing rows (`TmaLanding::Rows`) lands a box of
-    /// whole tiles of it a row's words after another, as a box over rows of `k` would.
+    /// descriptor reads: the strips of rows, the tiles along `k` in a strip, then a tile's rows,
+    /// each row's words in a tile one run. A descriptor landing rows (`TmaLanding::Rows`) lands a
+    /// box of whole tiles of it a row's words after another, as a box over rows of `k` would.
     pub fn words_in_tiles(self, k: usize, rows: usize) -> Metadata {
         let (tile_k, tile_rows) = self.tile;
         let words_per_row = tile_k / self.values_per_word;
@@ -469,10 +473,10 @@ impl TileOrder {
         )
     }
 
-    /// The kernel's statement of a matrix's values over [`values_axes`]: `k`'s finest fragments, as
-    /// many as make a block, become `KI`, and the rest `KB`. The statement the tile DSL wrote, exactly:
-    /// a reader matches the tiles it is stored in, not only the addresses. `None` for a matrix in rows, or one
-    /// whose `k` fragments do not close a block.
+    /// The kernel's statement of a matrix's values over [`values_dimensions`]: `k`'s finest
+    /// fragments, as many as make a block, become `KI`, and the rest `KB`. The statement the tile
+    /// DSL wrote, exactly: a reader matches the tiles it is stored in, not only the addresses.
+    /// `None` for a matrix in rows, or one whose `k` fragments do not close a block.
     pub fn kernel_values(self, matrix: &Metadata) -> Option<Metadata> {
         let [k, n] = matrix_fragments(matrix)?;
         let (kb, ki) = k.split_at(block_split(self.block, &k)?);
@@ -510,17 +514,17 @@ pub fn nvfp4_scheme() -> QuantScheme {
         .per_tensor(ScaleDtype::F32)
 }
 
-/// A tile's pieces above the word, finest first, each `(axis, count)` of the piece below it.
-type Pieces = Vec<(Axis, usize)>;
+/// A tile's pieces above the word, finest first, each `(dimension, count)` of the piece below it.
+type Pieces = Vec<(Dimension, usize)>;
 
 /// A tile of `pieces` above the word `word`, read `words` words a load, the tiles in `grid`'s
 /// order: the read a level of its own, because a reader takes a stated tile whole or not at all,
 /// and stated as one level the same bytes are read a word a load.
 fn stored_in_levels(
-    word: (Axis, usize),
-    pieces: &[(Axis, usize)],
+    word: (Dimension, usize),
+    pieces: &[(Dimension, usize)],
     words: usize,
-    grid: &[Axis],
+    grid: &[Dimension],
 ) -> StoragePartitioning {
     let (read, rest) = split_at_load(pieces, words);
     // A read of one word or of the whole tile is no level of its own.
@@ -579,7 +583,7 @@ impl StripLayout {
 }
 
 /// The kernel's statement of a matrix of `extents` stored as `storage` states.
-fn stated(storage: &StoragePartitioning, extents: &[(Axis, usize)]) -> Metadata {
+fn stated(storage: &StoragePartitioning, extents: &[(Dimension, usize)]) -> Metadata {
     let stored = storage
         .physical(extents)
         .expect("tile order's extents close whole tiles");
@@ -593,27 +597,27 @@ fn stated(storage: &StoragePartitioning, extents: &[(Axis, usize)]) -> Metadata 
 
 /// `pieces`, finest first, split where they fill `words` words: the pieces a load takes whole,
 /// a piece cut where the load ends inside it, then the rest.
-fn split_at_load(pieces: &[(Axis, usize)], words: usize) -> (Pieces, Pieces) {
+fn split_at_load(pieces: &[(Dimension, usize)], words: usize) -> (Pieces, Pieces) {
     let (mut read, mut rest) = (Vec::new(), Vec::new());
     let mut taken = 1;
-    for &(axis, count) in pieces {
+    for &(dimension, count) in pieces {
         let fits = (words / taken).min(count);
         match rest.is_empty() && fits > 1 && count.is_multiple_of(fits) {
             true => {
-                read.push((axis, fits));
+                read.push((dimension, fits));
                 taken *= fits;
                 if fits < count {
-                    rest.push((axis, count / fits));
+                    rest.push((dimension, count / fits));
                 }
             }
-            false => rest.push((axis, count)),
+            false => rest.push((dimension, count)),
         }
     }
     (read, rest)
 }
 
-/// The matrix's `[k, rows]` statement of values the kernel states over [`values_axes`]: `k` is a
-/// block's index then its offset inside it, so `KB`'s fragments come before `KI`'s, coarsest
+/// The matrix's `[k, rows]` statement of values the kernel states over [`values_dimensions`]: `k`
+/// is a block's index then its offset inside it, so `KB`'s fragments come before `KI`'s, coarsest
 /// first.
 ///
 /// # Panics
@@ -626,7 +630,7 @@ pub fn matrix_values(kernel: &Metadata) -> Metadata {
 }
 
 /// The matrix's `[k/block, rows]` statement of the block scales the kernel states over
-/// [`scales_axes`]: the blocks, then the rows, each dim's fragments coarsest first.
+/// [`scales_dimensions`]: the blocks, then the rows, each dim's fragments coarsest first.
 ///
 /// # Panics
 ///
@@ -651,7 +655,7 @@ pub fn swapped(matrix: &Metadata) -> Metadata {
 }
 
 /// `slabs` matrices laid end to end along their rows and stored as one matrix of all their rows,
-/// `whole` the kernel's statement of that matrix over [`values_axes`] or [`scales_axes`], as the
+/// `whole` the kernel's statement of that matrix over [`values_dimensions`] or [`scales_dimensions`], as the
 /// kernel states one slab of them: a leading dim of the slabs, then a slab's rows, `k` and the
 /// rest as `whole` states them. The coarsest piece of the rows is a strip of tiles, which holds
 /// every value and scale of its rows, so a slab of whole strips is one run of them, each slab its
@@ -684,6 +688,7 @@ pub fn stacked(whole: &Metadata, slabs: usize) -> Option<Metadata> {
     Some(assemble(&stated))
 }
 
+
 /// A tiled matrix's `[k, rows]` fragments, coarsest first; `None` for one in rows.
 fn matrix_fragments(matrix: &Metadata) -> Option<[Fragments; 2]> {
     if !matrix.is_tiled() {
@@ -696,7 +701,7 @@ fn matrix_fragments(matrix: &Metadata) -> Option<[Fragments; 2]> {
 mod tests {
     use super::*;
     use crate::layout::{self, fragments};
-    use crate::matmul_axes::N;
+    use crate::matmul_dimensions::N;
 
     const BLOCK: usize = NVFP4_BLOCK;
     const VALUES_PER_WORD: usize = 8;
@@ -840,7 +845,7 @@ mod tests {
     /// in.
     #[test]
     fn an_activation_states_its_matrix_swapped_and_reads_back_as_laid() {
-        use crate::matmul_axes::M;
+        use crate::matmul_dimensions::M;
 
         let (k, m) = (256, 64);
         for (order, words_per_load) in reads() {
@@ -1139,6 +1144,7 @@ mod tests {
         assert!(stacked(&whole, 3).is_some());
         assert!(stacked(&whole, 2).is_none());
     }
+
 
     /// Block by block, every scale lies at an address of its own, inside the matrix's scales, at
     /// every tile and load width; and where a load holds four words, the scales of four

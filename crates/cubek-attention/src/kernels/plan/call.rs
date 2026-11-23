@@ -2,7 +2,7 @@ use crate::kernels::AttentionKernel;
 use crate::kernels::tune::AttentionTuneInputs;
 use cubecl::Device;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use cubek_std::plan::{BoxedPlan, Declined, Step};
 use std::sync::Arc;
@@ -40,10 +40,10 @@ pub struct PackedAttentionCall {
 
 /// The attention of a packed cache read as it lies by one kernel at its lead.
 pub type PackedCacheRead =
-    Arc<dyn Fn(AttentionKernel) -> Result<TensorHandle, Refusal> + Send + Sync>;
+    Arc<dyn Fn(AttentionKernel) -> Result<TensorHandle, Decline> + Send + Sync>;
 
 /// The packed cache rebuilt as floats: the float call that reads it.
-pub type CacheRebuild = Arc<dyn Fn() -> Result<FloatAttentionCall, Refusal> + Send + Sync>;
+pub type CacheRebuild = Arc<dyn Fn() -> Result<FloatAttentionCall, Decline> + Send + Sync>;
 
 /// The packed cache rebuilt as floats before a plan over the float call: a float call passes
 /// through as it is.

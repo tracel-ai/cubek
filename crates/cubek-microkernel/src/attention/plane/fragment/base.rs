@@ -2,18 +2,15 @@ use crate::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, ScoreHo
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
-use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
-};
+use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::{Axis, Level, Levels, Space};
+use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
+use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, SWIZZLED_STAGE_UNREAD,
-    StageLayout, UnitWork,
+    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork,
 };
 
 /// The rows of one head a plane owns: their scores against a stage of keys in the fragments
@@ -21,11 +18,11 @@ use cubek_std::microkernel::{
 /// over the whole value dim in fragments held across the walk.
 ///
 /// Its two multiplications are the shared plane fragment microkernel's: the score, `query · keyᵀ`,
-/// fragments of its rows by the stage's keys walking the head dim, and the value,
-/// `probabilities · value`, fragments of its rows by the value dim walking the stage's keys. The
-/// keys are the columns of the one and the contracted axis of the other, cut by the score's `n` in
-/// the one and by the value's `k` in the other. Where the plane keeps the score between them is
-/// the score's [`ScoreHolder`], which also says whether the two cuts are one grid.
+/// fragments of its rows by the stage's keys walking the head dim, and the value, `probabilities ·
+/// value`, fragments of its rows by the value dim walking the stage's keys. The keys are the
+/// columns of the one and the contracted dimension of the other, cut by the score's `n` in the one
+/// and by the value's `k` in the other. Where the plane keeps the score between them is the score's
+/// [`ScoreHolder`], which also says whether the two cuts are one grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneFragmentAttentionMicrokernel {
     pub settings: PlaneFragmentAttentionMicrokernelSettings,
@@ -44,7 +41,7 @@ pub struct PlaneFragmentAttentionMicrokernel {
 
 /// What a routine whose planes' rows merge with another holder's declines where a plane keeps its
 /// score in fragments, each unit holding the state of its own rows.
-pub const ROW_STATE_HELD_BY_UNIT: Refusal = Refusal::Declined {
+pub const ROW_STATE_HELD_BY_UNIT: Decline = Decline::Unserved {
     why: "planes whose rows merge with another holder's read the score through their \
               windows: a score kept in fragments leaves each unit its own rows' state",
 };
@@ -69,7 +66,7 @@ impl PlaneFragmentAttentionMicrokernel {
     /// is placed in: the walker's level of planes, `planes` its counts, and below it the plane's
     /// score, its queries by the stage's keys by the whole head dim, which the tile cuts and walks.
     /// The counts are what index the accumulator's scratch, a window for every plane of the cube.
-    pub fn score_levels(&self, planes: &[(Axis, usize)]) -> Vec<Level> {
+    pub fn score_levels(&self, planes: &[(Dimension, usize)]) -> Vec<Level> {
         Levels::leaf(&[
             (Q, self.score.tile_extent(Q)),
             (S, self.score.tile_extent(S)),
@@ -113,20 +110,20 @@ impl PlaneFragmentAttentionMicrokernel {
         read: AttentionRead,
         settings: PlaneFragmentAttentionMicrokernelSettings,
     ) -> Vec<Self> {
-        // A stage of the cache converts a side it reads at another element as it fills, as an
-        // `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load the values it
-        // decodes. Both sides converted so are converted to one element alike.
-        let converted = |stored: ElemType, read: ElemType| stored != read;
-        let (keys_converted, values_converted) = (
-            converted(item.elements.key, read.score),
-            converted(item.elements.value, read.value),
-        );
-        if keys_converted && values_converted && read.score != read.value {
+        // A stage of the cache decodes a side that lies packed, or that it reads at another
+        // element, as an `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load
+        // the values it decodes, and the kernel opens its sums on them as decoded. Both sides
+        // decoded are decoded to one element alike.
+        let [keys, values] = item.stage_sources(read);
+        if keys == FragmentSource::Decoded
+            && values == FragmentSource::Decoded
+            && read.score != read.value
+        {
             return Vec::new();
         }
-        let cache_stage = match values_converted {
-            true => read.value,
-            false => read.score,
+        let cache_stage = match values {
+            FragmentSource::Decoded => read.value,
+            _ => read.score,
         };
         let item = &item.read_as(read);
         let (score_item, value_item) = (Self::score_item(item), Self::value_item(item));
@@ -148,14 +145,21 @@ impl PlaneFragmentAttentionMicrokernel {
         holders
             .iter()
             .filter_map(|&holder| {
-                let score = holder.sum_pick(hw, &score_item, score_tile)?;
-                let value = holder.reader_pick(hw, score, &value_item, value_tile)?;
+                let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
+                let value = holder.rescaled_reader_plane(
+                    hw,
+                    &score,
+                    &value_item,
+                    values,
+                    grid,
+                    value_tile,
+                )?;
                 Some(Self {
                     settings: settings.held_in(holder),
                     read,
                     cache_stage,
-                    score: PlaneFragmentMicrokernel::holding(&score_item, grid, score_tile, score)?,
-                    value: PlaneFragmentMicrokernel::holding(&value_item, grid, value_tile, value)?,
+                    score,
+                    value,
                 })
             })
             .collect()
@@ -242,8 +246,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             elements: self.out_edge(),
         });
 
-        // A manual fragment drains one cell at a time, wherever its unit holds it.
-        if self.value.instruction.drain() == PlaneFragmentDrain::CellByCell {
+        // A sum nothing bounces drains one cell at a time, wherever its unit holds it.
+        if self.value.cost.bounced_cell.is_none() {
             vectorization.require(VectorRequirement::Elementwise {
                 operand: AttentionOperand::Out,
             });
@@ -358,7 +362,7 @@ impl PlaneFragmentAttentionMicrokernel {
 
     /// The tile one fragment of the score reads of the staged query: one batch, one head of keys
     /// and one of its queries, the score's rows by its depth along the head dim.
-    pub fn query_tile(&self) -> Vec<(Axis, usize)> {
+    pub fn query_tile(&self) -> Vec<(Dimension, usize)> {
         vec![
             (B, 1),
             (KV, 1),
@@ -372,7 +376,7 @@ impl PlaneFragmentAttentionMicrokernel {
     /// keys' rows by the score's `n` and the value's `k`, whichever is longer, and along the head
     /// and value dims a run of the steps the score and the value take along them
     /// (`block_edge`).
-    pub fn stage_tile(&self) -> Vec<(Axis, usize)> {
+    pub fn stage_tile(&self) -> Vec<(Dimension, usize)> {
         vec![
             (B, 1),
             (KV, 1),
@@ -422,30 +426,39 @@ impl PlaneFragmentAttentionMicrokernel {
     ///
     /// Where it keeps the score in its fragments, each unit holding the state of its own rows:
     /// the routine keeps the score in windows instead ([`ScoreHolder::Window`]).
-    pub fn merges_rows(&self) -> Result<(), Refusal> {
+    pub fn merges_rows(&self) -> Result<(), Decline> {
         match self.score_holder() {
             ScoreHolder::Window => Ok(()),
             ScoreHolder::Fragments => Err(ROW_STATE_HELD_BY_UNIT),
         }
     }
 
-    /// Whether its fragments read a stage laid out as `layout`.
-    ///
-    /// # Errors
-    ///
-    /// Swizzled tiles where it reads the score through its windows: a cmma fragment loads a tile
-    /// off a pointer and a stride, which a swizzled row does not have.
-    pub fn reads_stage(&self, layout: StageLayout) -> Result<(), Refusal> {
-        match (layout, self.score_holder()) {
-            (StageLayout::SwizzledBlocks, ScoreHolder::Window) => Err(SWIZZLED_STAGE_UNREAD),
-            (
-                StageLayout::Strided
-                | StageLayout::PaddedRows
-                | StageLayout::Blocks
-                | StageLayout::PaddedBlocks
-                | StageLayout::SwizzledBlocks,
-                _,
-            ) => Ok(()),
-        }
+    /// The storage a stage of keys and values over `stage` is held in, laid out as `layout` in
+    /// its stage blocks ([`stage_tile`](Self::stage_tile)) and filled by `delivery`: its rows
+    /// arranged as both products' instructions read them, the score's loading the keys and the
+    /// value's the values ([`PlaneFragmentMicrokernel::read_by`]). A swizzle a cmma fragment
+    /// cannot read is padded instead.
+    pub fn stage_storage(
+        &self,
+        layout: StageLayout,
+        delivery: Delivery,
+        stage: &Space,
+    ) -> StageStorage {
+        let stated = layout.storage(stage, self.stage_tile());
+        self.value
+            .read_by(self.score.read_by(stated, delivery), delivery)
+    }
+
+    /// The storage its query, staged once over `stage`, is held in, laid out as `layout` in the
+    /// tiles a fragment of the score reads ([`query_tile`](Self::query_tile)) and filled by
+    /// `delivery`: its rows arranged as the score's instruction reads them.
+    pub fn query_storage(
+        &self,
+        layout: StageLayout,
+        delivery: Delivery,
+        stage: &Space,
+    ) -> StageStorage {
+        self.score
+            .read_by(layout.storage(stage, self.query_tile()), delivery)
     }
 }

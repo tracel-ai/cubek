@@ -6,7 +6,7 @@
 //! contraction, whatever weights it is handed.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Partitioning, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::interpolate::InterpolateWorkItem;
@@ -17,7 +17,7 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 
 use super::window::{BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W};
-pub use super::window::{Channels, WindowAxis, WindowedLaunch};
+pub use super::window::{Channels, WindowDimension, WindowedLaunch};
 
 /// An interpolate microkernel ready to launch.
 #[derive(Debug, Clone, Copy)]
@@ -33,10 +33,10 @@ impl InterpolateLaunch {
     /// blocks of the plane.
     pub fn new(
         hw: &Hardware,
-        windows: [WindowAxis; 2],
+        windows: [WindowDimension; 2],
         input: [usize; 2],
         channels: Channels,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let windowed = WindowedLaunch::new(hw, windows, input, channels)?;
         let item = InterpolateWorkItem {
             channels: channels.per_unit,
@@ -63,7 +63,7 @@ impl InterpolateLaunch {
         weights: TensorArg,
         output: TensorArg,
         element: ElemType,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self.windowed.launcher(client)?;
         let weights = TileTensorLaunch::new(
             weights,
@@ -100,14 +100,14 @@ impl InterpolateLaunch {
 fn cube_interpolate_kernel<E: Float>(
     input: &TileTensor<'_>,
     weights: &TileTensor<'_>,
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeInterpolateMicrokernel,
     #[define(E)] _element: ElemType,
 ) {
     let input = input.tile(&partitioning);
     let weights = weights.tile(&partitioning);
-    let output = output.tile(&partitioning);
+    let output = output.tile_mut(&partitioning);
     for cube in partitioning {
         for block in cube.walk() {
             cube_interpolate_microkernel(
