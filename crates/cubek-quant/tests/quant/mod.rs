@@ -4,6 +4,7 @@ mod base;
 mod fp4;
 mod fp8;
 mod harness;
+mod per_row;
 mod scale_rounding;
 mod tiled;
 mod two_level;
