@@ -59,7 +59,7 @@ impl CubeStagedWalk {
     /// `input` as the walk's stages hold it: as it lies, its scales kept beside its values, where
     /// the fill copies the inputs as stored and the planes decode them as they load; as it is
     /// where the fill decodes it. A float input carries no scales and stages as before.
-    pub(crate) fn as_staged(input: &Tile, #[comptime] walk: CubeStagedWalk) -> Tile {
+    fn as_staged(input: &Tile, #[comptime] walk: CubeStagedWalk) -> Tile {
         if walk.decoded().is_none() {
             input.scales_kept_beside()
         } else {
@@ -70,7 +70,7 @@ impl CubeStagedWalk {
     /// `input` without the outer scales `sum` takes out and applies once, and those scales: as the
     /// sum's instruction would have them ([`Tile::factor`]), or all of them where the walk decodes
     /// the inputs into an 8-bit float, whose range their values already fill.
-    pub(crate) fn factored(
+    fn factored(
         input: &Tile,
         sum: &Tile,
         #[comptime] walk: CubeStagedWalk,
@@ -83,6 +83,28 @@ impl CubeStagedWalk {
             input.factor_out(sum)
         } else {
             input.factor(sum)
+        }
+    }
+
+    /// The sum of `a · b` opened over `over` as `walk` reads them: each input as its stages hold
+    /// it ([`as_staged`](Self::as_staged)), without the outer scales the sum takes out
+    /// ([`factored`](Self::factored)), and those scales, which the sum applies once.
+    pub(crate) fn opened<EA: Numeric>(
+        over: &Tile,
+        a: &Tile,
+        b: &Tile,
+        #[comptime] walk: CubeStagedWalk,
+    ) -> OpenedSum {
+        let (a, b) = (Self::as_staged(a, walk), Self::as_staged(b, walk));
+        let sum = Self::open_sum::<EA>(over, &a, &b, walk);
+        let (a, a_factor) = Self::factored(&a, &sum, walk);
+        let (b, b_factor) = Self::factored(&b, &sum, walk);
+        OpenedSum {
+            sum,
+            a,
+            b,
+            a_factor,
+            b_factor,
         }
     }
 
@@ -125,17 +147,11 @@ impl CubeStagedWalk {
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
     ) -> PlanesSum {
-        let (a, b) = (Self::as_staged(a, walk), Self::as_staged(b, walk));
-        let sum = Self::open_sum::<EA>(over, &a, &b, walk);
-        let (a, a_factor) = Self::factored(&a, &sum, walk);
-        let (b, b_factor) = Self::factored(&b, &sum, walk);
-
-        cube_staged_sum_microkernel(run, &sum, &a, &b, walk, storage);
+        let opened = Self::opened::<EA>(over, a, b, walk);
+        cube_staged_sum_microkernel(run, &opened.sum, &opened.a, &opened.b, walk, storage);
 
         PlanesSum {
-            sum: Self::drain_sum(sum, walk)
-                .scaled(&a_factor)
-                .scaled(&b_factor),
+            sum: opened.scaled(Self::drain_sum(opened.sum.clone(), walk)),
             role: Role::new_Compute(),
         }
     }
@@ -160,10 +176,8 @@ impl CubeStagedWalk {
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
     ) -> PlanesSum {
-        let (a, b) = (Self::as_staged(a, walk), Self::as_staged(b, walk));
-        let sum = Self::open_sum::<EA>(over, &a, &b, walk);
-        let (a, a_factor) = Self::factored(&a, &sum, walk);
-        let (b, b_factor) = Self::factored(&b, &sum, walk);
+        let opened = Self::opened::<EA>(over, a, b, walk);
+        let (sum, a, b) = (opened.sum.clone(), opened.a.clone(), opened.b.clone());
 
         let depth = walk.ring.stages_in_flight.get();
         let mut stages = Stages::smem(&run, &a, &b, storage, depth, walk.decoded());
@@ -217,7 +231,7 @@ impl CubeStagedWalk {
         Self::free_ring_for_box(&stages, walk);
 
         PlanesSum {
-            sum: sum.scaled(&a_factor).scaled(&b_factor),
+            sum: opened.scaled(sum),
             role: stages.role(),
         }
     }
@@ -396,6 +410,25 @@ impl AsyncStage for PlaneGroupStages {
 
     fn done(&self) -> Pending<()> {
         self.sum.commit()
+    }
+}
+
+/// A sum opened over a cube's box, the inputs it contracts as the walk stages them, and the
+/// outer scales it took out of each ([`CubeStagedWalk::opened`]).
+#[derive(CubeType)]
+pub(crate) struct OpenedSum {
+    pub sum: Tile,
+    pub a: Tile,
+    pub b: Tile,
+    pub a_factor: Factor,
+    pub b_factor: Factor,
+}
+
+#[cube]
+impl OpenedSum {
+    /// `sum` under the scales the opened sum took out of its inputs, applied as it drains.
+    pub(crate) fn scaled(&self, sum: Tile) -> Tile {
+        sum.scaled(&self.a_factor).scaled(&self.b_factor)
     }
 }
 

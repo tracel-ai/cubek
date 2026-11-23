@@ -17,21 +17,11 @@ pub fn hypercube_staged_last_arrival_microkernel<'a, EA: Numeric, D: ServedDesti
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
 ) {
-    let slot = merge.tile();
+    // As a staged cube's: the scales the sum took out of its inputs are applied as each run parks
+    // its part.
+    let opened = CubeStagedWalk::opened::<EA>(&merge.tile(), a, b, walk);
+    cube_staged_sum_microkernel(run, &opened.sum, &opened.a, &opened.b, walk, storage);
 
-    // As a staged cube's: the stages keep words of block scales beside the values, and the
-    // scales above them leave for the sum, applied once as each run parks its part.
-    let (a, b) = (
-        CubeStagedWalk::as_staged(a, walk),
-        CubeStagedWalk::as_staged(b, walk),
-    );
-    let sum = CubeStagedWalk::open_sum::<EA>(&slot, &a, &b, walk);
-    let (a, a_factor) = CubeStagedWalk::factored(&a, &sum, walk);
-    let (b, b_factor) = CubeStagedWalk::factored(&b, &sum, walk);
-    cube_staged_sum_microkernel(run, &sum, &a, &b, walk, storage);
-
-    let sum = CubeStagedWalk::drain_sum(sum, walk)
-        .scaled(&a_factor)
-        .scaled(&b_factor);
+    let sum = opened.scaled(CubeStagedWalk::drain_sum(opened.sum.clone(), walk));
     merge.hand_on::<D>(&sum, dest);
 }

@@ -60,8 +60,8 @@ impl StoredTensor {
     }
 
     /// Every buffer it binds, in the order its binding holds them: its values, then a packed one's
-    /// block scales and its outer scale, or a row-scaled one's scales. What a kept binding is rebound to, in place of the
-    /// buffers it was made over.
+    /// block scales and its outer scale, or a row-scaled one's scales. What a kept binding is
+    /// rebound to, in place of the buffers it was made over.
     pub fn buffers(&self) -> Vec<BufferBinding> {
         self.tensors()
             .map(|tensor| tensor.binding.handle.clone())
@@ -90,12 +90,14 @@ impl StoredTensor {
 
     /// The tensors behind [`buffers`](Self::buffers), in its order.
     fn tensors(&self) -> impl Iterator<Item = &PlainTensor> {
-        let (values, scales): (_, Vec<&PlainTensor>) = match self {
-            Self::Plain(tensor) => (tensor, Vec::new()),
-            Self::Packed(tensor) => (tensor.words(), tensor.scales().collect()),
-            Self::RowScaled(tensor) => (tensor.values(), vec![tensor.scales()]),
+        let (values, packed, row) = match self {
+            Self::Plain(tensor) => (tensor, None, None),
+            Self::Packed(tensor) => (tensor.words(), Some(tensor.scales()), None),
+            Self::RowScaled(tensor) => (tensor.values(), None, Some(tensor.scales())),
         };
-        core::iter::once(values).chain(scales)
+        core::iter::once(values)
+            .chain(packed.into_iter().flatten())
+            .chain(row)
     }
 }
 

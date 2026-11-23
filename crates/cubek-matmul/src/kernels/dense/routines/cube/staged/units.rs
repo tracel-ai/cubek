@@ -60,10 +60,6 @@ impl CubeStagedMatmulRoutineSettings {
     }
 }
 
-/// A plane's grid of fragments, `(along m, along n, depth)`, on a cube's planes, `(along m, along
-/// n)`.
-type GridOnPlanes = ((usize, usize, usize), (usize, usize));
-
 impl CubeStagedMatmulRoutine {
     /// Boxes against a packed input several steps of `M` a plane, `(steps, planes)` as
     /// [`in_steps`](CubeStagedMicrokernelSettings::in_steps) takes them. A cube decodes every
@@ -105,12 +101,24 @@ impl CubeStagedMatmulRoutine {
     ];
 
     /// Boxes against a packed input the fill decodes into an 8-bit float, beside activations
-    /// stored in one ([`RowScaledTensor`](crate::kernels::tensor::RowScaledTensor)), `(grid,
-    /// planes)`, a second stage in flight: four by four fragments on four by two planes, one step
-    /// deep and two. On an R9700 the first was the fastest box of every grid raced on Qwen3.8
-    /// 27B's projections at 512 and 2048 rows (FP8-row against MXFP4 with row-factored scales,
-    /// 156 to 187 TFLOP/s), but at its output projection at 512 rows, which the second took.
-    const EIGHT_BIT_BOXES: [GridOnPlanes; 2] = [((4, 4, 1), (4, 2)), ((4, 4, 2), (4, 2))];
+    /// stored in one ([`RowScaledTensor`](crate::kernels::tensor::RowScaledTensor)), a second
+    /// stage in flight: four by four fragments on four by two planes, one step deep and two. On
+    /// an R9700 the first was the fastest box of every grid raced on Qwen3.8 27B's projections at
+    /// 512 and 2048 rows (FP8-row against MXFP4 with row-factored scales, 156 to 187 TFLOP/s),
+    /// but at its output projection at 512 rows, which the second took. They join the race of
+    /// every packed product on such a device.
+    const EIGHT_BIT_BOXES: [CubeStagedMicrokernelSettings; 2] = [
+        CubeStagedMicrokernelSettings::boxed(
+            PlaneFragmentMicrokernelSettings::grid(4, 4, 1),
+            MatmulPlaneLayout::new(4, 2),
+        )
+        .ringed(StageRing::DOUBLE),
+        CubeStagedMicrokernelSettings::boxed(
+            PlaneFragmentMicrokernelSettings::grid(4, 4, 2),
+            MatmulPlaneLayout::new(4, 2),
+        )
+        .ringed(StageRing::DOUBLE),
+    ];
 
     /// The steps of `K` a stage decoding a packed input holds, each a step of the inputs' finest
     /// reads, which the stage then reads as widely as it holds whole: four, which over byte scales
@@ -149,8 +157,9 @@ impl CubeStagedMatmulRoutine {
     /// at every count of steps of `K` a stage holds ([`PACKED_STAGE_STEPS`](Self::PACKED_STAGE_STEPS)),
     /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
     /// a device without a copy engine, the boxes staged as stored (`STORED`), then, on a device
-    /// whose manual MMA multiplies `e4m3`, the boxes of an 8-bit float product (`EIGHT_BIT_BOXES`). Planes splitting
-    /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
+    /// whose manual MMA multiplies `e4m3`, the boxes of an 8-bit float product
+    /// (`EIGHT_BIT_BOXES`). Planes splitting `K` only on a device whose shared memory takes the
+    /// atomic `f32` add they merge through:
     /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
     ///
     /// The instruction is the tile layer's, `cmma` for a sum written out: on an L4 the `mma`
@@ -177,16 +186,7 @@ impl CubeStagedMatmulRoutine {
             .into_iter()
             .map(|settings| settings.microkernel);
         let stored = Self::STORED.into_iter().filter(|_| !hw.unit_async_copy());
-        let eight_bit = Self::EIGHT_BIT_BOXES
-            .into_iter()
-            .filter(|_| hw.e4m3_mma())
-            .map(|((along_m, along_n, depth), (planes_m, planes_n))| {
-                CubeStagedMicrokernelSettings::boxed(
-                    PlaneFragmentMicrokernelSettings::grid(along_m, along_n, depth),
-                    MatmulPlaneLayout::new(planes_m, planes_n),
-                )
-                .ringed(StageRing::DOUBLE)
-            });
+        let eight_bit = Self::EIGHT_BIT_BOXES.into_iter().filter(|_| hw.e4m3_mma());
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
         for candidate in boxed.chain(one_step).chain(stored).chain(eight_bit) {
             let merges = candidate.planes_along_k.get() > 1;

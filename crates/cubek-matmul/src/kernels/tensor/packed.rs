@@ -1151,21 +1151,9 @@ impl PackedTensor {
             None => launcher
                 .arg(scale.rows(1, 1), WORD)
                 .gathered(Self::over_whole_matrix(words_dimensions, tiled_along)),
-            Some(_) => {
-                let rows = scale.shape().num_elements();
-                let inside = blocked(tiled_along).1;
-                let dimensions: Vec<Dimension> = words_dimensions
-                    .iter()
-                    .copied()
-                    .filter(|&dimension| dimension != inside)
-                    .collect();
-                launcher
-                    .arg(scale.rows(rows, 1), WORD)
-                    .gathered(Projection::new(
-                        &dimensions,
-                        &[scale_rows.clone(), PhysicalAxisMap::broadcast()],
-                    ))
-            }
+            Some(_) => launcher
+                .arg(scale.rows(scale.shape().num_elements(), 1), WORD)
+                .gathered(Self::per_row(words_dimensions, tiled_along, scale_rows)),
         })
     }
 
@@ -1328,16 +1316,34 @@ impl PackedTensor {
     /// bound words carry, that its block scales span, none addressed. A factor is looked up at the
     /// values' coordinates, so it spans no dimension they do not carry.
     fn over_whole_matrix(words_dimensions: &[Dimension], tiled_along: Dimension) -> Projection {
+        Projection::new(
+            &Self::outer_dimensions(words_dimensions, tiled_along),
+            &[PhysicalAxisMap::broadcast(), PhysicalAxisMap::broadcast()],
+        )
+    }
+
+    /// One value a row of `scale_rows` over the same dimensions as
+    /// [`over_whole_matrix`](Self::over_whole_matrix), broadcast along the rest.
+    fn per_row(
+        words_dimensions: &[Dimension],
+        tiled_along: Dimension,
+        scale_rows: &PhysicalAxisMap,
+    ) -> Projection {
+        Projection::new(
+            &Self::outer_dimensions(words_dimensions, tiled_along),
+            &[scale_rows.clone(), PhysicalAxisMap::broadcast()],
+        )
+    }
+
+    /// The dimensions an outer scale spans: every one of `words_dimensions`, the dimensions the
+    /// bound words carry, that their block scales span.
+    fn outer_dimensions(words_dimensions: &[Dimension], tiled_along: Dimension) -> Vec<Dimension> {
         let inside = blocked(tiled_along).1;
-        let dimensions: Vec<Dimension> = words_dimensions
+        words_dimensions
             .iter()
             .copied()
             .filter(|&dimension| dimension != inside)
-            .collect();
-        Projection::new(
-            &dimensions,
-            &[PhysicalAxisMap::broadcast(), PhysicalAxisMap::broadcast()],
-        )
+            .collect()
     }
 
     /// The values of a quantized matrix bound under its logical shape, `values`, as the elements
