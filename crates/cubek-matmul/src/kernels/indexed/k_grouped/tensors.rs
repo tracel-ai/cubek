@@ -137,3 +137,50 @@ impl KGroupedMatmulTensors {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::FloatKind;
+    use cubek_test_utils::client;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// Operands' side, whole tiles ([`PlainTensor::zeros_in_tiles`]).
+    const SIDE: usize = 32;
+
+    /// A row-major `[SIDE, SIDE]`.
+    fn in_rows(client: &Client) -> PlainTensor {
+        PlainTensor::zeros(client, &[SIDE, SIDE], vec![SIDE, 1], F32)
+    }
+
+    /// A `[SIDE, SIDE]` stored in tiles.
+    fn in_tiles(client: &Client) -> PlainTensor {
+        PlainTensor::zeros_in_tiles(client, SIDE, F32)
+    }
+
+    /// Why the grouped product of `lhs` and `rhs` is declined.
+    fn declined(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Option<Decline> {
+        let ends = PlainTensor::of_u32s(client, &[2], &[16, 32]);
+        KGroupedMatmulTensors::new(client, lhs, rhs, ends).err()
+    }
+
+    /// Each group's rows are a range of the buffer's rows, which a tile's strides do not state.
+    #[test]
+    fn an_lhs_stored_in_tiles_is_refused() {
+        let client = client();
+        assert_eq!(
+            declined(&client, in_tiles(&client), in_rows(&client)),
+            Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)
+        );
+    }
+
+    #[test]
+    fn an_rhs_stored_in_tiles_is_refused() {
+        let client = client();
+        assert_eq!(
+            declined(&client, in_rows(&client), in_tiles(&client)),
+            Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)
+        );
+    }
+}

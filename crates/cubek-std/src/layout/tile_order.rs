@@ -473,6 +473,20 @@ impl TileOrder {
         )
     }
 
+    /// `whole`, the kernel's statement of one matrix over [`values_dimensions`] or
+    /// [`scales_dimensions`], as that of the `slabs` matrices its rows hold end to end: a leading
+    /// dim of the slabs, each its strips of tiles past the one before, then one slab as `whole`
+    /// states it. `None` where `slabs` does not divide the strips, or the strips are not the
+    /// coarsest piece of the matrix.
+    pub fn stacked(whole: &Metadata, slabs: usize) -> Option<Metadata> {
+        stacked(whole, slabs)
+    }
+
+    /// Whether `rows` rows are whole strips of its tiles.
+    pub fn holds_whole_strips(self, rows: usize) -> bool {
+        rows.is_multiple_of(self.tile.1)
+    }
+
     /// The kernel's statement of a matrix's values over [`values_dimensions`]: `k`'s finest
     /// fragments, as many as make a block, become `KI`, and the rest `KB`. The statement the tile
     /// DSL wrote, exactly: a reader matches the tiles it is stored in, not only the addresses.
@@ -654,16 +668,9 @@ pub fn swapped(matrix: &Metadata) -> Metadata {
     assemble(&[second.as_slice(), first.as_slice()])
 }
 
-/// `slabs` matrices laid end to end along their rows and stored as one matrix of all their rows,
-/// `whole` the kernel's statement of that matrix over [`values_dimensions`] or [`scales_dimensions`], as the
-/// kernel states one slab of them: a leading dim of the slabs, then a slab's rows, `k` and the
-/// rest as `whole` states them. The coarsest piece of the rows is a strip of tiles, which holds
-/// every value and scale of its rows, so a slab of whole strips is one run of them, each slab its
-/// strips' run past the one before.
-///
-/// `None` where `slabs` does not divide the strips, or the strips are not the coarsest piece of
-/// the matrix.
-pub fn stacked(whole: &Metadata, slabs: usize) -> Option<Metadata> {
+/// [`TileOrder::stacked`]: the coarsest piece of the rows is a strip of tiles, which holds every
+/// value and scale of its rows, so a slab of whole strips is one run of them.
+fn stacked(whole: &Metadata, slabs: usize) -> Option<Metadata> {
     let dims = fragments(whole);
     let (rows, rest) = dims.split_first()?;
     let (&(strips, pitch), inside) = rows.split_first()?;
@@ -704,6 +711,13 @@ mod tests {
 
     const BLOCK: usize = NVFP4_BLOCK;
     const VALUES_PER_WORD: usize = 8;
+
+    /// Values of `k` a stack's rows hold, where a dense strip of every tile is a power of two
+    /// bytes, so a staggered one is padded.
+    const STACK_K: usize = 4096;
+
+    /// Slabs a stack holds.
+    const SLABS: usize = 3;
 
     /// The address `meta` stores logical `coords` at: each coordinate spread over its dim's
     /// fragments, coarsest first.
@@ -1094,54 +1108,108 @@ mod tests {
         }
     }
 
-    /// A stack's statement sends slab `e`'s row `r` where the whole matrix's statement sends its
-    /// row `e · rows + r`, values and scales alike, staggered or not, whether a slab is one strip
-    /// or several: a slab is a fixed run of strips, so a table's entry picks one by a stride.
-    #[test]
-    fn a_stack_of_whole_strips_reads_each_slab_where_the_matrix_holds_it() {
-        let (k, slabs) = (4096, 3);
-        for (order, words_per_load) in reads() {
+    /// Each order, staggered for three slabs of one strip and of two, with the rows of a slab and
+    /// the words a load holds.
+    fn stacks() -> impl Iterator<Item = (TileOrder, usize, usize)> {
+        reads().flat_map(|(order, words_per_load)| {
             let (_, tile_rows) = order.tile();
-            for rows in [tile_rows, 2 * tile_rows] {
-                let order = order.staggered(transaction()).for_matrix(k, slabs * rows);
-                let whole = order.kernel_values_read(k, (N, slabs * rows), words_per_load);
-                let stack = stacked(&whole, slabs).expect("whole strips a slab");
-                for (e, r, ki) in (0..slabs)
-                    .flat_map(|e| (0..rows).map(move |r| (e, r)))
-                    .flat_map(|(e, r)| (0..k).step_by(7).map(move |ki| (e, r, ki)))
-                {
-                    let (kb, ki) = (ki / BLOCK, ki % BLOCK);
-                    assert_eq!(
-                        offset(&stack, &[e, r, kb, ki]),
-                        offset(&whole, &[e * rows + r, kb, ki]),
-                        "{order:?}, {words_per_load} words a load, slab {e} row {r}"
-                    );
-                }
-                let Some(whole) = order.kernel_scales_read(k, (N, slabs * rows), 1) else {
-                    continue;
-                };
-                let stack = stacked(&whole, slabs).expect("whole strips a slab");
-                for (e, r, kb) in (0..slabs)
-                    .flat_map(|e| (0..rows).map(move |r| (e, r)))
-                    .flat_map(|(e, r)| (0..k / BLOCK).map(move |kb| (e, r, kb)))
-                {
-                    assert_eq!(
-                        offset(&stack, &[e, r, kb]),
-                        offset(&whole, &[e * rows + r, kb]),
-                        "{order:?} scales, slab {e} row {r}"
-                    );
-                }
+            [tile_rows, 2 * tile_rows].map(|rows| {
+                let order = order
+                    .staggered(transaction())
+                    .for_matrix(STACK_K, SLABS * rows);
+                (order, rows, words_per_load)
+            })
+        })
+    }
+
+    /// Asserts `stack`, the statement of [`SLABS`] slabs of `rows` rows, sends each slab's row
+    /// where `whole` sends that row of the one matrix they are stored as, at every one of `inner`,
+    /// the coordinates inside a row.
+    fn assert_slabs_lie_in(
+        stack: &Metadata,
+        whole: &Metadata,
+        rows: usize,
+        inner: &[Vec<usize>],
+        named: &str,
+    ) {
+        for row in 0..SLABS * rows {
+            for inside in inner {
+                let slab = [&[row / rows, row % rows], &inside[..]].concat();
+                let matrix = [&[row], &inside[..]].concat();
+                assert_eq!(
+                    offset(stack, &slab),
+                    offset(whole, &matrix),
+                    "{named}: row {row} at {inside:?}"
+                );
             }
         }
     }
 
+    /// The values of a stack lie where the matrix holds them, staggered or not, whether a slab is
+    /// one strip or several: a slab is a fixed run of strips, so a table's entry picks one by a
+    /// stride.
+    #[test]
+    fn a_stack_of_whole_strips_reads_each_slab_s_values_where_the_matrix_holds_them() {
+        let inner: Vec<_> = (0..STACK_K)
+            .step_by(7)
+            .map(|k| vec![k / BLOCK, k % BLOCK])
+            .collect();
+        for (order, rows, words_per_load) in stacks() {
+            let whole = order.kernel_values_read(STACK_K, (N, SLABS * rows), words_per_load);
+            let stack = TileOrder::stacked(&whole, SLABS).expect("whole strips a slab");
+            assert_slabs_lie_in(&stack, &whole, rows, &inner, &format!("{order:?}"));
+        }
+    }
+
+    /// The scales of a stack lie where the matrix holds them, as its values do.
+    #[test]
+    fn a_stack_of_whole_strips_reads_each_slab_s_scales_where_the_matrix_holds_them() {
+        let inner: Vec<_> = (0..STACK_K / BLOCK).map(|block| vec![block]).collect();
+        let in_tiles = stacks().filter(|(order, ..)| order.scales_in_tiles());
+        for (order, rows, _) in in_tiles {
+            let whole = order
+                .kernel_scales_read(STACK_K, (N, SLABS * rows), 1)
+                .expect("scales in tiles");
+            let stack = TileOrder::stacked(&whole, SLABS).expect("whole strips a slab");
+            assert_slabs_lie_in(&stack, &whole, rows, &inner, &format!("{order:?}"));
+        }
+    }
+
+    /// Three strips of eight rows, as the kernel states their values.
+    fn three_strips() -> Metadata {
+        nvfp4(TileWords::RowByRow, (128, 8)).kernel_values_read(256, (N, 24), 4)
+    }
+
     /// Slabs that split a strip state no stack.
     #[test]
-    fn a_stack_splitting_a_strip_states_none() {
-        let order = nvfp4(TileWords::RowByRow, (128, 8));
-        let whole = order.kernel_values_read(256, (N, 24), 4);
-        assert!(stacked(&whole, 3).is_some());
-        assert!(stacked(&whole, 2).is_none());
+    fn slabs_splitting_a_strip_state_no_stack() {
+        assert_eq!(TileOrder::stacked(&three_strips(), 2), None);
+    }
+
+    /// No slab states no stack.
+    #[test]
+    fn no_slabs_state_no_stack() {
+        assert_eq!(TileOrder::stacked(&three_strips(), 0), None);
+    }
+
+    /// A matrix whose rows are its finest piece, columns of words, holds no run of rows to take a
+    /// slab from.
+    #[test]
+    fn rows_finer_than_the_rest_state_no_stack() {
+        let columns = Metadata::new([24, 256], [1, 24]);
+        assert_eq!(TileOrder::stacked(&columns, 3), None);
+    }
+
+    /// Two strips are whole strips.
+    #[test]
+    fn rows_of_two_tiles_are_whole_strips() {
+        assert!(nvfp4(TileWords::RowByRow, (128, 8)).holds_whole_strips(16));
+    }
+
+    /// A strip and a half is not whole strips.
+    #[test]
+    fn rows_of_a_tile_and_a_half_are_no_whole_strips() {
+        assert!(!nvfp4(TileWords::RowByRow, (128, 8)).holds_whole_strips(12));
     }
 
     /// Block by block, every scale lies at an address of its own, inside the matrix's scales, at

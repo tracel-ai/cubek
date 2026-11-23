@@ -1,17 +1,14 @@
 //! The M-grouped launch against a host reference.
 
 use super::{MGroupedFloors, MGroupedMatmulTensors, MGroupedSettings, launch_tuned};
-use crate::kernels::MATMUL_SLABS_TAKE_NO_FLOAT_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::{Listing, Product};
-use crate::tiled::storage::{StorageLevels, tile};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
 use cubek_std::autotune::GroupPriority;
 use cubek_test_utils::client;
@@ -107,43 +104,6 @@ fn no_rows_return_an_empty_output() {
     )
     .expect("no row declines nothing");
     assert_eq!(out.shape().to_vec(), vec![0, n]);
-}
-
-/// A stack stored in tiles is refused rather than read as rows: a grouped product reads its
-/// stack a slab at a time through a table, which reads no stored tile.
-#[test]
-fn a_stack_stored_in_tiles_is_refused() {
-    let client = client();
-    let (rows, k, n, groups) = (8, 32, 32, 2);
-    let (row_dimension, col_dimension) = (Dimension(0), Dimension(1));
-    let stack = f32s(
-        &client,
-        [k, groups * n],
-        [groups * n, 1],
-        &vec![1.0; k * groups * n],
-    );
-    let storage = StorageLevels::new(&[(col_dimension, 16), (row_dimension, 16)])
-        .grid(&[col_dimension, row_dimension]);
-    let tiled = tile(
-        &client,
-        stack.binding,
-        &[row_dimension, col_dimension],
-        F32,
-        None,
-        storage,
-    )
-    .expect("the stack tiles");
-    let declined = launch(
-        &client,
-        f32s(&client, [rows, k], [k, 1], &vec![1.0; rows * k]),
-        PlainTensor::of_handle(tiled),
-        u32s(&client, &[4, 8]),
-        SlabDimension::Output,
-    );
-    assert!(
-        matches!(declined, Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)),
-        "{declined:?}"
-    );
 }
 
 /// The entry asks the floors listed for its stack's kind and no others: a float stack served only

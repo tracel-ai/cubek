@@ -63,8 +63,7 @@ impl RoutedMatmulTensors {
     /// # Errors
     ///
     /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_FLOAT_TILES`] for a
-    /// float stack stored in tiles; a packed one is read as its slabs when launched
-    /// ([`PackedTensor::stacked`](crate::kernels::tensor::PackedTensor::stacked)).
+    /// float stack stored in tiles.
     ///
     /// # Panics
     ///
@@ -311,5 +310,39 @@ impl RoutedMatmulTensors {
     /// One slab's `[k, n]`.
     fn slab_shape(&self) -> [usize; 2] {
         self.along.slab_shape(&self.rhs, self.experts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::FloatKind;
+    use cubek_test_utils::client;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// Operands' side, whole tiles ([`PlainTensor::zeros_in_tiles`]).
+    const SIDE: usize = 32;
+
+    /// A row-major `[SIDE, SIDE]`.
+    fn in_rows(client: &Client) -> PlainTensor {
+        PlainTensor::zeros(client, &[SIDE, SIDE], vec![SIDE, 1], F32)
+    }
+
+    /// A `[SIDE, SIDE]` stored in tiles.
+    fn in_tiles(client: &Client) -> PlainTensor {
+        PlainTensor::zeros_in_tiles(client, SIDE, F32)
+    }
+
+    /// A float stack is bound as one batch a slab, whose strides state no tile.
+    #[test]
+    fn a_float_stack_stored_in_tiles_is_refused() {
+        let client = client();
+        let routes = PlainTensor::of_u32s(&client, &[SIDE, 1], &[0; SIDE]);
+        let stack = StoredTensor::Plain(in_tiles(&client));
+        let rows = in_rows(&client);
+        let declined =
+            RoutedMatmulTensors::new(&client, rows, stack, routes, 2, SlabDimension::Output);
+        assert_eq!(declined.err(), Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES));
     }
 }
