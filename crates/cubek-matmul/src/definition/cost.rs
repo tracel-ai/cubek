@@ -1,7 +1,7 @@
 use cubecl::{
     client::Client,
     std::throughput::measure_peak_throughput,
-    throughput::{ThroughputKey, compute_throughput_key, select_cmma_tile},
+    throughput::{CmmaDims, ThroughputKey},
     tune::Work,
 };
 
@@ -9,19 +9,23 @@ use crate::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
 
 /// Unconstrained tile selection matches what the hardware can do rather than what a
 /// problem's own padding limits allow, so a small `m` is still judged against peak.
-const UNCONSTRAINED: (usize, usize, usize) = (usize::MAX, usize::MAX, usize::MAX);
+const UNCONSTRAINED: CmmaDims = CmmaDims {
+    m: usize::MAX,
+    n: usize::MAX,
+    k: usize::MAX,
+};
 
 /// The throughput key a matmul over these register types probes.
 pub fn compute_key(client: &Client, elems: &MatmulElems) -> ThroughputKey {
-    let cmma_tile = select_cmma_tile(
-        client,
+    let cmma_tile = CmmaDims::largest_supported(
+        &client.properties().features,
         elems.lhs_register,
         elems.rhs_register,
         elems.acc_register,
         UNCONSTRAINED,
     );
 
-    compute_throughput_key(cmma_tile, elems.lhs_register, elems.acc_register)
+    ThroughputKey::compute(cmma_tile, elems.lhs_register, elems.acc_register)
 }
 
 /// The device's measured arithmetic peak, in ops/s, for a bench row over these register
