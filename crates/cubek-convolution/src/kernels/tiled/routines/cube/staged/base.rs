@@ -87,7 +87,8 @@ impl Routine for CubeStagedConvRoutine {
             storage: Some(partitioning.storage()),
         };
         microkernel.ring = partitioning.ring(settings.microkernel.ring);
-        let resolved = microkernel.resolve_in(hw, &problem.work_item(), &placed)?;
+        let item = problem.work_item();
+        let resolved = microkernel.resolve_in(hw, &item, item.packings(), &placed)?;
         let mut vectorization = Vectorization::new();
         Self::vectorize(&resolved.microkernel, &partitioning, &mut vectorization);
         let cube = CubeResources {

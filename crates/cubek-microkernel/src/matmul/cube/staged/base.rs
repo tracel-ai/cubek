@@ -18,7 +18,7 @@ use cubecl::tile::space::Coverage;
 use cubecl::tile::{FragmentSource, Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::BlockScales;
+use cubek_std::layout::stored::{BlockScales, Packing};
 use cubek_std::matmul_dimensions::{K, KB, M, N};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, StageRing};
 
@@ -419,10 +419,14 @@ impl CubeStagedMicrokernel {
     /// A matrix instruction on a device that commits to no plane width; planes set aside to fill
     /// where they cannot be ([`CubeStagedFillingDecline`]); a plane group MMA its fill and drain do
     /// not serve (`CubeStagedWgmmaDecline`).
+    ///
+    /// `packings` are the packed inputs of the item as stated, before [`contracted`]
+    /// (Self::contracted) decodes them away: a fill decoding one is what a ring holds in registers.
     pub fn resolve(
         self,
         hw: &Hardware,
         item: &MatmulWorkItem,
+        packings: MatmulOperands<Option<Packing>>,
         cube_space: &MatmulCubeSpace,
     ) -> Result<CubeStagedResolved, Decline> {
         let placed = CubeStagedBox {
@@ -431,7 +435,7 @@ impl CubeStagedMicrokernel {
             masks_output: cube_space.overhangs_output,
             storage: None,
         };
-        self.resolve_in(hw, item, &placed)
+        self.resolve_in(hw, item, packings, &placed)
     }
 
     /// The storage a stage lands in when the units copy it, with the layout they copy it in.
@@ -456,12 +460,18 @@ impl CubeStagedMicrokernel {
         self,
         hw: &Hardware,
         item: &MatmulWorkItem,
+        packings: MatmulOperands<Option<Packing>>,
         placed: &CubeStagedBox,
     ) -> Result<CubeStagedResolved, Decline> {
         let stage = &placed.stage;
         let plane_width = self.plane.instruction.units(hw)?;
         let units = placed.contracting_planes * plane_width as usize;
-        let operands = stage.operands(item.elements, self.plane.orders, self.walk().reads);
+        let operands = stage.operands(
+            item.elements,
+            self.plane.orders,
+            self.walk().reads,
+            packings,
+        );
         let ring = self.ring.resolve(hw, &operands, units);
         let instruction = self.plane.instruction;
         let merges = self.drain() == CubeStagedDrain::Merged;
