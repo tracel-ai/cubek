@@ -49,7 +49,9 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its item writes the indices beside the values and `indices` is none.
+    /// Where its item writes the indices beside the values and `indices` is none, or writes
+    /// indices its carrier does not keep; or where its carrier keeps indices and
+    /// `partial_indices` is none.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"

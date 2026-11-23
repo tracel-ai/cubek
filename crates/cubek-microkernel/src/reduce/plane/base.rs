@@ -95,7 +95,8 @@ impl PlaneShuffleReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its item writes the indices beside the values and `indices` is none.
+    /// Where its item writes the indices beside the values and `indices` is none, or writes
+    /// indices its carrier does not keep.
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         plane: &Region,

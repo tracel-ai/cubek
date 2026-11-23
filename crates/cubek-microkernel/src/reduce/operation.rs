@@ -152,8 +152,8 @@ impl ReduceOperation {
     }
 
     /// The widest line its accumulator keeps apart, where the carrier bounds it, for a thread
-    /// keeping `lane_slots` top-k slots across a line's lanes. A top-k keeps `k` values and their
-    /// indices for every lane of a line: past `lane_slots` they spill out of registers, so the line
+    /// keeping `lane_slots` top-k slots across a line's lanes. A top-k keeps `k` values, and their
+    /// indices where it writes them, for every lane of a line: past `lane_slots` they spill out of registers, so the line
     /// narrows, down to one value for a list longer than `lane_slots`.
     ///
     /// # Panics
@@ -182,7 +182,7 @@ impl ReduceOperation {
     /// The cells it writes for `row`, computed on the host: one value, or `k` best first for a
     /// top-k, and an index written as a number. A NaN ranks ahead of every number and the lower
     /// index wins a tie, so a max or a min keeps a NaN. Past a row shorter than `k`, a top-k
-    /// writes the lowest `f32` for a value and `u32::MAX` for an index.
+    /// writes what an empty slot holds: `-inf` for a value and `u32::MAX` for an index.
     ///
     /// # Panics
     ///
@@ -200,7 +200,7 @@ impl ReduceOperation {
             Self::All => vec![flag(row.iter().all(|value| *value != 0.0))],
             Self::ArgMax => vec![ranked(row, Rank::Largest)[0].1 as f32],
             Self::ArgMin => vec![ranked(row, Rank::Smallest)[0].1 as f32],
-            Self::TopK { k } => best_k(row, k, |(value, _)| value, f32::MIN),
+            Self::TopK { k } => best_k(row, k, |(value, _)| value, f32::NEG_INFINITY),
             Self::ArgTopK { k } => best_k(row, k, |(_, index)| index as f32, u32::MAX as f32),
         }
     }
@@ -533,13 +533,13 @@ mod tests {
         );
     }
 
-    /// Past a row shorter than `k`, a top-k writes the lowest `f32`.
+    /// Past a row shorter than `k`, a top-k writes `-inf`.
     #[test]
     #[cfg(feature = "cpu-reference")]
     fn a_top_k_past_a_short_row_writes_the_lowest_value() {
         assert_eq!(
             ReduceOperation::TopK { k: 3 }.reference_cells(&[2.0]),
-            vec![2.0, f32::MIN, f32::MIN]
+            vec![2.0, f32::NEG_INFINITY, f32::NEG_INFINITY]
         );
     }
 
