@@ -51,9 +51,12 @@ pub const ROW_STATE_HELD_BY_UNIT: Decline = Decline::Unserved {
 /// The bytes a row of a stage block spans at least, where the dim holds them: a cache line.
 pub const BLOCK_ROW_BYTES: usize = 128;
 
-/// The octaves of headroom a plane's softmax keeps at a 16-bit element: `f16` holds `2^15`, one more
-/// than a probability reaches.
+/// The octaves of headroom a plane's softmax keeps at a 16-bit element or wider: `f16` reaches
+/// `2^15`, one octave past a probability's largest.
 const HALF_HEADROOM_OCTAVES: u32 = 14;
+
+/// The octaves of headroom a plane's softmax keeps at `e4m3`, whose largest value is 448, `2^8.8`.
+const E4M3_HEADROOM_OCTAVES: u32 = 8;
 
 impl PlaneFragmentAttentionMicrokernel {
     /// Where the plane keeps the score: its settings', which the tile picked its instructions for.
@@ -106,14 +109,14 @@ impl PlaneFragmentAttentionMicrokernel {
 
     /// Octaves a row's scores may rise above its softmax's max before the max follows them
     /// ([`OnlineSoftmax::with_headroom`](cubecl::tile::ops::softmax::OnlineSoftmax::with_headroom)):
-    /// the probabilities are cast to the values' element, whose largest value is past
-    /// `2^HALF_HEADROOM_OCTAVES` at `f16` and wider. An 8-bit element's is not, so its max follows
-    /// every block.
+    /// the whole octaves below the largest value of the values' element, which the probabilities
+    /// are cast to, are its to spend. An element not named here has none.
     pub fn softmax_headroom(&self) -> u32 {
         match self.read.value {
             ElemType::Float(
                 FloatKind::F16 | FloatKind::BF16 | FloatKind::TF32 | FloatKind::F32,
             ) => HALF_HEADROOM_OCTAVES,
+            ElemType::Float(FloatKind::E4M3) => E4M3_HEADROOM_OCTAVES,
             _ => 0,
         }
     }
