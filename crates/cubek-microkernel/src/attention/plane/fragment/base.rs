@@ -146,8 +146,14 @@ impl PlaneFragmentAttentionMicrokernel {
             .iter()
             .filter_map(|&holder| {
                 let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
-                let value =
-                    holder.reader_plane(hw, &score, &value_item, values, grid, value_tile)?;
+                let value = holder.rescaled_reader_plane(
+                    hw,
+                    &score,
+                    &value_item,
+                    values,
+                    grid,
+                    value_tile,
+                )?;
                 Some(Self {
                     settings: settings.held_in(holder),
                     read,

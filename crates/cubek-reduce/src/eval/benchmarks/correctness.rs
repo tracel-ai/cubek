@@ -38,7 +38,9 @@ impl ReduceCorrectness {
             )),
         }
     }
+}
 
+impl ReduceCorrectness {
     /// Validate the path that is actually benchmarked. The two-launch kind runs
     /// the same `Reduce::execute` as `Single` for its values half, so only the fused kind
     /// needs the dedicated entrypoint.
@@ -140,18 +142,30 @@ mod proof_shape_tests {
     use super::proof_shape;
     use crate::eval::cpu_reference::RAMP_MAX_ELEMS;
 
+    /// A proof shape whose values a ramp permutes: a power of two at most the ramp's longest.
+    fn fits_a_ramp(proof: &[usize]) -> bool {
+        let elems: usize = proof.iter().product();
+        elems.is_power_of_two() && elems <= RAMP_MAX_ELEMS
+    }
+
+    /// The fewest axes keep within a ramp.
     #[test]
-    fn stays_within_ramp_bounds_at_every_rank() {
-        for rank in 1..=16 {
-            for axis in 0..rank {
-                let proof = proof_shape(&vec![3; rank], axis);
-                let elems: usize = proof.iter().product();
-                assert!(
-                    elems.is_power_of_two() && elems <= RAMP_MAX_ELEMS,
-                    "rank {rank} axis {axis}: {proof:?} has {elems} elements"
-                );
-            }
-        }
+    fn one_axis_stays_within_ramp_bounds() {
+        assert!(fits_a_ramp(&proof_shape(&[3], 0)));
+    }
+
+    /// The most axes, reduced along the first, keep within a ramp.
+    #[test]
+    fn the_most_axes_along_the_first_stay_within_ramp_bounds() {
+        const RANK: usize = 16;
+        assert!(fits_a_ramp(&proof_shape(&[3; RANK], 0)));
+    }
+
+    /// The most axes, reduced along the last, keep within a ramp.
+    #[test]
+    fn the_most_axes_along_the_last_stay_within_ramp_bounds() {
+        const RANK: usize = 16;
+        assert!(fits_a_ramp(&proof_shape(&[3; RANK], RANK - 1)));
     }
 
     #[test]

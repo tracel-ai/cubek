@@ -7,7 +7,9 @@ use cubek_reduce::eval::benchmarks::{
 };
 use cubek_reduce::eval::cpu_reference::comparison_epsilon;
 use cubek_reduce::kernels::ReduceOpStrategy;
-use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
+use cubek_test_utils::{
+    CatalogEntry, Correctness, TestOutcome, ValidationResult, assert_equals_approx,
+};
 
 const SEEDS: [u64; 2] = [12, 34];
 
@@ -42,7 +44,10 @@ fn run(strategy_id: &str, problem_id: &str) {
 fn run_f16(strategy_id: &str, problem_id: &str) {
     let f16 = ReduceBenchPrecision::F16;
     if !precisions().contains(&f16) {
-        return;
+        return TestOutcome::Validated(ValidationResult::Skipped(
+            "no f16 row on this device".to_string(),
+        ))
+        .enforce();
     }
     run(strategy_id, &format!("{problem_id}{}", f16.suffix()));
 }

@@ -81,18 +81,45 @@ impl ScoreHolder {
         grid: PlaneFragmentMicrokernelSettings,
         tile: [usize; 3],
     ) -> Option<PlaneFragmentMicrokernel> {
+        let step = self.reader_step(kept, item, rhs, tile);
+        PlaneFragmentMicrokernel::draining(hw, item, grid, step)
+    }
+
+    /// [`reader_plane`](Self::reader_plane) for a product whose sum's rows are scaled between its
+    /// stages, as the forward's output is by its online softmax
+    /// ([`PlaneFragmentMicrokernel::rescaling`]).
+    pub(crate) fn rescaled_reader_plane(
+        self,
+        hw: &Hardware,
+        kept: &PlaneFragmentMicrokernel,
+        item: &MatmulWorkItem,
+        rhs: FragmentSource,
+        grid: PlaneFragmentMicrokernelSettings,
+        tile: [usize; 3],
+    ) -> Option<PlaneFragmentMicrokernel> {
+        let step = self.reader_step(kept, item, rhs, tile);
+        PlaneFragmentMicrokernel::rescaling(hw, item, grid, step)
+    }
+
+    /// The step of a product reading the sum `kept` holds here as its `A`, against `rhs`.
+    fn reader_step(
+        self,
+        kept: &PlaneFragmentMicrokernel,
+        item: &MatmulWorkItem,
+        rhs: FragmentSource,
+        tile: [usize; 3],
+    ) -> ProductStep {
         let lhs = match self {
             ScoreHolder::Window => FragmentSource::Values(item.elements.lhs),
             ScoreHolder::Fragments => kept.kept_sum(),
         };
-        let step = ProductStep {
+        ProductStep {
             shape: tile,
             holder: ComputeScope::Plane,
             lhs,
             rhs,
             sum: item.sum,
-        };
-        PlaneFragmentMicrokernel::draining(hw, item, grid, step)
+        }
     }
 }
 

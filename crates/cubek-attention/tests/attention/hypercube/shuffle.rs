@@ -6,7 +6,9 @@ use cubek_attention::kernels::{
 };
 use cubek_test_utils::ScopeUnderTest;
 
-use crate::attention::{DECODES, DECODES_WIDE_FP8, DECODES_WIDE_PER_TENSOR, Forward};
+use crate::attention::{
+    DECODE_WINDOWED, DECODES, DECODES_WIDE_FP8, DECODES_WIDE_PER_TENSOR, Forward,
+};
 
 /// The partial routine's lead, merged by a second launch, on every decode case.
 #[test]
@@ -41,4 +43,15 @@ fn every_hypercube_shuffle_setting_reads_a_cache_quantized_per_tensor() {
     partial.check(partial.at_every_setting(&DECODES_WIDE_PER_TENSOR));
     let last_arrival = Forward::new(HypercubeLastArrivalShuffleAttentionRoutine::new());
     last_arrival.check(last_arrival.at_every_setting(&DECODES_WIDE_PER_TENSOR));
+}
+
+/// Every setting of the split-keys partial and of the last arrival over a decode step that sees
+/// only the last few of its keys: the boxes whose keys it sees none of hold nothing to merge, and
+/// the merge must leave the boxes that do as they are.
+#[test]
+fn every_hypercube_shuffle_setting_decodes_through_a_window() {
+    let partial = Forward::split_keys(HypercubeShufflePartialAttentionRoutine::new());
+    partial.check(partial.at_every_setting(&[DECODE_WINDOWED]));
+    let last_arrival = Forward::new(HypercubeLastArrivalShuffleAttentionRoutine::new());
+    last_arrival.check(last_arrival.at_every_setting(&[DECODE_WINDOWED]));
 }
