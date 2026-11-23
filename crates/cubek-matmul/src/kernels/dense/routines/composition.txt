@@ -914,23 +914,23 @@ served by: unit-registers 12/12, plane-shuffle 15/15, cube-staged 28/40, hypercu
   refused (plane-dequantize): the packed placement walks the block-split space of the [k, n] input it streams, and this one is float
 
 # rdna4-rocm · 1 rows · f16 × q8 (rows)
-served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · f16 × q4 (rows)
-served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · f16 × nvfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · f16 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · f16 × mxfp8 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · bf16 × bf16 (rows)
@@ -939,23 +939,23 @@ served by: unit-registers 12/12, plane-shuffle 15/15, cube-staged 28/40, hypercu
   refused (plane-dequantize): the packed placement walks the block-split space of the [k, n] input it streams, and this one is float
 
 # rdna4-rocm · 1 rows · bf16 × q8 (rows)
-served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · bf16 × q4 (rows)
-served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · bf16 × nvfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · bf16 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · bf16 × mxfp8 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 1 rows · q8 × q8 (rows)
@@ -1111,27 +1111,27 @@ served by: unit-registers 12/12, cube-staged 28/40, hypercube-last-arrival 5/5
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
 
 # rdna4-rocm · 512 rows · f16 × q8 (rows)
-served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · f16 × q4 (rows)
-served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · f16 × nvfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · f16 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · f16 × mxfp8 (tiles)
-served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1141,27 +1141,27 @@ served by: unit-registers 12/12, cube-staged 28/40, hypercube-last-arrival 5/5
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
 
 # rdna4-rocm · 512 rows · bf16 × q8 (rows)
-served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · bf16 × q4 (rows)
-served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · bf16 × nvfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · bf16 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # rdna4-rocm · 512 rows · bf16 × mxfp8 (tiles)
-served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 43/176
+served by: plane-dequantize 1/1, cube-staged 39/109, hypercube-last-arrival 22/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -1877,23 +1877,23 @@ served by: unit-registers 12/12, plane-shuffle 15/15, cube-staged 31/40, hypercu
   refused (plane-dequantize): the packed placement walks the block-split space of the [k, n] input it streams, and this one is float
 
 # m2-pro · 1 rows · f16 × q8 (rows)
-served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · f16 × q4 (rows)
-served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · f16 × nvfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 78/109, hypercube-last-arrival 146/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 78/109, hypercube-last-arrival 140/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · f16 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · f16 × mxfp8 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · bf16 × bf16 (rows)
@@ -1902,23 +1902,23 @@ served by: unit-registers 12/12, plane-shuffle 15/15, cube-staged 31/40, hypercu
   refused (plane-dequantize): the packed placement walks the block-split space of the [k, n] input it streams, and this one is float
 
 # m2-pro · 1 rows · bf16 × q8 (rows)
-served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · bf16 × q4 (rows)
-served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 11/20, plane-dequantize 1/1, cube-shuffle 12/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · bf16 × nvfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 78/109, hypercube-last-arrival 146/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 78/109, hypercube-last-arrival 140/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · bf16 × mxfp4 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · bf16 × mxfp8 (tiles)
-served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-shuffle 12/20, plane-dequantize 1/1, cube-shuffle 13/14, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 1 rows · q8 × q8 (rows)
@@ -2074,27 +2074,27 @@ served by: unit-registers 12/12, cube-staged 31/40, hypercube-last-arrival 5/5
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
 
 # m2-pro · 512 rows · f16 × q8 (rows)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · f16 × q4 (rows)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · f16 × nvfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 78/109, hypercube-last-arrival 146/176
+served by: plane-dequantize 1/1, cube-staged 78/109, hypercube-last-arrival 140/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · f16 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · f16 × mxfp8 (tiles)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
@@ -2104,27 +2104,27 @@ served by: unit-registers 12/12, cube-staged 31/40, hypercube-last-arrival 5/5
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
 
 # m2-pro · 512 rows · bf16 × q8 (rows)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · bf16 × q4 (rows)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · bf16 × nvfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 78/109, hypercube-last-arrival 146/176
+served by: plane-dequantize 1/1, cube-staged 78/109, hypercube-last-arrival 140/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · bf16 × mxfp4 (tiles)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
 # m2-pro · 512 rows · bf16 × mxfp8 (tiles)
-served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 104/176
+served by: plane-dequantize 1/1, cube-staged 64/109, hypercube-last-arrival 83/176
   refused (plane-shuffle, cube-shuffle): the plane shuffle holds from one row to `PlaneShuffleMicrokernel::MAX_ROWS`, every one against one read of the rhs
   refused (unit-registers): this routine reads float operands; a packed one runs on the packed routines
 
