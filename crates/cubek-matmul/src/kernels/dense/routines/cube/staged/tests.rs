@@ -79,6 +79,11 @@ mod base {
         prepared.extend(prepared_by::<CubeStagedMatmulRoutine>(
             hw,
             problem,
+            CubeStagedMatmulRoutine.block_scaled_settings(hw),
+        ));
+        prepared.extend(prepared_by::<CubeStagedMatmulRoutine>(
+            hw,
+            problem,
             vec![CubeStagedMatmulRoutineSettings::DEFAULT],
         ));
         prepared
@@ -1518,6 +1523,51 @@ mod base {
                 assert_eq!(blueprint.microkernel.block_scales(), scales, "{form:?}");
             }
         }
+    }
+
+    /// A device without a copy engine, whose quantized MMA multiplies MXFP8's codes (RDNA4's),
+    /// races the units' block-scaled boxes, and each prepares an MXFP8 product of its own box.
+    /// A device with a copy engine lists none: its engine's routine fills those boxes.
+    #[test]
+    fn the_units_list_block_scaled_boxes_only_without_a_copy_engine() {
+        use cubecl::features::QuantizedMmaConfig;
+        use cubecl::quant::scheme::{QuantValue, ScaleDtype};
+
+        let mut hw = devices::strix_halo();
+        devices::features(&mut hw).matmul.quantized_mma = [QuantizedMmaConfig {
+            a: QuantValue::E4M3,
+            b: QuantValue::E4M3,
+            scales: ScaleDtype::UE8M0,
+            block_k: 32,
+            m: 16,
+            n: 16,
+            k: 32,
+        }]
+        .into_iter()
+        .collect();
+        assert!(!hw.unit_async_copy());
+        let listed = CubeStagedMatmulRoutine.block_scaled_settings(&hw);
+        assert_eq!(
+            listed.len(),
+            CubeStagedMatmulRoutine::BLOCK_SCALED_BOXES.len()
+        );
+        let form = cubek_std::block_scaled_mma(&hw)
+            .next()
+            .expect("the quantized MMA is a block-scaled instruction")
+            .form;
+        let inputs =
+            CubeStagedMatmulRoutine::block_scaled_inputs(&form).expect("MXFP8 is a packed input");
+        let problem =
+            MatmulRoutineProblem::packed(512, 512, 512, ElemType::Float(FloatKind::F16), inputs);
+        for settings in listed {
+            let prepared = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings);
+            assert!(prepared.is_ok(), "{settings}: {prepared:?}");
+        }
+        assert!(
+            CubeStagedMatmulRoutine
+                .block_scaled_settings(&devices::rtx_pro_6000())
+                .is_empty()
+        );
     }
 
     /// NVFP4 laid block by block keeps its scales in tiles across its rows, which the units copying

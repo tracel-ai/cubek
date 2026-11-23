@@ -178,6 +178,45 @@ impl CubeStagedMatmulRoutine {
     }
 }
 
+impl CubeStagedMatmulRoutine {
+    /// Boxes against both inputs packed and staged as they are stored, its planes contracting
+    /// them through a block-scaled or quantized instruction a stage one call deep or two, counted
+    /// in the instruction's calls: four by four on two by two planes, the fastest MXFP8 x MXFP4
+    /// box at every one of Qwen3.8 27B's projections at 512 and 2048 rows on an R9700, then the
+    /// MXFP8 x MXFP8 boxes, two by four calls two deep on four by two planes within 4% of the
+    /// fastest at every one, each of the others the fastest at one, eight by two on two by two
+    /// last, within 5% of the fastest MXFP4 box at every projection. Each one stage at a time:
+    /// a second stage or a stage through registers never moved them by more than the noise.
+    pub(crate) const BLOCK_SCALED_BOXES: [((usize, usize, usize), (usize, usize)); 7] = [
+        ((4, 4, 1), (2, 2)),
+        ((2, 4, 2), (4, 2)),
+        ((2, 4, 2), (2, 2)),
+        ((4, 4, 1), (4, 2)),
+        ((2, 4, 1), (4, 2)),
+        ((2, 8, 1), (2, 2)),
+        ((8, 2, 1), (2, 2)),
+    ];
+
+    /// The settings a block-scaled product read as stored races on `hw`, its stages filled by the
+    /// cube's units (`BLOCK_SCALED_BOXES`), its cubes in the grid's
+    /// order: what a device without a copy engine races, whose engine routines list none.
+    /// Elsewhere none: the engines' own lists fill the same boxes faster.
+    pub fn block_scaled_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
+        if hw.unit_async_copy() {
+            return Vec::new();
+        }
+        Self::BLOCK_SCALED_BOXES
+            .into_iter()
+            .map(|((along_m, along_n, depth), (planes_m, planes_n))| {
+                CubeStagedMatmulRoutineSettings::on_grid(CubeStagedMicrokernelSettings::boxed(
+                    PlaneFragmentMicrokernelSettings::grid(along_m, along_n, depth),
+                    MatmulPlaneLayout::new(planes_m, planes_n),
+                ))
+            })
+            .collect()
+    }
+}
+
 impl core::fmt::Display for CubeStagedMatmulRoutineSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(

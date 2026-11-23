@@ -20,7 +20,8 @@ use cubek_std::routine::Routine;
 
 /// The block-scaled autotune's candidates on `hw`: the staged routines reading both inputs as
 /// stored on the block-scaled tensor cores, at each of their block-scaled settings (the TMA
-/// engine's, its store's, the copy engine's), and the units' default, then the floor every
+/// engine's, its store's, the copy engine's, the units' on a device without a copy engine), and
+/// the units' default, then the floor every
 /// autotune ends on, the packed inputs decoded first ([`floor::decoded`]): autotune sends a
 /// product here by its formats and its `k`, which no candidate's own binding is asked about
 /// first, so a product none of them binds — batched, say — is still answered.
@@ -35,6 +36,7 @@ pub(super) fn candidates(hw: Hardware, _groups: MatmulAutotuneGroups) -> MatmulT
     let tma = CubeStagedTmaMatmulRoutine.block_scaled_settings(&hw);
     let tma_stored = CubeStagedTmaStoredMatmulRoutine.block_scaled_settings(&hw);
     let async_copy = CubeStagedAsyncCopyMatmulRoutine.block_scaled_settings(&hw);
+    let units = CubeStagedMatmulRoutine.block_scaled_settings(&hw);
     let autotune = tma.into_iter().fold(autotune, |autotune, settings| {
         autotune.candidate(
             &group,
@@ -51,6 +53,12 @@ pub(super) fn candidates(hw: Hardware, _groups: MatmulAutotuneGroups) -> MatmulT
         autotune.candidate(
             &group,
             candidate(hw.clone(), CubeStagedAsyncCopyMatmulRoutine, settings),
+        )
+    });
+    let autotune = units.into_iter().fold(autotune, |autotune, settings| {
+        autotune.candidate(
+            &group,
+            candidate(hw.clone(), CubeStagedMatmulRoutine, settings),
         )
     });
     autotune
