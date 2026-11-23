@@ -19,7 +19,7 @@ use cubek_microkernel::matmul::plane::plane_window_microkernel;
 pub fn plane_window_conv_kernel<EA: Numeric, EL: Numeric>(
     input: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] block: SoftwareMatmul,
     #[comptime] bounded: Vec<Dimension>,
@@ -28,7 +28,7 @@ pub fn plane_window_conv_kernel<EA: Numeric, EL: Numeric>(
 ) {
     let input = input.tile(&partitioning);
     let rhs = rhs.tile(&partitioning);
-    let out = out.tile(&partitioning);
+    let out = out.tile_mut(&partitioning);
 
     for plane in &partitioning {
         let mut inside = true;

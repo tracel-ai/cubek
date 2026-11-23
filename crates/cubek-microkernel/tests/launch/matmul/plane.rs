@@ -424,14 +424,14 @@ impl MatmulLaunch for PlaneWindowLaunch {
 fn plane_window_kernel<EA: Numeric, E: Numeric>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] block: SoftwareMatmul,
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let a = lhs.tile(&partitioning);
     let b = rhs.tile(&partitioning);
-    let c = out.tile(&partitioning);
+    let c = out.tile_mut(&partitioning);
     for plane in &partitioning {
         plane_window_microkernel(plane, &a, &b, &c, block);
     }

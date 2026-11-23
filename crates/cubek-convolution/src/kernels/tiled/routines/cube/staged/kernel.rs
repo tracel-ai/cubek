@@ -12,7 +12,7 @@ use cubek_microkernel::matmul::cube::{CubeStagedWalk, cube_staged_microkernel};
 pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
     input: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
@@ -20,7 +20,7 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric>(
 ) {
     let input = input.tile(&partitioning);
     let rhs = rhs.tile(&partitioning);
-    let out = out.tile(&partitioning);
+    let out = out.tile_mut(&partitioning);
 
     // No barrier between boxes: each box's first stage refill synchronizes the cube.
     for cube in &partitioning {
