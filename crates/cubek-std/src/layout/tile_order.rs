@@ -688,7 +688,6 @@ pub fn stacked(whole: &Metadata, slabs: usize) -> Option<Metadata> {
     Some(assemble(&stated))
 }
 
-
 /// A tiled matrix's `[k, rows]` fragments, coarsest first; `None` for one in rows.
 fn matrix_fragments(matrix: &Metadata) -> Option<[Fragments; 2]> {
     if !matrix.is_tiled() {
@@ -1144,7 +1143,6 @@ mod tests {
         assert!(stacked(&whole, 3).is_some());
         assert!(stacked(&whole, 2).is_none());
     }
-
 
     /// Block by block, every scale lies at an address of its own, inside the matrix's scales, at
     /// every tile and load width; and where a load holds four words, the scales of four

@@ -117,7 +117,6 @@ fn a_stack_in_tile_order_whose_slabs_split_a_strip_is_refused() {
     }
 }
 
-
 /// The routed autotune, against a stack laid either way it takes: a col float stack, its buffer
 /// `[slabs · n, k]` behind the `[k, slabs · n]` view, and a stack packed in each format.
 #[test]

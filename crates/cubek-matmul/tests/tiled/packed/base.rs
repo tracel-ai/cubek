@@ -74,7 +74,6 @@ pub(crate) enum Laid {
     InTiles(TileWords, (usize, usize)),
 }
 
-
 /// `slabs` matrices of `rows` rows of `k` values, laid one after the other along the dimension of
 /// `operand` beside `K`, packed along `k` in `format`.
 #[derive(Clone, Copy, Debug)]
@@ -157,7 +156,6 @@ impl PackedSlabs {
             Laid::InTiles(words, tile) => self.in_tile_order(client, words, tile),
         }
     }
-
 
     /// The matrix read as the stack of its slabs.
     pub(crate) fn stack(&self) -> StoredTensor {
@@ -250,7 +248,6 @@ impl PackedSlabs {
             sized,
         )
     }
-
 
     /// The dequantized value at `k` and row `row` of slab `slab`.
     pub(crate) fn cell(&self, slab: usize, k: usize, row: usize) -> f32 {
