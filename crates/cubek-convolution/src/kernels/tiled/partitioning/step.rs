@@ -22,7 +22,9 @@ impl ConvStep {
             },
         }
     }
+}
 
+impl ConvStep {
     pub(super) fn beside(self) -> usize {
         match self {
             Self::Alone { .. } => 1,

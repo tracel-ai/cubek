@@ -66,6 +66,13 @@ impl ConvAxis {
         }
     }
 
+    /// The `[out, tap]` axis pair of each of `spatial_dims` spatial dims.
+    pub fn spatial(spatial_dims: SpatialDimCount) -> impl Iterator<Item = [Dimension; 2]> {
+        (0..spatial_dims.0).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
+    }
+}
+
+impl ConvAxis {
     /// The measure of a spatial `label`.
     fn of_spatial(label: u8) -> Self {
         let offset = label - Self::FIRST_SPATIAL;
@@ -75,11 +82,6 @@ impl ConvAxis {
         } else {
             Self::Tap(dim)
         }
-    }
-
-    /// The `[out, tap]` axis pair of each of `spatial_dims` spatial dims.
-    pub fn spatial(spatial_dims: SpatialDimCount) -> impl Iterator<Item = [Dimension; 2]> {
-        (0..spatial_dims.0).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
     }
 }
 

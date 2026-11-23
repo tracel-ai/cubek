@@ -64,7 +64,9 @@ impl ConvTiles {
         };
         tiles
     }
+}
 
+impl ConvTiles {
     /// The cells of `operand` one instruction tile holds along its innermost axis.
     fn run(&self, operand: MatmulOperand) -> usize {
         match self.roles.axes().dim(self.roles.inner.get(operand)) {

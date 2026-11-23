@@ -121,14 +121,6 @@ impl Hardware {
         }
     }
 
-    /// Whether a plane is a single unit: a committed width of one and no plane operations.
-    fn single_unit_planes(&self) -> bool {
-        let hardware = &self.properties.hardware;
-        !self.properties.features.plane.contains(Plane::Ops)
-            && hardware.plane_size_min == 1
-            && hardware.plane_size_max == 1
-    }
-
     /// How the device runs a launch's units: single-unit planes on a device that counts CPU cores
     /// are swept by its physical cores, or by every core it counts where it states no physical
     /// ones.
@@ -333,6 +325,16 @@ impl Hardware {
     /// barriers its copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn unit_async_copy(&self) -> bool {
         Delivery::AsyncPerUnit.runs_on(&self.properties).is_ok()
+    }
+}
+
+impl Hardware {
+    /// Whether a plane is a single unit: a committed width of one and no plane operations.
+    fn single_unit_planes(&self) -> bool {
+        let hardware = &self.properties.hardware;
+        !self.properties.features.plane.contains(Plane::Ops)
+            && hardware.plane_size_min == 1
+            && hardware.plane_size_max == 1
     }
 }
 

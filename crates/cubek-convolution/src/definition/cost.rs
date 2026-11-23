@@ -31,27 +31,6 @@ pub struct ConvCostDim {
 }
 
 impl ConvCost {
-    /// The product of `extent` over the spatial dims.
-    fn positions(&self, extent: impl Fn(&ConvCostDim) -> usize) -> usize {
-        self.spatial.iter().map(extent).product()
-    }
-
-    /// The implicit gemm this convolution is: one output pixel per row, one
-    /// output channel per column, contracting over the filter's input window.
-    ///
-    /// Its traffic is not the gemm's, since the operands are the maps and the
-    /// filter rather than the unfolded matrices, so only the compute comes
-    /// from here.
-    fn gemm(&self) -> MatmulCost {
-        MatmulCost {
-            batches: 1,
-            m: self.batch * self.positions(|dim| dim.out),
-            n: self.channels_out,
-            k: self.channels_in * self.positions(|dim| dim.kernel),
-            elems: self.elems.clone(),
-        }
-    }
-
     /// Calculates the compute operations and compulsory memory traffic for the
     /// convolution.
     pub fn work(&self) -> Work {
@@ -93,6 +72,29 @@ impl ConvCost {
     /// an accelerated convolution issues the same MMA a gemm does.
     pub fn compute_key(&self, client: &Client) -> ThroughputKey {
         self.gemm().compute_key(client)
+    }
+}
+
+impl ConvCost {
+    /// The product of `extent` over the spatial dims.
+    fn positions(&self, extent: impl Fn(&ConvCostDim) -> usize) -> usize {
+        self.spatial.iter().map(extent).product()
+    }
+
+    /// The implicit gemm this convolution is: one output pixel per row, one
+    /// output channel per column, contracting over the filter's input window.
+    ///
+    /// Its traffic is not the gemm's, since the operands are the maps and the
+    /// filter rather than the unfolded matrices, so only the compute comes
+    /// from here.
+    fn gemm(&self) -> MatmulCost {
+        MatmulCost {
+            batches: 1,
+            m: self.batch * self.positions(|dim| dim.out),
+            n: self.channels_out,
+            k: self.channels_in * self.positions(|dim| dim.kernel),
+            elems: self.elems.clone(),
+        }
     }
 }
 

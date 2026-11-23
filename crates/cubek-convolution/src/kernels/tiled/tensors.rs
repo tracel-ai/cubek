@@ -98,90 +98,6 @@ impl ConvTensors {
         Self::checked(operation, client, operands, in_grad, window, dtypes)
     }
 
-    /// The tensors of `operation`, `[input, rhs]` and `out`, once the roles agree on every extent
-    /// they share: the batch, the input channels and the output channels, and the spatial extents
-    /// the window states.
-    fn checked(
-        operation: ConvolutionOperation,
-        client: &Client,
-        [input, rhs]: [InputBinding; 2],
-        out: TensorBinding,
-        window: &[SpatialWindow],
-        dtypes: MatmulElems,
-    ) -> Result<Self, Decline> {
-        let (InputBinding::Normal(input, _), InputBinding::Normal(rhs, _)) = (input, rhs) else {
-            return Err(ConvDecline::Quantized.into());
-        };
-        let rank = window.len() + 2;
-        if [&input, &rhs, &out]
-            .iter()
-            .any(|tensor| tensor.shape.len() != rank)
-        {
-            return Err(ConvDecline::RankMismatch.into());
-        }
-        let roles = ConvRoles::of(operation, SpatialDimCount(window.len()))?;
-        let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
-        let extents = &roles.extents;
-        let channels = |axis| {
-            (axis == roles.inner.lhs).then_some(extents.lhs_channels.read_shape(&input.shape))
-        };
-        let checks = [
-            (CI, ConvDecline::Groups, channels(CI)),
-            (CO, ConvDecline::OutChannels, channels(CO)),
-            (
-                B,
-                ConvDecline::Batch,
-                Some(extents.batch.read_shape(&input.shape)),
-            ),
-        ];
-        if let Some(&(_, declined, _)) = checks
-            .iter()
-            .find(|&&(axis, _, extent)| !roles.agree_on(axis, extent, [&rhs, &out]))
-        {
-            return Err(declined.into());
-        }
-        let tensors = Self {
-            operation,
-            client: client.clone(),
-            input,
-            rhs,
-            out,
-            window: window.to_vec(),
-            dtypes,
-        };
-        tensors.check_window()?;
-        if !tensors.is_empty() && tensors.problem().contracts_nothing() {
-            return Err(ConvDecline::ContractionEmpty.into());
-        }
-        Ok(tensors)
-    }
-
-    /// Whether the window is one a convolution steps by and the spatial extents are the ones it
-    /// yields.
-    fn check_window(&self) -> Result<(), Decline> {
-        let problem = self.problem();
-        if problem.spatial.iter().any(|conv_dim| conv_dim.kernel == 0) {
-            return Err(ConvDecline::KernelEmpty.into());
-        }
-        let steps_zero =
-            |conv_dim: &ConvDim| conv_dim.window.stride == 0 || conv_dim.window.dilation == 0;
-        if problem.spatial.iter().any(steps_zero) {
-            return Err(ConvDecline::WindowStepZero.into());
-        }
-        let roles = ConvRoles::of(self.operation, SpatialDimCount(self.window.len()))?;
-        let states_output = |conv_dim: &ConvDim| {
-            let (input, output) = roles.gather.window_ends(conv_dim);
-            conv_dim
-                .window
-                .output(SpatialExtent(input), TapCount(conv_dim.kernel))
-                == output
-        };
-        match problem.spatial.iter().all(states_output) {
-            true => Ok(()),
-            false => Err(roles.extent_mismatch.into()),
-        }
-    }
-
     /// Whether the output holds no element, so a launch has nothing to compute.
     pub fn is_empty(&self) -> bool {
         self.out.shape.iter().any(|&extent| extent == 0)
@@ -276,5 +192,91 @@ impl ConvTensors {
             rhs: rhs.arg(),
             out: out.arg(),
         })
+    }
+}
+
+impl ConvTensors {
+    /// The tensors of `operation`, `[input, rhs]` and `out`, once the roles agree on every extent
+    /// they share: the batch, the input channels and the output channels, and the spatial extents
+    /// the window states.
+    fn checked(
+        operation: ConvolutionOperation,
+        client: &Client,
+        [input, rhs]: [InputBinding; 2],
+        out: TensorBinding,
+        window: &[SpatialWindow],
+        dtypes: MatmulElems,
+    ) -> Result<Self, Decline> {
+        let (InputBinding::Normal(input, _), InputBinding::Normal(rhs, _)) = (input, rhs) else {
+            return Err(ConvDecline::Quantized.into());
+        };
+        let rank = window.len() + 2;
+        if [&input, &rhs, &out]
+            .iter()
+            .any(|tensor| tensor.shape.len() != rank)
+        {
+            return Err(ConvDecline::RankMismatch.into());
+        }
+        let roles = ConvRoles::of(operation, SpatialDimCount(window.len()))?;
+        let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
+        let extents = &roles.extents;
+        let channels = |axis| {
+            (axis == roles.inner.lhs).then_some(extents.lhs_channels.read_shape(&input.shape))
+        };
+        let checks = [
+            (CI, ConvDecline::Groups, channels(CI)),
+            (CO, ConvDecline::OutChannels, channels(CO)),
+            (
+                B,
+                ConvDecline::Batch,
+                Some(extents.batch.read_shape(&input.shape)),
+            ),
+        ];
+        if let Some(&(_, declined, _)) = checks
+            .iter()
+            .find(|&&(axis, _, extent)| !roles.agree_on(axis, extent, [&rhs, &out]))
+        {
+            return Err(declined.into());
+        }
+        let tensors = Self {
+            operation,
+            client: client.clone(),
+            input,
+            rhs,
+            out,
+            window: window.to_vec(),
+            dtypes,
+        };
+        tensors.check_window()?;
+        if !tensors.is_empty() && tensors.problem().contracts_nothing() {
+            return Err(ConvDecline::ContractionEmpty.into());
+        }
+        Ok(tensors)
+    }
+
+    /// Whether the window is one a convolution steps by and the spatial extents are the ones it
+    /// yields.
+    fn check_window(&self) -> Result<(), Decline> {
+        let problem = self.problem();
+        if problem.spatial.iter().any(|conv_dim| conv_dim.kernel == 0) {
+            return Err(ConvDecline::KernelEmpty.into());
+        }
+        let steps_zero =
+            |conv_dim: &ConvDim| conv_dim.window.stride == 0 || conv_dim.window.dilation == 0;
+        if problem.spatial.iter().any(steps_zero) {
+            return Err(ConvDecline::WindowStepZero.into());
+        }
+        let roles = ConvRoles::of(self.operation, SpatialDimCount(self.window.len()))?;
+        let states_output = |conv_dim: &ConvDim| {
+            let (input, output) = roles.gather.window_ends(conv_dim);
+            conv_dim
+                .window
+                .output(SpatialExtent(input), TapCount(conv_dim.kernel))
+                == output
+        };
+        match problem.spatial.iter().all(states_output) {
+            true => Ok(()),
+            false => Err(roles.extent_mismatch.into()),
+        }
     }
 }

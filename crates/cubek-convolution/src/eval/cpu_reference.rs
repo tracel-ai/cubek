@@ -136,6 +136,20 @@ impl ConvSpec {
         self.out()[1]
     }
 
+    /// Evaluates this convolution on the host, plus `bias`; the weight's input channels set the
+    /// groups.
+    pub fn cpu_reference(
+        &self,
+        input: &HostData,
+        weight: &HostData,
+        bias: Option<&HostData>,
+    ) -> HostData {
+        let progress = None;
+        ConvGeometry::from(self).cpu_reference(input, weight, bias, progress)
+    }
+}
+
+impl ConvSpec {
     fn out(&self) -> [usize; 2] {
         let [window_h, window_w] = self.args.windows();
         let [kh, kw] = self.kernel_size;
@@ -164,18 +178,6 @@ impl ConvSpec {
             Operation::BackwardWeight => [input, out_grad, weight],
             Operation::BackwardData | Operation::ForwardTransposed => [out_grad, weight, input],
         }
-    }
-
-    /// Evaluates this convolution on the host, plus `bias`; the weight's input channels set the
-    /// groups.
-    pub fn cpu_reference(
-        &self,
-        input: &HostData,
-        weight: &HostData,
-        bias: Option<&HostData>,
-    ) -> HostData {
-        let progress = None;
-        ConvGeometry::from(self).cpu_reference(input, weight, bias, progress)
     }
 }
 

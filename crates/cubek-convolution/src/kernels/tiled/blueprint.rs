@@ -50,7 +50,9 @@ impl<M> TileConvBlueprint<M> {
         };
         Ok((blueprint, grid))
     }
+}
 
+impl<M> TileConvBlueprint<M> {
     /// To the requirements the routine enqueued in `vectorization`, the binding adds its own for
     /// each of `operands`: its buffer's alignment and where its view starts, and the masking of an
     /// innermost run the tiles overhang. Each then binds at the widest width this device reads its

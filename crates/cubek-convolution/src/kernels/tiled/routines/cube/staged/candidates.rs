@@ -66,7 +66,9 @@ impl<'a> CubeStagedConvCandidates<'a> {
         }
         list
     }
+}
 
+impl<'a> CubeStagedConvCandidates<'a> {
     /// The instructions the device offers through either set, one for each count of rows of each
     /// triple of elements, the one contracting the most first: a row count's columns and depth
     /// are the triple's own, not those of whichever element's shape came first. Which of them a

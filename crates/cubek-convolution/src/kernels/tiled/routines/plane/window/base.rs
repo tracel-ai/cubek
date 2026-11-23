@@ -83,14 +83,6 @@ impl PlaneDeal {
         }
     }
 
-    /// A unit for every core of `cores`, within the planes of a cube and no more than the
-    /// `launch_tiles`, so that none is launched idle.
-    fn in_turns(cores: usize, launch_tiles: usize, planes: MatmulPlaneLayout) -> Self {
-        Self::InTurns {
-            units: cores.min(planes.count()).min(launch_tiles).max(1),
-        }
-    }
-
     /// The order the launch's planes take the tiles of `roles`' plane axes in, a box's taken in
     /// `cube_order` with `along_n` planes along the columns.
     pub fn order(self, roles: &ConvRoles, along_n: usize, cube_order: CubeOrder) -> PlaneOrder {
@@ -109,6 +101,16 @@ impl PlaneDeal {
     }
 }
 
+impl PlaneDeal {
+    /// A unit for every core of `cores`, within the planes of a cube and no more than the
+    /// `launch_tiles`, so that none is launched idle.
+    fn in_turns(cores: usize, launch_tiles: usize, planes: MatmulPlaneLayout) -> Self {
+        Self::InTurns {
+            units: cores.min(planes.count()).min(launch_tiles).max(1),
+        }
+    }
+}
+
 /// Units each owning a block of the output in registers, reading the gathered input and the rhs
 /// straight from global memory through every contracted cell. It asks nothing of the hardware: no
 /// shared stage, no plane instruction, so it serves a device with neither.
@@ -117,6 +119,28 @@ impl PlaneDeal {
 /// element at a time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaneWindowConvRoutine;
+
+impl PlaneWindowConvRoutine {
+    /// Where the memory leaf reads the input, `width` elements to a vector, in a block of the
+    /// output.
+    ///
+    /// # Errors
+    ///
+    /// The leaf's refusal, where it cannot serve the vectors as they are.
+    pub fn check_lhs_vector_axis(
+        problem: &ConvProblem,
+        width: usize,
+    ) -> Result<LhsVectorDimension, Decline> {
+        let roles = problem.roles();
+        let space = problem.space();
+        LhsVectorDimension::of(
+            &space.subspace(&roles.lhs),
+            &space.subspace(&roles.rhs),
+            &space.subspace(&roles.free.in_order()),
+            width,
+        )
+    }
+}
 
 impl PlaneWindowConvRoutine {
     /// How a cube laid out as `planes` takes the tiles of `microkernel`'s blocks, `blocks` along
@@ -139,26 +163,6 @@ impl PlaneWindowConvRoutine {
         let launch_tiles =
             tiles.count() * problem.extent(axes.n).div_ceil(columns) * problem.outer_extent();
         PlaneDeal::of(hw.unit_dispatch(), tiles, launch_tiles, planes)
-    }
-
-    /// Where the memory leaf reads the input, `width` elements to a vector, in a block of the
-    /// output.
-    ///
-    /// # Errors
-    ///
-    /// The leaf's refusal, where it cannot serve the vectors as they are.
-    pub fn check_lhs_vector_axis(
-        problem: &ConvProblem,
-        width: usize,
-    ) -> Result<LhsVectorDimension, Decline> {
-        let roles = problem.roles();
-        let space = problem.space();
-        LhsVectorDimension::of(
-            &space.subspace(&roles.lhs),
-            &space.subspace(&roles.rhs),
-            &space.subspace(&roles.free.in_order()),
-            width,
-        )
     }
 
     /// The axes the planes are laid over, and the extent of each as the launch reads it: a plane
