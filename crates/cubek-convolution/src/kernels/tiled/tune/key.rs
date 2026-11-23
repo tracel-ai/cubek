@@ -42,11 +42,11 @@ impl CubeStagedConvTuneKey {
         let free = problem.roles().free;
         let bucket = problem.batch.next_power_of_two();
         let grid = || free.outer.iter().chain([&free.across]);
-        let rides_grid = grid().any(|&axis| axis == B);
+        let rides_grid = grid().any(|&dimension| dimension == B);
         let cubes = grid()
-            .map(|&axis| match axis == B {
+            .map(|&dimension| match dimension == B {
                 true => bucket,
-                false => problem.extent(axis),
+                false => problem.extent(dimension),
             })
             .fold(1, usize::saturating_mul);
         let most_cubes = hw.properties.hardware.max_cube_count.2 as usize;

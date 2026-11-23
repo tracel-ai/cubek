@@ -60,11 +60,11 @@ impl ConvPartitioning {
         order: PlaneOrder,
     ) -> Self {
         let roles = problem.roles();
-        let axes = roles.axes();
+        let dimensions = roles.dimensions();
         let levels = microkernel
             .block_tiling()
-            .units_distributed(axes.n, blocks_per_plane)
-            .launch_planes(&roles.plane_axes(), order)
+            .units_distributed(dimensions.n, blocks_per_plane)
+            .launch_planes(&roles.plane_dimensions(), order)
             .build();
         let (rows, columns) = (microkernel.rows, microkernel.settings.columns.get());
         let depth = microkernel.settings.depth.get();
@@ -72,9 +72,9 @@ impl ConvPartitioning {
             .contracted
             .in_order()
             .iter()
-            .map(|&axis| problem.extent(axis))
+            .map(|&dimension| problem.extent(dimension))
             .product();
-        let along = |axis: Dimension| match axes.dim(axis) {
+        let along = |dimension: Dimension| match dimensions.dim(dimension) {
             Some(MatmulDim::K) => depth,
             Some(MatmulDim::M) => rows,
             Some(MatmulDim::N) => columns,
@@ -103,7 +103,7 @@ impl ConvPartitioning {
         &self.partitioning
     }
 
-    /// The partitioning a launch compiles: this one with the axis `roles` leave to the launch
+    /// The partitioning a launch compiles: this one with the dimension `roles` leave to the launch
     /// freed, so one kernel serves every extent of it. What the blueprint decides on (overhangs,
     /// widths) is read off the problem's own space, never off this one.
     pub fn kernel(&self, roles: &ConvRoles) -> Partitioning {
@@ -119,15 +119,18 @@ impl ConvPartitioning {
         self.partitioning.space()
     }
 
-    /// Whether the tiles overhang `axis`: a tile the problem's edge cuts short along it.
-    pub fn overhangs(&self, axis: Dimension) -> bool {
-        self.partitioning.overhangs(axis)
+    /// Whether the tiles overhang `dimension`: a tile the problem's edge cuts short along it.
+    pub fn overhangs(&self, dimension: Dimension) -> bool {
+        self.partitioning.overhangs(dimension)
     }
 
-    /// Whether the tiles overhang an axis the window gathers the input over, where a read past
+    /// Whether the tiles overhang a dimension the window gathers the input over, where a read past
     /// the real extents lands off the input whatever the padding.
     pub fn overhangs_gathered(&self, roles: &ConvRoles) -> bool {
-        roles.spatial().flatten().any(|axis| self.overhangs(axis))
+        roles
+            .spatial()
+            .flatten()
+            .any(|dimension| self.overhangs(dimension))
     }
 
     /// How the stages hold their cells.
@@ -198,16 +201,18 @@ impl ConvPartitioning {
         units_per_cube: usize,
     ) -> CandidatePriority {
         let roles = problem.roles();
-        let axes = roles.axes();
+        let dimensions = roles.dimensions();
         let block = self.block;
         let extents = [
-            problem.extent(axes.m),
+            problem.extent(dimensions.m),
             problem.extent(roles.free.across),
-            problem.extent(axes.n),
+            problem.extent(dimensions.n),
         ];
         let cuts = [block.rows, block.across, block.columns];
-        let boxes = [0, 1, 2].map(|axis| extents[axis].div_ceil(cuts[axis]));
-        let covered: usize = (0..3).map(|axis| boxes[axis] * cuts[axis]).product();
+        let boxes = [0, 1, 2].map(|dimension| extents[dimension].div_ceil(cuts[dimension]));
+        let covered: usize = (0..3)
+            .map(|dimension| boxes[dimension] * cuts[dimension])
+            .product();
         let work: usize = extents.iter().product();
         let wasteful = covered >= 2 * work.max(1);
         let cubes = boxes.iter().product::<usize>() * problem.outer_extent();

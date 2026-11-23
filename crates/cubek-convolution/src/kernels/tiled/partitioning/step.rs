@@ -4,16 +4,16 @@ use cubecl::tile::Dimension;
 /// What one step of the contraction, the instruction's `k` cells, is made of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvStep {
-    /// The contracted axis alone: a whole step is `k` cells of it, the last one cut short.
+    /// The contracted dimension alone: a whole step is `k` cells of it, the last one cut short.
     Alone { k: usize },
-    /// A few cells of the contracted axis, rounded up to a power of two, and as many of the
-    /// second contracted axis as fill the rest of the step.
+    /// A few cells of the contracted dimension, rounded up to a power of two, and as many of the
+    /// second contracted dimension as fill the rest of the step.
     Beside { beside: usize, cells: usize },
 }
 
 impl ConvStep {
     pub fn new(problem: &ConvProblem, k: usize) -> Self {
-        let cells = problem.extent(problem.roles().axes().k);
+        let cells = problem.extent(problem.roles().dimensions().k);
         match (k / cells.next_power_of_two()).max(1) {
             1 => Self::Alone { k },
             beside => Self::Beside {
@@ -39,13 +39,13 @@ impl ConvStep {
         }
     }
 
-    /// The axis a stage walks and the steps along it: the contracted axis alone, or the second
-    /// one where it shares the step.
+    /// The dimension a stage walks and the steps along it: the contracted dimension alone, or the
+    /// second one where it shares the step.
     pub(super) fn walk(self, roles: &ConvRoles, problem: &ConvProblem) -> (Dimension, usize) {
-        let (axis, step) = match self {
-            Self::Alone { k } => (roles.axes().k, k),
+        let (dimension, step) = match self {
+            Self::Alone { k } => (roles.dimensions().k, k),
             Self::Beside { beside, .. } => (roles.contracted.beside, beside),
         };
-        (axis, problem.extent(axis).div_ceil(step))
+        (dimension, problem.extent(dimension).div_ceil(step))
     }
 }

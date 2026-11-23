@@ -19,8 +19,8 @@ use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 use cubek_std::{Hardware, UnitDispatch};
 
-/// A count along the rows and a count along the across axis: of planes a cube holds, or of tiles
-/// they cover.
+/// A count along the rows and a count along the across dimension: of planes a cube holds, or of
+/// tiles they cover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct AcrossCounts {
     pub rows: usize,
@@ -69,8 +69,8 @@ pub(super) enum PlaneDeal {
 }
 
 impl PlaneDeal {
-    /// The deal `dispatch` runs over `tiles` along the rows and the across axis and `launch_tiles`
-    /// in all, in cubes of at most the planes of `planes`.
+    /// The deal `dispatch` runs over `tiles` along the rows and the across dimension and
+    /// `launch_tiles` in all, in cubes of at most the planes of `planes`.
     pub fn of(
         dispatch: UnitDispatch,
         tiles: AcrossCounts,
@@ -83,15 +83,15 @@ impl PlaneDeal {
         }
     }
 
-    /// The order the launch's planes take the tiles of `roles`' plane axes in, a box's taken in
-    /// `cube_order` with `along_n` planes along the columns.
+    /// The order the launch's planes take the tiles of `roles`' plane dimensions in, a box's taken
+    /// in `cube_order` with `along_n` planes along the columns.
     pub fn order(self, roles: &ConvRoles, along_n: usize, cube_order: CubeOrder) -> PlaneOrder {
-        let axes = roles.axes();
+        let dimensions = roles.dimensions();
         match self {
             Self::Boxed(split) => PlaneOrder::new(
                 &[
-                    (axes.m, split.rows),
-                    (axes.n, along_n),
+                    (dimensions.m, split.rows),
+                    (dimensions.n, along_n),
                     (roles.free.across, split.across),
                 ],
                 cube_order,
@@ -115,8 +115,8 @@ impl PlaneDeal {
 /// straight from global memory through every contracted cell. It asks nothing of the hardware: no
 /// shared stage, no plane instruction, so it serves a device with neither.
 ///
-/// An operand whose buffer does not run along the axis a register block reads it in is read one
-/// element at a time.
+/// An operand whose buffer does not run along the dimension a register block reads it in is read
+/// one element at a time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaneWindowConvRoutine;
 
@@ -127,7 +127,7 @@ impl PlaneWindowConvRoutine {
     /// # Errors
     ///
     /// The leaf's refusal, where it cannot serve the vectors as they are.
-    pub fn check_lhs_vector_axis(
+    pub fn check_lhs_vector_dimension(
         problem: &ConvProblem,
         width: usize,
     ) -> Result<LhsVectorDimension, Decline> {
@@ -153,32 +153,33 @@ impl PlaneWindowConvRoutine {
         planes: MatmulPlaneLayout,
     ) -> PlaneDeal {
         let roles = problem.roles();
-        let axes = roles.axes();
+        let dimensions = roles.dimensions();
         let tiles = AcrossCounts {
-            // The resolved rows, which a work item holding its rows whole sets apart from the settings'.
-            rows: problem.extent(axes.m).div_ceil(microkernel.rows),
+            // The resolved rows, which a work item holding its rows whole sets apart from the
+            // settings'.
+            rows: problem.extent(dimensions.m).div_ceil(microkernel.rows),
             across: problem.extent(roles.free.across),
         };
         let columns = microkernel.settings.columns.get() * blocks;
         let launch_tiles =
-            tiles.count() * problem.extent(axes.n).div_ceil(columns) * problem.outer_extent();
+            tiles.count() * problem.extent(dimensions.n).div_ceil(columns) * problem.outer_extent();
         PlaneDeal::of(hw.unit_dispatch(), tiles, launch_tiles, planes)
     }
 
-    /// The axes the planes are laid over, and the extent of each as the launch reads it: a plane
-    /// past the end of one has nothing to do.
+    /// The dimensions the planes are laid over, and the extent of each as the launch reads it: a
+    /// plane past the end of one has nothing to do.
     fn bounds(problem: &ConvProblem) -> (Vec<Dimension>, SequenceArg<usize>) {
-        let axes = problem.roles().plane_axes();
+        let dimensions = problem.roles().plane_dimensions();
         let mut extents = SequenceArg::new();
-        for &axis in &axes {
-            extents.push(problem.extent(axis));
+        for &dimension in &dimensions {
+            extents.push(problem.extent(dimension));
         }
-        (axes, extents)
+        (dimensions, extents)
     }
 
-    /// What the block's accesses require of every operand's width, by the axis the operand runs
-    /// along: down the contraction a vector of the block's depth, down the rows or the columns a
-    /// vector of them, along neither one element at a time. A rhs running down the contraction is
+    /// What the block's accesses require of every operand's width, by the dimension the operand
+    /// runs along: down the contraction a vector of the block's depth, down the rows or the columns
+    /// a vector of them, along neither one element at a time. A rhs running down the contraction is
     /// vectorized together with the input, one along the columns together with the output where
     /// that runs along them too.
     fn vectorization(
@@ -189,17 +190,17 @@ impl PlaneWindowConvRoutine {
         let mut vectorization = Vectorization::new();
         Self::vectorize(microkernel, partitioning, &mut vectorization);
         let roles = problem.roles();
-        let axes = roles.axes();
-        let runs_along = |axis| axes.dim(axis);
+        let dimensions = roles.dimensions();
+        let runs_along = |dimension| dimensions.dim(dimension);
         let lhs_access = (runs_along(roles.inner.lhs) == Some(MatmulDim::K)).then(|| {
             VectorRequirement::Access {
                 operand: MatmulOperand::Lhs,
-                elements: problem.extent(axes.k),
+                elements: problem.extent(dimensions.k),
             }
         });
         let out_beside_rhs = [roles.inner.rhs, roles.inner.out]
             .into_iter()
-            .all(|axis| runs_along(axis) == Some(MatmulDim::N));
+            .all(|dimension| runs_along(dimension) == Some(MatmulDim::N));
         let out_requirements = match out_beside_rhs {
             true => vec![
                 VectorRequirement::Access {
@@ -284,8 +285,8 @@ impl Routine for PlaneWindowConvRoutine {
     }
 
     /// The register block `settings` size, a plane of the launch for every box of the output laid
-    /// over the rows and the across axis, its units taking blocks along the columns in turns. The
-    /// plane is as wide as the device dispatches, since units cooperate on nothing.
+    /// over the rows and the across dimension, its units taking blocks along the columns in turns.
+    /// The plane is as wide as the device dispatches, since units cooperate on nothing.
     fn prepare(
         hw: &Hardware,
         problem: &ConvProblem,
@@ -306,10 +307,10 @@ impl Routine for PlaneWindowConvRoutine {
         };
         let microkernel =
             UnitRegistersMicrokernel::best(hw, &problem.work_item(), &block.microkernel)?;
-        let axes = roles.axes();
+        let dimensions = roles.dimensions();
         let planes = settings.planes;
         let plane_width = UnitRegistersMatmulRoutine::plane_width(hw, planes.count());
-        let blocks = block.fitted_blocks_per_plane(problem.extent(axes.n), plane_width);
+        let blocks = block.fitted_blocks_per_plane(problem.extent(dimensions.n), plane_width);
         let order = Self::plane_deal(hw, problem, &microkernel, blocks, planes).order(
             &roles,
             planes.along_n.get(),
@@ -333,7 +334,7 @@ impl Routine for PlaneWindowConvRoutine {
             )
         };
         let (blueprint, grid) = build(vectorization.clone())?;
-        if Self::check_lhs_vector_axis(problem, blueprint.widths.lhs).is_ok() {
+        if Self::check_lhs_vector_dimension(problem, blueprint.widths.lhs).is_ok() {
             return Ok((blueprint, grid));
         }
         // The leaf serves a one-wide input in every block, so the setting never declines here.

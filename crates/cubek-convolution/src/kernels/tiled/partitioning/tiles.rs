@@ -69,7 +69,7 @@ impl ConvTiles {
 impl ConvTiles {
     /// The cells of `operand` one instruction tile holds along its innermost axis.
     fn run(&self, operand: MatmulOperand) -> usize {
-        match self.roles.axes().dim(self.roles.inner.get(operand)) {
+        match self.roles.dimensions().dim(self.roles.inner.get(operand)) {
             Some(MatmulDim::M) => self.instruction.rows,
             Some(MatmulDim::N) => self.instruction.columns,
             Some(MatmulDim::K) => self.step.cells(),
@@ -91,22 +91,22 @@ impl ConvTiles {
         }
     }
 
-    /// The edge of the innermost box along each axis.
+    /// The edge of the innermost box along each dimension.
     fn leaf_block(&self) -> [(Dimension, usize); 4] {
-        let axes = self.roles.axes();
+        let dimensions = self.roles.dimensions();
         [
-            (axes.m, self.instruction.rows),
-            (axes.n, self.instruction.columns),
+            (dimensions.m, self.instruction.rows),
+            (dimensions.n, self.instruction.columns),
             (self.roles.contracted.beside, self.step.beside()),
-            (axes.k, self.step.cells()),
+            (dimensions.k, self.step.cells()),
         ]
     }
 
     /// How the stages hold their cells: tiles of the innermost box `problem`'s launch cuts, in
     /// order. Built once, so the stage is sized with the very storage that is launched.
     pub(super) fn storage(&self, problem: &ConvProblem) -> StageStorage {
-        let (axis, _) = self.step.walk(&self.roles, problem);
-        let partitioning = Partitioning::new(problem.space(), self.levels((axis, 1)));
+        let (dimension, _) = self.step.walk(&self.roles, problem);
+        let partitioning = Partitioning::new(problem.space(), self.levels((dimension, 1)));
         StageStorage::Tiled {
             block: partitioning.leaf().extents(),
             chunks: RowChunks::InOrder,
@@ -123,12 +123,12 @@ impl ConvTiles {
         steps: usize,
     ) -> usize {
         self.block(steps * self.instruction.depth)
-            .stage(self.roles.axes())
+            .stage(self.roles.dimensions())
             .bytes(hw, elements, storage, self.orders)
     }
 
-    /// The axis a stage walks and the steps along it, and the contraction cells that holds: the
-    /// most steps up to the setting's that divide the walk (a stage never overhangs) and fit
+    /// The dimension a stage walks and the steps along it, and the contraction cells that holds:
+    /// the most steps up to the setting's that divide the walk (a stage never overhangs) and fit
     /// `budget` of shared memory laid out as `storage`.
     pub(super) fn stage(
         &self,
@@ -137,7 +137,7 @@ impl ConvTiles {
         storage: &StageStorage,
         budget: usize,
     ) -> ((Dimension, usize), usize) {
-        let (axis, total) = self.step.walk(&self.roles, problem);
+        let (dimension, total) = self.step.walk(&self.roles, problem);
         // One stage holds a single ring, and the bounce window shares those bytes (the larger of
         // the two is held), so neither counts here.
         let fits = |steps: usize| self.stage_bytes(hw, problem.elements, storage, steps) <= budget;
@@ -151,20 +151,20 @@ impl ConvTiles {
             .then_some(total)
             .filter(|&steps| fits(steps));
         let steps = whole.unwrap_or(divisor);
-        ((axis, steps), steps * self.instruction.depth)
+        ((dimension, steps), steps * self.instruction.depth)
     }
 
     /// The contraction cells one owner walks over its box of `problem`, the cut steps counted
     /// whole.
     pub(super) fn contracted(&self, problem: &ConvProblem) -> usize {
-        let (beside, k) = (self.roles.contracted.beside, self.roles.axes().k);
+        let (beside, k) = (self.roles.contracted.beside, self.roles.dimensions().k);
         self.roles
             .contracted
             .in_order()
             .iter()
-            .map(|&axis| {
-                let extent = problem.extent(axis);
-                match (axis == beside, axis == k) {
+            .map(|&dimension| {
+                let extent = problem.extent(dimension);
+                match (dimension == beside, dimension == k) {
                     (true, _) => extent.next_multiple_of(self.step.beside()),
                     (_, true) => extent.next_multiple_of(self.step.cells()),
                     _ => extent,
@@ -174,9 +174,9 @@ impl ConvTiles {
     }
 
     /// Elements one read or write of a launch of `block` brings along each operand's innermost
-    /// axis: the stage fill's runs, and the output's, which a cube writes by its whole box.
+    /// dimension: the stage fill's runs, and the output's, which a cube writes by its whole box.
     pub(super) fn runs(&self, block: &ConvBlock) -> MatmulOperands<usize> {
-        let out = match self.roles.axes().dim(self.roles.inner.out) {
+        let out = match self.roles.dimensions().dim(self.roles.inner.out) {
             Some(MatmulDim::M) => block.rows,
             Some(MatmulDim::N) => block.columns,
             Some(MatmulDim::K) | None => 1,
@@ -187,27 +187,27 @@ impl ConvTiles {
     /// The levels of a launch whose stages walk `stage`: its planes' tiles, every contracted cell
     /// walked, a cube for every box of the output and one for every batch.
     pub(super) fn levels(&self, stage: (Dimension, usize)) -> Vec<Level> {
-        let axes = self.roles.axes();
+        let dimensions = self.roles.dimensions();
         let planes = self.settings.microkernel.planes;
         self.leaf(stage)
             .planes(&[
-                (axes.m, planes.along_m.get()),
-                (axes.n, planes.along_n.get()),
+                (dimensions.m, planes.along_m.get()),
+                (dimensions.n, planes.along_n.get()),
                 (self.roles.free.across, self.settings.across.get()),
             ])
             .walk_every(&self.roles.contracted.in_order())
-            .cubes(&[axes.n, axes.m, self.roles.free.across])
+            .cubes(&[dimensions.n, dimensions.m, self.roles.free.across])
             .batches(&self.roles.free.outer)
             .build()
     }
 
     fn leaf(&self, stage: (Dimension, usize)) -> Levels {
-        let axes = self.roles.axes();
+        let dimensions = self.roles.dimensions();
         let fragments = self.settings.microkernel.plane;
         Levels::leaf(&self.leaf_block())
             .walk(&[
-                (axes.m, fragments.along_m.get()),
-                (axes.n, fragments.along_n.get()),
+                (dimensions.m, fragments.along_m.get()),
+                (dimensions.n, fragments.along_n.get()),
             ])
             .walk(&[stage])
     }

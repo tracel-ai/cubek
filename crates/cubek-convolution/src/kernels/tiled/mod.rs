@@ -1,7 +1,7 @@
-//! A convolution over any number of spatial dims as one tile contraction over a gathered input:
-//! the forward, the weight gradient and the data gradient share one space and one projection of
-//! the input, with the roles of the axes moved ([`ConvolutionOperation`]). The data gradient is at
-//! stride 1 only.
+//! A convolution over any number of spatial dims as one tile contraction over a gathered input: the
+//! forward, the weight gradient and the data gradient share one space and one projection of the
+//! input, with the roles of the dimensions moved ([`ConvolutionOperation`]). The data gradient is
+//! at stride 1 only.
 //!
 //! Activations are channels last and the weight and its gradient `[co, taps.., ci]`. The routines
 //! in `routines` are what runs, one folder per scope.
@@ -27,7 +27,7 @@ pub(crate) use binding::ConvBinding;
 pub(crate) use blueprint::TileConvBlueprint;
 pub(crate) use launch::ConvRoutine;
 pub(crate) use partitioning::{ConvPartitioning, ConvTiles, InstructionShape};
-pub(crate) use problem::{B, CI, CO, ConvAxis, ConvDim, ConvProblem, SpatialDimCount};
+pub(crate) use problem::{B, CI, CO, ConvDim, ConvDimension, ConvProblem, SpatialDimCount};
 pub(crate) use roles::{ConvGather, ConvRoles};
 pub(crate) use routines::{CubeStagedConvRoutine, PlaneWindowConvRoutine};
 pub(crate) use staging::ConvStaging;

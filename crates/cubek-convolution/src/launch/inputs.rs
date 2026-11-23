@@ -110,13 +110,13 @@ impl SpatialWindow {
         (pos.0 + self.padding) as isize - (tap.0 * self.dilation) as isize
     }
 
-    /// [`Self::position`] as a map over the axes `out` and `tap`, for a tile projection.
+    /// [`Self::position`] as a map over the dimensions `out` and `tap`, for a tile projection.
     pub fn position_map(&self, out: Dimension, tap: Dimension) -> PhysicalAxisMap {
         PhysicalAxisMap::affine(&[(out, self.stride), (tap, self.dilation)])
             .shifted(-(self.padding as isize))
     }
 
-    /// [`Self::gradient_position`] as a map over the axes `pos` and `tap`.
+    /// [`Self::gradient_position`] as a map over the dimensions `pos` and `tap`.
     pub fn gradient_position_map(&self, pos: Dimension, tap: Dimension) -> PhysicalAxisMap {
         PhysicalAxisMap::scaled(&[
             (pos, Scale::Static(1)),

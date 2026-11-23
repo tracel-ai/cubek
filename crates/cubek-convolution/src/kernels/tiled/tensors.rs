@@ -162,8 +162,8 @@ impl ConvTensors {
             .arg(self.input, problem.elements.lhs)
             .gathered(problem.input_projection())
             .vectorize(widths.lhs);
-        // A box that overhangs a gathered axis reads past the input even where every real output
-        // position reads inside it.
+        // A box that overhangs a gathered dimension reads past the input even where every real
+        // output position reads inside it.
         let inside = problem.reads_inside() && !partitioning.overhangs_gathered(&roles);
         let input = match inside {
             true => input,
@@ -179,7 +179,7 @@ impl ConvTensors {
             .vectorize(widths.out)
             .build()?;
         let masked: Vec<_> = (roles.free.in_order().into_iter())
-            .map(|axis| (axis == roles.axes().m).then_some(Boundary::Zero))
+            .map(|dimension| (dimension == roles.dimensions().m).then_some(Boundary::Zero))
             .collect();
         out.spec = match blueprint.masks_out && !out.spec.is_checked() {
             true => out.spec.boundaries(&masked),
@@ -220,8 +220,8 @@ impl ConvTensors {
         let roles = ConvRoles::of(operation, SpatialDimCount(window.len()))?;
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
         let extents = &roles.extents;
-        let channels = |axis| {
-            (axis == roles.inner.lhs).then_some(extents.lhs_channels.read_shape(&input.shape))
+        let channels = |dimension| {
+            (dimension == roles.inner.lhs).then_some(extents.lhs_channels.read_shape(&input.shape))
         };
         let checks = [
             (CI, ConvDecline::Groups, channels(CI)),
@@ -234,7 +234,7 @@ impl ConvTensors {
         ];
         if let Some(&(_, declined, _)) = checks
             .iter()
-            .find(|&&(axis, _, extent)| !roles.agree_on(axis, extent, [&rhs, &out]))
+            .find(|&&(dimension, _, extent)| !roles.agree_on(dimension, extent, [&rhs, &out]))
         {
             return Err(declined.into());
         }

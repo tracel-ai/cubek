@@ -40,7 +40,8 @@ fn layer(operation: ConvolutionOperation, channels_in: usize) -> ConvProblem {
     })
 }
 
-/// A CPU runtime offers no plane instruction, so the default tile strategy is the plane window routine's.
+/// A CPU runtime offers no plane instruction, so the default tile strategy is the plane window
+/// routine's.
 #[test]
 fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_plane_window_routine() {
     assert!(CubeStagedConvRoutine::settings(&cpu(THREADS, CORES)).is_empty());
@@ -127,7 +128,8 @@ fn an_input_vector_not_dividing_the_rows_is_narrowed_not_declined() {
         let (blueprint, _) = PlaneWindowConvRoutine::prepare(&hw, &problem, &settings)
             .expect("the setting prepares");
         assert!(
-            PlaneWindowConvRoutine::check_lhs_vector_axis(&problem, blueprint.widths.lhs).is_ok()
+            PlaneWindowConvRoutine::check_lhs_vector_dimension(&problem, blueprint.widths.lhs)
+                .is_ok()
         );
     }
 }
@@ -220,7 +222,7 @@ fn first_served(
         .expect("a setting serves the problem")
 }
 
-/// The planes a cube of the prepared launch lays along the rows and the across axis.
+/// The planes a cube of the prepared launch lays along the rows and the across dimension.
 fn planes_of(
     blueprint: &TileConvBlueprint<UnitRegistersMicrokernel>,
     problem: &ConvProblem,
@@ -234,7 +236,7 @@ fn planes_of(
         .find_map(|level| level.plane_order())
         .expect("the plane window routine launches planes");
     AcrossCounts {
-        rows: order.block_along(roles.axes().m),
+        rows: order.block_along(roles.dimensions().m),
         across: order.block_along(roles.free.across),
     }
 }
@@ -251,8 +253,8 @@ fn units_of(
         .iter()
         .find_map(|level| level.plane_order())
         .expect("the plane window routine launches planes");
-    for axis in problem.roles().plane_axes() {
-        assert_eq!(order.block_along(axis), 1, "{axis:?}");
+    for dimension in problem.roles().plane_dimensions() {
+        assert_eq!(order.block_along(dimension), 1, "{dimension:?}");
     }
     order.planes_per_cube()
 }

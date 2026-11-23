@@ -38,9 +38,9 @@ pub struct CubeStagedConvSettings {
     pub microkernel: CubeStagedMicrokernelSettings,
     /// Rows of the instruction: the largest the device offers of exactly this many.
     pub rows: NonZeroUsize,
-    /// Planes a cube holds along the across axis, each a row group of its own over the one stage
-    /// of the rhs the cube's planes share. The across axis is the last free axis before the rows
-    /// and columns, so in a 1D forward it is the batch.
+    /// Planes a cube holds along the across dimension, each a row group of its own over the one
+    /// stage of the rhs the cube's planes share. The across dimension is the last free dimension
+    /// before the rows and columns, so in a 1D forward it is the batch.
     pub across: NonZeroUsize,
     /// Instruction steps of the contraction one stage holds at most: fewer where the problem has
     /// fewer, no divisor of its walk reaches this far, or the shared memory a cube holds is short.
@@ -71,8 +71,8 @@ impl CubeStagedConvSettings {
         }
     }
 
-    /// These settings with `planes` planes along the across axis, a cube then covering that many
-    /// of its positions with each weight stage.
+    /// These settings with `planes` planes along the across dimension, a cube then covering that
+    /// many of its positions with each weight stage.
     ///
     /// # Panics
     ///

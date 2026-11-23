@@ -176,7 +176,8 @@ fn a_batch_is_keyed_by_the_device_grid_limit() {
     assert_ne!(batched(5), batched(7));
 }
 
-/// A weight backward's batch is contracted, never a grid axis, so it is bucketed however large.
+/// A weight backward's batch is contracted, never a grid dimension, so it is bucketed however
+/// large.
 #[test]
 fn a_contracted_batch_is_keyed_by_its_bucket() {
     let batched = |batch| {

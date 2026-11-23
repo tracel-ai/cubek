@@ -4,7 +4,7 @@ use cubecl::ir::ElemType;
 use cubek_microkernel::matmul::MatmulLayout;
 use cubek_std::Hardware;
 
-/// How a unit's register block reads the input, which the axis the input runs along decides.
+/// How a unit's register block reads the input, which the dimension the input runs along decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockForm {
     /// The input runs down the contraction: a cell holds one vector of partial sums, and a step
@@ -16,7 +16,7 @@ pub enum BlockForm {
 }
 
 impl BlockForm {
-    /// Blocks along an axis the search tries at most.
+    /// Blocks along a dimension the search tries at most.
     const MOST_ALONG: usize = 4;
 
     /// Vector registers left to addressing and the compiler's temporaries.

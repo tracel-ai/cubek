@@ -81,7 +81,7 @@ impl Routine for CubeStagedConvRoutine {
             false => ConvStaging::Staged,
         };
         let placed = CubeStagedBox {
-            stage: partitioning.block().stage(roles.axes()),
+            stage: partitioning.block().stage(roles.dimensions()),
             contracting_planes: settings.planes() * plane.instruction.planes(),
             masks_output: bounces,
             storage: Some(partitioning.storage()),

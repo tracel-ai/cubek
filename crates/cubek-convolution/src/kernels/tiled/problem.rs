@@ -21,29 +21,29 @@ pub const CI: Dimension = Dimension(2);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpatialDimCount(pub usize);
 
-/// What an axis of the space measures: the one place that numbers the labels of the axes.
+/// What a dimension of the space measures: the one place that numbers the labels of the dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConvAxis {
+pub(crate) enum ConvDimension {
     Batch,
     ChannelsOut,
     ChannelsIn,
-    /// The output axis of a spatial dim.
+    /// The output dimension of a spatial dim.
     Out(usize),
-    /// The tap axis of a spatial dim, which the window slides along with its output axis.
+    /// The tap dimension of a spatial dim, which the window slides along with its output dimension.
     Tap(usize),
 }
 
-impl ConvAxis {
-    /// The label of the first spatial axis, which follows the three channel and batch labels.
+impl ConvDimension {
+    /// The label of the first spatial dimension, which follows the three channel and batch labels.
     const FIRST_SPATIAL: u8 = CI.0 + 1;
-    /// A spatial dim takes two labels: its out axis, then its tap axis.
+    /// A spatial dim takes two labels: its out dimension, then its tap dimension.
     const PER_SPATIAL_DIM: u8 = 2;
-    /// The most spatial dims whose labels, the last tap axis included, fit in a label.
+    /// The most spatial dims whose labels, the last tap dimension included, fit in a label.
     pub const MAX_SPATIAL_DIMS: usize =
         ((u8::MAX - Self::FIRST_SPATIAL) / Self::PER_SPATIAL_DIM) as usize;
 
-    /// The axis of this measure, the label [`Self::of`] reads back.
-    pub const fn axis(self) -> Dimension {
+    /// The dimension of this measure, the label [`Self::of`] reads back.
+    pub const fn dimension(self) -> Dimension {
         match self {
             Self::Batch => B,
             Self::ChannelsOut => CO,
@@ -55,24 +55,24 @@ impl ConvAxis {
         }
     }
 
-    /// The measure of `axis`, a label [`Self::axis`] made.
-    pub fn of(axis: Dimension) -> Self {
-        match axis {
+    /// The measure of `dimension`, a label [`Self::dimension`] made.
+    pub fn of(dimension: Dimension) -> Self {
+        match dimension {
             B => Self::Batch,
             CO => Self::ChannelsOut,
             CI => Self::ChannelsIn,
             Dimension(label) if label >= Self::FIRST_SPATIAL => Self::of_spatial(label),
-            _ => panic!("{axis:?} is not an axis of a convolution"),
+            _ => panic!("{dimension:?} is not a dimension of a convolution"),
         }
     }
 
-    /// The `[out, tap]` axis pair of each of `spatial_dims` spatial dims.
+    /// The `[out, tap]` dimension pair of each of `spatial_dims` spatial dims.
     pub fn spatial(spatial_dims: SpatialDimCount) -> impl Iterator<Item = [Dimension; 2]> {
-        (0..spatial_dims.0).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
+        (0..spatial_dims.0).map(|dim| [Self::Out(dim).dimension(), Self::Tap(dim).dimension()])
     }
 }
 
-impl ConvAxis {
+impl ConvDimension {
     /// The measure of a spatial `label`.
     fn of_spatial(label: u8) -> Self {
         let offset = label - Self::FIRST_SPATIAL;
@@ -164,7 +164,7 @@ impl ConvProblem {
         }
     }
 
-    /// The roles the operation gives the axes of the space.
+    /// The roles the operation gives the dimensions of the space.
     ///
     /// # Panics
     ///
@@ -185,38 +185,41 @@ impl ConvProblem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            dimensions: self.roles().axes(),
+            dimensions: self.roles().dimensions(),
             reading: MatmulReading::AsStored,
         }
     }
 
-    /// The axes of the contraction, in the order the operation lists them.
+    /// The dimensions of the contraction, in the order the operation lists them.
     pub fn space(&self) -> Space {
-        let axes: Vec<_> = (self.roles().space.into_iter())
-            .map(|axis| (axis, self.extent(axis)))
+        let dimensions: Vec<_> = (self.roles().space.into_iter())
+            .map(|dimension| (dimension, self.extent(dimension)))
             .collect();
-        Space::new(&axes)
+        Space::new(&dimensions)
     }
 
-    /// The cells of the output's outer axes: the boxes of the output that a launch hands out one
-    /// to each of its batches.
+    /// The cells of the output's outer dimensions: the boxes of the output that a launch hands out
+    /// one to each of its batches.
     pub fn outer_extent(&self) -> usize {
         let outer = self.roles().free.outer;
-        outer.into_iter().map(|axis| self.extent(axis)).product()
+        outer
+            .into_iter()
+            .map(|dimension| self.extent(dimension))
+            .product()
     }
 
-    /// What `axis` measures in this problem.
-    pub fn extent(&self, axis: Dimension) -> usize {
-        match ConvAxis::of(axis) {
-            ConvAxis::Batch => self.batch,
-            ConvAxis::ChannelsOut => self.channels_out,
-            ConvAxis::ChannelsIn => self.channels_in,
-            ConvAxis::Out(dim) => self.spatial[dim].out,
-            ConvAxis::Tap(dim) => self.spatial[dim].kernel,
+    /// What `dimension` measures in this problem.
+    pub fn extent(&self, dimension: Dimension) -> usize {
+        match ConvDimension::of(dimension) {
+            ConvDimension::Batch => self.batch,
+            ConvDimension::ChannelsOut => self.channels_out,
+            ConvDimension::ChannelsIn => self.channels_in,
+            ConvDimension::Out(dim) => self.spatial[dim].out,
+            ConvDimension::Tap(dim) => self.spatial[dim].kernel,
         }
     }
 
-    /// Whether some contracted axis has no cell, so every element of the output is a sum of
+    /// Whether some contracted dimension has no cell, so every element of the output is a sum of
     /// nothing.
     pub fn contracts_nothing(&self) -> bool {
         let roles = self.roles();
@@ -224,7 +227,7 @@ impl ConvProblem {
             .contracted
             .in_order()
             .into_iter()
-            .any(|axis| self.extent(axis) == 0)
+            .any(|dimension| self.extent(dimension) == 0)
     }
 
     /// The elements a kernel of this problem defines: the sum and the input.
@@ -241,8 +244,8 @@ impl ConvProblem {
                 .any(|conv_dim| conv_dim.window.padding > 0)
     }
 
-    /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: a channels last
-    /// buffer whose spatial dims are each addressed by an output axis and a tap axis. The data
+    /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: a channels last buffer
+    /// whose spatial dims are each addressed by an output dimension and a tap dimension. The data
     /// backward reads the gradient the other way round, at stride 1.
     pub fn input_projection(&self) -> Projection {
         let roles = self.roles();
@@ -304,16 +307,21 @@ mod tests {
     use ConvolutionOperation::{BackwardData, BackwardWeight, Forward};
 
     #[test]
-    fn every_axis_reads_back_as_the_measure_that_made_it() {
+    fn every_dimension_reads_back_as_the_measure_that_made_it() {
         for count in 1..=3 {
-            let spatial = (0..count).flat_map(|dim| [ConvAxis::Out(dim), ConvAxis::Tap(dim)]);
-            let measures = [ConvAxis::Batch, ConvAxis::ChannelsOut, ConvAxis::ChannelsIn]
-                .into_iter()
-                .chain(spatial);
+            let spatial =
+                (0..count).flat_map(|dim| [ConvDimension::Out(dim), ConvDimension::Tap(dim)]);
+            let measures = [
+                ConvDimension::Batch,
+                ConvDimension::ChannelsOut,
+                ConvDimension::ChannelsIn,
+            ]
+            .into_iter()
+            .chain(spatial);
             let mut labels = Vec::new();
             for measure in measures {
-                assert_eq!(ConvAxis::of(measure.axis()), measure);
-                labels.push(measure.axis().0);
+                assert_eq!(ConvDimension::of(measure.dimension()), measure);
+                labels.push(measure.dimension().0);
             }
             labels.sort_unstable();
             labels.dedup();

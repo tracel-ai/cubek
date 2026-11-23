@@ -1,4 +1,4 @@
-use super::{B, CI, CO, ConvAxis, ConvDecline, ConvDim, SpatialDimCount};
+use super::{B, CI, CO, ConvDecline, ConvDim, ConvDimension, SpatialDimCount};
 use crate::components::ConvolutionOperation;
 use crate::launch::SpatialWindow;
 use cubecl::prelude::TensorBinding;
@@ -9,28 +9,28 @@ use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::{MatmulDimensions, MatmulLayout, MatmulOperand, MatmulOperands};
 
-/// The output's axes by the part each plays. The outer axes and the one across take a tile each of
-/// a launch's cubes or planes, after the rows and the columns.
+/// The output's dimensions by the part each plays. The outer dimensions and the one across take a
+/// tile each of a launch's cubes or planes, after the rows and the columns.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConvFreeAxes {
+pub struct ConvFreeDimensions {
     pub outer: Vec<Dimension>,
     pub across: Dimension,
     pub m: Dimension,
     pub n: Dimension,
 }
 
-impl ConvFreeAxes {
-    /// The axes in the order the instruction reads them.
+impl ConvFreeDimensions {
+    /// The dimensions in the order the instruction reads them.
     pub fn in_order(&self) -> Vec<Dimension> {
         [&self.outer[..], &[self.across, self.m, self.n]].concat()
     }
 }
 
-impl ConvFreeAxes {
-    /// The last three of `axes` as the one across, the rows and the columns, the rest outer.
-    fn split(axes: &[Dimension]) -> Self {
-        let [outer @ .., across, m, n] = axes else {
-            panic!("a convolution's output has an across, a rows and a columns axis");
+impl ConvFreeDimensions {
+    /// The last three of `dimensions` as the one across, the rows and the columns, the rest outer.
+    fn split(dimensions: &[Dimension]) -> Self {
+        let [outer @ .., across, m, n] = dimensions else {
+            panic!("a convolution's output has an across, a rows and a columns dimension");
         };
         Self {
             outer: outer.to_vec(),
@@ -41,27 +41,27 @@ impl ConvFreeAxes {
     }
 }
 
-/// The contracted axes a box walks whole. `beside` fills a step of the contraction where `k` alone
-/// is shorter than the instruction's `k`.
+/// The contracted dimensions a box walks whole. `beside` fills a step of the contraction where `k`
+/// alone is shorter than the instruction's `k`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConvContractedAxes {
+pub struct ConvContractedDimensions {
     pub outer: Vec<Dimension>,
     pub beside: Dimension,
     pub k: Dimension,
 }
 
-impl ConvContractedAxes {
-    /// The axes in the order a box walks them.
+impl ConvContractedDimensions {
+    /// The dimensions in the order a box walks them.
     pub fn in_order(&self) -> Vec<Dimension> {
         [&self.outer[..], &[self.beside, self.k]].concat()
     }
 }
 
-impl ConvContractedAxes {
-    /// The last two of `axes` as the one beside `k` and `k`, the rest outer.
-    fn split(axes: &[Dimension]) -> Self {
-        let [outer @ .., beside, k] = axes else {
-            panic!("a convolution contracts a beside and a k axis");
+impl ConvContractedDimensions {
+    /// The last two of `dimensions` as the one beside `k` and `k`, the rest outer.
+    fn split(dimensions: &[Dimension]) -> Self {
+        let [outer @ .., beside, k] = dimensions else {
+            panic!("a convolution contracts a beside and a k dimension");
         };
         Self {
             outer: outer.to_vec(),
@@ -71,7 +71,7 @@ impl ConvContractedAxes {
     }
 }
 
-/// How the gathered input's positions are addressed from an output axis and a tap axis.
+/// How the gathered input's positions are addressed from an output dimension and a tap dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvGather {
     /// The window of a convolution: `out * stride + tap * dilation - padding`.
@@ -82,16 +82,16 @@ pub enum ConvGather {
 }
 
 impl ConvGather {
-    /// The map of `window` over the axes `out_axis` and `tap_axis`.
+    /// The map of `window` over the dimensions `out_dimension` and `tap_dimension`.
     pub fn map(
         self,
         window: &SpatialWindow,
-        out_axis: Dimension,
-        tap_axis: Dimension,
+        out_dimension: Dimension,
+        tap_dimension: Dimension,
     ) -> PhysicalAxisMap {
         match self {
-            Self::Window => window.position_map(out_axis, tap_axis),
-            Self::Gradient => window.gradient_position_map(out_axis, tap_axis),
+            Self::Window => window.position_map(out_dimension, tap_dimension),
+            Self::Gradient => window.gradient_position_map(out_dimension, tap_dimension),
         }
     }
 
@@ -206,26 +206,26 @@ impl ViewOrder {
     }
 }
 
-/// Which axis of the space plays which part in an operation.
+/// Which dimension of the space plays which part in an operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConvRoles {
     /// The spatial dims of the convolution.
     pub spatial_dims: SpatialDimCount,
-    pub free: ConvFreeAxes,
-    pub contracted: ConvContractedAxes,
-    /// The axes of the space, the rows before the columns: the planes of a cube take them in the
-    /// space's order.
+    pub free: ConvFreeDimensions,
+    pub contracted: ConvContractedDimensions,
+    /// The dimensions of the space, the rows before the columns: the planes of a cube take them in
+    /// the space's order.
     pub space: Vec<Dimension>,
-    /// The axes the gathered input is read over, the contracted run just before the free one: a
-    /// matrix instruction takes its operands' axes in that order.
+    /// The dimensions the gathered input is read over, the contracted run just before the free one:
+    /// a matrix instruction takes its operands' dimensions in that order.
     pub lhs: Vec<Dimension>,
-    /// The axes the rhs is bound by, in the order the instruction reads them.
+    /// The dimensions the rhs is bound by, in the order the instruction reads them.
     pub rhs: Vec<Dimension>,
     /// The order the rhs's view lists the dims of its buffer in.
     pub rhs_order: ViewOrder,
     /// The order the output's view lists the dims of its buffer in.
     pub out_order: ViewOrder,
-    /// The axis each operand's buffer is contiguous along: the one its vectors run along.
+    /// The dimension each operand's buffer is contiguous along: the one its vectors run along.
     pub inner: MatmulOperands<Dimension>,
     /// How the gathered input is addressed.
     pub gather: ConvGather,
@@ -234,23 +234,23 @@ pub struct ConvRoles {
     pub extent_mismatch: ConvDecline,
 }
 
-/// The out and tap axes of a convolution over `spatial_dims` spatial dims, and where their extents
-/// sit in the operands' views.
+/// The out and tap dimensions of a convolution over `spatial_dims` spatial dims, and where their
+/// extents sit in the operands' views.
 #[derive(Debug)]
-struct SpatialAxes {
+struct SpatialDimensions {
     spatial_dims: SpatialDimCount,
     outs: Vec<Dimension>,
     taps: Vec<Dimension>,
 }
 
-/// The axes of `parts` one after the other; the slices let arrays and `Vec`s mix in one list.
+/// The dimensions of `parts` one after the other; the slices let arrays and `Vec`s mix in one list.
 fn joined(parts: &[&[Dimension]]) -> Vec<Dimension> {
     parts.concat()
 }
 
-impl SpatialAxes {
+impl SpatialDimensions {
     fn new(spatial_dims: SpatialDimCount) -> Self {
-        let (outs, taps) = ConvAxis::spatial(spatial_dims)
+        let (outs, taps) = ConvDimension::spatial(spatial_dims)
             .map(|[out, tap]| (out, tap))
             .unzip();
         Self {
@@ -276,14 +276,14 @@ impl SpatialAxes {
 }
 
 impl ConvRoles {
-    /// The roles `operation` gives the axes of the space of a convolution over `spatial_dims`
+    /// The roles `operation` gives the dimensions of the space of a convolution over `spatial_dims`
     /// spatial dims.
     ///
     /// # Errors
     ///
     /// [`ConvDecline::NoSpatialDim`], for no spatial dim, [`ConvDecline::TooManySpatialDims`], for
-    /// more than [`ConvAxis::MAX_SPATIAL_DIMS`], and [`ConvDecline::Transposed`], for a transposed
-    /// forward.
+    /// more than [`ConvDimension::MAX_SPATIAL_DIMS`], and [`ConvDecline::Transposed`], for a
+    /// transposed forward.
     pub fn of(
         operation: ConvolutionOperation,
         spatial_dims: SpatialDimCount,
@@ -291,10 +291,10 @@ impl ConvRoles {
         if spatial_dims.0 == 0 {
             return Err(ConvDecline::NoSpatialDim.into());
         }
-        if spatial_dims.0 > ConvAxis::MAX_SPATIAL_DIMS {
+        if spatial_dims.0 > ConvDimension::MAX_SPATIAL_DIMS {
             return Err(ConvDecline::TooManySpatialDims.into());
         }
-        let spatial = SpatialAxes::new(spatial_dims);
+        let spatial = SpatialDimensions::new(spatial_dims);
         match operation {
             ConvolutionOperation::Forward => Ok(Self::forward(&spatial)),
             ConvolutionOperation::BackwardWeight => Ok(Self::backward_weight(&spatial)),
@@ -303,13 +303,13 @@ impl ConvRoles {
         }
     }
 
-    /// The spatial `[out, tap]` axis pairs, one per spatial dim of the gathered input.
+    /// The spatial `[out, tap]` dimension pairs, one per spatial dim of the gathered input.
     pub fn spatial(&self) -> impl Iterator<Item = [Dimension; 2]> {
-        ConvAxis::spatial(self.spatial_dims)
+        ConvDimension::spatial(self.spatial_dims)
     }
 
-    /// The axis a kernel leaves to its launch: the batch where it is a free axis. The weight
-    /// backward contracts it, so it stays compiled in there.
+    /// The dimension a kernel leaves to its launch: the batch where it is a free dimension. The
+    /// weight backward contracts it, so it stays compiled in there.
     pub fn dynamic(&self) -> Option<Dimension> {
         self.free.in_order().contains(&B).then_some(B)
     }
@@ -317,9 +317,9 @@ impl ConvRoles {
     /// How each operand's buffer lies against the product's own `[m, k]`, `[k, n]` and `[m, n]`:
     /// row where it runs along the second of them, col along the first.
     pub fn layouts(&self) -> MatmulOperands<MatmulLayout> {
-        let axes = self.axes();
+        let dimensions = self.dimensions();
         let layout = |operand: MatmulOperand| {
-            let along = axes.dim(self.inner.get(operand));
+            let along = dimensions.dim(self.inner.get(operand));
             MatmulLayout::along(along.map(|dim| MatmulDimensions::MNK.of(dim)), operand)
         };
         MatmulOperands {
@@ -329,8 +329,8 @@ impl ConvRoles {
         }
     }
 
-    /// The axes of the instruction's rows, columns and contracted cells.
-    pub fn axes(&self) -> MatmulDimensions {
+    /// The dimensions of the instruction's rows, columns and contracted cells.
+    pub fn dimensions(&self) -> MatmulDimensions {
         MatmulDimensions {
             m: self.free.m,
             n: self.free.n,
@@ -372,29 +372,30 @@ impl ConvRoles {
         }
     }
 
-    /// Whether `rhs` and `out`, viewed through the roles, and the input's `extent` of `axis`
-    /// (`None` where the input does not carry it) all give `axis` the same extent.
+    /// Whether `rhs` and `out`, viewed through the roles, and the input's `extent` of `dimension`
+    /// (`None` where the input does not carry it) all give `dimension` the same extent.
     pub fn agree_on(
         &self,
-        axis: Dimension,
+        dimension: Dimension,
         extent: Option<usize>,
         [rhs, out]: [&TensorBinding; 2],
     ) -> bool {
         let free = self.free.in_order();
         let named = [(&self.rhs[..], rhs), (&free[..], out)];
-        let mut extents = extent
-            .into_iter()
-            .chain(named.iter().filter_map(|(axes, tensor)| {
-                let dim = axes.iter().position(|&named| named == axis)?;
-                Some(tensor.shape[dim])
-            }));
+        let mut extents =
+            extent
+                .into_iter()
+                .chain(named.iter().filter_map(|(dimensions, tensor)| {
+                    let dim = dimensions.iter().position(|&named| named == dimension)?;
+                    Some(tensor.shape[dim])
+                }));
         let first = extents.next();
         extents.all(|extent| Some(extent) == first)
     }
 
-    /// The axes a plane window launch lays its planes over: the rows, the columns, the one
+    /// The dimensions a plane window launch lays its planes over: the rows, the columns, the one
     /// across and the outer ones.
-    pub fn plane_axes(&self) -> Vec<Dimension> {
+    pub fn plane_dimensions(&self) -> Vec<Dimension> {
         let free = &self.free;
         joined(&[&[free.m, free.n, free.across], &free.outer[..]])
     }
@@ -420,15 +421,15 @@ impl ConvRoles {
 }
 
 impl ConvRoles {
-    fn forward(spatial: &SpatialAxes) -> Self {
+    fn forward(spatial: &SpatialDimensions) -> Self {
         use MatmulOperand::{Lhs, Out, Rhs};
         let free = joined(&[&[B], &spatial.outs, &[CO]]);
         let contracted = joined(&[&spatial.taps, &[CI]]);
         Self {
             spatial_dims: spatial.spatial_dims,
             space: joined(&[&free, &contracted]),
-            free: ConvFreeAxes::split(&free),
-            contracted: ConvContractedAxes::split(&contracted),
+            free: ConvFreeDimensions::split(&free),
+            contracted: ConvContractedDimensions::split(&contracted),
             lhs: joined(&[&[B], &spatial.outs, &spatial.taps, &[CI]]),
             rhs: joined(&[&[CO], &spatial.taps, &[CI]]),
             rhs_order: ViewOrder::Stored,
@@ -452,15 +453,15 @@ impl ConvRoles {
         }
     }
 
-    fn backward_weight(spatial: &SpatialAxes) -> Self {
+    fn backward_weight(spatial: &SpatialDimensions) -> Self {
         use MatmulOperand::{Lhs, Out, Rhs};
         let free = joined(&[&spatial.taps, &[CI, CO]]);
         let contracted = joined(&[&[B], &spatial.outs]);
         Self {
             spatial_dims: spatial.spatial_dims,
             space: joined(&[&contracted, &free]),
-            free: ConvFreeAxes::split(&free),
-            contracted: ConvContractedAxes::split(&contracted),
+            free: ConvFreeDimensions::split(&free),
+            contracted: ConvContractedDimensions::split(&contracted),
             lhs: joined(&[&spatial.taps, &[B], &spatial.outs, &[CI]]),
             rhs: joined(&[&[B], &spatial.outs, &[CO]]),
             rhs_order: ViewOrder::Stored,
@@ -484,15 +485,15 @@ impl ConvRoles {
         }
     }
 
-    fn backward_data(spatial: &SpatialAxes) -> Self {
+    fn backward_data(spatial: &SpatialDimensions) -> Self {
         use MatmulOperand::{Lhs, Out, Rhs};
         let free = joined(&[&[B], &spatial.outs, &[CI]]);
         let contracted = joined(&[&spatial.taps, &[CO]]);
         Self {
             spatial_dims: spatial.spatial_dims,
             space: joined(&[&free, &contracted]),
-            free: ConvFreeAxes::split(&free),
-            contracted: ConvContractedAxes::split(&contracted),
+            free: ConvFreeDimensions::split(&free),
+            contracted: ConvContractedDimensions::split(&contracted),
             lhs: joined(&[&[B], &spatial.outs, &spatial.taps, &[CO]]),
             rhs: joined(&[&spatial.taps, &[CO, CI]]),
             rhs_order: ViewOrder::ChannelsOutAfterTaps,
@@ -545,7 +546,7 @@ mod tests {
 
     #[test]
     fn spatial_dims_past_the_label_range_are_refused_by_name() {
-        let max = ConvAxis::MAX_SPATIAL_DIMS;
+        let max = ConvDimension::MAX_SPATIAL_DIMS;
         assert!(ConvRoles::of(Forward, SpatialDimCount(max)).is_ok());
         assert_eq!(
             ConvRoles::of(Forward, SpatialDimCount(max + 1)),
@@ -556,7 +557,7 @@ mod tests {
     /// Over two spatial dims the roles are the 2D tables.
     #[test]
     fn two_spatial_dims_state_the_two_dimensional_tables() {
-        let [[oh, rh], [ow, rw]] = ConvAxis::spatial(SpatialDimCount(2))
+        let [[oh, rh], [ow, rw]] = ConvDimension::spatial(SpatialDimCount(2))
             .collect::<Vec<_>>()
             .try_into()
             .expect("two spatial dims");
@@ -633,10 +634,10 @@ mod tests {
         assert_eq!(data.extent_mismatch, ConvDecline::DataGradExtent);
     }
 
-    /// Whatever the spatial count, every axis of the space is named once, the operands' axes
-    /// cover it, and a view lists each dim of its buffer once.
+    /// Whatever the spatial count, every dimension of the space is named once, the operands'
+    /// dimensions cover it, and a view lists each dim of its buffer once.
     #[test]
-    fn roles_of_any_spatial_count_name_each_axis_once() {
+    fn roles_of_any_spatial_count_name_each_dimension_once() {
         for operation in OPERATIONS {
             for count in [1, 3] {
                 let spatial_dims = SpatialDimCount(count);

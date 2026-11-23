@@ -9,8 +9,8 @@ use cubek_std::{Hardware, Instructions, UNIT_REGISTERS, manual_mma};
 /// the stage reads and the addressing. It stays below the unit's limit.
 const ACCUMULATOR_REGISTER_SHARE: usize = 4;
 
-/// The counts every other candidate moves one setting off: two fragments along each axis on two
-/// planes along each.
+/// The counts every other candidate moves one setting off: two fragments along each dimension on
+/// two planes along each.
 const BASE_FRAGMENTS: PlaneFragmentMicrokernelSettings =
     PlaneFragmentMicrokernelSettings::grid(2, 2, 1);
 const BASE_PLANES: MatmulPlaneLayout = MatmulPlaneLayout::new(2, 2);
@@ -201,8 +201,8 @@ impl<'a> CubeStagedConvCandidates<'a> {
         (self.accumulator_register_budget() / self.fragment_registers(shape)).max(1)
     }
 
-    /// The planes a cube holds along the across axis at most: the device's count of planes for a
-    /// cube of its full units.
+    /// The planes a cube holds along the across dimension at most: the device's count of planes for
+    /// a cube of its full units.
     fn planes_across(&self) -> usize {
         let hardware = &self.hw.properties.hardware;
         self.hw.plane_count_per_cube(
