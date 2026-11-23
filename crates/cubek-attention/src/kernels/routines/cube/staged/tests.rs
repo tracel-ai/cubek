@@ -28,6 +28,7 @@ mod fragment {
     type Settings = CubeStagedAttentionRoutineSettings;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
+    const E4M3: ElemType = ElemType::Float(FloatKind::E4M3);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
     /// `hw` offering the square instruction of `edge` for `f16` and for `f32`, summed in `f32`.
@@ -240,18 +241,20 @@ mod fragment {
         );
     }
 
-    /// A device whose manual `mma` is `16 × 16 × 16` in `f16` and lays its accumulator as its `A`, and
-    /// whose cubes hold 64 KiB of shared memory, as RDNA4's do.
+    /// A device whose manual `mma` is `16 × 16`, 16 or 32 deep, in `f16` and in `e4m3`, and lays its
+    /// accumulator as its `A`, and whose cubes hold 64 KiB of shared memory, as RDNA4's do.
     fn offering_square_mma() -> Hardware {
-        let square = MmaConfig {
-            a_type: F16,
-            b_type: F16,
-            cd_type: F32,
-            m: 16,
-            n: 16,
-            k: 16,
-        };
-        let mut hw = devices::offering_mma(offering(devices::h100(), 16), [square]);
+        let squares = [F16, E4M3].into_iter().flat_map(|element| {
+            [16, 32].map(|k| MmaConfig {
+                a_type: element,
+                b_type: element,
+                cd_type: F32,
+                m: 16,
+                n: 16,
+                k,
+            })
+        });
+        let mut hw = devices::offering_mma(offering(devices::h100(), 16), squares);
         devices::topology(&mut hw).max_shared_memory_size = 64 * 1024;
         hw
     }
@@ -295,6 +298,33 @@ mod fragment {
             shared(QueryHolder::Stage, 6, 4),
             Err(Decline::SharedMemoryPastDevice { .. })
         ));
+    }
+
+    /// An `e4m3` cache beside an `f16` query held in registers is multiplied on the FP8 instruction
+    /// on both sides: the query is cast as it loads, the keys and values are staged as stored.
+    #[test]
+    fn a_held_query_reads_an_fp8_cache_as_it_is_stored() {
+        let hw = offering_square_mma();
+        let mut problem = AttentionRoutineProblem::dense((1, 24, 4), (2048, 4096), (256, 256), F16);
+        problem.elements.key = E4M3;
+        problem.elements.value = E4M3;
+        let lead = Settings::DEFAULT;
+        let settings = Settings {
+            microkernel: CubeAttentionMicrokernelSettings {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
+                        .querying(QueryHolder::Registers),
+                ),
+                heads: NonZeroUsize::new(8).unwrap(),
+                planes_along_queries: NonZeroUsize::new(4).unwrap(),
+                ..lead.microkernel
+            },
+            ..lead
+        };
+        let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)
+            .expect("the held query reads the cache");
+        let served = blueprint.microkernel.served(&problem.work_item()).elements;
+        assert_eq!([served.query, served.key, served.value], [F16, E4M3, E4M3]);
     }
 
     /// A query held in registers is the `A` of a score in fragments: where the device gives no such
