@@ -221,20 +221,6 @@ impl PackedProduct {
         (codes, scales)
     }
 
-    /// An `e4m3` code's value.
-    fn e4m3(code: u8) -> f32 {
-        let (exponent, mantissa) = (i32::from((code >> 3) & 0xf), f32::from(code & 0b111));
-        let magnitude = match exponent {
-            0 => mantissa / 8. * 2f32.powi(-6),
-            _ => (1. + mantissa / 8.) * 2f32.powi(exponent - 7),
-        };
-        if code & 0x80 != 0 {
-            -magnitude
-        } else {
-            magnitude
-        }
-    }
-
     /// The operand's values on the host.
     fn host(&self, operand: MatmulOperand, stored: Stored) -> HostOperand {
         match (stored, operand) {
@@ -253,7 +239,9 @@ impl PackedProduct {
                 let values = codes
                     .iter()
                     .enumerate()
-                    .map(|(at, &code)| Self::e4m3(code) * scales[at / self.k])
+                    .map(|(at, &code)| {
+                        cubecl_common::e4m3::from_bits(code).to_f32() * scales[at / self.k]
+                    })
                     .collect();
                 HostOperand::Dense {
                     values,

@@ -1,7 +1,6 @@
 //! Packed matrices as the tiled tests build them: block-scaled values a quantizer reads back
 //! exactly, bound as the words and scales a kernel reads.
 
-use cubecl::CubeElement;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::Scalar;
@@ -23,10 +22,11 @@ use crate::tiled::upload;
 /// The per-tensor scale a two-level format is built under.
 const GLOBAL_SCALE: f32 = 2.;
 
-/// Powers of two a block's scale falls below the matrix's largest: for MXFP4 with its scales
-/// factored by row, a reach past the eight its decode into `e4m3` takes exactly; for every other
-/// format, a few.
+/// Powers of two a block's scale falls below the matrix's largest, for every format but MXFP4
+/// with its scales factored by row: a few.
 const SPREAD: i32 = 3;
+/// The same for MXFP4 with its scales factored by row: past the eight its decode into `e4m3`
+/// takes exactly, so some blocks round.
 const ROW_SPREAD: i32 = 12;
 
 /// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly;
@@ -91,8 +91,6 @@ pub(crate) struct PackedSlabs {
     spec: PackedSlabsSpec,
     tensor: PackedTensor,
     host: HostSlabs,
-    /// The blocks factoring the scales by row counted as rounding in the decode, for that format.
-    lossy_blocks: Option<TensorHandle>,
 }
 
 /// The dequantized values of a packed matrix of slabs, on the host: what a routine reading it
@@ -126,7 +124,7 @@ impl PackedSlabs {
             quantized.quantization.expect("a quantized tensor").scale,
             (rows, spec.k / block_of(&scheme)),
         );
-        let (scales, global, lossy_blocks) = match spec.format {
+        let (scales, global) = match spec.format {
             PackedFormat::Mxfp4RowFactored => {
                 let restated = factor_mxfp4_scales_by_row(client, &scales);
                 let row_scales = TensorHandle::new_contiguous(
@@ -135,16 +133,12 @@ impl PackedSlabs {
                     restated.row_scales.dtype,
                 );
                 let global = PlainTensor::of_handle(row_scales);
-                (
-                    restated.block_scales,
-                    Some(global),
-                    Some(restated.lossy_blocks),
-                )
+                (restated.block_scales, Some(global))
             }
             _ => {
                 let global =
                     (scheme.num_levels() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
-                (scales, global, None)
+                (scales, global)
             }
         };
         let across = across(spec.operand);
@@ -160,7 +154,6 @@ impl PackedSlabs {
             spec,
             tensor,
             host: spec.dequantized(),
-            lossy_blocks,
         };
         slabs.assert_distinct(&scheme);
         slabs
@@ -169,14 +162,6 @@ impl PackedSlabs {
     /// The matrix whole, its slabs not yet read as such.
     pub(crate) fn matrix(&self) -> PackedTensor {
         self.tensor.clone()
-    }
-
-    /// The blocks factoring the scales by row counted as rounding in the decode into `e4m3`; `None` for
-    /// every other format.
-    pub(crate) fn lossy_blocks(&self, client: &Client) -> Option<u32> {
-        let count = self.lossy_blocks.clone()?;
-        let bytes = client.read_one_unchecked_tensor(count.into_copy_descriptor());
-        Some(u32::from_bytes(&bytes)[0])
     }
 
     /// The matrix read as the stack of its slabs.
