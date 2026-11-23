@@ -6,7 +6,7 @@ use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
 };
 use cubek_microkernel::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, QueryHolder};
-use cubek_std::microkernel::StageLayout;
+use cubek_std::microkernel::{StageLayout, StageRing};
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::attention::{
@@ -55,13 +55,20 @@ fn a_swizzled_stage_matches_the_host() {
 }
 
 /// Planes holding their query in registers, which read it from global memory once, past the last
-/// query a box cuts: one fragment of rows a plane and several, over one and several key fragments
-/// a step. A device that keeps no score in fragments, or whose shared memory does not hold the
-/// stages, declines.
+/// query a box cuts: one plane along the queries and several, over one and several key fragments a
+/// step, with the next stage in a second slot and waiting in registers. A device that keeps no
+/// score in fragments, or whose shared memory does not hold the stages, declines.
 #[test]
 fn a_query_held_in_registers_matches_the_host() {
     let forward = Forward::new(CubeStagedAttentionRoutine);
-    let held = [(1, 1, 1), (2, 2, 1), (6, 4, 1), (2, 4, 2)].map(|(heads, planes, keys)| {
+    let held = [
+        (1, 1, 1, StageRing::SINGLE),
+        (2, 2, 1, StageRing::DOUBLE),
+        (6, 4, 1, StageRing::SINGLE_THROUGH_REGISTERS),
+        (6, 4, 1, StageRing::DOUBLE),
+        (2, 4, 2, StageRing::SINGLE),
+    ]
+    .map(|(heads, planes, keys, ring)| {
         let lead = CubeStagedAttentionRoutineSettings::DEFAULT;
         CubeStagedAttentionRoutineSettings {
             microkernel: CubeAttentionMicrokernelSettings {
@@ -71,6 +78,7 @@ fn a_query_held_in_registers_matches_the_host() {
                 ),
                 heads: NonZeroUsize::new(heads).unwrap(),
                 planes_along_queries: NonZeroUsize::new(planes).unwrap(),
+                ring,
                 layout: StageLayout::PaddedRows,
                 ..lead.microkernel
             },
