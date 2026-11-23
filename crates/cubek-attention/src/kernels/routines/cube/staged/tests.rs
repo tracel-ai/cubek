@@ -278,11 +278,11 @@ mod fragment {
                 ..lead
             };
             let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)?;
-            Ok::<_, Decline>(
-                blueprint
-                    .microkernel
-                    .shared_memory(&hw, &item, &blueprint.shared_memory),
-            )
+            Ok::<_, Decline>(blueprint.microkernel.shared_memory(
+                &hw,
+                &item,
+                &blueprint.shared_memory,
+            ))
         };
         let query = 16 * 256 * F16.size();
         assert_eq!(

@@ -2,7 +2,8 @@ use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, QueryHolder, ScoreHolder,
 };
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionRead, AttentionWorkItem, B,
+    D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
@@ -332,8 +333,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             .estimate(&Self::value_item(item), &(), planes, estimate);
         let softmax = UnitWork {
             instruction: ArithmeticInstruction::Matrix,
-            registers: self.softmax_registers(item)
-                + self.query_registers(item, planes.width),
+            registers: self.softmax_registers(item) + self.query_registers(item, planes.width),
         };
 
         estimate.work = score

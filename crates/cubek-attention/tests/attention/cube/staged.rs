@@ -1,13 +1,11 @@
 //! The cube staged routine: a cube's planes of fragments contracting the stages it fills.
 
-use cubek_attention::kernels::{CubeStagedAttentionRoutine, CubeStagedAttentionRoutineSettings};
 use core::num::NonZeroUsize;
+use cubek_attention::kernels::{CubeStagedAttentionRoutine, CubeStagedAttentionRoutineSettings};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
 };
-use cubek_microkernel::attention::plane::{
-    PlaneFragmentAttentionMicrokernelSettings, QueryHolder,
-};
+use cubek_microkernel::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, QueryHolder};
 use cubek_std::microkernel::StageLayout;
 use cubek_test_utils::ScopeUnderTest;
 
