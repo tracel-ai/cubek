@@ -240,8 +240,8 @@ mod fragment {
         );
     }
 
-    /// A device whose manual `mma` is `16 × 16 × 16` in `f16` and lays its accumulator as its `A`, as
-    /// RDNA4 does.
+    /// A device whose manual `mma` is `16 × 16 × 16` in `f16` and lays its accumulator as its `A`, and
+    /// whose cubes hold 64 KiB of shared memory, as RDNA4's do.
     fn offering_square_mma() -> Hardware {
         let square = MmaConfig {
             a_type: F16,
@@ -251,7 +251,9 @@ mod fragment {
             n: 16,
             k: 16,
         };
-        devices::offering_mma(offering(devices::h100(), 16), [square])
+        let mut hw = devices::offering_mma(offering(devices::h100(), 16), [square]);
+        devices::topology(&mut hw).max_shared_memory_size = 64 * 1024;
+        hw
     }
 
     /// Planes holding their query in registers take its stage's bytes out of the cube's shared
