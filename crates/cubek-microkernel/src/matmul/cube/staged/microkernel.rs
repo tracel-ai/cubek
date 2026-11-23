@@ -70,11 +70,7 @@ impl CubeStagedWalk {
     /// `input` without the outer scales `sum` takes out and applies once, and those scales: as the
     /// sum's instruction would have them ([`Tile::factor`]), or all of them where the walk decodes
     /// the inputs into an 8-bit float, whose range their values already fill.
-    fn factored(
-        input: &Tile,
-        sum: &Tile,
-        #[comptime] walk: CubeStagedWalk,
-    ) -> (Tile, Factor) {
+    fn factored(input: &Tile, sum: &Tile, #[comptime] walk: CubeStagedWalk) -> (Tile, Factor) {
         let narrow = comptime!(
             walk.decoded()
                 .is_some_and(|element| element.size_bits() == u8::BITS as usize)
