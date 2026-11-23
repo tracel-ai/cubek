@@ -62,7 +62,7 @@ pub const MATMUL_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
 /// product's rows, a float stack of either, and the routed product's stack; a routed lhs is laid
 /// back in rows instead. A packed stack in tile order is read slab by slab where its slabs are
 /// whole strips ([`PackedTensor::stacked`]).
-pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Decline = Decline::Unserved {
+pub const MATMUL_SLABS_TAKE_NO_FLOAT_TILES: Decline = Decline::Unserved {
     why: "the routed and grouped products read float operands in rows, slab by slab; store \
               them untiled",
 };

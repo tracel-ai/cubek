@@ -1,7 +1,7 @@
 //! The M-grouped launch against a host reference.
 
 use super::{MGroupedFloors, MGroupedMatmulTensors, MGroupedSettings, launch_tuned};
-use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
+use crate::kernels::MATMUL_SLABS_TAKE_NO_FLOAT_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -141,7 +141,7 @@ fn a_stack_stored_in_tiles_is_refused() {
         SlabDimension::Output,
     );
     assert!(
-        matches!(declined, Err(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
+        matches!(declined, Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)),
         "{declined:?}"
     );
 }

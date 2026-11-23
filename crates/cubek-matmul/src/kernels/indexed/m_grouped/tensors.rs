@@ -6,7 +6,7 @@ use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::{
-    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
+    MATMUL_SLABS_TAKE_NO_FLOAT_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
     MatmulRoutineProblem,
 };
 use cubecl::client::Client;
@@ -45,7 +45,7 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for
+    /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_FLOAT_TILES`] for
     /// rows or a float stack stored in tiles; a packed stack is read as its slabs when launched
     /// ([`PackedTensor::stacked`](crate::kernels::tensor::PackedTensor::stacked)).
     ///
@@ -69,7 +69,7 @@ impl MGroupedMatmulTensors {
             "a grouped product's rows are `[rows, k]`: {shape:?}"
         );
         if rows.is_tiled() || matches!(&rhs, StoredTensor::Plain(rhs) if rhs.is_tiled()) {
-            return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
+            return Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES);
         }
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),

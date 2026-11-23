@@ -1,6 +1,6 @@
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
+    MATMUL_SLABS_TAKE_NO_FLOAT_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -36,7 +36,7 @@ impl KGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`], and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an operand stored
+    /// As [`MatmulInputs::new`], and [`MATMUL_SLABS_TAKE_NO_FLOAT_TILES`] for an operand stored
     /// in tiles.
     ///
     /// # Panics
@@ -50,7 +50,7 @@ impl KGroupedMatmulTensors {
         ends: PlainTensor,
     ) -> Result<Self, Decline> {
         if lhs.is_tiled() || rhs.is_tiled() {
-            return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
+            return Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES);
         }
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?.into_parts();
         let (lhs_shape, rhs_shape) = (lhs.shape(), rhs.shape());

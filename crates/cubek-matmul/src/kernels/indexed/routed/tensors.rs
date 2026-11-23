@@ -5,7 +5,7 @@ use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::tune::{Product, matmul_ceiling};
 use crate::kernels::{
-    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
+    MATMUL_SLABS_TAKE_NO_FLOAT_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
     MatmulTensors,
 };
 use cubecl::client::Client;
@@ -62,7 +62,7 @@ impl RoutedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for a
+    /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_FLOAT_TILES`] for a
     /// float stack stored in tiles; a packed one is read as its slabs when launched
     /// ([`PackedTensor::stacked`](crate::kernels::tensor::PackedTensor::stacked)).
     ///
@@ -79,7 +79,7 @@ impl RoutedMatmulTensors {
         along: SlabDimension,
     ) -> Result<Self, Decline> {
         if matches!(&rhs, StoredTensor::Plain(rhs) if rhs.is_tiled()) {
-            return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
+            return Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES);
         }
         assert_eq!(
             rhs.values().shape().rank(),

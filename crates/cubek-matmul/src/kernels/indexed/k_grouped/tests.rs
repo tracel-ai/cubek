@@ -1,7 +1,7 @@
 //! The K-grouped launch against a host reference.
 
 use super::{KGroupedMatmulTensors, launch};
-use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
+use crate::kernels::MATMUL_SLABS_TAKE_NO_FLOAT_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::tensor::PlainTensor;
 use crate::tiled::storage::{StorageLevels, tile};
@@ -131,7 +131,7 @@ fn an_operand_stored_in_tiles_is_refused() {
     .expect("the operand tiles");
     let declined = launch_grouped(&client, PlainTensor::of_handle(tiled), ones(), &[16, 32]);
     assert!(
-        matches!(declined, Err(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
+        matches!(declined, Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)),
         "{declined:?}"
     );
 }
