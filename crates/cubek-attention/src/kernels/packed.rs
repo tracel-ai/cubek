@@ -1,9 +1,10 @@
 //! A packed cache as the attention reads it: each operand's codebook indices packed into words,
 //! its per-vector norms and the codebook, and the keys' QJL fix-up where there is one.
 
+use crate::kernels::page_table;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::tile::kind::Field;
-use cubecl::tile::{Dimension, Launcher, TileSpec, TileTensorLaunch};
+use cubecl::tile::{Dimension, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{B, D, DV, KV, S};
@@ -23,7 +24,10 @@ pub struct PackedAttentionCache<T = PlainTensor> {
 
 /// The keys or the values of a packed cache: `words` `[b, kv, s, w]`, each vector's coordinates
 /// packed low first as `bits`-wide indices into `codebook`, and the vector scaled by its entry of
-/// `norms` `[b, kv, s, 1]`.
+/// `norms` `[b, kv, s, 1]`. Where the cache lies in pools of pages ([`KvSource::pages`]),
+/// `words` and `norms` are `[pages, kv, page_size, ·]`, both placed by the one table.
+///
+/// [`KvSource::pages`]: crate::kernels::KvSource::pages
 #[derive(Debug, Clone)]
 pub struct PackedAttentionOperand<T = PlainTensor> {
     pub words: T,
@@ -31,8 +35,9 @@ pub struct PackedAttentionOperand<T = PlainTensor> {
     pub codebook: T,
 }
 
-/// The keys' QJL fix-up: each key's residual length `errs` `[b, kv, s, 1]`, and `sign_codebook`,
-/// the codebook its indices read the residual's projected sign through.
+/// The keys' QJL fix-up: each key's residual length `errs` `[b, kv, s, 1]`, a pool
+/// `[pages, kv, page_size, 1]` as the keys' words are, and `sign_codebook`, the codebook its
+/// indices read the residual's projected sign through.
 #[derive(Debug, Clone)]
 pub struct QjlFixup<T = PlainTensor> {
     pub errs: T,
@@ -142,18 +147,20 @@ impl PackedAttentionCache {
     /// The cache bound under `launcher`, each operand a tile its kernel decodes as it reads it
     /// ([`Tile::decoded`](cubecl::tile::Tile::decoded)): the keys along the head dim `D`, the
     /// values along `DV`, and the keys' fix-up, the same words read through the sign codebook
-    /// under the residual lengths, where they carry one.
-    pub fn bind(&self, launcher: &Launcher) -> PackedCacheBinding {
+    /// under the residual lengths, where they carry one. Where `pages` is the table of a pool of
+    /// pages ([`KvSource::pages`](crate::kernels::KvSource::pages)), every operand's words and
+    /// norms are read through it, as a float pool's values are.
+    pub fn bind(&self, launcher: &Launcher, pages: Option<&PlainTensor>) -> PackedCacheBinding {
         PackedCacheBinding {
-            key: self.key.bind(launcher, self.bits.key, D),
-            value: self.value.bind(launcher, self.bits.value, DV),
+            key: self.key.bind(launcher, self.bits.key, D, pages),
+            value: self.value.bind(launcher, self.bits.value, DV, pages),
             fixup: self.fixup.as_ref().map(|fixup| {
                 let fixup = PackedAttentionOperand {
                     words: self.key.words.clone(),
                     norms: fixup.errs.clone(),
                     codebook: fixup.sign_codebook.clone(),
                 };
-                fixup.bind(launcher, self.bits.key, D)
+                fixup.bind(launcher, self.bits.key, D, pages)
             }),
         }
     }
@@ -187,8 +194,15 @@ const CHECKED_BY_NEW: &str =
 impl PackedAttentionOperand {
     /// The operand bound under `launcher` along `[B, KV, S, head]`: its words' `bits`-wide fields
     /// indices into its codebook, each vector under its norm. Bound a word a line, the width a
-    /// decoding read takes.
-    fn bind(&self, launcher: &Launcher, bits: u32, head: Dimension) -> TileTensorLaunch {
+    /// decoding read takes. Where `pages` places a pool, the norms are a pool placed by it before
+    /// they are stated, as a pool's scales must be, and the words are placed under them.
+    fn bind(
+        &self,
+        launcher: &Launcher,
+        bits: u32,
+        head: Dimension,
+        pages: Option<&PlainTensor>,
+    ) -> TileTensorLaunch {
         const TABLE: ElemType = ElemType::Float(FloatKind::F32);
         let dimensions = [B, KV, S, head];
         // A norm per vector, `[b, kv, s, 1]`, scales the vector along `[b, kv, s]`.
@@ -203,6 +217,7 @@ impl PackedAttentionOperand {
             .build()
             .expect(CHECKED_BY_NEW)
             .arg();
+        let norms = paged(norms, pages);
         let codebook = TileTensorLaunch::new(
             self.codebook.binding.clone().into_tensor_arg(),
             TABLE,
@@ -220,7 +235,7 @@ impl PackedAttentionOperand {
             .chain([1])
             .collect::<Vec<_>>();
         let values = self.words.viewed(Metadata::new(shape, strides));
-        launcher
+        let words = launcher
             .arg(values.binding, ElemType::UInt(UIntKind::U32))
             .dimensions(&dimensions)
             .vectorize(1)
@@ -232,6 +247,23 @@ impl PackedAttentionOperand {
             .arg()
             .codebook(codebook)
             .expect(CHECKED_BY_NEW)
-            .scales(norms)
+            .scales(norms);
+        paged(words, pages)
     }
 }
+
+/// `operand`, a buffer over `[B, KV, S, ·]`, read as a pool of pages through `pages` where there
+/// is one: the table covers the launch, a row a sequence and a column a page of its positions.
+fn paged(operand: TileTensorLaunch, pages: Option<&PlainTensor>) -> TileTensorLaunch {
+    match pages {
+        Some(pages) => operand
+            .indexed_covering(page_table(pages), Indexing::Coordinate(B))
+            .expect(CHECKED_BY_ATTENTION),
+        None => operand,
+    }
+}
+
+/// What a packed pool's binding rests on, checked by
+/// [`AttentionTensors::attention`](crate::kernels::AttentionTensors::attention).
+const CHECKED_BY_ATTENTION: &str =
+    "a packed pool and its table are as AttentionTensors::attention checks them";

@@ -8,9 +8,11 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Decline;
+use cubecl::tile::{TileSpec, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
+use cubek_microkernel::attention::{B, S};
 
 /// What an attention routine declines where a packed cache is read through an index list.
 pub const INDEXED_KEYS_UNREAD: Decline = Decline::Unserved {
@@ -28,11 +30,6 @@ pub const INDEXED_VISIBILITY_UNREAD: Decline = Decline::Unserved {
 pub const KEY_BLOCK_SPLITS_A_PAGE: Decline = Decline::Unserved {
     why: "a block of listed keys lies in one page, and at the same place of the key and value \
           buffers",
-};
-
-/// What an attention routine declines where a packed cache lies in pools of pages.
-pub const PAGED_PACKED_UNREAD: Decline = Decline::Unserved {
-    why: "the packed attention reads a packed cache laid out as sequences, not in pages",
 };
 
 /// What an attention routine declines where a packed cache is stated under per-tensor scales: its
@@ -61,7 +58,8 @@ pub struct KvSource {
     pub cache: AttentionCache,
     /// The `u32` table `[b, pages_per_sequence]` naming each sequence's pages in order: sequence
     /// `b`'s position `s` lies in page `pages[b, s / page_size]`, and the cache's buffers are pools
-    /// of pages, `[pages, kv, page_size, ·]`. `None` where the buffers are `[b, kv, s, ·]`.
+    /// of pages, `[pages, kv, page_size, ·]`, a packed cache's words, norms and residual lengths
+    /// alike. `None` where the buffers are `[b, kv, s, ·]`.
     pub pages: Option<PlainTensor>,
     /// The blocks each sequence reads, in order. `None` where a sequence reads every position its
     /// length attends.
@@ -228,8 +226,9 @@ impl KvSource {
         }
     }
 
-    /// How the keys and values lie, for a source the routines read: no blocks listed, and a packed
-    /// cache laid out as sequences.
+    /// How the keys and values lie, for a source the routines read, listing no blocks. A packed
+    /// cache is packed wherever it lies: its pages are its binding's, which reads them through the
+    /// table as it decodes ([`PackedAttentionCache::bind`]).
     pub(crate) fn layout(&self) -> AttentionCacheLayout {
         match (&self.cache, &self.pages) {
             (AttentionCache::Packed(cache), _) => AttentionCacheLayout::Packed(cache.layout()),
@@ -239,6 +238,17 @@ impl KvSource {
             },
         }
     }
+}
+
+/// The page table `pages` ([`KvSource::pages`]) bound for a launch: keyed by the batch and the
+/// keys' positions, it covers the launch, its rows the batch and its columns the keys.
+pub(crate) fn page_table(pages: &PlainTensor) -> TileTensorLaunch {
+    TileTensorLaunch::new(
+        pages.binding.clone().into_tensor_arg(),
+        ElemType::UInt(UIntKind::U32),
+        1,
+        TileSpec::direct(&[B, S]),
+    )
 }
 
 /// One buffer of a cache viewed as a pool of pages of one block each: `[blocks, kv, size, ·]`,
@@ -316,10 +326,10 @@ mod tests {
     use cubek_std::Hardware;
     use cubek_test_utils::{HostData, HostDataType, TestInput, ValidationResult};
 
-    /// A packed cache in pages or under per-tensor scales, and blocks of keys listed over a packed
-    /// cache, at a causal visibility or straddling a page, are each declined by the one entry,
-    /// before any routine is launched; the same queries and keys read contiguously, as listed
-    /// blocks, or under per-tensor scales, are admitted.
+    /// A packed cache under per-tensor scales, and blocks of keys listed over a packed cache, at a
+    /// causal visibility or straddling a page, are each declined by the one entry, before any
+    /// routine is launched; the same queries and keys read contiguously, as listed blocks, or
+    /// under per-tensor scales, and a packed cache in pages, are admitted.
     #[test]
     fn the_entry_declines_what_no_routine_reads() {
         let client: Client = cubecl::test_device().client();
@@ -395,7 +405,7 @@ mod tests {
         );
         let paged_packed =
             KvSource::new(AttentionCache::Packed(packed.clone())).paged(tensor(&[1, 2], u32));
-        assert_eq!(attention(dense(), paged_packed), Some(PAGED_PACKED_UNREAD));
+        assert_eq!(attention(dense(), paged_packed), None);
         let listed_packed =
             KvSource::new(AttentionCache::Packed(packed)).indexed(tensor(&[1, 2], u32), block(4));
         assert_eq!(attention(dense(), listed_packed), Some(INDEXED_KEYS_UNREAD));
@@ -509,5 +519,254 @@ mod tests {
             served.contains(&AttentionKernel::Unit),
             "the unit routine serves any problem: {served:?}"
         );
+    }
+
+    /// Sequences of the packed cases.
+    const PACKED_SEQUENCES: usize = 3;
+    /// Key heads of the packed cases, each a group of two query heads.
+    const PACKED_KV: usize = 2;
+    const PACKED_GROUP: usize = 2;
+    /// Coordinates a packed key or value holds, four bits each.
+    const PACKED_COORDS: usize = 32;
+    const PACKED_BITS: u32 = 4;
+    /// Positions a page of the packed pools holds.
+    const PACKED_PAGE: usize = 8;
+    /// Pages of the packed pools: page 0 the null page, and pages no sequence names among them.
+    const PACKED_POOL: usize = 14;
+    /// Each sequence's pages of the pool, in order and scattered over it: the shorter sequences'
+    /// rows end in the null page, page 0, which none of them attends.
+    const PACKED_TABLE: [[u32; 4]; PACKED_SEQUENCES] = [[5, 12, 2, 9], [7, 3, 0, 0], [11, 0, 0, 0]];
+    /// Keys each sequence attends, every one ending inside a page.
+    const PACKED_LENGTHS: [u32; PACKED_SEQUENCES] = [29, 11, 5];
+    /// Queries each sequence has where its queries lie end to end, the last of its keys.
+    const PACKED_RUNS: [usize; PACKED_SEQUENCES] = [4, 3, 1];
+
+    /// A pool of [`PACKED_POOL`] pages, `last` values a row, as the sequences [`PACKED_TABLE`]
+    /// names: a sequence's position `s` of key head `h` is its page's row.
+    fn gathered<T: Copy>(pool: &[T], last: usize) -> Vec<T> {
+        let seq = PACKED_TABLE[0].len() * PACKED_PAGE;
+        let mut values = Vec::new();
+        for pages in &PACKED_TABLE {
+            for h in 0..PACKED_KV {
+                for s in 0..seq {
+                    let page = pages[s / PACKED_PAGE] as usize;
+                    let row = (page * PACKED_KV + h) * PACKED_PAGE + s % PACKED_PAGE;
+                    values.extend_from_slice(&pool[row * last..(row + 1) * last]);
+                }
+            }
+        }
+        values
+    }
+
+    /// How the queries of a packed case are stated.
+    #[derive(Clone, Copy, Debug)]
+    enum PackedQueries {
+        /// One query a sequence, a decode step's, seeing every attended key.
+        Decode,
+        /// [`PACKED_RUNS`] queries a sequence, end to end, causal.
+        Runs,
+    }
+
+    /// The kernels that read a packed cache in pools of pages as they read the same cache laid out
+    /// as the sequences its table names: the pool's words, norms and, under the QJL `fixup`, the
+    /// residual lengths gathered host-side into `[b, kv, s, ·]` buffers. The pool is scattered,
+    /// its null page and the pages no sequence names filled as any other, so a read through the
+    /// wrong page shows. A kernel that declines the sequences is not one of them; one that reads
+    /// the sequences and declines or misreads the pool fails.
+    fn packed_pages_read_as_their_sequences(
+        fixup: KeyFixup,
+        queries: PackedQueries,
+    ) -> Vec<AttentionKernel> {
+        let client: Client = cubecl::test_device().client();
+        let hw = Hardware::from_client(&client);
+        let seq = PACKED_TABLE[0].len() * PACKED_PAGE;
+        let row_words = PACKED_COORDS * PACKED_BITS as usize / 32;
+        let noise = |at: usize, salt: u64| {
+            (at as u64 + 1)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(salt.wrapping_mul(0xBF58_476D_1CE4_E5B9))
+                >> 32
+        };
+        let unit = |at: usize, salt: u64| (noise(at, salt) % 4096) as f32 / 4096.;
+        let pool_rows = PACKED_POOL * PACKED_KV * PACKED_PAGE;
+        let words = |salt| -> Vec<u32> {
+            (0..pool_rows * row_words)
+                .map(|at| noise(at, salt) as u32)
+                .collect()
+        };
+        let lengths =
+            |salt| -> Vec<f32> { (0..pool_rows).map(|at| 0.5 + unit(at, salt)).collect() };
+        let (key_words, key_norms, value_words, value_norms, errs) =
+            (words(1), lengths(2), words(3), lengths(4), lengths(5));
+        let f32s = |shape: &[usize], values: Vec<f32>| {
+            PlainTensor::of_handle(
+                TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+                    .dtype(f32::elem_type_native())
+                    .custom(values)
+                    .generate_without_host_data(),
+            )
+        };
+        let u32s = |shape: &[usize], values: &[u32]| PlainTensor::of_u32s(&client, shape, values);
+        let codebook = |salt| {
+            let entries = 1usize << PACKED_BITS;
+            f32s(
+                &[entries],
+                (0..entries).map(|at| unit(at, salt) * 2. - 1.).collect(),
+            )
+        };
+        // The cache over `rows` sequences or pages of `positions` each.
+        let cache = |rows: usize,
+                     positions: usize,
+                     words: [Vec<u32>; 2],
+                     norms: [Vec<f32>; 2],
+                     errs: Vec<f32>| {
+            let [key_words, value_words] = words;
+            let [key_norms, value_norms] = norms;
+            let words_shape = [rows, PACKED_KV, positions, row_words];
+            let norms_shape = [rows, PACKED_KV, positions, 1];
+            let operand = |words: &[u32], norms, salt| PackedAttentionOperand {
+                words: u32s(&words_shape, words),
+                norms: f32s(&norms_shape, norms),
+                codebook: codebook(salt),
+            };
+            let fixup = match fixup {
+                KeyFixup::Qjl => Some(QjlFixup {
+                    errs: f32s(&norms_shape, errs),
+                    sign_codebook: codebook(8),
+                }),
+                KeyFixup::RoundOnly => None,
+            };
+            PackedAttentionCache::new(
+                operand(&key_words, key_norms, 6),
+                operand(&value_words, value_norms, 7),
+                KvBitWidths {
+                    key: PACKED_BITS,
+                    value: PACKED_BITS,
+                },
+                fixup,
+            )
+        };
+        let in_sequences = || {
+            KvSource::new(AttentionCache::Packed(cache(
+                PACKED_SEQUENCES,
+                seq,
+                [
+                    gathered(&key_words, row_words),
+                    gathered(&value_words, row_words),
+                ],
+                [gathered(&key_norms, 1), gathered(&value_norms, 1)],
+                gathered(&errs, 1),
+            )))
+        };
+        let in_pages = || {
+            KvSource::new(AttentionCache::Packed(cache(
+                PACKED_POOL,
+                PACKED_PAGE,
+                [key_words.clone(), value_words.clone()],
+                [key_norms.clone(), value_norms.clone()],
+                errs.clone(),
+            )))
+            .paged(u32s(
+                &[PACKED_SEQUENCES, PACKED_TABLE[0].len()],
+                PACKED_TABLE.as_flattened(),
+            ))
+        };
+        // The query spans the keys' lines: twice the coordinates under the fix-up.
+        let dim = match fixup {
+            KeyFixup::Qjl => 2 * PACKED_COORDS,
+            KeyFixup::RoundOnly => PACKED_COORDS,
+        };
+        let heads = PACKED_KV * PACKED_GROUP;
+        let f16s = |shape: &[usize]| {
+            let count = shape.iter().product::<usize>();
+            PlainTensor::of_handle(
+                TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+                    .dtype(half::f16::elem_type_native())
+                    .custom((0..count).map(|at| unit(at, 9) * 2. - 1.).collect())
+                    .generate_without_host_data(),
+            )
+        };
+        let attended = || u32s(&[PACKED_SEQUENCES], &PACKED_LENGTHS);
+        let (stated, visibility) = match queries {
+            PackedQueries::Decode => (
+                AttentionQueries::Dense {
+                    query: f16s(&[PACKED_SEQUENCES, heads, 1, dim]),
+                    lengths: attended(),
+                },
+                AttentionVisibility::Attended,
+            ),
+            PackedQueries::Runs => {
+                let ends: Vec<u32> = PACKED_RUNS
+                    .iter()
+                    .scan(0, |end, &run| {
+                        *end += run as u32;
+                        Some(*end)
+                    })
+                    .collect();
+                (
+                    AttentionQueries::Packed {
+                        query: f16s(&[PACKED_RUNS.iter().sum(), heads, dim]),
+                        ends: u32s(&[PACKED_SEQUENCES], &ends),
+                        longest: *PACKED_RUNS.iter().max().unwrap(),
+                        lengths: attended(),
+                    },
+                    AttentionVisibility::Causal {
+                        queries: QueryPlacement::Last,
+                    },
+                )
+            }
+        };
+        let scoring = AttentionScoring::standard(visibility, PACKED_COORDS);
+        let mut served = Vec::new();
+        for kernel in AttentionKernel::all() {
+            let run = |kv: KvSource| {
+                AttentionTensors::attention(&client, stated.clone(), kv, scoring)
+                    .and_then(|tensors| kernel.launch_lead_on(&hw, tensors))
+                    .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+            };
+            let expected = match run(in_sequences()) {
+                Ok(expected) => expected,
+                Err(decline) => {
+                    eprintln!("{kernel:?} declines the sequences: {decline}");
+                    continue;
+                }
+            };
+            let actual = run(in_pages()).unwrap_or_else(|decline| {
+                panic!("{kernel:?} reads the sequences, and declines their pages: {decline}")
+            });
+            let compared = cubek_test_utils::assert_equals_approx(&actual, &expected, 1e-3);
+            assert!(
+                matches!(compared, ValidationResult::Pass),
+                "{kernel:?}: {compared:?}"
+            );
+            served.push(kernel);
+        }
+        eprintln!("read the pages as their sequences: {served:?}");
+        served
+    }
+
+    /// A round-only packed cache in pages reads, at a decode step, as the same cache laid out as
+    /// the sequences its table names.
+    #[test]
+    fn round_only_packed_pages_read_as_their_sequences_at_a_decode_step() {
+        let served =
+            packed_pages_read_as_their_sequences(KeyFixup::RoundOnly, PackedQueries::Decode);
+        assert!(!served.is_empty(), "some kernel reads a packed cache");
+    }
+
+    /// A packed cache whose keys carry the QJL fix-up, in pages, reads, at a decode step, as the
+    /// same cache laid out as the sequences its table names.
+    #[test]
+    fn qjl_packed_pages_read_as_their_sequences_at_a_decode_step() {
+        let served = packed_pages_read_as_their_sequences(KeyFixup::Qjl, PackedQueries::Decode);
+        assert!(!served.is_empty(), "some kernel reads a packed cache");
+    }
+
+    /// A round-only packed cache in pages reads, under queries that lie end to end, as the same
+    /// cache laid out as the sequences its table names.
+    #[test]
+    fn round_only_packed_pages_read_as_their_sequences_under_query_runs() {
+        let served = packed_pages_read_as_their_sequences(KeyFixup::RoundOnly, PackedQueries::Runs);
+        assert!(!served.is_empty(), "some kernel reads a packed cache");
     }
 }

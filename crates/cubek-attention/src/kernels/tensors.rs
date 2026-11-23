@@ -3,8 +3,8 @@
 use crate::kernels::conversion::converted;
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
-    AttentionRoutineProblem, AttentionScoring, CacheScales, KvSource, PAGED_PACKED_UNREAD,
-    PackedAttentionCache, QueryDimension, SCALED_PACKED_UNREAD,
+    AttentionRoutineProblem, AttentionScoring, CacheScales, KvSource, PackedAttentionCache,
+    QueryDimension, SCALED_PACKED_UNREAD, page_table,
 };
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
@@ -117,8 +117,7 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`PACKED_WIDTH_UNREAD`] and [`ATTENTION_GROUP_UNEVEN`]:
-    /// what the routines decline whatever the device; [`PAGED_PACKED_UNREAD`],
-    /// [`SCALED_PACKED_UNREAD`] and what
+    /// what the routines decline whatever the device; [`SCALED_PACKED_UNREAD`] and what
     /// [`KvSource::read_as_block_pages`] declines: sources no routine reads; and
     /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
     ///
@@ -165,8 +164,9 @@ impl AttentionTensors {
                 Self::assert_cache_scales(&kv.scales);
             }
             (AttentionCache::Packed(_), _) if kv.scales.any() => return Err(SCALED_PACKED_UNREAD),
-            (AttentionCache::Packed(cache), None) => Self::admit_packed(client, &query, cache)?,
-            (AttentionCache::Packed(_), Some(_)) => return Err(PAGED_PACKED_UNREAD),
+            (AttentionCache::Packed(cache), pages) => {
+                Self::admit_packed(client, &query, cache, pages.as_ref())?
+            }
         }
         let group = Self::group(&query, kv.num_kv_heads())?;
         Ok(Self::assemble(
@@ -289,17 +289,28 @@ impl AttentionTensors {
             "the keys and values agree on their sequences or pages, key heads and positions"
         );
         assert_eq!(k_shape[3], q_shape[3], "the keys' head dim is the query's");
+        Self::assert_cache_rows(q_shape[0], [k_shape[0], k_shape[2]], pages);
+        Ok(())
+    }
+
+    /// A cache whose buffers hold `rows`, `[sequences or pages, positions]`, under the query's
+    /// `sequences`: one row a sequence, or a non-empty pool of non-empty pages that `pages` names
+    /// a row of for each sequence.
+    ///
+    /// # Panics
+    ///
+    /// As [`attention`](Self::attention), for the batch and the page table.
+    fn assert_cache_rows(sequences: usize, rows: [usize; 2], pages: Option<&PlainTensor>) {
         match pages {
             Some(pages) => {
-                Self::assert_page_table(pages, q_shape[0]);
+                Self::assert_page_table(pages, sequences);
                 assert!(
-                    k_shape[0] > 0 && k_shape[2] > 0 && pages.shape()[1] > 0,
+                    rows[0] > 0 && rows[1] > 0 && pages.shape()[1] > 0,
                     "a paged attention reads a pool, its pages and its table rows non-empty"
                 );
             }
-            None => assert_eq!(k_shape[0], q_shape[0], "the operands' batch dims agree"),
+            None => assert_eq!(rows[0], sequences, "the operands' batch dims agree"),
         }
-        Ok(())
     }
 
     /// Scales of a float cache the routines read: each one `f32` over its whole side.
@@ -317,7 +328,7 @@ impl AttentionTensors {
     }
 
     /// A packed cache the routines read, under `query` of an element they take and `client`'s
-    /// device runs.
+    /// device runs, laid out as sequences, or as pools of pages where `pages` names them.
     ///
     /// # Errors
     ///
@@ -325,11 +336,14 @@ impl AttentionTensors {
     ///
     /// # Panics
     ///
-    /// A query whose head dim is not the cache's, twice it with a fix-up.
+    /// A query whose head dim is not the cache's, twice it with a fix-up; buffers that disagree
+    /// on their sequences or pages, key heads or positions; or as
+    /// [`attention`](Self::attention), for the batch and the page table.
     fn admit_packed(
         client: &Client,
         query: &PlainTensor,
         cache: &PackedAttentionCache,
+        pages: Option<&PlainTensor>,
     ) -> Result<(), Decline> {
         Self::admit_element(client, query)?;
         if ![cache.bits.key, cache.bits.value]
@@ -344,6 +358,20 @@ impl AttentionTensors {
             None => coords,
         };
         assert_eq!(query.shape()[3], widened, "the query spans the keys' lines");
+        let rows = cache.key.words.shape();
+        let buffers = [&cache.key.words, &cache.key.norms, &cache.value.words]
+            .into_iter()
+            .chain([&cache.value.norms])
+            .chain(cache.fixup.as_ref().map(|fixup| &fixup.errs));
+        for buffer in buffers {
+            let shape = buffer.shape();
+            assert!(
+                shape.num_dims() == 4 && shape.as_slice()[..3] == rows.as_slice()[..3],
+                "a packed cache's buffers agree on their sequences or pages, key heads and \
+                 positions"
+            );
+        }
+        Self::assert_cache_rows(query.shape()[0], [rows[0], rows[2]], pages);
         Ok(())
     }
 
@@ -831,9 +859,8 @@ impl AttentionTensors {
                         TileSpec::new(Projection::new(&[head], &[PhysicalAxisMap::broadcast()])),
                     )
                 };
-                // A pool of pages is placed by its table, keyed by the batch and the keys'
-                // positions: it covers the launch, its rows the batch and its columns the keys.
-                // The side's scale is stated first, so the table places the values under it.
+                // A pool of pages is placed by its table ([`page_table`]). The side's
+                // scale is stated first, so the table places the values under it.
                 let read_cache =
                     |tensor: &PlainTensor,
                      dimensions: &'static [Dimension],
@@ -851,15 +878,7 @@ impl AttentionTensors {
                         };
                         match &self.kv.pages {
                             Some(pages) => arg
-                                .indexed_covering(
-                                    TileTensorLaunch::new(
-                                        pages.binding.clone().into_tensor_arg(),
-                                        ElemType::UInt(UIntKind::U32),
-                                        1,
-                                        TileSpec::direct(&[B, S]),
-                                    ),
-                                    Indexing::Coordinate(B),
-                                )
+                                .indexed_covering(page_table(pages), Indexing::Coordinate(B))
                                 .expect(ADMITTED_PLAN_RUNS),
                             None => arg,
                         }
@@ -891,7 +910,9 @@ impl AttentionTensors {
                 );
                 AttentionCacheBinding::Tiles { key, value }
             }
-            AttentionCache::Packed(cache) => AttentionCacheBinding::Packed(cache.bind(&launcher)),
+            AttentionCache::Packed(cache) => {
+                AttentionCacheBinding::Packed(cache.bind(&launcher, self.kv.pages.as_ref()))
+            }
         };
         let out = runs(
             arg(

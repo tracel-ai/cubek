@@ -92,14 +92,15 @@ impl<N: Size> StepReads<N> for PackedStepReads {
         1.0
     }
 
-    fn read_page_entry(&self, _region: &Region) -> PageEntry {
-        PageEntry::unlisted()
+    fn read_page_entry(&self, region: &Region) -> PageEntry {
+        self.tile.read_page_entry(region)
     }
 
-    fn with_page_entry(&self, _entry: &PageEntry) -> PackedStepReads {
+    /// The fix-up reads the keys' words through their table, so the keys' entry serves it too.
+    fn with_page_entry(&self, entry: &PageEntry) -> PackedStepReads {
         PackedStepReads {
-            tile: self.tile.clone(),
-            fixup: self.fixup.clone(),
+            tile: self.tile.with_page_entry(entry),
+            fixup: self.fixup.clone().map(|fixup| fixup.with_page_entry(entry)),
         }
     }
 
