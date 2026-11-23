@@ -37,7 +37,12 @@ impl Decoded {
         input: &MatmulCallInput,
     ) -> Result<MatmulCallInput, Declined> {
         match &input.tensor {
-            StoredTensor::Plain(_) | StoredTensor::RowScaled(_) => Ok(input.clone()),
+            StoredTensor::Plain(_) => Ok(input.clone()),
+            // No kernel here decodes 8-bit float values under a scale a row: the framework does.
+            StoredTensor::RowScaled(_) => framework_dequantized(input).map_err(|why| Declined {
+                plan: self.name(),
+                why: why.to_string(),
+            }),
             StoredTensor::Packed(packed) => decode(call, packed)
                 .or_else(|why| match packed.words().is_tiled() {
                     true => panic!(
@@ -73,11 +78,12 @@ impl Step<MatmulCall> for Decoded {
 impl Step<MatmulCall> for FrameworkDequantized {
     fn apply(&self, call: &MatmulCall) -> Result<MatmulCall, Declined> {
         let dequantized = |input: &MatmulCallInput| match &input.tensor {
-            StoredTensor::Plain(_) | StoredTensor::RowScaled(_) => Ok(input.clone()),
-            StoredTensor::Packed(_) => framework_dequantized(input).map_err(|why| Declined {
-                plan: self.name(),
-                why: why.to_string(),
-            }),
+            StoredTensor::Plain(_) => Ok(input.clone()),
+            StoredTensor::Packed(_) | StoredTensor::RowScaled(_) => framework_dequantized(input)
+                .map_err(|why| Declined {
+                    plan: self.name(),
+                    why: why.to_string(),
+                }),
         };
         Ok(MatmulCall {
             lhs: dequantized(&call.lhs)?,

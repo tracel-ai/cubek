@@ -8,6 +8,7 @@ use crate::kernels::tune::{
 use MatmulKernel as K;
 use MatmulKernelHeuristic as H;
 use MatmulOpStrategy::*;
+use cubecl::ir::{ElemType, FloatKind, features::MmaConfig};
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
@@ -827,27 +828,72 @@ mod float {
     }
 }
 
-/// FP8-row activations against an MXFP4 weight with row-factored scales are streamed, the
-/// activation read as stored
-/// under its scales a row: past a decode's rows they reach the many-rows autotune. Row-scaled
-/// values anywhere but the lhs are a scheme no kernel reads, which the framework dequantizes.
-#[test]
-fn an_fp8_row_activation_against_a_row_factored_mxfp4_weight_reaches_the_many_rows_autotune() {
-    let hw = devices::h100();
-    let row_factored = QuantScheme::default()
+/// MXFP4 with its scales factored by row, its blocks along `k`, as a served weight stores it.
+fn mxfp4_row_factored_along_k() -> QuantScheme {
+    QuantScheme::default()
         .with_value(QuantValue::E2M1)
         .per_block([32, 1], ScaleDtype::UE8M0)
         .per_row(ScaleDtype::F32)
-        .with_store(QuantStore::PackedU32(1));
-    let w4a8 = with_packed_lhs(quantized(512, row_factored), QuantScheme::fp8_per_row());
+        .with_store(QuantStore::PackedU32(1))
+}
+
+/// FP8-row activations against MXFP4 with row-factored scales, at a prompt's rows.
+fn fp8_row_against_mxfp4_row_factored() -> MatmulProblem {
+    with_packed_lhs(
+        quantized(512, mxfp4_row_factored_along_k()),
+        QuantScheme::fp8_per_row(),
+    )
+}
+
+/// An H100 whose manual MMA multiplies `e4m3` into `f32`.
+fn offering_e4m3_mma() -> Hardware {
+    let e4m3 = ElemType::Float(FloatKind::E4M3);
+    let config = MmaConfig {
+        a_type: e4m3,
+        b_type: e4m3,
+        cd_type: ElemType::Float(FloatKind::F32),
+        m: 16,
+        n: 16,
+        k: 16,
+    };
+    devices::offering_mma(devices::h100(), [config])
+}
+
+/// On a device whose manual MMA multiplies `e4m3`, FP8-row activations are streamed against
+/// MXFP4 with row-factored scales, read as stored: past a decode's rows on the many-rows
+/// autotune.
+#[test]
+fn an_fp8_row_activation_reaches_the_many_rows_autotune_on_an_e4m3_mma() {
     assert_eq!(
-        select(Autotune, &w4a8, &hw),
+        select(
+            Autotune,
+            &fp8_row_against_mxfp4_row_factored(),
+            &offering_e4m3_mma()
+        ),
         Ok(fastest(MatmulAutotune::ManyRows))
     );
+}
+
+/// On a device whose manual MMA does not multiply `e4m3`, no kernel contracts FP8-row values, and
+/// the framework dequantizes them.
+#[test]
+fn an_fp8_row_activation_is_dequantized_by_the_framework_without_an_e4m3_mma() {
+    let hw = devices::lacking_every_feature(devices::h100());
+    assert!(framework_dequantized(&select(
+        Autotune,
+        &fp8_row_against_mxfp4_row_factored(),
+        &hw
+    )));
+}
+
+/// Row-scaled values anywhere but the lhs are a scheme no kernel reads, which the framework
+/// dequantizes.
+#[test]
+fn a_row_scaled_rhs_is_dequantized_by_the_framework() {
     let row_scaled_rhs = quantized(512, QuantScheme::fp8_per_row());
     assert!(framework_dequantized(&select(
         Autotune,
         &row_scaled_rhs,
-        &hw
+        &offering_e4m3_mma()
     )));
 }

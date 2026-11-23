@@ -61,14 +61,16 @@ pub fn matmul_supported(hw: &Hardware, scheme: &QuantScheme, input: MatmulOperan
 }
 
 /// Whether the kernels read `input` row-scaled under `scheme` ([`QuantScheme::fp8_per_row`]):
-/// 8-bit float values in dense rows under one scale a row, its only level, as the lhs, whose row
-/// scales come out of the sum along the output's rows. A packed rhs beside it decodes into its
-/// element, which a launch against any other rhs declines.
-fn row_scaled_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
+/// 8-bit float values in dense rows under one scale a row, its only level, as the lhs, on a
+/// device whose manual MMA multiplies `e4m3` ([`Hardware::e4m3_mma`]), which contracts them as
+/// they are. Their row scales come out of the sum along the output's rows; a launch against any
+/// rhs but MXFP4 with row-factored scales declines.
+fn row_scaled_supported(hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
     matches!(scheme.value, QuantValue::E4M3 | QuantValue::E5M2)
         && scheme.mode == QuantMode::Symmetric
         && scheme.num_levels() == 1
         && input == MatmulOperand::Lhs
+        && hw.e4m3_mma()
 }
 
 /// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.

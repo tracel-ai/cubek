@@ -1,6 +1,7 @@
 use super::counters::ZeroedCounters;
 use crate::kernels::tensor::{
-    PACKED_STACK_UNREAD, PackedTensor, PlainTensor, ROW_SCALED_UNSERVED, StoredTensor,
+    PACKED_STACK_UNREAD, PackedTensor, PlainTensor, ROW_FACTORED_WEIGHT_UNSERVED,
+    ROW_SCALED_RHS_UNREAD, ROW_SCALED_UNSERVED, RowScaledTensor, StoredTensor,
 };
 use crate::kernels::{
     MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulIndex,
@@ -11,8 +12,12 @@ use core::marker::PhantomData;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::{BufferArg, TensorMapArg, TensorMapSwizzle};
+use cubecl::quant::scheme::{QuantScheme, QuantValue, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::Projection;
+use cubecl::tile::kind::Field;
 use cubecl::tile::launch::{Arg, Decline, Labelled, TmaCoordinates, TmaTerm};
+use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::tile::{
     Dimension, Geometry, Launcher, Space, StageStorage, TileSpec, TileTensorLaunch, launch::Bound,
     launch::TmaBox, launch::Unbound,
@@ -453,7 +458,7 @@ impl MatmulTensors {
     }
 
     /// The element a product beside a packed input is written in: a float input's, or, where
-    /// both are packed and name none, the element their words unpack into
+    /// neither is float and none is named, the element packed words unpack into
     /// ([`PACKED`](MatmulRoutineProblem::PACKED)).
     pub(super) fn packed_output(lhs: &StoredTensor, rhs: &StoredTensor) -> ElemType {
         match (lhs, rhs) {
@@ -549,11 +554,7 @@ impl MatmulTensors {
         lhs: StoredTensor,
         rhs: StoredTensor,
     ) -> Result<(StoredTensor, StoredTensor, Vec<usize>), Decline> {
-        // A row-scaled lhs's 8-bit values contract against a packed rhs decoded to their element,
-        // never against a float one of another.
-        if matches!(lhs, StoredTensor::RowScaled(_)) && !matches!(rhs, StoredTensor::Packed(_)) {
-            return Err(ROW_SCALED_UNSERVED);
-        }
+        Self::check_row_scaled_pair(&lhs, &rhs)?;
         let k = rhs.extent([K, N], K);
         let lhs = Self::stored_beside_packed(client, lhs, [M, K], k)?;
         let rhs = Self::stored_beside_packed(client, rhs, [K, N], k)?;
@@ -563,6 +564,37 @@ impl MatmulTensors {
         };
         *shape.last_mut().expect("the lhs has a rank") = rhs.extent([K, N], N);
         Ok((lhs, rhs, shape))
+    }
+
+    /// A row-scaled lhs's 8-bit values contract against MXFP4 with row-factored scales decoded to
+    /// their element, and that weight against such an lhs alone.
+    ///
+    /// # Errors
+    ///
+    /// [`ROW_SCALED_UNSERVED`] against a float rhs, [`ROW_SCALED_RHS_UNREAD`] against any other
+    /// packed one, [`ROW_FACTORED_WEIGHT_UNSERVED`] for that weight against any other lhs.
+    fn check_row_scaled_pair(lhs: &StoredTensor, rhs: &StoredTensor) -> Result<(), Decline> {
+        let row_factored = |scheme: QuantScheme| {
+            scheme.value == QuantValue::E2M1
+                && scheme.row_scale().is_some()
+                && scheme.block_scale().map(|block| block.dtype) == Some(ScaleDtype::UE8M0)
+        };
+        match (lhs, rhs) {
+            (StoredTensor::RowScaled(_), StoredTensor::Plain(_) | StoredTensor::RowScaled(_)) => {
+                Err(ROW_SCALED_UNSERVED)
+            }
+            (StoredTensor::RowScaled(_), StoredTensor::Packed(rhs))
+                if !row_factored(rhs.scheme()) =>
+            {
+                Err(ROW_SCALED_RHS_UNREAD)
+            }
+            (StoredTensor::Plain(_) | StoredTensor::Packed(_), StoredTensor::Packed(rhs))
+                if row_factored(rhs.scheme()) =>
+            {
+                Err(ROW_FACTORED_WEIGHT_UNSERVED)
+            }
+            _ => Ok(()),
+        }
     }
 
     /// The three operands bound as `blueprint` states them, on `grid`: under its partitioning, at
@@ -1053,11 +1085,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             |operand: &StoredTensor, [rows, columns]: [Dimension; 2], width: usize| match operand {
                 StoredTensor::Plain(tensor) => float(tensor, [rows, columns], width),
                 // Its values as a float input's, under its scales a row, which the sum takes out.
-                StoredTensor::RowScaled(tensor) => {
-                    let values = float(tensor.values(), [rows, columns], width);
-                    // Its rows group nothing, so the space holds them whole, inside one block.
-                    values.scales(tensor.bind_scales(&launcher, blocked(rows).1))
-                }
+                // Its rows group nothing, so the space holds them whole, inside one block.
+                StoredTensor::RowScaled(tensor) => float(tensor.values(), [rows, columns], width)
+                    .scales(bind_row_scales(&launcher, tensor, blocked(rows).1)),
                 // A launch the TMA engine fills binds its packed inputs again through descriptors
                 // (`tma_packed_operands`), scales and all, so the launcher states their scales as a
                 // reader of fields takes them, which reads them where they lie, in tiles or in
@@ -1232,7 +1262,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             StoredTensor::Plain(lhs) => self.tma_float_lhs(lhs, stage, storage, orders, widths.lhs),
             StoredTensor::RowScaled(lhs) => self
                 .tma_float_lhs(lhs.values(), stage, storage, orders, widths.lhs)
-                .scales(lhs.bind_scales(launcher, blocked(M).1)),
+                .scales(bind_row_scales(launcher, lhs, blocked(M).1)),
             StoredTensor::Packed(lhs) => packed(lhs, MatmulOperand::Lhs, M, widths.lhs),
         };
         let rhs = packed(rhs, MatmulOperand::Rhs, N, widths.rhs);
@@ -1666,6 +1696,30 @@ struct TmaLanding {
     swizzle: TensorMapSwizzle,
 }
 
+/// `tensor`'s scales under `launcher`, one a row of the dimension `rows` its values' rows are bound
+/// over, broadcast along every other: the level a kernel takes out of its sum. Bound at its words,
+/// as a packed operand's scale level is: an `f32` a word.
+fn bind_row_scales(
+    launcher: &Launcher,
+    tensor: &RowScaledTensor,
+    rows: Dimension,
+) -> TileTensorLaunch {
+    let scales = tensor.scales();
+    launcher
+        .arg(
+            scales.as_rows(scales.shape().num_elements(), 1).binding,
+            ElemType::UInt(UIntKind::U32),
+        )
+        .gathered(Projection::new(
+            &[rows],
+            &[PhysicalAxisMap::of(rows), PhysicalAxisMap::broadcast()],
+        ))
+        .packed(Field::of_scale(ScaleDtype::F32))
+        .build()
+        .expect(ADMITTED_PLAN_RUNS)
+        .arg()
+}
+
 #[cfg(test)]
 mod tests {
     use cubecl::tile::layout::ElemAlignment;
@@ -1721,6 +1775,135 @@ mod tests {
                 ElemAlignment::in_stride_order(&shape, &strides),
                 "slabs at {strides:?}"
             );
+        }
+    }
+
+    mod row_scaled {
+        use crate::kernels::MatmulTensors;
+        use crate::kernels::select::packed::nvfp4_scheme;
+        use crate::kernels::tensor::{
+            PackedTensor, PlainTensor, ROW_FACTORED_WEIGHT_UNSERVED, ROW_SCALED_RHS_UNREAD,
+            ROW_SCALED_UNSERVED, RowScaledTensor, StoredTensor,
+        };
+        use cubecl::client::Client;
+        use cubecl::ir::{ElemType, FloatKind, UIntKind};
+        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubek_std::layout::stored::Operand;
+        use cubek_std::matmul_dimensions::{K, N};
+
+        const ROWS: usize = 8;
+        const COLUMNS: usize = 32;
+        const DEPTH: usize = 128;
+        const F32: ElemType = ElemType::Float(FloatKind::F32);
+        const WORD: ElemType = ElemType::UInt(UIntKind::U32);
+
+        fn zeros(client: &Client, [rows, columns]: [usize; 2], elem: ElemType) -> PlainTensor {
+            PlainTensor::zeros(client, &[rows, columns], [columns, 1], elem)
+        }
+
+        /// FP8-row activations, `[ROWS, DEPTH]`.
+        fn fp8_row(client: &Client) -> StoredTensor {
+            let values = zeros(client, [ROWS, DEPTH], ElemType::Float(FloatKind::E4M3));
+            let scales = zeros(client, [ROWS, 1], F32);
+            StoredTensor::RowScaled(
+                RowScaledTensor::new(values, scales, QuantScheme::fp8_per_row())
+                    .expect("FP8-row values"),
+            )
+        }
+
+        /// A weight `[COLUMNS, DEPTH]` packed along `k` under `scheme`, its blocks of `block`.
+        fn weight(client: &Client, scheme: QuantScheme, block: usize) -> StoredTensor {
+            let words = zeros(client, [COLUMNS, DEPTH / scheme.num_quants()], WORD);
+            let scales = zeros(client, [COLUMNS, DEPTH / block / 4], WORD);
+            let outer = (scheme.num_levels() > 1).then(|| zeros(client, [COLUMNS, 1], F32));
+            let operand = Operand::of_scheme(&scheme, K, [N, K]).expect("blocks along k");
+            StoredTensor::Packed(PackedTensor::new(
+                words,
+                scales,
+                outer,
+                scheme,
+                operand,
+                [(N, COLUMNS), (K, DEPTH)],
+            ))
+        }
+
+        fn mxfp4(row_factored: bool) -> QuantScheme {
+            let scheme = QuantScheme::default()
+                .with_value(QuantValue::E2M1)
+                .per_block([32], ScaleDtype::UE8M0)
+                .with_store(QuantStore::PackedU32(0));
+            match row_factored {
+                true => scheme.per_row(ScaleDtype::F32),
+                false => scheme,
+            }
+        }
+
+        fn checked(
+            lhs: StoredTensor,
+            rhs: StoredTensor,
+        ) -> Result<(), cubecl::tile::launch::Decline> {
+            MatmulTensors::check_row_scaled_pair(&lhs, &rhs)
+        }
+
+        /// FP8-row activations are read against MXFP4 with row-factored scales.
+        #[test]
+        fn an_fp8_row_lhs_is_read_against_a_row_factored_weight() {
+            let client = cubek_test_utils::client();
+            let rhs = weight(&client, mxfp4(true), 32);
+            assert_eq!(checked(fp8_row(&client), rhs), Ok(()));
+        }
+
+        /// FP8-row activations against NVFP4 are declined: its codes under `ue4m3` scales would
+        /// saturate `e4m3`.
+        #[test]
+        fn an_fp8_row_lhs_declines_an_nvfp4_weight() {
+            let client = cubek_test_utils::client();
+            let rhs = weight(&client, nvfp4_scheme(), 16);
+            assert_eq!(checked(fp8_row(&client), rhs), Err(ROW_SCALED_RHS_UNREAD));
+        }
+
+        /// FP8-row activations against plain MXFP4 are declined: its scales would flush `e4m3`.
+        #[test]
+        fn an_fp8_row_lhs_declines_a_plain_mxfp4_weight() {
+            let client = cubek_test_utils::client();
+            let rhs = weight(&client, mxfp4(false), 32);
+            assert_eq!(checked(fp8_row(&client), rhs), Err(ROW_SCALED_RHS_UNREAD));
+        }
+
+        /// FP8-row activations against a float weight are declined.
+        #[test]
+        fn an_fp8_row_lhs_declines_a_float_weight() {
+            let client = cubek_test_utils::client();
+            let rhs = StoredTensor::Plain(zeros(&client, [DEPTH, COLUMNS], F32));
+            assert_eq!(checked(fp8_row(&client), rhs), Err(ROW_SCALED_UNSERVED));
+        }
+
+        /// `e4m3` values beside a packed weight without their scales a row are a float input of
+        /// an element the packed routines do not take.
+        #[test]
+        fn a_plain_e4m3_lhs_beside_a_packed_weight_is_unverified() {
+            let client = cubek_test_utils::client();
+            let lhs = zeros(&client, [ROWS, DEPTH], ElemType::Float(FloatKind::E4M3));
+            let rhs = weight(&client, mxfp4(false), 32);
+            let made = MatmulTensors::new(
+                &client,
+                StoredTensor::Plain(lhs),
+                rhs,
+                cubek_microkernel::matmul::MatmulRowsKind::Tiled,
+            );
+            assert_eq!(
+                made.err(),
+                Some(crate::kernels::MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED)
+            );
+        }
+
+        /// MXFP4 with row-factored scales against a float activation is declined.
+        #[test]
+        fn a_row_factored_weight_declines_a_float_lhs() {
+            let client = cubek_test_utils::client();
+            let lhs = StoredTensor::Plain(zeros(&client, [ROWS, DEPTH], F32));
+            let rhs = weight(&client, mxfp4(true), 32);
+            assert_eq!(checked(lhs, rhs), Err(ROW_FACTORED_WEIGHT_UNSERVED));
         }
     }
 }

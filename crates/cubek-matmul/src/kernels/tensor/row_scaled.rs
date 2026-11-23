@@ -1,10 +1,7 @@
 use super::PlainTensor;
-use cubecl::ir::{ElemType, FloatKind, UIntKind};
-use cubecl::quant::scheme::{QuantScheme, QuantValue, ScaleDtype};
+use cubecl::ir::{ElemType, FloatKind};
+use cubecl::quant::scheme::{QuantScheme, QuantValue};
 use cubecl::tile::launch::Decline;
-use cubecl::tile::{Dimension, Launcher, TileTensorLaunch, kind::Field};
-use cubecl::tile::{Projection, layout::PhysicalAxisMap};
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// What a row-scaled tensor declines: a scheme of other than one per-row level over 8-bit float
 /// values, values not of its element in dense rows, or scales other than one `f32` a row.
@@ -17,6 +14,20 @@ pub const ROW_SCALED_UNREAD: Decline = Decline::Unserved {
 /// the one place its row scales come out of the sum as the output rows' factor.
 pub const ROW_SCALED_UNSERVED: Decline = Decline::Unserved {
     why: "a row-scaled operand is read as the lhs of a product against a packed rhs",
+};
+
+/// What a product declines of a row-scaled lhs against a packed rhs other than MXFP4 with
+/// row-factored scales ([`QuantScheme::mxfp4_row_factored`]): the decode into `e4m3` takes only
+/// codes whose every value an `e4m3` holds under their block's offset, where NVFP4's would
+/// saturate, plain MXFP4's flush and integer codes mean nothing.
+pub const ROW_SCALED_RHS_UNREAD: Decline = Decline::Unserved {
+    why: "a row-scaled lhs is read against MXFP4 with row-factored scales alone",
+};
+
+/// What a product declines of MXFP4 with row-factored scales against anything but a row-scaled
+/// lhs: its row scales come out of the sum beside the lhs's, which no other read verifies.
+pub const ROW_FACTORED_WEIGHT_UNSERVED: Decline = Decline::Unserved {
+    why: "MXFP4 with row-factored scales is read against a row-scaled lhs alone",
 };
 
 /// A matrix of 8-bit float values, each row under one scale over the whole row, its scheme's
@@ -32,7 +43,7 @@ pub struct RowScaledTensor {
 
 impl RowScaledTensor {
     /// `values`, `[rows, k]` of the element `scheme`'s values are, each row under its scale of
-    /// `scales`, one `f32` a row.
+    /// `scales`, one contiguous `f32` a row.
     ///
     /// # Errors
     ///
@@ -49,9 +60,13 @@ impl RowScaledTensor {
         };
         let one_level = scheme.num_levels() == 1 && scheme.row_scale().is_some();
         let shape = values.shape();
-        let rows = shape.num_elements() / shape[shape.rank() - 1].max(1);
-        let one_a_row =
-            scales.shape().num_elements() == rows && scales.elem == ElemType::Float(FloatKind::F32);
+        let Some(&k) = shape.as_slice().last() else {
+            return Err(ROW_SCALED_UNREAD);
+        };
+        let rows = shape.num_elements() / k.max(1);
+        let one_a_row = scales.shape().num_elements() == rows
+            && scales.elem == ElemType::Float(FloatKind::F32)
+            && scales.is_contiguous();
         if !one_level || values.elem != element || !values.is_contiguous() || !one_a_row {
             return Err(ROW_SCALED_UNREAD);
         }
@@ -76,21 +91,68 @@ impl RowScaledTensor {
     pub fn scheme(&self) -> QuantScheme {
         self.scheme
     }
+}
 
-    /// Its scales under `launcher`, one a row of the dimension `rows` its values' rows are bound
-    /// over, broadcast along every other: the level a kernel takes out of its sum.
-    pub fn bind_scales(&self, launcher: &Launcher, rows: Dimension) -> TileTensorLaunch {
-        let scales = self.scales.as_rows(self.scales.shape().num_elements(), 1);
-        launcher
-            // Bound at its words, as a packed operand's scale level is: an `f32` a word.
-            .arg(scales.binding, ElemType::UInt(UIntKind::U32))
-            .gathered(Projection::new(
-                &[rows],
-                &[PhysicalAxisMap::of(rows), PhysicalAxisMap::broadcast()],
-            ))
-            .packed(Field::of_scale(ScaleDtype::F32))
-            .build()
-            .expect(ADMITTED_PLAN_RUNS)
-            .arg()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::quant::scheme::ScaleDtype;
+
+    const ROWS: usize = 4;
+    const DEPTH: usize = 64;
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+    const E4M3: ElemType = ElemType::Float(FloatKind::E4M3);
+
+    fn zeros(shape: [usize; 2], elem: ElemType) -> PlainTensor {
+        PlainTensor::zeros(&cubek_test_utils::client(), &shape, [shape[1], 1], elem)
+    }
+
+    fn new(values: PlainTensor, scales: PlainTensor, scheme: QuantScheme) -> Option<Decline> {
+        RowScaledTensor::new(values, scales, scheme).err()
+    }
+
+    /// `e4m3` values in dense rows under one contiguous `f32` a row are FP8-row.
+    #[test]
+    fn e4m3_rows_under_a_scale_a_row_are_row_scaled() {
+        let (values, scales) = (zeros([ROWS, DEPTH], E4M3), zeros([ROWS, 1], F32));
+        assert_eq!(new(values, scales, QuantScheme::fp8_per_row()), None);
+    }
+
+    /// A per-tensor level in place of the row's is refused.
+    #[test]
+    fn a_per_tensor_level_is_refused() {
+        let (values, scales) = (zeros([ROWS, DEPTH], E4M3), zeros([ROWS, 1], F32));
+        let scheme = QuantScheme::fp8_per_row().per_tensor(ScaleDtype::F32);
+        assert_eq!(new(values, scales, scheme), Some(ROW_SCALED_UNREAD));
+    }
+
+    /// One scale short of the rows is refused.
+    #[test]
+    fn a_scale_short_is_refused() {
+        let (values, scales) = (zeros([ROWS, DEPTH], E4M3), zeros([ROWS - 1, 1], F32));
+        assert_eq!(
+            new(values, scales, QuantScheme::fp8_per_row()),
+            Some(ROW_SCALED_UNREAD)
+        );
+    }
+
+    /// Values of another element than the scheme's are refused.
+    #[test]
+    fn values_of_another_element_are_refused() {
+        let (values, scales) = (zeros([ROWS, DEPTH], F32), zeros([ROWS, 1], F32));
+        assert_eq!(
+            new(values, scales, QuantScheme::fp8_per_row()),
+            Some(ROW_SCALED_UNREAD)
+        );
+    }
+
+    /// Scales of another element than `f32` are refused.
+    #[test]
+    fn scales_of_another_element_are_refused() {
+        let (values, scales) = (zeros([ROWS, DEPTH], E4M3), zeros([ROWS, 1], E4M3));
+        assert_eq!(
+            new(values, scales, QuantScheme::fp8_per_row()),
+            Some(ROW_SCALED_UNREAD)
+        );
     }
 }
