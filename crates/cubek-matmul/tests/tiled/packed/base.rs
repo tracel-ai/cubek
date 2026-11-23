@@ -1,6 +1,7 @@
 //! Packed matrices as the tiled tests build them: block-scaled values a quantizer reads back
 //! exactly, bound as the words and scales a kernel reads.
 
+use cubecl::CubeElement;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::Scalar;
@@ -12,6 +13,7 @@ use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
+use cubek_quant::per_row::mxfp4_per_row;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_dimensions::K;
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
@@ -20,6 +22,11 @@ use crate::tiled::upload;
 
 /// The per-tensor scale a two-level format is built under.
 const GLOBAL_SCALE: f32 = 2.;
+
+/// Powers of two a block's scale falls below the matrix's largest: an MXFP4-row matrix's reach
+/// past the eight its decode into `e4m3` takes exactly, every other's a few.
+const SPREAD: i32 = 3;
+const ROW_SPREAD: i32 = 12;
 
 /// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly;
 /// a `ue8m0` byte holds only the first.
@@ -32,6 +39,10 @@ pub(crate) enum PackedFormat {
     Q4,
     Nvfp4,
     Mxfp4,
+    /// MXFP4 restated as MXFP4-row by the load step a caller runs
+    /// ([`mxfp4_per_row`](cubek_quant::per_row::mxfp4_per_row)), its blocks' scales spread wider
+    /// than the decode into `e4m3` takes exactly, so some round and are counted.
+    Mxfp4Row,
     Mxfp8,
 }
 
@@ -47,6 +58,7 @@ impl PackedFormat {
             Self::Q8 => blocks_of_32(QuantValue::Q8S),
             Self::Q4 => blocks_of_32(QuantValue::Q4S),
             Self::Nvfp4 => nvfp4_scheme(),
+            Self::Mxfp4Row => QuantScheme::mxfp4_per_row(),
             Self::Mxfp4 => QuantScheme::default()
                 .with_value(QuantValue::E2M1)
                 .per_block([32], ScaleDtype::UE8M0)
@@ -77,6 +89,8 @@ pub(crate) struct PackedSlabs {
     spec: PackedSlabsSpec,
     tensor: PackedTensor,
     host: HostSlabs,
+    /// The blocks the MXFP4-row load step counted as rounding in the decode, for that format.
+    lossy_blocks: Option<TensorHandle>,
 }
 
 /// The dequantized values of a packed matrix of slabs, on the host: what a routine reading it
@@ -110,7 +124,27 @@ impl PackedSlabs {
             quantized.quantization.expect("a quantized tensor").scale,
             (rows, spec.k / block_of(&scheme)),
         );
-        let global = (scheme.num_levels() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
+        let (scales, global, lossy_blocks) = match spec.format {
+            PackedFormat::Mxfp4Row => {
+                let restated = mxfp4_per_row(client, &scales);
+                let row_scales = TensorHandle::new_contiguous(
+                    Shape::from(vec![rows, 1]),
+                    restated.row_scales.handle,
+                    restated.row_scales.dtype,
+                );
+                let global = PlainTensor::of_handle(row_scales);
+                (
+                    restated.block_scales,
+                    Some(global),
+                    Some(restated.lossy_blocks),
+                )
+            }
+            _ => {
+                let global =
+                    (scheme.num_levels() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
+                (scales, global, None)
+            }
+        };
         let across = across(spec.operand);
         let tensor = PackedTensor::new(
             PlainTensor::of_handle(quantized.handle),
@@ -124,6 +158,7 @@ impl PackedSlabs {
             spec,
             tensor,
             host: spec.dequantized(),
+            lossy_blocks,
         };
         slabs.assert_distinct(&scheme);
         slabs
@@ -132,6 +167,14 @@ impl PackedSlabs {
     /// The matrix whole, its slabs not yet read as such.
     pub(crate) fn matrix(&self) -> PackedTensor {
         self.tensor.clone()
+    }
+
+    /// The blocks the MXFP4-row load step counted as rounding in the decode into `e4m3`; `None` for
+    /// every other format.
+    pub(crate) fn lossy_blocks(&self, client: &Client) -> Option<u32> {
+        let count = self.lossy_blocks.clone()?;
+        let bytes = client.read_one_unchecked_tensor(count.into_copy_descriptor());
+        Some(u32::from_bytes(&bytes)[0])
     }
 
     /// The matrix read as the stack of its slabs.
@@ -179,7 +222,8 @@ impl PackedSlabsSpec {
     pub(crate) fn dequantized(&self) -> HostSlabs {
         let scheme = self.format.scheme();
         let exact = self.exact_values(&scheme);
-        let values = match scheme.num_levels() > 1 {
+        // The load step restating MXFP4 as MXFP4-row changes no value.
+        let values = match scheme.tensor_scale().is_some() {
             true => exact.into_iter().map(|v| v * GLOBAL_SCALE).collect(),
             false => exact,
         };
@@ -209,7 +253,11 @@ impl PackedSlabsSpec {
                     ScaleDtype::UE8M0 => MANTISSAS[0],
                     _ => MANTISSAS[h % 4],
                 };
-                let scale = mantissa * 2f32.powi(-headroom - ((h / 4) % 3) as i32);
+                let spread = match self.format {
+                    PackedFormat::Mxfp4Row => ROW_SPREAD,
+                    _ => SPREAD,
+                };
+                let scale = mantissa * 2f32.powi(-headroom - (h / 4) as i32 % spread);
                 let pick = hashed(i, self.seed) % (2 * codes.len());
                 let code = match within {
                     0 => peak,

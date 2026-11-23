@@ -1,7 +1,7 @@
 //! A stacked rhs: slabs laid end to end along one dimension of a product, as the routed and grouped
 //! products read it.
 
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::tensor::{PlainTensor, ROW_SCALED_UNSERVED, StoredTensor};
 use cubecl::client::Client;
 use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
@@ -90,6 +90,7 @@ impl SlabDimension {
         slabs: usize,
     ) -> Result<StoredTensor, Decline> {
         match stack {
+            StoredTensor::RowScaled(_) => Err(ROW_SCALED_UNSERVED),
             StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
                 packed.clone().stacked(slabs, self.dimension())?,
             )),

@@ -1,6 +1,7 @@
 use crate::kernels::indexed::routed::RoutedMatmulKey;
 use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
+use crate::kernels::tensor::ROW_SCALED_UNSERVED;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::tune::{Product, matmul_ceiling};
@@ -88,6 +89,7 @@ impl RoutedMatmulTensors {
         );
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),
+            StoredTensor::RowScaled(_) => return Err(ROW_SCALED_UNSERVED),
             StoredTensor::Plain(rhs) => {
                 let (_, rhs) = MatmulInputs::new(client, lhs.clone(), rhs)?.into_parts();
                 StoredTensor::Plain(SlabView::readable(client, rhs))

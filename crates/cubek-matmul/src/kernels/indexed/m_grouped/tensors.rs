@@ -3,6 +3,7 @@ use crate::kernels::indexed::m_grouped::{
 };
 use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
+use crate::kernels::tensor::ROW_SCALED_UNSERVED;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::{
@@ -73,6 +74,7 @@ impl MGroupedMatmulTensors {
         }
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),
+            StoredTensor::RowScaled(_) => return Err(ROW_SCALED_UNSERVED),
             // The rows are padded into a buffer of the launch's own, so only the stack is read
             // where it lies. The slabs are strided views of the stack's buffer, which an
             // overlapping view has no single place for.
@@ -298,6 +300,7 @@ impl MGroupedMatmulTensors {
     fn slab_problem(&self, rows: usize) -> Result<MatmulRoutineProblem, Decline> {
         let elem = self.source.buffer().elem;
         match &self.rhs {
+            StoredTensor::RowScaled(_) => Err(ROW_SCALED_UNSERVED),
             StoredTensor::Packed(packed) => {
                 let stack = packed
                     .clone()

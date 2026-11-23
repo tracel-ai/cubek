@@ -5,13 +5,14 @@
 use std::sync::{Arc, OnceLock};
 
 use cubecl::client::Client;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::Scalar;
-use cubecl::quant::scheme::QuantStore;
+use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::MatmulRoutine;
-use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
+use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, RowScaledTensor, StoredTensor};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
 use cubek_std::matmul_dimensions::{K, N};
@@ -29,6 +30,9 @@ const BF16_TOLERANCE: f32 = 1e-2;
 pub(crate) enum Stored {
     /// Dense `bf16` values in `[-1, 1)`, row-major.
     Bf16,
+    /// An lhs in FP8-row, seeded by `seed`: `e4m3` codes in dense rows, each row under an `f32`
+    /// scale of its own.
+    Fp8Row { seed: usize },
     /// Packed along `k` in `format`, seeded by `seed`.
     Packed { format: PackedFormat, seed: usize },
     /// A rhs `[n, k]` packed along `k` in `format`, seen through the transposed view `[k, n]` a
@@ -156,6 +160,19 @@ impl PackedProduct {
             Stored::Bf16 => {
                 StoredTensor::Plain(upload(client, &dims, &Self::halves(dims[0] * dims[1])))
             }
+            Stored::Fp8Row { seed } => {
+                let (codes, scales) = Self::fp8_row(dims[0], dims[1], seed);
+                let values = PlainTensor::of_handle(TensorHandle::new_contiguous(
+                    Shape::from(dims.to_vec()),
+                    client.create_from_slice(&codes),
+                    ElemType::Float(FloatKind::E4M3),
+                ));
+                let scales = upload(client, &[dims[0], 1], &scales);
+                StoredTensor::RowScaled(
+                    RowScaledTensor::new(values, scales, QuantScheme::fp8_per_row())
+                        .expect("an FP8-row lhs"),
+                )
+            }
             Stored::Packed { format, seed } => StoredTensor::Packed(
                 PackedSlabs::new(client, self.spec(operand, format, seed)).matrix(),
             ),
@@ -180,6 +197,40 @@ impl PackedProduct {
             .expect("a transposed view of a packed matrix reads as stored")
     }
 
+    /// `rows` rows of `k` `e4m3` codes, every finite one but the NaN's, and a scale a row: one
+    /// whose values a row of the halves' magnitude, and a power of two times `1.5` or `1`, so no
+    /// scale is the next one's.
+    fn fp8_row(rows: usize, k: usize, seed: usize) -> (Vec<u8>, Vec<f32>) {
+        let codes = (0..rows * k)
+            .map(|i| {
+                let mixed = (i * 2654435761 + seed * 40503) >> 7;
+                // `0x7f` and `0xff` are `e4m3`'s NaNs.
+                (mixed % 0x7f) as u8 | ((mixed / 0x7f % 2) as u8) << 7
+            })
+            .collect();
+        let scales = (0..rows)
+            .map(|row| {
+                let mantissa = if (row + seed) % 2 == 0 { 1.5 } else { 1. };
+                mantissa * 2f32.powi(-12 - ((row * 7 + seed) % 4) as i32)
+            })
+            .collect();
+        (codes, scales)
+    }
+
+    /// An `e4m3` code's value.
+    fn e4m3(code: u8) -> f32 {
+        let (exponent, mantissa) = (i32::from((code >> 3) & 0xf), f32::from(code & 0b111));
+        let magnitude = match exponent {
+            0 => mantissa / 8. * 2f32.powi(-6),
+            _ => (1. + mantissa / 8.) * 2f32.powi(exponent - 7),
+        };
+        if code & 0x80 != 0 {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+
     /// The operand's values on the host.
     fn host(&self, operand: MatmulOperand, stored: Stored) -> HostOperand {
         match (stored, operand) {
@@ -193,6 +244,19 @@ impl PackedProduct {
                 row_stride: 1,
                 k_stride: self.n,
             },
+            (Stored::Fp8Row { seed }, _) => {
+                let (codes, scales) = Self::fp8_row(self.m, self.k, seed);
+                let values = codes
+                    .iter()
+                    .enumerate()
+                    .map(|(at, &code)| Self::e4m3(code) * scales[at / self.k])
+                    .collect();
+                HostOperand::Dense {
+                    values,
+                    row_stride: self.k,
+                    k_stride: 1,
+                }
+            }
             (
                 Stored::Packed { format, seed } | Stored::PackedViewedTransposed { format, seed },
                 _,

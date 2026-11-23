@@ -1,4 +1,4 @@
-use super::{PackedTensor, PlainTensor};
+use super::{PackedTensor, PlainTensor, RowScaledTensor};
 use crate::kernels::select::problem::OperandKind;
 use cubecl::server::BufferBinding;
 use cubecl::tile::Dimension;
@@ -17,6 +17,8 @@ pub enum StoredTensor {
     Plain(PlainTensor),
     /// Packed words under their scales.
     Packed(PackedTensor),
+    /// 8-bit float values under one scale a row, which come out of the sum.
+    RowScaled(RowScaledTensor),
 }
 
 impl StoredTensor {
@@ -25,6 +27,7 @@ impl StoredTensor {
         match self {
             Self::Plain(tensor) => tensor,
             Self::Packed(tensor) => tensor.words(),
+            Self::RowScaled(tensor) => tensor.values(),
         }
     }
 
@@ -33,6 +36,7 @@ impl StoredTensor {
         match self {
             Self::Plain(_) => OperandKind::Float,
             Self::Packed(tensor) => OperandKind::Quantized(tensor.scheme()),
+            Self::RowScaled(tensor) => OperandKind::Quantized(tensor.scheme()),
         }
     }
 
@@ -43,8 +47,8 @@ impl StoredTensor {
     /// On a dimension not among them.
     pub fn extent(&self, dimensions: [Dimension; 2], dimension: Dimension) -> usize {
         match self {
-            Self::Plain(tensor) => {
-                let shape = tensor.shape();
+            Self::Plain(_) | Self::RowScaled(_) => {
+                let shape = self.values().shape();
                 let position = dimensions
                     .iter()
                     .position(|&own| own == dimension)
@@ -56,7 +60,7 @@ impl StoredTensor {
     }
 
     /// Every buffer it binds, in the order its binding holds them: its values, then a packed one's
-    /// block scales and its per-tensor scale. What a kept binding is rebound to, in place of the
+    /// block scales and its outer scale, or a row-scaled one's scales. What a kept binding is rebound to, in place of the
     /// buffers it was made over.
     pub fn buffers(&self) -> Vec<BufferBinding> {
         self.tensors()
@@ -86,11 +90,12 @@ impl StoredTensor {
 
     /// The tensors behind [`buffers`](Self::buffers), in its order.
     fn tensors(&self) -> impl Iterator<Item = &PlainTensor> {
-        let (values, scales) = match self {
-            Self::Plain(tensor) => (tensor, None),
-            Self::Packed(tensor) => (tensor.words(), Some(tensor.scales())),
+        let (values, scales): (_, Vec<&PlainTensor>) = match self {
+            Self::Plain(tensor) => (tensor, Vec::new()),
+            Self::Packed(tensor) => (tensor.words(), tensor.scales().collect()),
+            Self::RowScaled(tensor) => (tensor.values(), vec![tensor.scales()]),
         };
-        core::iter::once(values).chain(scales.into_iter().flatten())
+        core::iter::once(values).chain(scales)
     }
 }
 

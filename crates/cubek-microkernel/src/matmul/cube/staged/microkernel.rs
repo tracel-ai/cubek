@@ -6,7 +6,9 @@ use cubecl::tile::launch::{
     OpenedDestination, OpenedDestinationExpand, ServedDestination, ServedDestinationExpand,
 };
 use cubecl::tile::stage::{AsyncStage, AsyncStageExpand, OperandPair, Role};
-use cubecl::tile::{Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk};
+use cubecl::tile::{
+    Factor, Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
+};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -65,6 +67,25 @@ impl CubeStagedWalk {
         }
     }
 
+    /// `input` without the outer scales `sum` takes out and applies once, and those scales: as the
+    /// sum's instruction would have them ([`Tile::factor`]), or all of them where the walk decodes
+    /// the inputs into an 8-bit float, whose range their values already fill.
+    pub(crate) fn factored(
+        input: &Tile,
+        sum: &Tile,
+        #[comptime] walk: CubeStagedWalk,
+    ) -> (Tile, Factor) {
+        let narrow = comptime!(
+            walk.decoded()
+                .is_some_and(|element| element.size_bits() == u8::BITS as usize)
+        );
+        if narrow {
+            input.factor_out(sum)
+        } else {
+            input.factor(sum)
+        }
+    }
+
     /// `sum`, walked, bouncing its fragments through the scratch `walk` holds as it drains. The
     /// scratch is opened once the walk has freed its stages, past a cube barrier, so it takes
     /// their bytes rather than its own.
@@ -106,8 +127,8 @@ impl CubeStagedWalk {
     ) -> PlanesSum {
         let (a, b) = (Self::as_staged(a, walk), Self::as_staged(b, walk));
         let sum = Self::open_sum::<EA>(over, &a, &b, walk);
-        let (a, a_factor) = a.factor(&sum);
-        let (b, b_factor) = b.factor(&sum);
+        let (a, a_factor) = Self::factored(&a, &sum, walk);
+        let (b, b_factor) = Self::factored(&b, &sum, walk);
 
         cube_staged_sum_microkernel(run, &sum, &a, &b, walk, storage);
 
@@ -141,8 +162,8 @@ impl CubeStagedWalk {
     ) -> PlanesSum {
         let (a, b) = (Self::as_staged(a, walk), Self::as_staged(b, walk));
         let sum = Self::open_sum::<EA>(over, &a, &b, walk);
-        let (a, a_factor) = a.factor(&sum);
-        let (b, b_factor) = b.factor(&sum);
+        let (a, a_factor) = Self::factored(&a, &sum, walk);
+        let (b, b_factor) = Self::factored(&b, &sum, walk);
 
         let depth = walk.ring.stages_in_flight.get();
         let mut stages = Stages::smem(&run, &a, &b, storage, depth, walk.decoded());

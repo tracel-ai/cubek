@@ -31,7 +31,10 @@ use cubek_std::layout::stored::Operand;
 /// first, or on the framework's quantized matmul — it just never reaches one
 /// of the tiled kernels packed. This is the gate that decides which, so
 /// everything downstream may take the form, and the decode, for granted.
-pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
+pub fn matmul_supported(hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
+    if scheme.row_scale().is_some() && scheme.block_scale().is_none() {
+        return row_scaled_supported(hw, scheme, input);
+    }
     let value = matches!(
         scheme.value,
         QuantValue::Q4F
@@ -55,6 +58,17 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOpera
         .and_then(|dimension| Operand::of_scheme(scheme, dimension, dimensions))
         .is_some();
     value && numbers && laid
+}
+
+/// Whether the kernels read `input` row-scaled under `scheme` ([`QuantScheme::fp8_per_row`]):
+/// 8-bit float values in dense rows under one scale a row, its only level, as the lhs, whose row
+/// scales come out of the sum along the output's rows. A packed rhs beside it decodes into its
+/// element, which a launch against any other rhs declines.
+fn row_scaled_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
+    matches!(scheme.value, QuantValue::E4M3 | QuantValue::E5M2)
+        && scheme.mode == QuantMode::Symmetric
+        && scheme.num_levels() == 1
+        && input == MatmulOperand::Lhs
 }
 
 /// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.
