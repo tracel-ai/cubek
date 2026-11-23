@@ -1,7 +1,7 @@
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{B, ConvProblem, SpatialDim};
 use cubecl::ir::ElemType;
-use cubecl::throughput::{MemoryAccess, compute_throughput_key};
+use cubecl::throughput::{CmmaDims, MemoryAccess, ThroughputKey};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
@@ -87,9 +87,13 @@ impl CubeStagedConvTuneKey {
             .chain(manual_mma(hw))
             .for_triple(self.lhs, self.rhs, self.sum)
             .largest()
-            .map(|shape| (shape.m, shape.n, shape.k));
+            .map(|shape| CmmaDims {
+                m: shape.m as usize,
+                n: shape.n as usize,
+                k: shape.k as usize,
+            });
         Ceiling::Either {
-            compute: compute_throughput_key(instruction, self.lhs, self.sum),
+            compute: ThroughputKey::compute(instruction, self.lhs, self.sum),
             memory: MemoryAccess::Read,
         }
     }
