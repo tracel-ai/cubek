@@ -4,8 +4,10 @@ use cubecl::tile::launch::Decline;
 /// one convolution it computes, or a setting the device cannot serve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvDecline {
-    /// A bias, which is not part of the contraction.
-    Bias,
+    /// A bias that is not one value for each output channel, as a vector of that length.
+    BiasShape,
+    /// A bias of another element than the output's.
+    BiasElement,
     /// A weight or weight gradient whose channels are not the input's.
     Groups,
     /// A convolution over no spatial dim.
@@ -58,7 +60,10 @@ pub enum ConvDecline {
 impl ConvDecline {
     const fn why(self) -> &'static str {
         match self {
-            Self::Bias => "the tiled forward convolution adds no bias",
+            Self::BiasShape => {
+                "the tiled forward convolution's bias is a vector of its output channels"
+            }
+            Self::BiasElement => "the tiled forward convolution's bias is of the output's element",
             Self::Groups => {
                 "the tiled convolution contracts every input channel, so it has no groups"
             }

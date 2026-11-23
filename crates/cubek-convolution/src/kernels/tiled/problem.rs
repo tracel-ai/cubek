@@ -107,8 +107,17 @@ impl SpatialDim {
     }
 }
 
-/// A convolution with no groups and no bias, as the host describes it. Operands are read as a
-/// matmul's: the input is the lhs.
+/// Whether a forward convolution adds a value to each output channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ConvBias {
+    /// The output is the sum alone.
+    Absent,
+    /// One value for each output channel, added to every cell of that channel.
+    PerChannel,
+}
+
+/// A convolution with no groups and at most one bias value a channel, as the host describes it.
+/// Operands are read as a matmul's: the input is the lhs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConvProblem {
     pub operation: ConvolutionOperation,
@@ -125,6 +134,8 @@ pub struct ConvProblem {
     pub alignments: MatmulOperands<ElemAlignment>,
     /// Bytes each operand's view starts past its buffer's own start.
     pub start_bytes: MatmulOperands<u64>,
+    /// Whether each output channel takes a value after the sum.
+    pub bias: ConvBias,
 }
 
 impl ConvProblem {
@@ -161,6 +172,7 @@ impl ConvProblem {
             sum,
             alignments,
             start_bytes,
+            bias: ConvBias::Absent,
         }
     }
 
@@ -230,9 +242,9 @@ impl ConvProblem {
             .any(|dimension| self.extent(dimension) == 0)
     }
 
-    /// The elements a kernel of this problem defines: the sum and the input.
-    pub fn kernel_elements(&self) -> [ElemType; 2] {
-        [self.sum, self.elements.lhs]
+    /// The elements a kernel of this problem defines: the sum, the input and the output.
+    pub fn kernel_elements(&self) -> [ElemType; 3] {
+        [self.sum, self.elements.lhs, self.elements.out]
     }
 
     /// Whether a position can read before the input's start.
@@ -289,7 +301,10 @@ impl EstimatedProblem for ConvProblem {
                     }
                 })
                 .collect(),
-            bias_elems: 0,
+            bias_elems: match self.bias {
+                ConvBias::Absent => 0,
+                ConvBias::PerChannel => self.channels_out,
+            },
             elems: MatmulGlobalElems {
                 lhs: self.elements.lhs,
                 rhs: self.elements.rhs,
@@ -345,6 +360,7 @@ mod tests {
                 },
                 operation,
                 element: Conv2dElement::F32,
+                bias: ConvBias::Absent,
             });
             let spatial: Vec<_> = (problem.spatial.iter())
                 .map(|spatial_dim| (spatial_dim.gathered, spatial_dim.kernel, spatial_dim.out))

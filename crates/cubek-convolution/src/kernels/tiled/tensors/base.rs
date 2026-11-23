@@ -1,7 +1,7 @@
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{
-    B, CI, CO, ConvBinding, ConvDecline, ConvProblem, ConvRoles, SpatialDim, SpatialDimCount,
-    TileConvBlueprint,
+    B, CI, CO, ConvBias, ConvBinding, ConvDecline, ConvProblem, ConvRoles, SpatialDim,
+    SpatialDimCount, TileConvBlueprint,
 };
 use crate::launch::{SpatialExtent, SpatialWindow, TapCount};
 use cubecl::client::Client;
@@ -16,7 +16,7 @@ use cubek_std::routine::Grid;
 
 /// The tensors of one convolution on one client, held by the role they play in the contraction:
 /// the gathered input, the rhs (the weight, or the output gradient) and the output (the
-/// activation, or the weight gradient).
+/// activation, or the weight gradient), and a forward's bias.
 #[derive(Clone)]
 pub struct ConvTensors {
     operation: ConvolutionOperation,
@@ -24,6 +24,7 @@ pub struct ConvTensors {
     input: TensorBinding,
     rhs: TensorBinding,
     out: TensorBinding,
+    bias: Option<TensorBinding>,
     window: Vec<SpatialWindow>,
     dtypes: MatmulElems,
 }
@@ -50,11 +51,12 @@ impl ConvTensors {
         window: &[SpatialWindow],
         dtypes: MatmulElems,
     ) -> Result<Self, Decline> {
-        if bias.is_some() {
-            return Err(ConvDecline::Bias.into());
-        }
         let operation = ConvolutionOperation::Forward;
-        Self::checked(operation, client, [input, weight], out, window, dtypes)
+        let tensors = Self::checked(operation, client, [input, weight], out, window, dtypes)?;
+        match bias {
+            Some(bias) => tensors.with_bias(bias),
+            None => Ok(tensors),
+        }
     }
 
     /// The weight gradient of `input` and `out_grad` into `weight_grad` over `window`, each
@@ -113,7 +115,11 @@ impl ConvTensors {
     pub fn problem(&self) -> ConvProblem {
         let start = |tensor: &TensorBinding| tensor.handle.offset_start.unwrap_or(0);
         let shape = |tensor: &TensorBinding| tensor.shape.to_vec();
-        ConvProblem::from_views(
+        let bias = match self.bias {
+            Some(_) => ConvBias::PerChannel,
+            None => ConvBias::Absent,
+        };
+        let stated = ConvProblem::from_views(
             self.operation,
             &self.window,
             MatmulOperands {
@@ -137,7 +143,8 @@ impl ConvTensors {
                 rhs: start(&self.rhs),
                 out: start(&self.out),
             },
-        )
+        );
+        ConvProblem { bias, ..stated }
     }
 
     /// These tensors of `problem` bound under the launcher `grid` spawns for `blueprint`, each
@@ -186,11 +193,22 @@ impl ConvTensors {
             false => out.spec,
         };
         let (input, rhs) = (input.build()?, rhs.build()?);
+        let bias = self
+            .bias
+            .map(|bias| {
+                launcher
+                    .arg(bias, problem.elements.out)
+                    .dimensions(&[CO])
+                    .vectorize(1)
+                    .build()
+            })
+            .transpose()?;
         Ok(ConvBinding {
             launcher,
             input: input.arg(),
             rhs: rhs.arg(),
             out: out.arg(),
+            bias: bias.map(|bias| bias.arg()),
         })
     }
 }
@@ -244,6 +262,7 @@ impl ConvTensors {
             input,
             rhs,
             out,
+            bias: None,
             window: window.to_vec(),
             dtypes,
         };
@@ -252,6 +271,23 @@ impl ConvTensors {
             return Err(ConvDecline::ContractionEmpty.into());
         }
         Ok(tensors)
+    }
+
+    /// These tensors with `bias` added to every output channel.
+    fn with_bias(self, bias: InputBinding) -> Result<Self, Decline> {
+        let InputBinding::Normal(bias, element) = bias else {
+            return Err(ConvDecline::Quantized.into());
+        };
+        if bias.shape.len() != 1 || bias.shape[0] != self.problem().channels_out {
+            return Err(ConvDecline::BiasShape.into());
+        }
+        if element != self.dtypes.acc_global {
+            return Err(ConvDecline::BiasElement.into());
+        }
+        Ok(Self {
+            bias: Some(bias),
+            ..self
+        })
     }
 
     /// Whether the window is one a convolution steps by and the spatial extents are the ones it

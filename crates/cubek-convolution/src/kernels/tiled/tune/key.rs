@@ -1,5 +1,5 @@
 use crate::components::ConvolutionOperation;
-use crate::kernels::tiled::{B, ConvProblem, SpatialDim};
+use crate::kernels::tiled::{B, ConvBias, ConvProblem, SpatialDim};
 use cubecl::ir::ElemType;
 use cubecl::throughput::{CmmaDims, MemoryAccess, ThroughputKey};
 use cubecl::tile::layout::ElemAlignment;
@@ -26,6 +26,7 @@ pub struct CubeStagedConvTuneKey {
     pub channels_in: usize,
     pub channels_out: usize,
     pub spatial: Vec<SpatialDim>,
+    pub bias: ConvBias,
     pub lhs_width: usize,
     pub rhs_width: usize,
 }
@@ -118,6 +119,7 @@ impl CubeStagedConvTuneKey {
             channels_in: problem.channels_in,
             channels_out: problem.channels_out,
             spatial: problem.spatial.clone(),
+            bias: problem.bias,
             lhs_width: width(MatmulOperand::Lhs),
             rhs_width: width(MatmulOperand::Rhs),
         }
@@ -147,6 +149,7 @@ impl From<&CubeStagedConvTuneKey> for ConvProblem {
             sum: key.sum,
             alignments,
             start_bytes: MatmulOperands::all(0),
+            bias: key.bias,
         }
     }
 }
