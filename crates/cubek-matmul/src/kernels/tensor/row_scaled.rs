@@ -1,6 +1,8 @@
 use super::PlainTensor;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::{QuantScheme, QuantValue};
+#[cfg(doc)]
+use cubecl::tile::kind::Field;
 use cubecl::tile::launch::Decline;
 
 /// What a row-scaled tensor declines: a scheme of other than one per-row level over 8-bit float
@@ -16,18 +18,25 @@ pub const ROW_SCALED_UNSERVED: Decline = Decline::Unserved {
     why: "a row-scaled operand is read as the lhs of a product against a packed rhs",
 };
 
-/// What a product declines of a row-scaled lhs against a packed rhs other than MXFP4 with
-/// row-factored scales ([`QuantScheme::mxfp4_row_factored`]): the decode into `e4m3` takes only
-/// codes whose every value an `e4m3` holds under their block's offset, where NVFP4's would
-/// saturate, plain MXFP4's flush and integer codes mean nothing.
-pub const ROW_SCALED_RHS_UNREAD: Decline = Decline::Unserved {
-    why: "a row-scaled lhs is read against MXFP4 with row-factored scales alone",
+/// What a product declines of a row-scaled lhs against a packed rhs whose values are not all
+/// values of the lhs's element ([`Field::values_exact_in`]): an 8-bit integer's, or a float
+/// format of more mantissa bits or a wider exponent, which the decode into it would round.
+pub const ROW_SCALED_RHS_VALUES_INEXACT: Decline = Decline::Unserved {
+    why: "a row-scaled lhs is read against packed values its element holds exactly",
 };
 
-/// What a product declines of MXFP4 with row-factored scales against anything but a row-scaled
-/// lhs: its row scales come out of the sum beside the lhs's, which no other read verifies.
-pub const ROW_FACTORED_WEIGHT_UNSERVED: Decline = Decline::Unserved {
-    why: "MXFP4 with row-factored scales is read against a row-scaled lhs alone",
+/// What a product declines of a row-scaled lhs against a packed rhs whose block scales are no
+/// powers of two (`ue8m0`): a `ue4m3`'s or a float's mantissa times a code is no value of the
+/// lhs's 8-bit element.
+pub const ROW_SCALED_RHS_SCALES_INEXACT: Decline = Decline::Unserved {
+    why: "a row-scaled lhs is read against packed values under power-of-two block scales",
+};
+
+/// What a product declines of a packed rhs with a per-row level against anything but a
+/// row-scaled lhs: its row scales come out of the sum beside the lhs's, which no other read
+/// verifies.
+pub const ROW_SCALED_WEIGHT_UNSERVED: Decline = Decline::Unserved {
+    why: "a packed rhs with a per-row level is read against a row-scaled lhs alone",
 };
 
 /// A matrix of 8-bit float values, each row under one scale over the whole row, its scheme's

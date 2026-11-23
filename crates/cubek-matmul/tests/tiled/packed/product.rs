@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::Scalar;
-use cubecl::quant::scheme::{QuantScheme, QuantStore};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
@@ -30,9 +30,9 @@ const BF16_TOLERANCE: f32 = 1e-2;
 pub(crate) enum Stored {
     /// Dense `bf16` values in `[-1, 1)`, row-major.
     Bf16,
-    /// An lhs in FP8-row, seeded by `seed`: `e4m3` codes in dense rows, each row under an `f32`
-    /// scale of its own.
-    Fp8Row { seed: usize },
+    /// An lhs in FP8-row, seeded by `seed`: `value` codes (`e4m3` or `e5m2`) in dense rows, each
+    /// row under an `f32` scale of its own.
+    Fp8Row { value: QuantValue, seed: usize },
     /// Packed along `k` in `format`, seeded by `seed`.
     Packed { format: PackedFormat, seed: usize },
     /// A rhs `[n, k]` packed along `k` in `format`, seen through the transposed view `[k, n]` a
@@ -160,17 +160,21 @@ impl PackedProduct {
             Stored::Bf16 => {
                 StoredTensor::Plain(upload(client, &dims, &Self::halves(dims[0] * dims[1])))
             }
-            Stored::Fp8Row { seed } => {
-                let (codes, scales) = Self::fp8_row(dims[0], dims[1], seed);
+            Stored::Fp8Row { value, seed } => {
+                let (codes, scales) = Self::fp8_row(value, dims[0], dims[1], seed);
+                let element = match value {
+                    QuantValue::E5M2 => FloatKind::E5M2,
+                    _ => FloatKind::E4M3,
+                };
                 let values = PlainTensor::of_handle(TensorHandle::new_contiguous(
                     Shape::from(dims.to_vec()),
                     client.create_from_slice(&codes),
-                    ElemType::Float(FloatKind::E4M3),
+                    ElemType::Float(element),
                 ));
                 let scales = upload(client, &[dims[0], 1], &scales);
+                let scheme = QuantScheme::fp8_per_row().with_value(value);
                 StoredTensor::RowScaled(
-                    RowScaledTensor::new(values, scales, QuantScheme::fp8_per_row())
-                        .expect("an FP8-row lhs"),
+                    RowScaledTensor::new(values, scales, scheme).expect("an FP8-row lhs"),
                 )
             }
             Stored::Packed { format, seed } => StoredTensor::Packed(
@@ -197,15 +201,20 @@ impl PackedProduct {
             .expect("a transposed view of a packed matrix reads as stored")
     }
 
-    /// `rows` rows of `k` `e4m3` codes, every finite one but the NaN's, and a scale a row: one
-    /// whose values a row of the halves' magnitude, and a power of two times `1.5` or `1`, so no
-    /// scale is the next one's.
-    fn fp8_row(rows: usize, k: usize, seed: usize) -> (Vec<u8>, Vec<f32>) {
+    /// `rows` rows of `k` `value` codes, every finite one, and a scale a row: one whose values a
+    /// row of the halves' magnitude, and a power of two times `1.5` or `1`, so no scale is the
+    /// next one's.
+    fn fp8_row(value: QuantValue, rows: usize, k: usize, seed: usize) -> (Vec<u8>, Vec<f32>) {
+        // The magnitudes below the first that is no number: `e4m3`'s NaN at `0x7f`, `e5m2`'s
+        // infinity at `0x7c`; and the power of two that brings the format's largest near one.
+        let (finite, largest_exponent) = match value {
+            QuantValue::E5M2 => (0x7c, 16),
+            _ => (0x7f, 9),
+        };
         let codes = (0..rows * k)
             .map(|i| {
                 let mixed = (i * 2654435761 + seed * 40503) >> 7;
-                // `0x7f` and `0xff` are `e4m3`'s NaNs.
-                (mixed % 0x7f) as u8 | ((mixed / 0x7f % 2) as u8) << 7
+                (mixed % finite) as u8 | ((mixed / finite % 2) as u8) << 7
             })
             .collect();
         let scales = (0..rows)
@@ -215,7 +224,7 @@ impl PackedProduct {
                 } else {
                     1.
                 };
-                mantissa * 2f32.powi(-12 - ((row * 7 + seed) % 4) as i32)
+                mantissa * 2f32.powi(-3 - largest_exponent - ((row * 7 + seed) % 4) as i32)
             })
             .collect();
         (codes, scales)
@@ -234,14 +243,16 @@ impl PackedProduct {
                 row_stride: 1,
                 k_stride: self.n,
             },
-            (Stored::Fp8Row { seed }, _) => {
-                let (codes, scales) = Self::fp8_row(self.m, self.k, seed);
+            (Stored::Fp8Row { value, seed }, _) => {
+                let (codes, scales) = Self::fp8_row(value, self.m, self.k, seed);
+                let decode = |code: u8| match value {
+                    QuantValue::E5M2 => cubecl_common::e5m2::from_bits(code).to_f32(),
+                    _ => cubecl_common::e4m3::from_bits(code).to_f32(),
+                };
                 let values = codes
                     .iter()
                     .enumerate()
-                    .map(|(at, &code)| {
-                        cubecl_common::e4m3::from_bits(code).to_f32() * scales[at / self.k]
-                    })
+                    .map(|(at, &code)| decode(code) * scales[at / self.k])
                     .collect();
                 HostOperand::Dense {
                     values,

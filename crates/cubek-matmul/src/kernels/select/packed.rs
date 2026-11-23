@@ -1,6 +1,7 @@
 //! What the selection ([`super::selector::select`]) asks of a packed input: whether the kernels
 //! stream its scheme ([`matmul_supported`]).
 
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
@@ -62,15 +63,19 @@ pub fn matmul_supported(hw: &Hardware, scheme: &QuantScheme, input: MatmulOperan
 
 /// Whether the kernels read `input` row-scaled under `scheme` ([`QuantScheme::fp8_per_row`]):
 /// 8-bit float values in dense rows under one scale a row, its only level, as the lhs, on a
-/// device whose manual MMA multiplies `e4m3` ([`Hardware::e4m3_mma`]), which contracts them as
-/// they are. Their row scales come out of the sum along the output's rows; a launch against any
-/// rhs but MXFP4 with row-factored scales declines.
+/// device whose manual MMA multiplies two of them into `f32` ([`Hardware::manual_mma`]), which
+/// contracts them as they are. Their row scales come out of the sum along the output's rows; a
+/// launch against an rhs whose values do not decode exactly into theirs declines.
 fn row_scaled_supported(hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
-    matches!(scheme.value, QuantValue::E4M3 | QuantValue::E5M2)
-        && scheme.mode == QuantMode::Symmetric
+    let element = match scheme.value {
+        QuantValue::E4M3 => ElemType::Float(FloatKind::E4M3),
+        QuantValue::E5M2 => ElemType::Float(FloatKind::E5M2),
+        _ => return false,
+    };
+    scheme.mode == QuantMode::Symmetric
         && scheme.num_levels() == 1
         && input == MatmulOperand::Lhs
-        && hw.e4m3_mma()
+        && hw.manual_mma(element, element, ElemType::Float(FloatKind::F32))
 }
 
 /// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.
