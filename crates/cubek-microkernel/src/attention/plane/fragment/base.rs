@@ -4,7 +4,7 @@ use crate::attention::{
 };
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Space, StageStorage};
 use cubek_std::Hardware;
@@ -49,6 +49,10 @@ pub const ROW_STATE_HELD_BY_UNIT: Decline = Decline::Unserved {
 /// The bytes a row of a stage block spans at least, where the dim holds them: a cache line.
 pub const BLOCK_ROW_BYTES: usize = 128;
 
+/// The octaves of headroom a plane's softmax keeps at a 16-bit element: `f16` holds `2^15`, one more
+/// than a probability reaches.
+const HALF_HEADROOM_OCTAVES: u32 = 14;
+
 impl PlaneFragmentAttentionMicrokernel {
     /// Where the plane keeps the score: its settings', which the tile picked its instructions for.
     /// Kept in fragments, the score is the value's `A`, read in runs of its cells; windows
@@ -74,6 +78,20 @@ impl PlaneFragmentAttentionMicrokernel {
         ])
         .planes(planes)
         .build()
+    }
+
+    /// Octaves a row's scores may rise above its softmax's max before the max follows them
+    /// ([`OnlineSoftmax::with_headroom`](cubecl::tile::ops::softmax::OnlineSoftmax::with_headroom)):
+    /// the probabilities are cast to the values' element, whose largest value is past
+    /// `2^HALF_HEADROOM_OCTAVES` at `f16` and wider. An 8-bit element's is not, so its max follows
+    /// every block.
+    pub fn softmax_headroom(&self) -> u32 {
+        match self.read.value {
+            ElemType::Float(
+                FloatKind::F16 | FloatKind::BF16 | FloatKind::TF32 | FloatKind::F32,
+            ) => HALF_HEADROOM_OCTAVES,
+            _ => 0,
+        }
     }
 
     /// 32-bit registers one unit keeps the softmax's running max and sum in, beside its share of

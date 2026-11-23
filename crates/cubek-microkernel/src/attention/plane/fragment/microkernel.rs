@@ -84,7 +84,7 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         #[comptime] planes: Vec<(Dimension, usize)>,
     ) -> Self {
         let score = StageScore::open::<EA, EV>(walk, query, microkernel);
-        let softmax = score.softmax::<EA>(microkernel.seq_q());
+        let softmax = score.softmax::<EA>(microkernel);
         let sum = Self::open_sum(out, &score, value, microkernel);
         let cache = StagedCache::new(key, value, &sum);
         PlaneFragmentAttention::<EA, EV> {
@@ -300,13 +300,19 @@ impl StageScore {
         }
     }
 
-    /// The softmax state of a plane's `queries` rows, kept where the score is: every row of the
-    /// window by every unit, or by each unit the rows it holds fragment cells of.
-    pub fn softmax<EA: Float>(&self, #[comptime] queries: usize) -> OnlineSoftmax<EA> {
-        match self {
-            StageScore::Window(_, _) => OnlineSoftmax::<EA>::new(queries, S),
+    /// The softmax state of `microkernel`'s rows of one plane, kept where the score is: every row
+    /// of the window by every unit, or by each unit the rows it holds fragment cells of. Its max
+    /// follows a row's scores past the headroom of the element their probabilities are cast to
+    /// ([`PlaneFragmentAttentionMicrokernel::softmax_headroom`]).
+    pub fn softmax<EA: Float>(
+        &self,
+        #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
+    ) -> OnlineSoftmax<EA> {
+        let softmax = match self {
+            StageScore::Window(_, _) => OnlineSoftmax::<EA>::new(microkernel.seq_q(), S),
             StageScore::Fragments(logits) => OnlineSoftmax::<EA>::along(logits, S),
-        }
+        };
+        softmax.with_headroom(microkernel.softmax_headroom())
     }
 
     /// One stage of one plane's rows: the scores of its keys, taken into the rows' softmax, and
@@ -397,7 +403,7 @@ impl StageScore {
         // The probabilities land before the fragments load them.
         sync_plane();
 
-        sum.along(DV).mul_every_slice(&correction);
+        sum.along(DV).rescale_every_slice(&correction);
 
         // A tile's clone is a handle to the same cells: the shared microkernel reads the
         // probabilities and adds into the sum through it.
@@ -442,7 +448,7 @@ impl StageScore {
 
         // The keys' scale multiplies the softmax's; the fragments hold the probabilities after it.
         let correction = softmax.step(&logits.scaled(key_factor), bias, scale);
-        sum.along(DV).mul(&correction);
+        sum.along(DV).rescale(&correction);
 
         let probabilities = logits.cast::<E>();
         plane_fragment_microkernel(
@@ -488,7 +494,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
     sync_plane();
 
     let score = StageScore::open::<EA, EV>(&walk, &staged_query, microkernel);
-    let mut softmax = score.softmax::<EA>(microkernel.seq_q());
+    let mut softmax = score.softmax::<EA>(microkernel);
     let mut sum = PlaneFragmentAttention::<EA, EV>::open_sum(out, &score, value, microkernel);
     let cache = StagedCache::new(key, value, &sum);
 
