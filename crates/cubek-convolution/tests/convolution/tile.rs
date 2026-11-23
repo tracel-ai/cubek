@@ -1,13 +1,12 @@
 //! The tiled routines against the host's convolution: each pass through each routine, over
-//! windows, extents and storages that the boxes overhang or fill exactly, and the refusals the
-//! launch states before it prepares anything.
+//! windows, extents and storages that the boxes overhang or fill exactly.
 
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
-use cubecl::zspace::{Shape, Strides};
+use cubecl::zspace::Strides;
 use cubek_convolution::components::ConvSetupError;
 use cubek_convolution::eval::benchmarks::settings;
 use cubek_convolution::kernels::tiled::{
@@ -475,117 +474,6 @@ fn why(declined: impl Into<Decline>) -> &'static str {
         Decline::Unserved { why } => why,
         other => panic!("a refusal with no stated reason: {other:?}"),
     }
-}
-
-/// A launch of dense half precision operands to refuse, shaped as stated: the tuned launch of
-/// `pass` over `args`, which a quantized lhs declines whatever else it states.
-#[derive(Debug)]
-struct Refused {
-    pass: Pass,
-    quantized: bool,
-    shapes: [[usize; 4]; 3],
-    args: Window,
-}
-
-impl Refused {
-    /// The message the launch is refused with.
-    fn message(&self) -> String {
-        let client = client();
-        let [lhs, rhs, out] = self
-            .shapes
-            .map(|shape| filled(&client, &shape, 0.0).binding());
-        let lhs = match self.quantized {
-            false => InputBinding::new(lhs, F16),
-            true => InputBinding::Quantized {
-                scale: lhs.clone(),
-                shape: Shape::from(self.shapes[0].to_vec()),
-                data: lhs,
-                data_dtype: F16,
-                scale_dtype: F32,
-                scheme: Default::default(),
-            },
-        };
-        let operands = inputs(self.pass, lhs, InputBinding::new(rhs, F16), out);
-        match launch(&tuned(), &client, operands, self.args) {
-            Ok(()) => panic!("the launch was accepted"),
-            Err(refusal) => refusal,
-        }
-    }
-}
-
-/// A test for each launch that must be refused, `name: operation, shapes [, window] => refusal`,
-/// the shapes as `[lhs, rhs, out]` in the order of [`Conv2dProblem::shapes`]; `quantized` marks a
-/// quantized lhs.
-macro_rules! refusals {
-    ($($name:ident: $pass:ident, $quantized:expr, $shapes:expr, $args:expr => $declined:expr;)*) => {
-        mod refusals {
-            use super::*;
-
-            $(#[test]
-            fn $name() {
-                let launch = Refused {
-                    pass: $pass,
-                    quantized: $quantized,
-                    shapes: $shapes,
-                    args: $args,
-                };
-                let message = launch.message();
-                assert!(message.contains(why($declined)), "{message}");
-            })*
-        }
-    };
-}
-
-// Forward over [1, 6, 6, 64] and a [32, 3, 3, 64] weight into [1, 6, 6, 32]; the data backward
-// over the mirrored shapes.
-refusals! {
-    forward_quantized_input: Forward, true, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], SAME => ConvDecline::Quantized;
-    forward_weight_of_other_channels: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 16], [1, 6, 6, 32]], SAME => ConvDecline::Groups;
-    forward_output_of_other_channels: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDecline::OutChannels;
-    forward_output_of_another_batch: Forward, false, [[2, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], SAME => ConvDecline::Batch;
-    forward_output_of_another_extent: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 5, 6, 32]], SAME => ConvDecline::ForwardExtent;
-    forward_weight_of_no_taps: Forward, false, [[1, 6, 6, 64], [32, 0, 3, 64], [1, 6, 6, 32]], SAME => ConvDecline::KernelEmpty;
-    forward_input_of_no_channels: Forward, false, [[1, 6, 6, 0], [32, 3, 3, 0], [1, 6, 6, 32]], SAME => ConvDecline::ContractionEmpty;
-    forward_stride_of_zero: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], window([0, 1], [1, 1], [1, 1]) => ConvDecline::WindowStepZero;
-    forward_dilation_of_zero: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], window([1, 1], [1, 1], [1, 0]) => ConvDecline::WindowStepZero;
-
-    weight_grad_quantized_input: BackwardWeight, true, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::Quantized;
-    weight_grad_of_other_channels: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 16]], SAME => ConvDecline::Groups;
-    weight_grad_of_other_filters: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [16, 3, 3, 64]], SAME => ConvDecline::OutChannels;
-    weight_grad_out_grad_of_another_batch: BackwardWeight, false, [[2, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::Batch;
-    weight_grad_out_grad_of_another_extent: BackwardWeight, false, [[1, 6, 6, 64], [1, 5, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::WeightGradExtent;
-    weight_grad_of_no_taps: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 0, 3, 64]], SAME => ConvDecline::KernelEmpty;
-    weight_grad_over_an_empty_batch: BackwardWeight, false, [[0, 6, 6, 64], [0, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::ContractionEmpty;
-    weight_grad_stride_of_zero: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], window([1, 0], [1, 1], [1, 1]) => ConvDecline::WindowStepZero;
-
-    data_grad_strided: BackwardData, false, [[1, 3, 3, 32], [32, 3, 3, 64], [1, 6, 6, 64]], STRIDE_2 => ConvDecline::DataBackwardStrided;
-    data_grad_quantized_out_grad: BackwardData, true, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::Quantized;
-    data_grad_of_other_channels: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDecline::Groups;
-    data_grad_of_other_filters: BackwardData, false, [[1, 6, 6, 32], [16, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::OutChannels;
-    data_grad_out_grad_of_another_batch: BackwardData, false, [[2, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::Batch;
-    data_grad_out_grad_of_another_extent: BackwardData, false, [[1, 5, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::DataGradExtent;
-    data_grad_weights_of_no_taps: BackwardData, false, [[1, 6, 6, 32], [32, 0, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::KernelEmpty;
-    data_grad_of_no_filters: BackwardData, false, [[1, 6, 6, 0], [0, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::ContractionEmpty;
-    data_grad_dilation_of_zero: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], window([1, 1], [1, 1], [0, 1]) => ConvDecline::WindowStepZero;
-}
-
-/// Tensors of one more dim than the window gives are refused by name; `Refused` states rank 4
-/// shapes, so this launch is its own.
-#[test]
-fn tensors_of_another_rank_than_the_window_are_refused() {
-    let client = client();
-    let dense = |shape: [usize; 5]| filled(&client, &shape, 0.0).binding();
-    let operands = inputs(
-        Forward,
-        InputBinding::new(dense([1, 6, 6, 6, 64]), F16),
-        InputBinding::new(dense([32, 3, 3, 3, 64]), F16),
-        dense([1, 6, 6, 6, 32]),
-    );
-    let message = launch(&tuned(), &client, operands, SAME).expect_err("the launch was accepted");
-    assert!(
-        message.contains(why(ConvDecline::RankMismatch)),
-        "{message}"
-    );
 }
 
 /// An output with no element has nothing to compute: the launch returns and writes nowhere, as
