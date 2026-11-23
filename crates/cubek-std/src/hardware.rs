@@ -276,6 +276,17 @@ impl Hardware {
         !matmul.cmma.is_empty() || !matmul.mma.is_empty()
     }
 
+    /// Whether the device's manual MMA multiplies two `e4m3` operands into an `f32` sum: what an
+    /// 8-bit float product contracts through, its scales applied as its sum drains.
+    pub fn e4m3_mma(&self) -> bool {
+        let e4m3 = ElemType::Float(FloatKind::E4M3);
+        self.properties.features.matmul.mma.iter().any(|config| {
+            config.a_type == e4m3.into()
+                && config.b_type == e4m3.into()
+                && config.cd_type == ElemType::Float(FloatKind::F32).into()
+        })
+    }
+
     /// Whether a stage may be filled by the TMA engine: the bulk tensor copy, and the barriers its
     /// copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn bulk_tensor_copy(&self) -> bool {
