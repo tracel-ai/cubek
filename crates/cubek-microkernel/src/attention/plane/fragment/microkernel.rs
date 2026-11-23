@@ -4,7 +4,9 @@ use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
 use core::marker::PhantomData;
 use cubecl::tile::ops::softmax::OnlineSoftmax;
-use cubecl::tile::{Axis, Factor, Level, Region, Semiring, StageStorage, Stages, Tile, Walk};
+use cubecl::tile::{
+    Dimension, Factor, Level, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
+};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -12,8 +14,8 @@ use cubek_std::microkernel::StageRing;
 /// output's sum take out of them, and those scales: the stages hold what is taken out as stored,
 /// filled by plain copies, and each scale is applied once instead.
 ///
-/// The softmax reads every score under one factor ([`OnlineSoftmax::step`]), wherever the score
-/// is held, so the keys give up the scales that vary along no axis ([`Tile::factor_whole`]). The
+/// The softmax reads every score under one factor ([`OnlineSoftmax::step`]), wherever the score is
+/// held, so the keys give up the scales that vary along no dimension ([`Tile::factor_whole`]). The
 /// values give up what the output's sum takes out ([`Tile::factor`]), the instruction it contracts
 /// through deciding; what a side keeps, its stage's fill decodes.
 #[derive(CubeType, Clone)]
@@ -59,10 +61,10 @@ pub struct PlaneFragmentAttention<EA: Float, EV: Float> {
     probabilities: PhantomData<EV>,
     #[cube(comptime)]
     microkernel: PlaneFragmentAttentionMicrokernel,
-    /// The planes its walker lays it over, along each axis: what the score's own grid is placed
-    /// under ([`PlaneFragmentAttentionMicrokernel::score_levels`]).
+    /// The planes its walker lays it over, along each dimension: what the score's own grid is
+    /// placed under ([`PlaneFragmentAttentionMicrokernel::score_levels`]).
     #[cube(comptime)]
-    planes: Vec<(Axis, usize)>,
+    planes: Vec<(Dimension, usize)>,
 }
 
 #[cube]
@@ -70,8 +72,8 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     /// Every plane's rows over `walk` before any key: its score placed by the walk, and its sum
     /// opened at zero on `out`, the output it is shaped by, against `value` and the score's
     /// probabilities, and `key` and `value` without the scales the softmax and the sum take out of
-    /// them, which its stages are filled from ([`StagedCache`]). `query` is staged, and `planes` the planes
-    /// its walker lays it over along each axis.
+    /// them, which its stages are filled from ([`StagedCache`]). `query` is staged, and `planes`
+    /// the planes its walker lays it over along each dimension.
     pub fn open(
         walk: &Walk,
         query: &Tile,
@@ -79,7 +81,7 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         key: &Tile,
         value: &Tile,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
-        #[comptime] planes: Vec<(Axis, usize)>,
+        #[comptime] planes: Vec<(Dimension, usize)>,
     ) -> Self {
         let score = StageScore::open::<EA, EV>(walk, query, microkernel);
         let softmax = score.softmax::<EA>(microkernel.seq_q());
@@ -117,20 +119,25 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     }
 
     /// The output's accumulator every stage's product adds into, at `EA`, opened at zero on `out`
-    /// against what each stage contracts with the value, `score`'s probabilities: a window's sum
-    /// through the fragment API with the scratch its rows are scaled through, the fragments' sum
-    /// in their own instruction, which scales its rows in place.
+    /// against what each stage contracts with the value, `score`'s probabilities, its rows scaled
+    /// by each stage's correction ([`Tile::rescaled_accumulator`]): where the tile holds it in the
+    /// fragment API, a window's sum bounces each correction through the settings' scratch.
     fn open_sum(
         out: &Tile,
         score: &StageScore,
         value: &Tile,
         #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
     ) -> Tile {
-        let opened = out.accumulator::<EA>(&score.probabilities(), value, Semiring::SUM_PROD);
-        let mut sum = match microkernel.score_holder() {
-            ScoreHolder::Window => opened.with_scratch(microkernel.settings.scratch),
-            ScoreHolder::Fragments => opened,
-        };
+        let scratch = comptime!(match microkernel.score_holder() {
+            ScoreHolder::Window => microkernel.settings.scratch,
+            ScoreHolder::Fragments => Scratch::None,
+        });
+        let mut sum = out.rescaled_accumulator::<EA>(
+            &score.probabilities(),
+            value,
+            Semiring::SumProd,
+            scratch,
+        );
 
         sum.zero();
         sum
@@ -140,6 +147,15 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     /// scale, which it is multiplied by as it drains.
     pub fn sum_at(&self, plane: &Region) -> Tile {
         self.sum.at(plane).scaled(&self.cache.value_factor)
+    }
+
+    /// `plane`'s rows of the sum, divided by their softmax's normalizer, merged with the planes
+    /// sharing its rows ([`OnlineSoftmax::normalizer`]), under the values' scale.
+    pub fn normalized_sum_at(&mut self, plane: &Region) -> Tile {
+        let sum = self.sum_at(plane);
+        let normalizer = self.softmax.normalizer(plane);
+        self.score.at(plane).rescale::<EA>(&sum, &normalizer);
+        sum
     }
 
     /// Each plane's rows' logsumexp, `max + ln(sum)` of their scaled scores, written into
@@ -273,6 +289,17 @@ impl StageScore {
         }
     }
 
+    /// `sum`'s rows scaled by `factors`, the softmax state kept where this score is: one factor
+    /// for every row of the plane where it is read through windows
+    /// ([`DimensionSlices::mul_every_slice`](cubecl::tile::DimensionSlices::mul_every_slice)), one
+    /// for each row a unit holds cells of where it is kept in fragments.
+    pub fn rescale<EA: Float>(&self, sum: &Tile, factors: &Array<EA>) {
+        match self {
+            StageScore::Window(_, _) => sum.along(DV).mul_every_slice(factors),
+            StageScore::Fragments(_) => sum.along(DV).mul(factors),
+        }
+    }
+
     /// The softmax state of a plane's `queries` rows, kept where the score is: every row of the
     /// window by every unit, or by each unit the rows it holds fragment cells of.
     pub fn softmax<EA: Float>(&self, #[comptime] queries: usize) -> OnlineSoftmax<EA> {
@@ -353,7 +380,7 @@ impl StageScore {
         let score_window = scores.with_levels(1usize, score_levels.clone());
         let query = query.with_levels(1usize, score_levels.clone());
         let key = key.with_levels(1usize, score_levels);
-        let mut logits = score_window.accumulator::<EA>(&query, &key, Semiring::SUM_PROD);
+        let mut logits = score_window.accumulator::<EA>(&query, &key, Semiring::SumProd);
         logits.zero();
         logits.mma(&query, &key);
         // The window on the score's grid is the plane's window of scores: drained at the depth
@@ -370,7 +397,7 @@ impl StageScore {
         // The probabilities land before the fragments load them.
         sync_plane();
 
-        sum.along(DV).mul(&correction);
+        sum.along(DV).mul_every_slice(&correction);
 
         // A tile's clone is a handle to the same cells: the shared microkernel reads the
         // probabilities and adds into the sum through it.
@@ -493,7 +520,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
         });
     });
 
-    sum.along(DV).mul(&softmax.recip_l());
+    score.rescale::<EA>(&sum, &softmax.recip_l());
     sum.scaled(&cache.value_factor).drained_into(out);
 
     #[comptime]

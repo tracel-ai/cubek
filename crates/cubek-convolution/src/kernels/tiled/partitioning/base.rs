@@ -4,7 +4,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::PlaneOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{Axis, Partitioning, Space, StageStorage};
+use cubecl::tile::{Dimension, Partitioning, Space, StageStorage};
 use cubek_microkernel::matmul::unit::UnitRegistersMicrokernel;
 use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -74,7 +74,7 @@ impl ConvPartitioning {
             .iter()
             .map(|&axis| problem.extent(axis))
             .product();
-        let along = |axis: Axis| match axes.dim(axis) {
+        let along = |axis: Dimension| match axes.dim(axis) {
             Some(MatmulDim::K) => depth,
             Some(MatmulDim::M) => rows,
             Some(MatmulDim::N) => columns,
@@ -107,7 +107,7 @@ impl ConvPartitioning {
     /// freed, so one kernel serves every extent of it. What the blueprint decides on (overhangs,
     /// widths) is read off the problem's own space, never off this one.
     pub fn kernel(&self, roles: &ConvRoles) -> Partitioning {
-        let dynamic: Vec<Axis> = roles.dynamic().into_iter().collect();
+        let dynamic: Vec<Dimension> = roles.dynamic().into_iter().collect();
         Partitioning::new(
             self.partitioning.space().clone().with_dynamic(&dynamic),
             self.partitioning.levels().to_vec(),
@@ -120,7 +120,7 @@ impl ConvPartitioning {
     }
 
     /// Whether the tiles overhang `axis`: a tile the problem's edge cuts short along it.
-    pub fn overhangs(&self, axis: Axis) -> bool {
+    pub fn overhangs(&self, axis: Dimension) -> bool {
         self.partitioning.overhangs(axis)
     }
 

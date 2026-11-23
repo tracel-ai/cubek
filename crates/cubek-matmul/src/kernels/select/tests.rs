@@ -9,7 +9,7 @@ use MatmulKernel as K;
 use MatmulKernelHeuristic as H;
 use MatmulOpStrategy::*;
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::plan::Plan;
 use cubek_std::{Hardware, devices};
@@ -73,7 +73,7 @@ fn select(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     hw: &Hardware,
-) -> Result<String, Refusal> {
+) -> Result<String, Decline> {
     super::selector::select(strategy, problem, hw, MatmulAutotuneGroups::default())
         .map(|plan| plan.tree().to_string())
 }
@@ -122,7 +122,7 @@ fn decoded(plan: String) -> String {
 }
 
 /// Whether `plan` dequantizes its packed inputs by the framework first.
-fn framework_dequantized(plan: &Result<String, Refusal>) -> bool {
+fn framework_dequantized(plan: &Result<String, Decline>) -> bool {
     matches!(plan, Ok(tree) if tree.starts_with("framework-dequantized("))
 }
 
@@ -175,7 +175,7 @@ fn with_float_rhs(problem: MatmulProblem) -> MatmulProblem {
     }
 }
 
-/// NVFP4 over an `[m, k]` lhs: its words and blocks running along `k`, its last axis.
+/// NVFP4 over an `[m, k]` lhs: its words and blocks running along `k`, its last dimension.
 fn nvfp4_lhs() -> QuantScheme {
     nvfp4_scheme()
 }
@@ -549,12 +549,12 @@ fn the_quantized_bound_holds_its_edges() {
     assert!(!quantized_few_rows(QUANTIZED_FEW_ROWS + 1));
 }
 
-/// A packed input reaches its few-rows autotune by its own row ceiling, past the float one: the packed
-/// kernels stream to [`QUANTIZED_FEW_ROWS`], a float one to [`FLOAT_FEW_ROWS`].
+/// A packed input reaches its few-rows autotune by its own row ceiling, past the float one: the
+/// packed kernels stream to [`QUANTIZED_FEW_ROWS`], a float one to [`FLOAT_FEW_ROWS`].
 ///
 /// The two being different numbers is the property. Routing a float width past the float bound to
-/// the few-rows autotune would put it on an autotune whose every candidate declines it, and the widths between
-/// the bounds would be answered by the floor rather than a kernel.
+/// the few-rows autotune would put it on an autotune whose every candidate declines it, and the
+/// widths between the bounds would be answered by the floor rather than a kernel.
 #[test]
 fn a_packed_input_reaches_its_autotune_by_its_own_row_ceiling() {
     let hw = devices::strix_halo();
@@ -587,11 +587,11 @@ fn a_policy_never_names_a_kernel_that_can_decline() {
         .into_iter()
         .filter(MatmulOpStrategy::is_policy)
     {
-        // An input stored in tiles is the exception, and not checked here: only the packed
-        // routines read one, so they are what every strategy runs. A pin's kernel
-        // declines on what these rules cannot see: the plane shuffle on strides, cubek's selector on
-        // "no accelerated path on this device" at the launch, the packed plane routine on a
-        // contraction its steps do not close. A policy names a kernel with a fallback, never a pin.
+        // An input stored in tiles is the exception, and not checked here: only the packed routines
+        // read one, so they are what every strategy runs. A pin's kernel declines on what these
+        // rules cannot see: the plane shuffle on strides, cubek's selector on "no accelerated path
+        // on this device" at the launch, the packed plane routine on a contraction its steps do not
+        // close. A policy names a kernel with a fallback, never a pin.
         for problem in [
             quantized(1, q4()),
             quantized(4, q4()),
@@ -666,13 +666,13 @@ mod float {
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;
-    use cubecl::tile::launch::Refusal;
+    use cubecl::tile::launch::Decline;
     use cubek_microkernel::matmul::MatmulOperands;
     use cubek_std::devices;
 
     /// The kernel `strategy` chooses for the float `problem`: the selection, which reads a float
     /// input on any device alike.
-    fn select(strategy: MatmulOpStrategy, problem: &MatmulProblem) -> Result<String, Refusal> {
+    fn select(strategy: MatmulOpStrategy, problem: &MatmulProblem) -> Result<String, Decline> {
         super::select(strategy, problem, &devices::cpu_12())
     }
 
@@ -738,9 +738,9 @@ mod float {
         }
     }
 
-    /// The float bound is what every float few-rows candidate holds: the plane shuffle compiles at most
-    /// that many rows in, so a wider float width routed to the few-rows autotune would meet a candidate
-    /// that declines it and be answered by the fallback.
+    /// The float bound is what every float few-rows candidate holds: the plane shuffle compiles at
+    /// most that many rows in, so a wider float width routed to the few-rows autotune would meet a
+    /// candidate that declines it and be answered by the fallback.
     #[test]
     fn the_float_bound_is_what_the_plane_shuffle_holds() {
         use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;

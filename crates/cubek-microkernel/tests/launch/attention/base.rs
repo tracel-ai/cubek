@@ -6,9 +6,10 @@
 use core::fmt::Debug;
 use cubecl::prelude::*;
 use cubecl::tile::Space;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::attention::{
-    AttentionOperand, AttentionOperands, AttentionReading, AttentionVisibility, AttentionWorkItem,
+    AttentionCacheKind, AttentionOperand, AttentionOperands, AttentionReading, AttentionVisibility,
+    AttentionWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
@@ -42,7 +43,7 @@ impl AttentionElements {
             elements: self.stored(),
             sum: self.sum,
             reading: AttentionReading::AsStored,
-            page_size: None,
+            cache: AttentionCacheKind::Sequences,
             group: 1,
             head_dim,
             val_dim,
@@ -112,5 +113,5 @@ pub trait AttentionLaunch: Debug {
         lengths: TensorArg,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal>;
+    ) -> Result<(), Decline>;
 }

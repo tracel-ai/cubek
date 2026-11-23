@@ -2,7 +2,7 @@ use crate::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use crate::kernels::{MATMUL_ELEMENT_UNVERIFIED, MatmulIndex};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 
 /// A product's two operands, on one device and of one element the routines are
 /// verified at: what every launch's tensors are read from, before a launch prepares them as it
@@ -36,7 +36,7 @@ impl MatmulInputs {
     ///
     /// [`MATMUL_ELEMENT_UNVERIFIED`]: what the routines decline whatever the device, and
     /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
-    pub fn new(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Refusal> {
+    pub fn new(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Result<Self, Decline> {
         if lhs.elem != rhs.elem || !Self::VERIFIED.contains(&lhs.elem) {
             return Err(MATMUL_ELEMENT_UNVERIFIED);
         }

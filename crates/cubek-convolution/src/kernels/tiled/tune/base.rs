@@ -3,7 +3,7 @@ use crate::kernels::tiled::{
     ConvRoutine, ConvTensors, CubeStagedConvSettings, PlaneWindowConvRoutine,
 };
 use cubecl::client::Client;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::{LocalTuner, TunableSet, local_tuner};
 use cubecl_common::device::ServiceId;
 use cubek_std::Hardware;
@@ -42,7 +42,7 @@ fn listed(id: &ServiceId, hw: &Hardware) -> Arc<[CubeStagedConvCandidate]> {
 /// # Errors
 ///
 /// The plane window routine's refusal where nothing serves the problem.
-pub fn launch_tuned(hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> {
+pub fn launch_tuned(hw: &Hardware, tensors: ConvTensors) -> Result<(), Decline> {
     let client = tensors.client().clone();
     let id = client.service_id();
     let list = listed(&id, hw);
@@ -81,7 +81,7 @@ fn run_tuned(
         >,
     >,
     tensors: ConvTensors,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     TUNER.execute(id, client, tunables, tensors);
     Ok(())
 }
@@ -92,7 +92,7 @@ fn launch_floor(
     list: &[CubeStagedConvCandidate],
     hw: &Hardware,
     tensors: ConvTensors,
-) -> Result<(), Refusal> {
+) -> Result<(), Decline> {
     let listed = list
         .iter()
         .map(|candidate| candidate.launch(tensors.clone()));

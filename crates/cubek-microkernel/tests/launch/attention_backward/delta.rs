@@ -2,7 +2,7 @@
 //! each query's `delta = Σ_dv out_gradient · out`.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Launcher, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
@@ -32,7 +32,7 @@ impl PlaneDeltaLaunch {
         hw: &Hardware,
         item: AttentionBackwardWorkItem,
         settings: &PlaneDeltaMicrokernelSettings,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = PlaneDeltaMicrokernel::best(hw, &item, settings)?;
         Ok(Self {
             microkernel,
@@ -58,7 +58,7 @@ impl PlaneDeltaLaunch {
         out: TensorArg,
         out_gradient: TensorArg,
         delta: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let space = Space::new(&[
             (B, 1),
             (KV, 1),
@@ -81,8 +81,8 @@ impl PlaneDeltaLaunch {
             cube_dim: partitioning.cube_dim(self.plane_width),
         };
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
-        let bound = |arg, element, axes: &[_]| {
-            TileTensorLaunch::new(arg, element, 1, TileSpec::direct(axes))
+        let bound = |arg, element, dimensions: &[_]| {
+            TileTensorLaunch::new(arg, element, 1, TileSpec::direct(dimensions))
         };
         let (element, sum) = (self.item.element, self.item.sum);
         // SAFETY: every operand is bound through the launcher at the problem's own extents, and
@@ -108,12 +108,12 @@ impl PlaneDeltaLaunch {
 fn plane_delta_kernel<EA: Float>(
     out: &TileTensor<'_>,
     out_gradient: &TileTensor<'_>,
-    delta: &TileTensor<'_>,
+    delta: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[define(EA)] _sum: ElemType,
 ) {
     let (o, d_o) = (out.tile(&partitioning), out_gradient.tile(&partitioning));
-    let delta = delta.tile(&partitioning);
+    let delta = delta.tile_mut(&partitioning);
     for plane in &partitioning {
         plane_delta_microkernel::<EA>(&plane, &delta.at(&plane), &d_o.at(&plane), &o.at(&plane));
     }

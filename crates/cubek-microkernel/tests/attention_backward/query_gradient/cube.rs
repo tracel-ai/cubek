@@ -1,7 +1,7 @@
 //! The cube query gradient microkernel alone: one cube's queries, their dot products and their gradient over every key.
 
 use crate::launch::attention_backward::CubeQueryGradientLaunch;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, CubeQueryGradientMicrokernelSettings,
@@ -20,7 +20,7 @@ impl BackwardSettings for CubeQueryGradientMicrokernelSettings {
         hw: &Hardware,
         item: AttentionBackwardWorkItem,
         steps: usize,
-    ) -> Result<CubeQueryGradientLaunch, Refusal> {
+    ) -> Result<CubeQueryGradientLaunch, Decline> {
         CubeQueryGradientLaunch::new(hw, item, self, steps)
     }
 }

@@ -10,7 +10,7 @@ use core::fmt::Debug;
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 
 use crate::{
     ExecutionOutcome, HostData, HostDataType, TestOutcome, ValidationResult, assert_equals_approx,
@@ -34,7 +34,7 @@ pub trait ScopeUnderTest {
     /// # Errors
     ///
     /// Why the device runs no such scope at `case`: a skip, not a failure.
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal>;
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline>;
 
     /// What the scope must write for `case`, computed on the host: one value per output
     /// [`launch`](Self::launch) returns, in its order.
@@ -62,7 +62,7 @@ pub trait ScopeUnderTest {
     }
 
     /// [`check`](Self::check), where at least one case must launch: a test guarding a launch that
-    /// was once refused fails where every case is refused, unless every refusal is a cube larger
+    /// was once refused fails where every case is refused, unless every decline is a cube larger
     /// than the device holds (the CPU runtime's few units), which skips the test.
     #[track_caller]
     fn check_some(&self, cases: impl IntoIterator<Item = Self::Case>) {
@@ -81,7 +81,7 @@ pub trait ScopeUnderTest {
         if launched > 0 {
             return;
         }
-        let past_device = |why: &Refusal| matches!(why, Refusal::CubePastDevice { .. });
+        let past_device = |why: &Decline| matches!(why, Decline::CubePastDevice { .. });
         match !refused.is_empty() && refused.iter().all(past_device) {
             true => TestOutcome::Validated(ValidationResult::Skipped(
                 "every case asks for a cube larger than this device holds".to_string(),
@@ -101,7 +101,7 @@ pub trait ScopeUnderTest {
 
     /// The outcome of one case the scope launched, or why it refused the case.
     #[track_caller]
-    fn attempt(&self, client: &Client, case: &Self::Case) -> Result<TestOutcome, Refusal> {
+    fn attempt(&self, client: &Client, case: &Self::Case) -> Result<TestOutcome, Decline> {
         let written = self.launch(client, case)?;
         let handles: Vec<_> = written.iter().map(|output| &output.tensor.handle).collect();
         if let ExecutionOutcome::CompileError(why) = ExecutionOutcome::of_outputs(client, &handles)

@@ -7,7 +7,7 @@ use crate::launch::{SpatialExtent, SpatialWindow, TapCount};
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
-use cubecl::tile::launch::{BoundaryPolicy, Refusal};
+use cubecl::tile::launch::{BoundaryPolicy, Decline};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_matmul::definition::MatmulElems;
 use cubek_microkernel::matmul::MatmulOperands;
@@ -49,7 +49,7 @@ impl ConvTensors {
         out: TensorBinding,
         window: &[SpatialWindow],
         dtypes: MatmulElems,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if bias.is_some() {
             return Err(ConvDecline::Bias.into());
         }
@@ -70,7 +70,7 @@ impl ConvTensors {
         weight_grad: TensorBinding,
         window: &[SpatialWindow],
         dtypes: MatmulElems,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let operation = ConvolutionOperation::BackwardWeight;
         let operands = [input, out_grad];
         Self::checked(operation, client, operands, weight_grad, window, dtypes)
@@ -89,7 +89,7 @@ impl ConvTensors {
         in_grad: TensorBinding,
         window: &[SpatialWindow],
         dtypes: MatmulElems,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         if window.iter().any(|window| window.stride > 1) {
             return Err(ConvDecline::DataBackwardStrided.into());
         }
@@ -108,7 +108,7 @@ impl ConvTensors {
         out: TensorBinding,
         window: &[SpatialWindow],
         dtypes: MatmulElems,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (InputBinding::Normal(input, _), InputBinding::Normal(rhs, _)) = (input, rhs) else {
             return Err(ConvDecline::Quantized.into());
         };
@@ -158,7 +158,7 @@ impl ConvTensors {
 
     /// Whether the window is one a convolution steps by and the spatial extents are the ones it
     /// yields.
-    fn check_window(&self) -> Result<(), Refusal> {
+    fn check_window(&self) -> Result<(), Decline> {
         let problem = self.problem();
         if problem.spatial.iter().any(|conv_dim| conv_dim.kernel == 0) {
             return Err(ConvDecline::KernelEmpty.into());
@@ -235,7 +235,7 @@ impl ConvTensors {
         problem: &ConvProblem,
         blueprint: &TileConvBlueprint<M>,
         grid: &Grid,
-    ) -> Result<ConvBinding, Refusal> {
+    ) -> Result<ConvBinding, Decline> {
         let partitioning = &blueprint.partitioning;
         let roles = problem.roles();
         let launcher = grid.launcher(&self.client, || {
@@ -255,11 +255,11 @@ impl ConvTensors {
         };
         let rhs = launcher
             .arg(self.rhs, problem.elements.rhs)
-            .axes(&roles.rhs)
+            .dimensions(&roles.rhs)
             .vectorize(widths.rhs);
         let mut out = launcher
             .arg(self.out, problem.elements.out)
-            .axes(&roles.free.in_order())
+            .dimensions(&roles.free.in_order())
             .vectorize(widths.out)
             .build()?;
         let masked: Vec<_> = (roles.free.in_order().into_iter())

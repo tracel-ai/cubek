@@ -6,7 +6,7 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };
@@ -73,12 +73,12 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on eight cubes a box, then four and
     /// sixteen, then seven, ten and thirteen: counts that are no power of two, which may fill the
     /// device's last wave of boxes where a power of two leaves it mostly idle.
-    fn settings(&self, _hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         [8, 4, 16, 7, 10, 13]
             .into_iter()
             .flat_map(|cubes| {
                 HypercubeAttentionMicrokernelSettings::FRAGMENT
-                    .listed()
+                    .listed(hw)
                     .into_iter()
                     .map(move |microkernel| Self::Settings {
                         microkernel,
@@ -91,7 +91,6 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
     /// access.
     fn vectorize(
-        &self,
         microkernel: &HypercubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
@@ -102,7 +101,6 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// Nothing of its own: its cubes' microkernel walks each cube's run of the keys and counts
     /// each cube's partial.
     fn estimate(
-        &self,
         problem: &AttentionRoutineProblem,
         blueprint: &HypercubeFragmentPartialAttentionRoutineBlueprint,
         grid: &Grid,
@@ -123,11 +121,10 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
     /// autotune key prepares its candidates at one representative for every call of its bucket.
     /// The merge after it is prepared by the strategy that launches it.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
@@ -136,10 +133,6 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
         }
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
-        microkernel
-            .cube
-            .plane
-            .reads_stage(microkernel.cube.settings.layout)?;
         let partitioning = AttentionPartitioning::new(
             problem.space(),
             microkernel.cube.tiling(),
@@ -154,7 +147,7 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
             hw,
             problem,

@@ -9,7 +9,7 @@ use cubecl::CubeDim;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::routine::{Routine, RoutineCandidate};
 use cubek_std::{Hardware, Instructions, manual_mma};
 
@@ -62,7 +62,7 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
     {
         ListedFor::Float
             .admits(call.product())
-            .map_err(|refusal| format!("{refusal:?}"))?;
+            .map_err(|decline| format!("{decline:?}"))?;
         let settings = self.settings();
         let destination = call.destination;
         let (lhs, rhs) = (call.lhs.tensor, call.rhs.tensor);
@@ -79,7 +79,7 @@ impl<R: Routine + Copy> MatmulRoutineCandidate<R> {
         let launched = tensors.and_then(|tensors| {
             let (blueprint, grid) = self.candidate.prepare(&tensors.problem())?;
             self.routine()
-                .dispatch_into_buffer(&tensors, blueprint, grid);
+                .dispatch_into_buffer(&tensors, blueprint, grid)?;
             Ok(match destination {
                 Some(destination) => destination,
                 None => tensors

@@ -1,7 +1,7 @@
 use crate::Hardware;
 use crate::routine::{Grid, PreparedLaunches, Routine};
 use cubecl::CubeDim;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use std::sync::Arc;
 
 /// A routine at one of its settings, raced for the device it was listed on.
@@ -41,8 +41,7 @@ impl<R: Routine> RoutineCandidate<R> {
 impl<R: Routine + Copy> RoutineCandidate<R> {
     /// Every setting `routine` lists on `hw`, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
-        routine
-            .settings(hw)
+        R::settings(hw)
             .into_iter()
             .map(|settings| Self::new(routine, settings, hw))
             .collect()
@@ -63,9 +62,8 @@ where
     /// # Errors
     ///
     /// Why the routine cannot run `problem` at this setting, as [`Routine::prepare`] says.
-    pub fn prepare(&self, problem: &R::Problem) -> Result<(R::Blueprint, Grid), Refusal> {
-        self.prepared
-            .prepare(&self.routine, &self.hw, problem, &self.settings)
+    pub fn prepare(&self, problem: &R::Problem) -> Result<(R::Blueprint, Grid), Decline> {
+        self.prepared.prepare(&self.hw, problem, &self.settings)
     }
 
     /// The blueprint the routine prepares for `problem` and the cube it launches, or `None`

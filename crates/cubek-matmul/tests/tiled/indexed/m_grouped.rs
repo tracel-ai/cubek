@@ -6,9 +6,9 @@ use core::marker::PhantomData;
 
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_matmul::kernels::indexed::m_grouped::{MGroupedMatmulTensors, MGroupedSettings};
-use cubek_matmul::kernels::indexed::stack::SlabAxis;
+use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::StoredTensor;
 use cubek_matmul::kernels::{
     CubeStagedMatmulRoutine, MatmulRoutine, MatmulRoutineProblem, PlaneShuffleMatmulRoutine,
@@ -145,7 +145,7 @@ fn a_cube_staged_launch_holds_the_rows_its_groups_were_padded_to() {
                 &vec![0f32; k * groups * n],
             )),
             upload(&client, &[groups], &ends),
-            SlabAxis::Output,
+            SlabDimension::Output,
         )
         .expect("a float stack derives a grouped launch");
         let Some(padded) = walk.ran(tensors.launch(&hw, &CubeStagedMatmulRoutine, &settings))
@@ -154,7 +154,7 @@ fn a_cube_staged_launch_holds_the_rows_its_groups_were_padded_to() {
         };
         let chunk = padded.layout().align();
         let problem = MatmulRoutineProblem::dense(chunk, n, k, ElemType::Float(FloatKind::F32));
-        let Ok((blueprint, _)) = CubeStagedMatmulRoutine.prepare(&hw, &problem, &settings.routine)
+        let Ok((blueprint, _)) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings.routine)
         else {
             continue;
         };
@@ -194,7 +194,7 @@ fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padde
                 grouped.activation(&client),
                 StoredTensor::Packed(stack.matrix()),
                 upload(&client, &[sizes.len()], &ends),
-                SlabAxis::Output,
+                SlabDimension::Output,
             )
             .expect("a packed stack of whole slabs derives a grouped launch");
             let launched = tensors.launch(&hw, &CubeStagedMatmulRoutine, &settings);
@@ -204,7 +204,7 @@ fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padde
             let chunk = padded.layout().align();
             let packing = stack
                 .matrix()
-                .stacked(sizes.len(), SlabAxis::Output.axis())
+                .stacked(sizes.len(), SlabDimension::Output.dimension())
                 .expect("whole slabs stack")
                 .packing();
             let problem = MatmulRoutineProblem::packed(
@@ -217,8 +217,7 @@ fn a_cube_staged_launch_over_a_packed_stack_holds_the_rows_its_groups_were_padde
                     ..MatmulOperands::all(None)
                 },
             );
-            let (blueprint, _) = CubeStagedMatmulRoutine
-                .prepare(&hw, &problem, &settings.routine)
+            let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings.routine)
                 .expect("the launch prepared these chunk rows");
             assert_eq!(
                 blueprint.partitioning.rows() as usize,
@@ -268,7 +267,7 @@ where
 {
     type Case = AtSetting<MGroupedSettings<R::Settings>, GroupedRows>;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let grouped = &case.product;
         let stack = PackedSlabs::new(client, grouped.packed_slabs());
         let tensors = MGroupedMatmulTensors::new(
@@ -276,7 +275,7 @@ where
             grouped.activation(client),
             StoredTensor::Packed(stack.matrix()),
             upload(client, &[grouped.sizes.len()], &grouped.ends()),
-            SlabAxis::Output,
+            SlabDimension::Output,
         )
         .expect("a packed stack of whole slabs derives a grouped launch");
         let padded = tensors.launch(&self.hw, &self.routine, &case.settings)?;
@@ -296,7 +295,7 @@ where
     }
 }
 
-/// The launches of a walk over settings. At least one must run, unless every refusal was a cube
+/// The launches of a walk over settings. At least one must run, unless every decline was a cube
 /// larger than the device holds (the CPU runtime's few units), which skips the test.
 struct Walk {
     ran: usize,
@@ -312,14 +311,14 @@ impl Walk {
     }
 
     /// The launch's output when it ran, counting it; else `None`, noting why it did not.
-    fn ran<T>(&mut self, launched: Result<T, Refusal>) -> Option<T> {
+    fn ran<T>(&mut self, launched: Result<T, Decline>) -> Option<T> {
         match launched {
             Ok(out) => {
                 self.ran += 1;
                 Some(out)
             }
             Err(why) => {
-                self.cubes_past_device &= matches!(why, Refusal::CubePastDevice { .. });
+                self.cubes_past_device &= matches!(why, Decline::CubePastDevice { .. });
                 None
             }
         }

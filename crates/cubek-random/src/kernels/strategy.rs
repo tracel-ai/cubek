@@ -4,7 +4,7 @@ use crate::kernels::{
     PlaneRandomRoutine, PlaneRandomRoutineSettings, RandomTensor, UnitRandomRoutine,
     UnitRandomRoutineSettings, launch_random_routine,
 };
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::random::{Distribution, SeedsLaunch};
 use cubek_std::Hardware;
 
@@ -40,7 +40,7 @@ impl RandomKernel {
         tensor: &RandomTensor,
         distribution: D,
         seeds: SeedsLaunch,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         match self {
             Self::Plane(settings) => launch_random_routine(
                 &PlaneRandomRoutine,

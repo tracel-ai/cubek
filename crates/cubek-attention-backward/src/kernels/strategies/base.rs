@@ -4,7 +4,7 @@
 use crate::kernels::{
     AttentionBackwardGradients, AttentionBackwardProblem, AttentionBackwardTensors,
 };
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use cubek_std::routine::Grid;
 
@@ -39,7 +39,7 @@ pub trait AttentionBackwardLaunch {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<Self::Blueprint, Refusal>;
+    ) -> Result<Self::Blueprint, Decline>;
 
     /// Launch every routine `blueprint` holds, in order, over `tensors`.
     fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint);
@@ -58,7 +58,7 @@ pub trait AttentionBackwardLaunch {
         hw: &Hardware,
         tensors: AttentionBackwardTensors,
         settings: &Self::Settings,
-    ) -> Result<AttentionBackwardGradients, Refusal> {
+    ) -> Result<AttentionBackwardGradients, Decline> {
         let blueprint = self.prepare(hw, &tensors.problem(), settings)?;
         self.dispatch(&tensors, blueprint);
         Ok(tensors.into_gradients())

@@ -1,6 +1,6 @@
 use crate::components::ConvolutionOperation;
 use cubecl::prelude::TensorBinding;
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 use cubecl::tile::layout::{PhysicalAxisMap, Scale};
 use cubek_std::InputBinding;
 use serde::{Deserialize, Serialize};
@@ -111,13 +111,13 @@ impl SpatialWindow {
     }
 
     /// [`Self::position`] as a map over the axes `out` and `tap`, for a tile projection.
-    pub fn position_map(&self, out: Axis, tap: Axis) -> PhysicalAxisMap {
+    pub fn position_map(&self, out: Dimension, tap: Dimension) -> PhysicalAxisMap {
         PhysicalAxisMap::affine(&[(out, self.stride), (tap, self.dilation)])
             .shifted(-(self.padding as isize))
     }
 
     /// [`Self::gradient_position`] as a map over the axes `pos` and `tap`.
-    pub fn gradient_position_map(&self, pos: Axis, tap: Axis) -> PhysicalAxisMap {
+    pub fn gradient_position_map(&self, pos: Dimension, tap: Dimension) -> PhysicalAxisMap {
         PhysicalAxisMap::scaled(&[
             (pos, Scale::Static(1)),
             (tap, Scale::Static(-(self.dilation as isize))),

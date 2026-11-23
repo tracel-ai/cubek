@@ -4,7 +4,7 @@ use crate::kernels::tiled::{
     ConvBinding, ConvPartitioning, ConvProblem, ConvRoutine, ConvStaging, ConvTiles,
     CubeStagedConvSettings, TileConvBlueprint,
 };
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::matmul::cube::{CubeStagedBox, CubeStagedDepth, CubeStagedMicrokernel};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -24,7 +24,7 @@ impl Routine for CubeStagedConvRoutine {
     type Partitioning = ConvPartitioning;
 
     /// The device's own: [`CubeStagedConvCandidates`].
-    fn settings(&self, hw: &Hardware) -> Vec<CubeStagedConvSettings> {
+    fn settings(hw: &Hardware) -> Vec<CubeStagedConvSettings> {
         CubeStagedConvCandidates::on(hw)
             .map(|candidates| candidates.list())
             .unwrap_or_default()
@@ -32,7 +32,6 @@ impl Routine for CubeStagedConvRoutine {
 
     /// Nothing of its microkernel's: the stage fill's own reads are the partitioning's.
     fn vectorize(
-        &self,
         _microkernel: &CubeStagedMicrokernel,
         partitioning: &ConvPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -42,7 +41,6 @@ impl Routine for CubeStagedConvRoutine {
 
     /// The cube's staging, which its partitioning places, and its planes' work.
     fn estimate(
-        &self,
         problem: &ConvProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -62,11 +60,10 @@ impl Routine for CubeStagedConvRoutine {
     /// The cube microkernel over the instruction `settings` ask for, a cube a box of the output,
     /// one plane for every tile of it, the stages held as the partitioning lays them out.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ConvProblem,
         settings: &CubeStagedConvSettings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let plane = settings.plane(hw, problem)?;
         let tiles = ConvTiles::new(problem, &plane, settings);
         let partitioning = ConvPartitioning::cube_staged(hw, problem, &tiles);
@@ -92,7 +89,7 @@ impl Routine for CubeStagedConvRoutine {
         microkernel.ring = partitioning.ring(settings.microkernel.ring);
         let resolved = microkernel.resolve_in(hw, &problem.work_item(), &placed)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&resolved.microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&resolved.microkernel, &partitioning, &mut vectorization);
         let cube = CubeResources {
             plane_width: resolved.plane_width,
             shared_memory: resolved.shared_memory,

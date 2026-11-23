@@ -3,7 +3,7 @@
 
 use crate::launch::Lines;
 use crate::launch::matmul::{HypercubeStagedLaunch, MatmulElements};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
@@ -22,7 +22,7 @@ impl MatmulSettings for HypercubeStagedMicrokernelSettings {
         elements: MatmulElements,
         lines: Lines,
         steps: usize,
-    ) -> Result<HypercubeStagedLaunch, Refusal> {
+    ) -> Result<HypercubeStagedLaunch, Decline> {
         HypercubeStagedLaunch::new(hw, elements, self, lines, steps)
     }
 }

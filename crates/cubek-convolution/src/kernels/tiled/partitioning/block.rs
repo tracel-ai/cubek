@@ -1,5 +1,5 @@
 use cubecl::tile::Space;
-use cubek_microkernel::matmul::{MatmulAxes, MatmulStage};
+use cubek_microkernel::matmul::{MatmulDimensions, MatmulStage};
 
 /// What one cube covers of the output, and how deep one stage of the contraction runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +22,7 @@ impl ConvBlock {
 
     /// The box one stage holds, over the rows of every across position (the rhs stage is shared
     /// by them, so only the lhs one grows with them) and the columns.
-    pub fn stage(&self, axes: MatmulAxes) -> MatmulStage {
+    pub fn stage(&self, axes: MatmulDimensions) -> MatmulStage {
         MatmulStage::new(
             Space::new(&[
                 (axes.m, self.positions()),

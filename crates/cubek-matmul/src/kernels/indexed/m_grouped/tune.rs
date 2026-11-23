@@ -11,7 +11,7 @@ use crate::kernels::indexed::m_grouped::{
     GroupedRows, MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind,
     MGroupedSettings, PaddedRows, RouteSort, upload,
 };
-use crate::kernels::indexed::stack::SlabAxis;
+use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
 use crate::kernels::tune::key::OperandLayout;
@@ -22,7 +22,7 @@ use crate::kernels::{
 };
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tune::{LocalTuner, Tunable, local_tuner};
 use cubecl::{self as cubecl, AutotuneKey, CubeTuneId};
 use cubecl_common::device::Device;
@@ -51,10 +51,10 @@ pub struct MGroupedMatmulKey {
     /// Whether the stack is float or packed, and how: a packed stack is read packed, by other
     /// kernels than a float one.
     stack: OperandKind,
-    /// Which axis the stack lines along.
+    /// Which dimension the stack lines along.
     lines: OperandLayout,
-    /// Which axis the slabs lie along.
-    slabs: SlabAxis,
+    /// Which dimension the slabs lie along.
+    slabs: SlabDimension,
     /// Where the rows come from: a candidate is timed with the pass that pads them.
     source: MGroupedRowSourceKind,
 }
@@ -70,7 +70,7 @@ pub fn launch_tuned(
     device: &impl Device,
     tensors: MGroupedMatmulTensors,
     routines: GroupPriority,
-) -> Result<TensorHandle, Refusal> {
+) -> Result<TensorHandle, Decline> {
     let rows = tensors.source().rows();
     if rows == 0 {
         let [_, n] = tensors.slab_shape();
@@ -95,16 +95,16 @@ pub fn launch_tuned_padded(
     device: &impl Device,
     tensors: MGroupedMatmulTensors,
     routines: GroupPriority,
-) -> Result<PaddedRows, Refusal> {
+) -> Result<PaddedRows, Decline> {
     let client = tensors.client().clone();
     let hw = Hardware::from_client(&client);
     // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
     let stack = Product::of([tensors.stack_kind()]);
     let floors = MGroupedFloors::LISTED;
     let plane_shuffle = Listing::admitted(&floors.plane_shuffle, stack)
-        .map(|floor| tensors.served_by(&hw, &PlaneShuffleMatmulRoutine, &floor.settings));
+        .map(|floor| tensors.served_by::<_, _, PlaneShuffleMatmulRoutine>(&hw, &floor.settings));
     let cube_staged = Listing::admitted(&floors.cube_staged, stack)
-        .map(|floor| tensors.served_by(&hw, &CubeStagedMatmulRoutine, &floor.settings));
+        .map(|floor| tensors.served_by::<_, _, CubeStagedMatmulRoutine>(&hw, &floor.settings));
     first_served_on_floor(plane_shuffle.chain(cube_staged))?;
 
     // Named rather than `module_path!()`, so the cached winners stay this autotune's wherever the
@@ -187,7 +187,7 @@ where
         move |tensors: MGroupedMatmulTensors| {
             listed
                 .admits(Product::of([tensors.stack_kind()]))
-                .map_err(|refusal| format!("{settings} {refusal:?}"))?;
+                .map_err(|decline| format!("{settings} {decline:?}"))?;
             let hw = Hardware::from_client(tensors.client());
             tensors
                 .launch(&hw, &routine, &settings)
@@ -245,7 +245,7 @@ mod tests {
     use crate::kernels::indexed::m_grouped::{
         GroupedRows, MGroupedMatmulTensors, MGroupedRowSource, PaddedRows, RouteSort, upload,
     };
-    use crate::kernels::indexed::stack::SlabAxis;
+    use crate::kernels::indexed::stack::SlabDimension;
     use crate::kernels::tensor::{PlainTensor, StoredTensor};
 
     /// `tensor`, `u32`, read back.
@@ -300,7 +300,7 @@ mod tests {
                 source,
                 StoredTensor::Plain(floats([k, experts * n])),
                 garbage(experts),
-                SlabAxis::Output,
+                SlabDimension::Output,
             )
             .expect("float operands the routines read");
             let spread = evenly_spread(&tensors.key(), &tensors);

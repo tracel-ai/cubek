@@ -12,7 +12,6 @@ use cubek_std::devices;
 use cubek_std::routine::Routine;
 use cubek_std::{Hardware, UnitDispatch};
 
-const ROUTINE: PlaneWindowConvRoutine = PlaneWindowConvRoutine;
 const THREADS: u32 = 12;
 const CORES: u32 = 12;
 const SMT_THREADS: u32 = 32;
@@ -44,19 +43,15 @@ fn layer(operation: ConvolutionOperation, channels_in: usize) -> ConvProblem {
 /// A CPU runtime offers no plane instruction, so the default tile strategy is the plane window routine's.
 #[test]
 fn only_a_device_with_no_plane_instruction_leaves_the_default_to_the_plane_window_routine() {
-    assert!(
-        CubeStagedConvRoutine
-            .settings(&cpu(THREADS, CORES))
-            .is_empty()
-    );
-    assert!(!CubeStagedConvRoutine.settings(&nvidia()).is_empty());
+    assert!(CubeStagedConvRoutine::settings(&cpu(THREADS, CORES)).is_empty());
+    assert!(!CubeStagedConvRoutine::settings(&nvidia()).is_empty());
 }
 
 /// Every operation prepares at each block setting, at the block its form gives that setting.
 #[test]
 fn every_operation_prepares_at_each_block_setting_on_a_cpu_runtime() {
     let hw = cpu(THREADS, CORES);
-    assert!(!ROUTINE.settings(&hw).is_empty());
+    assert!(!PlaneWindowConvRoutine::settings(&hw).is_empty());
     for operation in [
         ConvolutionOperation::Forward,
         ConvolutionOperation::BackwardData,
@@ -64,9 +59,8 @@ fn every_operation_prepares_at_each_block_setting_on_a_cpu_runtime() {
     ] {
         let problem = on(operation);
         let form = BlockForm::of(&problem.roles());
-        for settings in ROUTINE.settings(&hw) {
-            let (blueprint, _) = ROUTINE
-                .prepare(&hw, &problem, &settings)
+        for settings in PlaneWindowConvRoutine::settings(&hw) {
+            let (blueprint, _) = PlaneWindowConvRoutine::prepare(&hw, &problem, &settings)
                 .unwrap_or_else(|refusal| panic!("{operation:?} at {settings}: {refusal:?}"));
             let block = (
                 blueprint.microkernel.rows,
@@ -129,9 +123,8 @@ fn a_forward_reads_its_rhs_as_wide_as_its_input() {
 fn an_input_vector_not_dividing_the_rows_is_narrowed_not_declined() {
     let hw = cpu(THREADS, CORES);
     let problem = layer(ConvolutionOperation::BackwardWeight, ODD_CHANNELS);
-    for settings in ROUTINE.settings(&hw) {
-        let (blueprint, _) = ROUTINE
-            .prepare(&hw, &problem, &settings)
+    for settings in PlaneWindowConvRoutine::settings(&hw) {
+        let (blueprint, _) = PlaneWindowConvRoutine::prepare(&hw, &problem, &settings)
             .expect("the setting prepares");
         assert!(
             PlaneWindowConvRoutine::check_lhs_vector_axis(&problem, blueprint.widths.lhs).is_ok()
@@ -220,10 +213,9 @@ fn first_served(
     hw: &Hardware,
     problem: &ConvProblem,
 ) -> TileConvBlueprint<UnitRegistersMicrokernel> {
-    ROUTINE
-        .settings(hw)
+    PlaneWindowConvRoutine::settings(hw)
         .iter()
-        .find_map(|settings| ROUTINE.prepare(hw, problem, settings).ok())
+        .find_map(|settings| PlaneWindowConvRoutine::prepare(hw, problem, settings).ok())
         .map(|(blueprint, _)| blueprint)
         .expect("a setting serves the problem")
 }

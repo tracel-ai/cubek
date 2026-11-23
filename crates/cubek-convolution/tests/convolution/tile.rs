@@ -6,7 +6,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, Strides};
 use cubek_convolution::components::ConvSetupError;
 use cubek_convolution::eval::benchmarks::settings;
@@ -470,9 +470,9 @@ fn launch(
 }
 
 /// The reason a refusal the routines name states.
-fn why(declined: impl Into<Refusal>) -> &'static str {
+fn why(declined: impl Into<Decline>) -> &'static str {
     match declined.into() {
-        Refusal::Declined { why } => why,
+        Decline::Unserved { why } => why,
         other => panic!("a refusal with no stated reason: {other:?}"),
     }
 }

@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::matmul::MatmulLayout;
 use cubek_std::Hardware;
@@ -114,7 +114,7 @@ pub(crate) trait MatmulSettings: Debug + Copy {
         elements: MatmulElements,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self::Launch, Refusal>;
+    ) -> Result<Self::Launch, Decline>;
 }
 
 /// A product of `elements` at `settings`, `steps` of the microkernel's step of `K` deep, its
@@ -170,7 +170,7 @@ impl<S: MatmulSettings> Matmul<S> {
 impl<S: MatmulSettings> ScopeUnderTest for Matmul<S> {
     type Case = MatmulCase<S>;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = case
             .settings
             .launch(&self.hw, case.elements, case.lines, case.steps)?;

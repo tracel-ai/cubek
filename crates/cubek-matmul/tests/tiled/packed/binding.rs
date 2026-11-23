@@ -7,7 +7,7 @@ use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PACKED_STACK_UNREAD, PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 
 use crate::tiled::packed::{PackedFormat, PackedSlabs, PackedSlabsSpec, block_of};
 

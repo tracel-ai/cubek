@@ -1,25 +1,25 @@
+use crate::matmul::MatmulBlocks;
 use crate::matmul::cube::{
-    CubeStagedDelivery, CubeStagedFill, CubeStagedFillingRefusal, CubeStagedMicrokernelSettings,
-    CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaRefusal, MatmulCubeSpace, MatmulPlaneLayout,
+    CubeStagedDelivery, CubeStagedFill, CubeStagedFillingDecline, CubeStagedMicrokernelSettings,
+    CubeStagedStore, CubeStagedWalk, CubeStagedWgmmaDecline, MatmulCubeSpace, MatmulPlaneLayout,
 };
 use crate::matmul::plane::{
-    PlaneFragmentDrain, PlaneFragmentInstruction, PlaneFragmentMicrokernel,
-    PlaneFragmentMicrokernelSettings,
+    PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulOperands,
-    MatmulRead, MatmulStage, MatmulStagingCount, MatmulStep, MatmulWorkItem,
+    MatmulDestination, MatmulDim, MatmulDimensions, MatmulMicrokernel, MatmulOperand,
+    MatmulOperands, MatmulRead, MatmulStage, MatmulStagingCount, MatmulStep, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
 use cubecl::tile::{FragmentSource, Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::BlockScales;
-use cubek_std::matmul_axes::{K, KB, M, N};
+use cubek_std::matmul_dimensions::{K, KB, M, N};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, StageRing};
 
 /// A box of the output one cube owns: it stages the box's rows of the lhs and columns of the rhs
@@ -50,15 +50,19 @@ pub struct CubeStagedMicrokernel {
     pub ring: StageRing,
     /// Who fills them: the routine's.
     pub fill: CubeStagedFill,
-    /// How a stage lays out the rows its fragments load: the layout its units copy it in, or
-    /// none where a box lands it.
-    pub stage_layout: Option<StageLayout>,
+    /// How a stage its units copy lays out the rows its fragments load
+    /// ([`CubeStagedMicrokernelSettings::stage_layout`]); the default's where a box lands it.
+    pub stage_layout: StageLayout,
     /// Who stores its box of the output: the routine's.
     pub store: CubeStagedStore,
     /// What one stage spans along the contraction.
     pub depth: CubeStagedDepth,
     /// How its planes read each operand out of the stages.
     pub reads: MatmulOperands<MatmulRead>,
+    /// The block-split space it planned on, every packed input at the reads it takes: the widest
+    /// its stage holds whole, where the stage is decoded ([`MatmulBlocks::within`]), or its
+    /// planes', where they read the stage as stored. `None` over float inputs.
+    pub planned: Option<MatmulBlocks>,
 }
 
 /// What one stage of a cube spans along the contraction.
@@ -84,7 +88,7 @@ pub enum CubeStagedDrain {
 
 impl CubeStagedMicrokernel {
     /// What a packed item whose scales do not group `K` is declined with.
-    pub const UNGROUPED_K: Refusal = Refusal::Declined {
+    pub const UNGROUPED_K: Decline = Decline::Unserved {
         why: "the packed staged matmul stages K a scale block at a time, and this packed input's scales do not group K",
     };
 
@@ -107,6 +111,7 @@ impl CubeStagedMicrokernel {
             store: CubeStagedStore::Fragments,
             depth,
             reads,
+            planned: None,
         }
     }
 
@@ -120,7 +125,7 @@ impl CubeStagedMicrokernel {
             .map(|operand| {
                 let packed = space.operand(operand);
                 match packed.scaled_along() {
-                    Some(axis) if axis == K => packed.grouping(K, space.k),
+                    Some(dimension) if dimension == K => packed.grouping(K, space.k),
                     _ => None,
                 }
             });
@@ -197,9 +202,18 @@ impl CubeStagedMicrokernel {
         item: &MatmulWorkItem,
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
+        // A stage read as stored is one step of the instruction: deeper ones are the decoding
+        // planes' alone.
+        let one_step = settings.stage_steps.get() == 1;
         let mut candidates: Vec<Self> = match item.as_stored() {
-            Some(stored) => Self::as_stored_candidates(hw, &stored, settings),
-            None => Vec::new(),
+            Some(stored) if one_step => Self::as_stored_candidates(hw, &stored, settings)
+                .into_iter()
+                .map(|candidate| Self {
+                    planned: candidate.plane.blocks,
+                    ..candidate
+                })
+                .collect(),
+            _ => Vec::new(),
         };
         candidates.extend(Self::decoding_candidates(hw, item, settings));
         candidates
@@ -209,14 +223,23 @@ impl CubeStagedMicrokernel {
     /// float product's plane microkernels on the decoded stages, the tile layer's instruction
     /// first, one for each matrix instruction under which a step of `K`, the stage, is
     /// whole scale blocks, each a whole number of the instruction's steps. A plane holds the
-    /// settings' steps of `M` and `N` and walks a step of `K` through each stage, block by block,
-    /// in the instruction's calls ([`MatmulStep::calls`]). The units filling
-    /// each stage decode every packed input into [`MatmulWorkItem::decoded_element`].
+    /// settings' steps of `M` and `N` and walks the settings' steps of `K` through each stage
+    /// ([`CubeStagedMicrokernelSettings::stage_steps`]), block by block, in the instruction's
+    /// calls ([`MatmulStep::calls`]). The units filling each stage decode every packed input into
+    /// [`MatmulWorkItem::decoded_element`].
     fn decoding_candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
         settings: &CubeStagedMicrokernelSettings,
     ) -> Vec<Self> {
+        // The step is planned on every packed input's finest reads, which every wider read is
+        // whole numbers of; the inputs are then read as widely as they were bound and the stage,
+        // the window its units fill, holds whole.
+        let Some(space) = item.blocks else {
+            return Vec::new();
+        };
+        let finest = space.finest();
+        let item = &item.with_blocks(finest);
         let (block, read) = (Self::block(item), item.decoded_element());
         let step = item
             .blocks
@@ -254,8 +277,17 @@ impl CubeStagedMicrokernel {
                     },
                     ..plane
                 };
-                let depth = CubeStagedDepth::ScaleBlocks(NonZeroUsize::new(blocks)?);
-                Some(Self::new(settings, plane, depth, item.decoding_reads()))
+                let stage_blocks = NonZeroUsize::new(blocks)?.checked_mul(settings.stage_steps)?;
+                let window = stage_blocks.get() * block;
+                Some(Self {
+                    planned: Some(space.within(window, window)?),
+                    ..Self::new(
+                        settings,
+                        plane,
+                        CubeStagedDepth::ScaleBlocks(stage_blocks),
+                        item.decoding_reads(),
+                    )
+                })
             })
             .collect()
     }
@@ -337,12 +369,12 @@ impl CubeStagedMicrokernel {
     /// the first level of its [`tiling`](Self::tiling) that walks `K` (its blocks, in a
     /// block-split space), cut from that space.
     pub fn stage(&self, cube_space: &MatmulCubeSpace) -> MatmulStage {
-        let walked = cube_space.axes_kind.walked();
+        let walked = cube_space.dimensions_kind.walked();
         let mut enclosing = cube_space.space.clone();
         for level in self.tiling().build() {
             let tile = level.child(&enclosing);
             if level.coverage() == Coverage::Walk && level.tile(walked).is_some() {
-                return MatmulStage::new(tile, cube_space.axes_kind.stage_axes());
+                return MatmulStage::new(tile, cube_space.dimensions_kind.stage_dimensions());
             }
             enclosing = tile;
         }
@@ -358,11 +390,10 @@ impl CubeStagedMicrokernel {
     }
 
     /// Whether a masked output makes the planes bounce their fragments through scratch: the
-    /// instruction stores a fragment whole ([`PlaneFragmentDrain::Bounce`]) into the output
+    /// instruction bounces its cells and the planes store their fragments into the output
     /// itself. The one place the rule lives; a launch that must bounce masks its output.
     pub fn bounces_masked_output(&self) -> bool {
-        self.plane.instruction.drain() == PlaneFragmentDrain::Bounce
-            && self.store == CubeStagedStore::Fragments
+        self.plane.cost.bounced_cell.is_some() && self.store == CubeStagedStore::Fragments
     }
 
     /// This microkernel as `hw` runs it for `item`, handed the box `cube_space` (of its
@@ -386,14 +417,14 @@ impl CubeStagedMicrokernel {
     /// # Errors
     ///
     /// A matrix instruction on a device that commits to no plane width; planes set aside to fill
-    /// where they cannot be ([`CubeStagedFillingRefusal`]); a plane group MMA its fill and drain do
-    /// not serve (`CubeStagedWgmmaRefusal`).
+    /// where they cannot be ([`CubeStagedFillingDecline`]); a plane group MMA its fill and drain do
+    /// not serve (`CubeStagedWgmmaDecline`).
     pub fn resolve(
         self,
         hw: &Hardware,
         item: &MatmulWorkItem,
         cube_space: &MatmulCubeSpace,
-    ) -> Result<CubeStagedResolved, Refusal> {
+    ) -> Result<CubeStagedResolved, Decline> {
         let placed = CubeStagedBox {
             stage: self.stage(cube_space),
             contracting_planes: self.contracting_planes(),
@@ -406,11 +437,13 @@ impl CubeStagedMicrokernel {
     /// The storage a stage lands in when the units copy it, with the layout they copy it in.
     fn copied_stage_storage(
         &self,
-        instruction: PlaneFragmentInstruction,
+        delivery: CubeStagedDelivery,
         stage: &MatmulStage,
-    ) -> Result<(StageStorage, Option<StageLayout>), Refusal> {
-        let layout = instruction.stage_layout(self.stage_layout)?;
-        Ok((self.plane.stage_storage(layout, stage), Some(layout)))
+    ) -> (StageStorage, StageLayout) {
+        let storage = self
+            .plane
+            .stage_storage(self.stage_layout, delivery.fills(), stage);
+        (storage, self.stage_layout)
     }
 
     /// [`resolve`](Self::resolve) for a routine that places the box and lays the stages out
@@ -424,7 +457,7 @@ impl CubeStagedMicrokernel {
         hw: &Hardware,
         item: &MatmulWorkItem,
         placed: &CubeStagedBox,
-    ) -> Result<CubeStagedResolved, Refusal> {
+    ) -> Result<CubeStagedResolved, Decline> {
         let stage = &placed.stage;
         let plane_width = self.plane.instruction.units(hw)?;
         let units = placed.contracting_planes * plane_width as usize;
@@ -435,9 +468,9 @@ impl CubeStagedMicrokernel {
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
         let cut_short = placed.masks_output && self.bounces_masked_output();
-        let window = match self.plane.instruction.drain() {
-            PlaneFragmentDrain::Bounce => self.scratch.at_least_bouncing(true),
-            PlaneFragmentDrain::CellByCell => Scratch::None,
+        let window = match self.plane.cost.bounced_cell {
+            Some(_) => self.scratch.at_least_bouncing(true),
+            None => Scratch::None,
         };
         let bounces = merges || cut_short || item.destination == MatmulDestination::Sink;
         let scratch = match bounces {
@@ -446,25 +479,28 @@ impl CubeStagedMicrokernel {
         };
         let fill = self.fill;
         if fill.filling_planes > 0
-            && let Some(refusal) =
-                CubeStagedFillingRefusal::new(fill.delivery, &ring, window, self.planes_along_k)
+            && let Some(decline) =
+                CubeStagedFillingDecline::new(fill.delivery, &ring, window, self.planes_along_k)
         {
-            return Err(refusal.into());
+            return Err(decline.into());
         }
         if let PlaneFragmentInstruction::Wgmma { .. } = instruction
-            && let Some(refusal) = CubeStagedWgmmaRefusal::new(&fill, self.planes_along_k, merges)
+            && let Some(decline) = CubeStagedWgmmaDecline::new(&fill, self.planes_along_k, merges)
         {
-            return Err(refusal.into());
+            return Err(decline.into());
         }
-        // A box lands a stage as one run of whole rows; the units copy it in the layout the
-        // setting names, or the instruction's own. Resolved to the layout it lays, a setting that
-        // names the instruction's own launches as its twin does, and a table sees one launch
-        // rather than timing it twice.
+        // A box lands a stage as one run of whole rows, as the instruction reads it; the units
+        // copy it in the layout the setting names, its rows arranged as the instruction reads
+        // them. Under a box, or a storage the routine lays out, the setting names nothing, so it
+        // resolves to the default's, and a table sees one launch rather than timing its twins.
         let (storage, stage_layout) = match (&placed.storage, fill.delivery) {
-            (Some(storage), _) => (storage.clone(), None),
-            (None, CubeStagedDelivery::Tma) => (self.plane.landed_stage_storage(stage), None),
-            (None, CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy) => {
-                self.copied_stage_storage(instruction, stage)?
+            (Some(storage), _) => (storage.clone(), CubeStagedMicrokernelSettings::SWIZZLED),
+            (None, CubeStagedDelivery::Tma) => (
+                self.plane.landed_stage_storage(stage),
+                CubeStagedMicrokernelSettings::SWIZZLED,
+            ),
+            (None, delivery @ (CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy)) => {
+                self.copied_stage_storage(delivery, stage)
             }
         };
         let microkernel = Self {
@@ -556,13 +592,13 @@ impl CubeStagedMicrokernel {
         if self.walk().decoded().is_some() {
             return 0;
         }
-        let axes = stage.axes();
+        let dimensions = stage.dimensions();
         let rows: usize = MatmulOperand::INPUTS
             .into_iter()
             .filter(|&operand| blocks.packings.get(operand).is_some())
             .flat_map(|operand| operand.dims())
             .filter(|&dim| dim != MatmulDim::K)
-            .map(|dim| stage.extent(axes.of(dim)))
+            .map(|dim| stage.extent(dimensions.of(dim)))
             .sum();
         let scales = rows * stage.extent(KB);
         let landing = match self.fill.delivery {
@@ -610,11 +646,11 @@ impl Microkernel for CubeStagedMicrokernel {
 
     const DECLINE: &'static str = "this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps";
 
-    /// A star around the default, one axis a setting names at a time: the fragment grid, the plane
-    /// layout. Then the named boxes a star moving one axis never reaches — the deep ones, two
-    /// instruction steps of `K` a stage, which read longer runs of a col rhs's rows; the small
-    /// ones a short problem fills the device with; the small cubes, one to four planes on a line
-    /// each holding a deep grid, where a small instruction (Metal's `8×8×8` simdgroup matrix)
+    /// A star around the default, one dimension a setting names at a time: the fragment grid, the
+    /// plane layout. Then the named boxes a star moving one dimension never reaches — the deep
+    /// ones, two instruction steps of `K` a stage, which read longer runs of a col rhs's rows; the
+    /// small ones a short problem fills the device with; the small cubes, one to four planes on a
+    /// line each holding a deep grid, where a small instruction (Metal's `8×8×8` simdgroup matrix)
     /// contracts more per shared read and more cubes fit a core — the named ones crossed with the
     /// rings that keep a second stage in flight. The instruction is the tile layer's
     /// ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)), never a
@@ -662,7 +698,7 @@ impl Microkernel for CubeStagedMicrokernel {
         ]
         .map(|(grid, planes)| boxed(grid, planes));
         let in_order = |settings: Self::Settings| Self::Settings {
-            stage_layout: Some(StageLayout::Blocks),
+            stage_layout: StageLayout::Blocks,
             ..settings
         };
         let rows_in_order = [layouts[0], small_cubes[2]].map(in_order);
@@ -716,9 +752,9 @@ impl Microkernel for CubeStagedMicrokernel {
             .collect()
     }
 
-    /// Items on matmul's own axes, which it places and stages in; a packed one, against a packed
-    /// input whose scales group `K`, which it stages a block at a time.
-    fn admits(item: &MatmulWorkItem) -> Result<(), Refusal> {
+    /// Items on matmul's own dimensions, which it places and stages in; a packed one, against a
+    /// packed input whose scales group `K`, which it stages a block at a time.
+    fn admits(item: &MatmulWorkItem) -> Result<(), Decline> {
         match item.blocks {
             None => MatmulCubeSpace::admits(item),
             Some(_) => Self::block(item).map(|_| ()).ok_or(Self::UNGROUPED_K),
@@ -761,7 +797,7 @@ impl Microkernel for CubeStagedMicrokernel {
             .filter(move |_| !merges || atomic)
     }
     /// Its ring reads both operands out of their tiles a stage at a time, in stretches of the
-    /// stage's extent along each one's contiguous axis, one element wide where the TMA engine
+    /// stage's extent along each one's contiguous dimension, one element wide where the TMA engine
     /// fills it. Each plane drains its tile a fragment at a time, or a cell at a time from a manual
     /// fragment, into the output; merged along
     /// `K` in shared memory, it drains one element at a time, since an atomic takes one. Its
@@ -780,10 +816,10 @@ impl Microkernel for CubeStagedMicrokernel {
                 vectorization.require(VectorRequirement::Access {
                     operand: MatmulOperand::Out,
                     elements: cube_space.leaf.extent(
-                        MatmulAxes::MNK.of(self.plane.orders.innermost(MatmulOperand::Out)),
+                        MatmulDimensions::MNK.of(self.plane.orders.innermost(MatmulOperand::Out)),
                     ),
                 });
-                if self.plane.instruction.drain() == PlaneFragmentDrain::CellByCell {
+                if self.plane.cost.bounced_cell.is_none() {
                     vectorization.require(VectorRequirement::Elementwise {
                         operand: MatmulOperand::Out,
                     });
@@ -858,7 +894,7 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// An instruction several planes issue together, a plane group MMA's, distributes the box over
     /// groups of them instead: the layout counts groups.
     fn tiling(&self) -> Levels {
-        let MatmulAxes { m, n, .. } = self.plane.axes;
+        let MatmulDimensions { m, n, .. } = self.plane.dimensions;
         let (tiling, walked) = match self.depth {
             CubeStagedDepth::Steps => (self.plane.tiling(), self.plane.walked()),
             CubeStagedDepth::ScaleBlocks(blocks) => {
@@ -907,6 +943,10 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     fn decoded_stage(&self) -> Option<ElemType> {
         self.walk().decoded()
     }
+
+    fn planned_space(&self) -> Option<MatmulBlocks> {
+        self.planned
+    }
 }
 
 #[cfg(test)]
@@ -949,7 +989,7 @@ mod tests {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::MNK,
+            dimensions: MatmulDimensions::MNK,
             reading,
         };
         let settings = CubeStagedMicrokernelSettings::DEFAULT;
@@ -1066,7 +1106,7 @@ mod tests {
             }),
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes::INSIDE_BLOCKS,
+            dimensions: MatmulDimensions::INSIDE_BLOCKS,
             reading: MatmulReading::AsStored,
         }
     }

@@ -31,7 +31,7 @@ pub fn cube_staged_matmul_kernel<
 >(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &O::Arg<E>,
+    out: &mut O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,

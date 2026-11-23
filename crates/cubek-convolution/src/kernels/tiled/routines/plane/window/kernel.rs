@@ -1,4 +1,4 @@
-use cubecl::tile::{Axis, Partitioning, SoftwareMatmul, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::plane::plane_window_microkernel;
 
@@ -22,7 +22,7 @@ pub fn plane_window_conv_kernel<EA: Numeric, EL: Numeric>(
     out: &TileTensor<'_>,
     partitioning: Partitioning,
     #[comptime] block: SoftwareMatmul,
-    #[comptime] bounded: Vec<Axis>,
+    #[comptime] bounded: Vec<Dimension>,
     extents: Sequence<usize>,
     #[define(EA, EL)] _elements: [ElemType; 2],
 ) {

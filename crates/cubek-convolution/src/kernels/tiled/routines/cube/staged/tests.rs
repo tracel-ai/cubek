@@ -9,13 +9,11 @@ use crate::kernels::tiled::routines::test_support::{
     cmma_8x32_only, cmma_only, mma_only, nvidia, problems,
 };
 use crate::kernels::tiled::{ConvDecline, ConvProblem};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::devices::{self, topology};
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::routine::EstimatedProblem;
 use cubek_std::routine::Routine;
-
-const ROUTINE: CubeStagedConvRoutine = CubeStagedConvRoutine;
 
 fn conv2d(name: &str) -> Conv2dProblem {
     problems()
@@ -36,7 +34,7 @@ fn a_step_of_taps_is_served_by_either_instruction() {
     for hw in [nvidia(), cmma_only(), mma_only()] {
         for settings in [settings::F2X2_P2X2_T16, settings::F1X2_P1X2_T16] {
             assert!(
-                ROUTINE.prepare(&hw, &problem, &settings).is_ok(),
+                CubeStagedConvRoutine::prepare(&hw, &problem, &settings).is_ok(),
                 "{settings}"
             );
         }
@@ -49,8 +47,7 @@ fn a_step_of_taps_is_served_by_either_instruction() {
 fn only_a_cmma_output_is_masked_to_bounce() {
     let problem = problem("channels_64");
     let masks_out = |hw| {
-        ROUTINE
-            .prepare(&hw, &problem, &settings::F2X2_P2X2_T16)
+        CubeStagedConvRoutine::prepare(&hw, &problem, &settings::F2X2_P2X2_T16)
             .expect("the setting prepares")
             .0
             .masks_out
@@ -65,12 +62,11 @@ fn only_a_cmma_output_is_masked_to_bounce() {
 fn a_device_with_no_matrix_instruction_or_planes_declines_every_problem() {
     let hw = devices::cpu_12();
     for (name, problem) in staged_problems() {
-        let declined = ROUTINE
-            .prepare(&hw, &problem, &settings::F2X2_P2X2_T16)
-            .err();
+        let declined =
+            CubeStagedConvRoutine::prepare(&hw, &problem, &settings::F2X2_P2X2_T16).err();
         assert_eq!(
             declined,
-            Some(Refusal::from(ConvDecline::InstructionUnoffered)),
+            Some(Decline::from(ConvDecline::InstructionUnoffered)),
             "{name}"
         );
     }
@@ -89,15 +85,11 @@ fn planes_across_past_the_cube_are_refused_by_name() {
         device.plane_size_max = plane_width;
         device.max_units_per_cube = most_units;
         assert!(matches!(
-            ROUTINE.prepare(&hw, &narrow, &settings).err(),
-            Some(Refusal::CubePastDevice { .. })
+            CubeStagedConvRoutine::prepare(&hw, &narrow, &settings).err(),
+            Some(Decline::CubePastDevice { .. })
         ));
     }
-    assert!(
-        ROUTINE
-            .prepare(&cmma_8x32_only(), &narrow, &settings)
-            .is_ok()
-    );
+    assert!(CubeStagedConvRoutine::prepare(&cmma_8x32_only(), &narrow, &settings).is_ok());
 }
 
 /// The catalog's 64 channel shape read as a data backward of `channels_out` output channels,
@@ -118,8 +110,7 @@ fn data_backward(channels_out: usize) -> ConvProblem {
 fn a_data_backward_over_overhanging_channels_reads_one_element_wide() {
     let widths = |channels_out| {
         let settings = settings::F2X2_P2X2_T16;
-        ROUTINE
-            .prepare(&nvidia(), &data_backward(channels_out), &settings)
+        CubeStagedConvRoutine::prepare(&nvidia(), &data_backward(channels_out), &settings)
             .expect("cmma serves whole steps of channels")
             .0
             .widths
@@ -135,7 +126,7 @@ fn a_data_backward_step_across_taps_is_served_by_either_instruction() {
     let problem = data_backward(3);
     let settings = settings::F2X2_P2X2_T16;
     for hw in [nvidia(), cmma_only(), mma_only()] {
-        assert!(ROUTINE.prepare(&hw, &problem, &settings).is_ok());
+        assert!(CubeStagedConvRoutine::prepare(&hw, &problem, &settings).is_ok());
     }
 }
 
@@ -149,13 +140,13 @@ fn staged_problems() -> Vec<(&'static str, ConvProblem)> {
 
 /// The refusals the routine states for a setting its device lists: an instruction the device
 /// lacks, and a stage past the device's shared memory.
-fn named(refusal: &Refusal) -> bool {
+fn named(refusal: &Decline) -> bool {
     [
-        Refusal::from(ConvDecline::InstructionUnoffered),
-        Refusal::from(ConvDecline::RowsNotPicked),
+        Decline::from(ConvDecline::InstructionUnoffered),
+        Decline::from(ConvDecline::RowsNotPicked),
     ]
     .contains(refusal)
-        || matches!(refusal, Refusal::SharedMemoryPastDevice { .. })
+        || matches!(refusal, Decline::SharedMemoryPastDevice { .. })
 }
 
 /// Every listed setting prepares each problem or is declined by name, and some setting serves
@@ -164,14 +155,14 @@ fn named(refusal: &Refusal) -> bool {
 fn every_setting_prepares_or_declines_by_name() {
     for hw in [nvidia(), cmma_only(), mma_only()] {
         for (name, problem) in staged_problems() {
-            for settings in ROUTINE.settings(&hw) {
-                let Err(refusal) = ROUTINE.prepare(&hw, &problem, &settings) else {
+            for settings in CubeStagedConvRoutine::settings(&hw) {
+                let Err(refusal) = CubeStagedConvRoutine::prepare(&hw, &problem, &settings) else {
                     continue;
                 };
                 assert!(named(&refusal), "{settings} on {name}: {refusal:?}");
             }
             assert!(
-                ROUTINE.prepare_first_served(&hw, &problem).is_ok(),
+                CubeStagedConvRoutine::prepare_first_served(&hw, &problem).is_ok(),
                 "no setting serves {name}"
             );
         }
@@ -184,14 +175,15 @@ fn every_setting_prepares_or_declines_by_name() {
 fn every_setting_estimates_whole() {
     let hw = nvidia();
     let mut prepared = 0;
-    for settings in ROUTINE.settings(&hw) {
+    for settings in CubeStagedConvRoutine::settings(&hw) {
         for (name, problem) in staged_problems() {
-            let Ok((blueprint, grid)) = ROUTINE.prepare(&hw, &problem, &settings) else {
+            let Ok((blueprint, grid)) = CubeStagedConvRoutine::prepare(&hw, &problem, &settings)
+            else {
                 continue;
             };
             prepared += 1;
             let mut estimate = KernelEstimate::from(&grid);
-            ROUTINE.estimate(&problem, &blueprint, &grid, &mut estimate);
+            CubeStagedConvRoutine::estimate(&problem, &blueprint, &grid, &mut estimate);
             let staging = estimate.staging.as_ref().expect("a staging");
             assert!(estimate.work.is_some(), "{settings} on {name}: no work");
             assert!(!staging.reads.is_empty(), "{settings} on {name}");

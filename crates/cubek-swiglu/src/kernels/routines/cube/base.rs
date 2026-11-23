@@ -4,8 +4,8 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Levels;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::DestinationLaunch;
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::launch::Vectorization;
 use cubek_microkernel::row_store::OwnerMemory;
 use cubek_microkernel::swiglu::cube::{CubeSwigluMicrokernel, CubeSwigluMicrokernelSettings};
@@ -104,7 +104,7 @@ impl Routine for CubeSwigluRoutine {
 
     /// Each of its microkernel's settings ([`CubeSwigluMicrokernel::settings`]) a group a cube,
     /// then the smaller groups several a cube: a prompt's many rows, more of them a cube.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let on = |microkernel, groups| Self::Settings {
             microkernel,
             groups: NonZeroUsize::new(groups).unwrap(),
@@ -121,7 +121,6 @@ impl Routine for CubeSwigluRoutine {
 
     /// Nothing of its own: it walks cubes and groups, and its microkernel makes every access.
     fn vectorize(
-        &self,
         microkernel: &CubeSwigluMicrokernel,
         _: &SwigluPartitioning,
         vectorization: &mut Vectorization<SwigluOperand>,
@@ -132,7 +131,6 @@ impl Routine for CubeSwigluRoutine {
     /// Each cube reads its groups' runs of either half once, straight from global memory, and
     /// writes them once. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &SwigluRoutineProblem,
         blueprint: &CubeSwigluRoutineBlueprint,
         grid: &Grid,
@@ -147,11 +145,10 @@ impl Routine for CubeSwigluRoutine {
     /// A group is launched as the cube's `x`, its units the group's, and the groups along `y`: the
     /// units share nothing, so the width a plane runs at is not read.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &SwigluRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let microkernel = CubeSwigluMicrokernel::best(
             hw,
             &problem.work_item(),
@@ -168,7 +165,11 @@ impl Routine for CubeSwigluRoutine {
             },
         );
         let groups = settings.groups_of(hw, &microkernel, problem, staged);
-        let run_box = [vec![(R, 1), (H, 2)], store.width_axes(microkernel.run())].concat();
+        let run_box = [
+            vec![(R, 1), (H, 2)],
+            store.width_dimensions(microkernel.run()),
+        ]
+        .concat();
         let partitioning = SwigluPartitioning::new(
             problem.space(),
             Levels::leaf(&run_box).planes(&[(R, groups)]),
@@ -180,7 +181,7 @@ impl Routine for CubeSwigluRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = SwigluBlueprint::new(hw, problem, microkernel, partitioning, vectorization)
             .planned_at(microkernel.width)?;
         Ok((blueprint, grid))
@@ -238,9 +239,9 @@ mod tests {
             devices::h100(),
             devices::cpu_12(),
         ] {
-            for settings in CubeSwigluRoutine.settings(&hw) {
+            for settings in CubeSwigluRoutine::settings(&hw) {
                 for problem in problems() {
-                    let prepared = CubeSwigluRoutine.prepare(&hw, &problem, &settings);
+                    let prepared = CubeSwigluRoutine::prepare(&hw, &problem, &settings);
                     assert!(prepared.is_ok(), "{settings} on {hw:?}: {prepared:?}");
                 }
             }
@@ -256,9 +257,9 @@ mod tests {
         let hw = devices::strix_halo();
         let microkernel = |dim: usize, element| {
             let problem = SwigluRoutineProblem::dense(1, dim, element);
-            let (blueprint, _) = CubeSwigluRoutine
-                .prepare(&hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
-                .expect("the floor prepares");
+            let (blueprint, _) =
+                CubeSwigluRoutine::prepare(&hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
+                    .expect("the floor prepares");
             let microkernel = blueprint.microkernel;
             (microkernel.run_lines, microkernel.units, blueprint.width)
         };
@@ -276,9 +277,9 @@ mod tests {
     fn a_long_prime_row_is_one_run_walked_in_a_loop() {
         let hw = devices::strix_halo();
         let problem = SwigluRoutineProblem::dense(1, 5003, F32);
-        let (blueprint, _) = CubeSwigluRoutine
-            .prepare(&hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
-            .expect("the floor prepares");
+        let (blueprint, _) =
+            CubeSwigluRoutine::prepare(&hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
+                .expect("the floor prepares");
         assert!(
             !blueprint.microkernel.unrolled(),
             "{:?}",
@@ -292,9 +293,9 @@ mod tests {
     fn rows_past_the_grid_take_more_groups_a_cube() {
         let problem = SwigluRoutineProblem::dense(70_000, 128, F16);
         let groups = |hw: &Hardware| {
-            let (_, grid) = CubeSwigluRoutine
-                .prepare(hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
-                .expect("the floor prepares");
+            let (_, grid) =
+                CubeSwigluRoutine::prepare(hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
+                    .expect("the floor prepares");
             grid.planes().count
         };
         assert_eq!(groups(&devices::wgpu_no_subgroups()), 2);
@@ -308,9 +309,9 @@ mod tests {
     fn rows_past_the_grid_of_a_wide_row_narrow_the_floors_groups() {
         let hw = devices::wgpu_no_subgroups();
         let problem = SwigluRoutineProblem::dense(70_000, 8192, F16);
-        let (_, grid) = CubeSwigluRoutine
-            .prepare(&hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
-            .expect("the floor prepares past the grid's x");
+        let (_, grid) =
+            CubeSwigluRoutine::prepare(&hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
+                .expect("the floor prepares past the grid's x");
         let cubes = grid.launch.cube_count;
         let most = hw.properties.hardware.max_cube_count;
         assert!(
@@ -330,8 +331,7 @@ mod tests {
                 microkernel,
                 groups: NonZeroUsize::MIN,
             };
-            CubeSwigluRoutine
-                .prepare(&hw, &problem, &settings)
+            CubeSwigluRoutine::prepare(&hw, &problem, &settings)
                 .expect("the floor prepares")
                 .0
         };
@@ -347,9 +347,9 @@ mod tests {
     fn the_up_half_binds_at_the_width_its_start_allows() {
         let hw = devices::strix_halo();
         let problem = SwigluRoutineProblem::dense(4, 1028, F16);
-        let (blueprint, _) = CubeSwigluRoutine
-            .prepare(&hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
-            .expect("the floor prepares");
+        let (blueprint, _) =
+            CubeSwigluRoutine::prepare(&hw, &problem, &CubeSwigluRoutineSettings::DEFAULT)
+                .expect("the floor prepares");
         assert_eq!(blueprint.width, 4);
     }
 
@@ -364,13 +364,12 @@ mod tests {
             scales_per_word: 4,
         };
         let hw = devices::rdna_range();
-        for settings in CubeSwigluRoutine.settings(&hw) {
+        for settings in CubeSwigluRoutine::settings(&hw) {
             for problem in [
                 SwigluRoutineProblem::dense(1, 8192, F32).stored(store),
                 SwigluRoutineProblem::dense(512, 2816, F16).stored(store),
             ] {
-                let (blueprint, grid) = CubeSwigluRoutine
-                    .prepare(&hw, &problem, &settings)
+                let (blueprint, grid) = CubeSwigluRoutine::prepare(&hw, &problem, &settings)
                     .unwrap_or_else(|why| panic!("{settings}: {why:?}"));
                 assert!(
                     store.holds_cube_run(blueprint.microkernel.run()),

@@ -1,5 +1,5 @@
 use super::{ConvBinding, ConvProblem, ConvTensors, TileConvBlueprint};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
 use cubek_std::routine::{Grid, Routine};
@@ -31,9 +31,9 @@ pub trait ConvRoutine<M: Microkernel>:
         hw: &Hardware,
         tensors: ConvTensors,
         settings: &Self::Settings,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let prepared = self.prepare(hw, &problem, settings)?;
+        let prepared = Self::prepare(hw, &problem, settings)?;
         self.launch_prepared(&problem, tensors, prepared)
     }
 
@@ -43,9 +43,9 @@ pub trait ConvRoutine<M: Microkernel>:
     /// # Errors
     ///
     /// Why the last setting declines it where none serves.
-    fn launch_first_served(&self, hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> {
+    fn launch_first_served(&self, hw: &Hardware, tensors: ConvTensors) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let prepared = self.prepare_first_served(hw, &problem)?;
+        let prepared = Self::prepare_first_served(hw, &problem)?;
         self.launch_prepared(&problem, tensors, prepared)
     }
 
@@ -59,7 +59,7 @@ pub trait ConvRoutine<M: Microkernel>:
         problem: &ConvProblem,
         tensors: ConvTensors,
         (blueprint, grid): (TileConvBlueprint<M>, Grid),
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let binding = tensors.bind(problem, &blueprint, &grid)?;
         self.dispatch(problem, binding, blueprint);
         Ok(())

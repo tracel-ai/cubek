@@ -1,0 +1,233 @@
+use super::kernel::hypercube_atomic_reduce_kernel;
+use crate::kernels::{
+    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
+    each_microkernel_with, estimate_reduce, microkernel_widths, prepared_from_key, split_launch,
+};
+use core::convert::identity;
+use cubecl::client::Client;
+use cubecl::ir::Type;
+use cubecl::ir::features::AtomicUsage;
+use cubecl::prelude::LaunchArg;
+use cubecl::tile::launch::{
+    AccumulateArgLaunch, Bound, Decline, StoredTileOperand, TileOperand, Unbound, Vectorization,
+};
+use cubecl::tile::{Geometry, Partitioning, TileTensorLaunch};
+use cubek_microkernel::reduce::cube::{
+    CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
+};
+use cubek_microkernel::reduce::{ReduceOperand, ReduceOperation};
+use cubek_std::Hardware;
+use cubek_std::microkernel::{KernelEstimate, Microkernel};
+use cubek_std::routine::{Grid, Routine};
+
+/// Every row split into parts along the reduced dim, a cube a part, which reduces it as the cube
+/// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
+/// cube each to keep the device busy, as a whole tensor summed into one value.
+///
+/// The output must hold zero before it runs ([`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
+/// zeroes it), since it only ever adds. Its cubes run along
+/// [`REDUCED`](crate::kernels::REDUCED), then [`BATCH`](crate::kernels::BATCH).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct HypercubeAtomicReduceRoutine;
+
+/// What a measurement settles for the atomic hypercube: each cube's microkernel, and the lines a
+/// unit reads of a part, which set how many cubes add into one row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HypercubeAtomicReduceSettings {
+    pub microkernel: CubeStagedReduceMicrokernelSettings,
+    pub unit_lines: usize,
+}
+
+impl HypercubeAtomicReduceSettings {
+    /// Lines each unit reads of a part, the longest parts first: the fewest atomic adds that still
+    /// spread a row over the device.
+    pub const UNIT_LINES: [usize; 3] = [32, 8, 2];
+}
+
+impl core::fmt::Display for HypercubeAtomicReduceSettings {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} unit_lines={}", self.microkernel, self.unit_lines)
+    }
+}
+
+pub type HypercubeAtomicReduceBlueprint = ReduceBlueprint<CubeStagedReduceMicrokernel>;
+
+impl Routine for HypercubeAtomicReduceRoutine {
+    type Problem = ReduceRoutineProblem;
+    type Microkernel = CubeStagedReduceMicrokernel;
+    type Settings = HypercubeAtomicReduceSettings;
+    type Blueprint = HypercubeAtomicReduceBlueprint;
+    type Partitioning = Partitioning;
+
+    /// Each cube microkernel setting crossed with
+    /// [`UNIT_LINES`](HypercubeAtomicReduceSettings::UNIT_LINES).
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
+        each_microkernel_with(
+            CubeStagedReduceMicrokernel::settings(hw),
+            HypercubeAtomicReduceSettings::UNIT_LINES,
+            |microkernel, unit_lines| HypercubeAtomicReduceSettings {
+                microkernel,
+                unit_lines,
+            },
+        )
+    }
+
+    fn vectorize(
+        microkernel: &CubeStagedReduceMicrokernel,
+        _partitioning: &Partitioning,
+        vectorization: &mut Vectorization<ReduceOperand>,
+    ) {
+        microkernel.vectorize(&(), vectorization);
+    }
+
+    fn prepare(
+        hw: &Hardware,
+        problem: &ReduceRoutineProblem,
+        settings: &Self::Settings,
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
+        // Inside, `problem` is the problem the call's Tune Key stands for.
+        prepared_from_key::<Self, _>(hw, problem, |problem| {
+            if problem.operation != ReduceOperation::Sum {
+                return Err(Decline::Unserved {
+                    why: "the atomic hypercube adds its parts, which only a sum's parts make whole",
+                });
+            }
+            if !hw
+                .properties
+                .atomic_type_usage(Type::atomic(problem.elements.out))
+                .contains(AtomicUsage::Add)
+            {
+                return Err(Decline::Unserved {
+                    why: "the device has no atomic add for the output's element",
+                });
+            }
+            let microkernel =
+                CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+            let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
+            let (partitioning, grid) = split_launch(
+                hw,
+                problem,
+                |_| problem.space(),
+                microkernel.units(),
+                settings.unit_lines,
+                widths[0],
+                microkernel.shared_memory_bytes_at_width(widths[0]),
+            )?;
+            Ok((
+                ReduceBlueprint::new(microkernel, partitioning, widths),
+                grid,
+            ))
+        })
+    }
+
+    fn estimate(
+        problem: &ReduceRoutineProblem,
+        blueprint: &Self::Blueprint,
+        grid: &Grid,
+        estimate: &mut KernelEstimate,
+    ) {
+        estimate_reduce(problem, &blueprint.microkernel, grid, estimate);
+    }
+}
+
+impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine {
+    const NAME: &'static str = "hypercube-atomic-reduce";
+
+    /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
+    /// the output as the atomic argument the kernel adds into, which a plain output tensor is not.
+    fn dispatch<I: TileOperand>(
+        _problem: &ReduceRoutineProblem,
+        _client: &Client,
+        _binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
+        _blueprint: HypercubeAtomicReduceBlueprint,
+        _grid: Grid,
+    ) {
+        unreachable!("the atomic hypercube binds its output in `launch` and `launch_unbound`")
+    }
+
+    /// `tensors` reduced on `grid`, each cube's total added into the output.
+    fn launch(tensors: &ReduceTensors, blueprint: HypercubeAtomicReduceBlueprint, grid: Grid) {
+        let space = Self::space(tensors.problem(), &blueprint);
+        let binding = tensors
+            .bind(&blueprint, &grid, space)
+            .map(Bound::arg, identity);
+        launch_atomic::<StoredTileOperand>(
+            tensors.problem(),
+            tensors.client(),
+            binding,
+            blueprint,
+            grid,
+        );
+    }
+
+    /// `tensors`, whose input the caller binds, reduced on `grid`, each cube's total added into
+    /// the output.
+    fn launch_unbound<I: TileOperand>(
+        tensors: &ReduceTensors<Geometry>,
+        blueprint: HypercubeAtomicReduceBlueprint,
+        grid: Grid,
+        input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
+    ) {
+        let space = Self::space(tensors.problem(), &blueprint);
+        let binding = tensors.bind(&blueprint, &grid, space).map(input, identity);
+        launch_atomic::<I>(
+            tensors.problem(),
+            tensors.client(),
+            binding,
+            blueprint,
+            grid,
+        );
+    }
+}
+
+/// The kernel `blueprint` compiles for `problem`, launched on `grid`, its input served as `I`
+/// serves it and its output bound as the atomic argument the kernel adds into.
+fn launch_atomic<I: TileOperand>(
+    problem: &ReduceRoutineProblem,
+    client: &Client,
+    binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Bound>,
+    blueprint: HypercubeAtomicReduceBlueprint,
+    grid: Grid,
+) {
+    let elements = problem.elements;
+    let (spec, width) = (binding.out.spec.clone(), binding.out.vector_size);
+    let out = AccumulateArgLaunch::new(binding.out.tensor(), width, spec);
+    // SAFETY: both operands are bound through the launcher, which masks the reads and writes of a
+    // tile the problem's edge cuts short, and the kernel indexes no buffer but through its tiles;
+    // the output only receives atomic adds. Its shared memory is the slots its microkernel
+    // declares, which the grid counted.
+    unsafe {
+        hypercube_atomic_reduce_kernel::launch_unchecked::<I>(
+            client,
+            grid.launch.cube_count,
+            grid.launch.cube_dim,
+            blueprint.width,
+            binding.input,
+            out,
+            binding.launcher.partitioning_arg(),
+            blueprint.microkernel,
+            [elements.input, elements.accumulator, elements.out],
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::tile::launch::Decline;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// tracel:kernel::routine-tested-without-features: no atomics, so a Decline.
+    #[test]
+    fn declines_lacking_every_feature() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
+        let settings = HypercubeAtomicReduceRoutine::settings(&hw)[0];
+        let prepared = HypercubeAtomicReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(
+            matches!(prepared, Err(Decline::Unserved { .. })),
+            "{prepared:?}"
+        );
+    }
+}

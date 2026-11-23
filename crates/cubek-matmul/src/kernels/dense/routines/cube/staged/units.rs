@@ -3,7 +3,7 @@ use crate::kernels::{
     CUBE_STRIPS, MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, cube_order_name,
 };
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
@@ -100,6 +100,15 @@ impl CubeStagedMatmulRoutine {
         CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::DOUBLE),
     ];
 
+    /// The steps of `K` a stage decoding a packed input holds, each a step of the inputs' finest
+    /// reads, which the stage then reads as widely as it holds whole: four, which over byte scales
+    /// is a word of them, NVFP4's 64 of `K` and MXFP4's 128; and two, which on an RTX PRO 6000
+    /// gave MXFP4's boxes with a second stage in flight room in shared memory at 64 of `K`, its
+    /// 27B down projection at 512 rows then running as fast as NVFP4's (672 against 674 µs), where
+    /// one block a stage lost a fifth to the barriers between twice as many stages. Tunables:
+    /// each is raced, the first a caller that measures nothing takes.
+    pub const PACKED_STAGE_STEPS: [usize; 2] = [4, 2];
+
     /// The settings a product of a handful of rows against a packed input races: one step of `M`
     /// and `N` a plane, on one, two or four planes along `N`, split four or eight ways along `K`,
     /// one stage at a time or three in flight. Measured on Qwen3-4B's projections at one to sixteen
@@ -113,7 +122,8 @@ impl CubeStagedMatmulRoutine {
                 for along_k in Self::PACKED_ONE_STEP_PLANES_ALONG_K {
                     settings.push(CubeStagedMatmulRoutineSettings::on_grid(
                         CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
-                            .split_along_k(along_k),
+                            .split_along_k(along_k)
+                            .stage_steps(Self::PACKED_STAGE_STEPS[0]),
                     ));
                 }
             }
@@ -122,8 +132,9 @@ impl CubeStagedMatmulRoutine {
     }
 
     /// The settings a product against a packed input races on `hw`: the lead, the boxes several
-    /// steps tall the float routine races, one stage at a time and with a second in flight, then
-    /// the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
+    /// steps tall the float routine races, one stage at a time and with a second in flight, each
+    /// at every count of steps of `K` a stage holds ([`PACKED_STAGE_STEPS`](Self::PACKED_STAGE_STEPS)),
+    /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
     /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
     /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
     /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
@@ -132,6 +143,9 @@ impl CubeStagedMatmulRoutine {
     /// transport's boxes lead `cmma`'s on Qwen3-4B's down projection by a few percent, and lose a
     /// third once the projection's residual add is fused into its store, which its fragments
     /// drain into cell by cell.
+    ///
+    /// A step of `K` is planned on the inputs' finest reads, one scale block where scales are
+    /// bytes ([`CubeStagedMicrokernel::planned`](cubek_microkernel::matmul::cube::CubeStagedMicrokernel::planned)).
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
         let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
             .into_iter()
@@ -139,7 +153,8 @@ impl CubeStagedMatmulRoutine {
                 Self::PACKED_BOXES.map(|(steps, planes)| {
                     CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
                 })
-            });
+            })
+            .flat_map(|settings| Self::PACKED_STAGE_STEPS.map(|steps| settings.stage_steps(steps)));
         let one_step = self
             .packed_one_step_settings()
             .into_iter()
@@ -181,7 +196,7 @@ impl Routine for CubeStagedMatmulRoutine {
     /// order. Then its own knob around the
     /// boxes it suits: the default, the default's grid on two by two planes with its stage's rows
     /// in order, and the planes splitting `K`, in strips.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let [along_m, _] = CUBE_STRIPS;
         let on_grid = CubeStagedMicrokernel::settings(hw)
             .into_iter()
@@ -190,7 +205,7 @@ impl Routine for CubeStagedMatmulRoutine {
                 cube_order: CubeOrder::RowMajor,
             });
         let rows_in_order_on_2x2 = CubeStagedMicrokernelSettings {
-            stage_layout: Some(StageLayout::Blocks),
+            stage_layout: StageLayout::Blocks,
             ..CubeStagedMicrokernelSettings::boxed(
                 PlaneFragmentMicrokernelSettings::DEFAULT,
                 MatmulPlaneLayout::new(2, 2),
@@ -215,7 +230,6 @@ impl Routine for CubeStagedMatmulRoutine {
     }
 
     fn vectorize(
-        &self,
         microkernel: &CubeStagedMicrokernel,
         partitioning: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -224,7 +238,6 @@ impl Routine for CubeStagedMatmulRoutine {
     }
 
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &CubeStagedMatmulRoutineBlueprint,
         grid: &Grid,
@@ -237,18 +250,26 @@ impl Routine for CubeStagedMatmulRoutine {
     /// problem's space or, against packed inputs, its block-split space, its stages filled by its
     /// units and its fragments stored by its planes (`CubeStagedPlacement`).
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
-        CubeStagedPlacement::new(
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
+        // The problem its microkernel plans on, every packed input read as it reads it.
+        let (read, picked) = CubeStagedPlacement::planned(
             hw,
             problem,
+            &settings.microkernel,
+            CubeStagedFill::BY_UNITS,
+            CubeStagedStore::Fragments,
+        )?;
+        CubeStagedPlacement::new(
+            hw,
+            &read,
             &settings.microkernel,
             settings.cube_order,
             CubeStagedFill::BY_UNITS,
             CubeStagedStore::Fragments,
+            picked,
         )?
         .prepare(hw)
     }

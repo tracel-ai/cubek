@@ -123,7 +123,7 @@ fn a_key_holds_the_width_a_view_start_leaves() {
     assert_ne!(aligned_key, shifted_key);
     for (problem, key) in [(&aligned, &aligned_key), (&shifted, &shifted_key)] {
         for settings in CubeStagedConvCandidate::list(&hw) {
-            let prepared = CubeStagedConvRoutine.prepare(&hw, problem, settings.settings());
+            let prepared = CubeStagedConvRoutine::prepare(&hw, problem, settings.settings());
             let real = prepared
                 .ok()
                 .map(|(blueprint, grid)| (blueprint, grid.launch.cube_dim));
@@ -211,9 +211,7 @@ fn the_list_and_its_set_are_built_in_one_order() {
 
 /// Whether the plane window routine, the floor under every tuned launch, serves `problem` on `hw`.
 fn floor_serves(hw: &Hardware, problem: &Conv2dProblem) -> bool {
-    PlaneWindowConvRoutine
-        .prepare_first_served(hw, &ConvProblem::from(problem))
-        .is_ok()
+    PlaneWindowConvRoutine::prepare_first_served(hw, &ConvProblem::from(problem)).is_ok()
 }
 
 /// A device whose plane width is a range lists nothing to race, so the tuned launch floors on the

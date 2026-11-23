@@ -3,8 +3,8 @@ use crate::microkernel::{CubeFootprint, CubePlanes, KernelEstimate};
 use crate::routine::{ADMITTED_PLAN_RUNS, LaunchSettings};
 use cubecl::CubeCount;
 use cubecl::client::Client;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::launch::Grid as LaunchGrid;
-use cubecl::tile::launch::Refusal;
 use cubecl::tile::{Launcher, Partitioning, Space};
 use cubecl_environment::sync::{Arc, SyncOnceCell};
 
@@ -86,7 +86,7 @@ impl Grid {
         hw: &Hardware,
         partitioning: &Partitioning,
         cube: CubeResources,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let launch = LaunchSettings {
             cube_dim: partitioning.cube_dim(cube.plane_width),
             cube_count: partitioning.cube_count(),
@@ -95,7 +95,7 @@ impl Grid {
         .validate(hw)?;
         let available = hw.shared_memory_budget();
         if cube.shared_memory > available {
-            return Err(Refusal::SharedMemoryPastDevice {
+            return Err(Decline::SharedMemoryPastDevice {
                 bytes: cube.shared_memory,
                 most: available,
             });

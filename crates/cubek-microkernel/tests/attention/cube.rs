@@ -3,7 +3,7 @@
 
 use crate::launch::Lines;
 use crate::launch::attention::{AttentionElements, CubeAttentionLaunch};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
@@ -22,7 +22,7 @@ impl AttentionSettings for CubeAttentionMicrokernelSettings {
         elements: AttentionElements,
         lines: Lines,
         steps: usize,
-    ) -> Result<CubeAttentionLaunch, Refusal> {
+    ) -> Result<CubeAttentionLaunch, Decline> {
         CubeAttentionLaunch::new(hw, elements, DIMS, self, lines, steps)
     }
 }

@@ -3,7 +3,7 @@ use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::cube::MatmulCubeWrite;
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulRowsKind};
 use cubek_std::Hardware;
@@ -51,16 +51,23 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
 
     /// Launch the kernel `blueprint` compiles, on `grid`, replacing `tensors`' output buffer: what
     /// every launch below runs once it has prepared.
+    ///
+    /// # Errors
+    ///
+    /// Why the tile engine refuses to bind a float input as it is stored under the launch: one
+    /// stored in tiles that the launch's last cubes reach past, which the routine, reading the
+    /// problem and not the tensors, could not see.
     fn dispatch_into_buffer(
         &self,
         tensors: &MatmulTensors,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let binding = tensors
-            .bind(&blueprint, &grid)
+            .bind(&blueprint, &grid)?
             .map_out(|out| (out, Write::Replace));
         self.dispatch::<Buffered, _>(tensors, binding, blueprint, grid);
+        Ok(())
     }
 
     /// `lhs · rhs` on `client`'s device, prepared for `hw`: the device as it reports itself, or
@@ -78,10 +85,10 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         lhs: StoredTensor,
         rhs: StoredTensor,
         settings: &Self::Settings,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         let tensors = MatmulTensors::new(client, lhs, rhs, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid);
+        let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
+        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
         Ok(tensors.into_out().expect(ALLOCATED))
     }
 
@@ -99,13 +106,13 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         lhs: StoredTensor,
         rhs: StoredTensor,
         settings: &Self::Settings,
-    ) -> Result<MatmulSinkLaunch<Self, M, SM>, Refusal>
+    ) -> Result<MatmulSinkLaunch<Self, M, SM>, Decline>
     where
         Self: Sized,
     {
         let tensors = MatmulTensors::sink(client, lhs, rhs, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
-        Ok(MatmulSinkLaunch::new(self, tensors, blueprint, grid))
+        let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
+        MatmulSinkLaunch::new(self, tensors, blueprint, grid)
     }
 
     /// `lhs · rhs` on `client`'s device written into `out`, which the caller allocated, prepared
@@ -123,10 +130,10 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         rhs: StoredTensor,
         out: PlainTensor,
         settings: &Self::Settings,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let tensors = MatmulTensors::writing_into(client, lhs, rhs, out, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid);
+        let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
+        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
         Ok(())
     }
 
@@ -151,10 +158,10 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         table: MatmulIndexTable,
         out: PlainTensor,
         settings: &Self::Settings,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let tensors = MatmulTensors::indexed(client, lhs, rhs, table, out, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid);
+        let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
+        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
         Ok(())
     }
 
@@ -171,10 +178,10 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         client: &Client,
         lhs: StoredTensor,
         rhs: StoredTensor,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         let tensors = MatmulTensors::new(client, lhs, rhs, Self::ROWS_KIND)?;
-        let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid);
+        let (blueprint, grid) = Self::prepare_first_served(hw, &tensors.problem())?;
+        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
         Ok(tensors.into_out().expect(ALLOCATED))
     }
 
@@ -193,10 +200,10 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         lhs: StoredTensor,
         rhs: StoredTensor,
         out: ElemType,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         let tensors = MatmulTensors::written_in(client, lhs, rhs, out)?;
-        let (blueprint, grid) = self.prepare_first_served(hw, &tensors.problem())?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid);
+        let (blueprint, grid) = Self::prepare_first_served(hw, &tensors.problem())?;
+        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
         Ok(tensors.into_out().expect(ALLOCATED))
     }
 }
@@ -218,20 +225,24 @@ pub struct MatmulSinkLaunch<R, M, SM = ()> {
 impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, SM> {
     /// `tensors`' product on `routine`, launched as `blueprint` and `grid` state it, its operands
     /// bound now.
+    ///
+    /// # Errors
+    ///
+    /// Why the tile engine refuses to bind a float input as it is stored under the launch.
     pub fn new(
         routine: R,
         tensors: MatmulTensors<Geometry>,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
-    ) -> Self {
-        let binding = tensors.bind(&blueprint, &grid);
-        Self {
+    ) -> Result<Self, Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
+        Ok(Self {
             routine,
             tensors,
             blueprint,
             grid,
             binding,
-        }
+        })
     }
 }
 

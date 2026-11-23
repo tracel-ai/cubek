@@ -1,6 +1,6 @@
 use super::{ConvPartitioning, ConvProblem, ConvStaging};
-use cubecl::tile::Axis;
-use cubecl::tile::launch::{MaskedExtent, Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::Dimension;
+use cubecl::tile::launch::{Decline, MaskedExtent, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -33,7 +33,7 @@ impl<M> TileConvBlueprint<M> {
         vectorization: Vectorization<MatmulOperand>,
         staging: ConvStaging,
         cube: CubeResources,
-    ) -> Result<(Self, Grid), Refusal> {
+    ) -> Result<(Self, Grid), Decline> {
         let widths = Self::widths(
             hw,
             problem,
@@ -98,7 +98,7 @@ impl<M> TileConvBlueprint<M> {
         problem: &ConvProblem,
         partitioning: &ConvPartitioning,
         operand: MatmulOperand,
-        innermost: Axis,
+        innermost: Dimension,
     ) -> VectorRequirement<MatmulOperand> {
         use MatmulOperand::{Lhs, Out, Rhs};
         let space = partitioning.space();

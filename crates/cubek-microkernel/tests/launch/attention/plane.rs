@@ -1,7 +1,7 @@
 //! The plane attention microkernels on one work item: every query one plane's rows.
 
 use cubecl::prelude::*;
-use cubecl::tile::launch::{Grid, Refusal};
+use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubecl::tile::{Launcher, Partitioning, Space, Tile, TileTensor, TileTensorLaunch};
 use cubecl::{self as cubecl, cube};
@@ -47,7 +47,7 @@ impl PlaneFragmentAttentionLaunch {
         settings: &PlaneFragmentAttentionMicrokernelSettings,
         lines: Lines,
         steps: usize,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let item = elements.work_item([head_dim, val_dim]);
         let microkernel = PlaneFragmentAttentionMicrokernel::best(hw, &item, settings)?;
         let plane_width = hw.plane_dim()?;
@@ -89,7 +89,7 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
         lengths: TensorArg,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let [queries, keys] = self.seq;
         let item = &self.item;
         let space = Space::new(&[
@@ -123,8 +123,11 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
         let launcher = Launcher::new(client, partitioning, &space, grid)?;
         let served = self.microkernel.served(item);
         let delivery = self.microkernel.delivery(&widths, item);
-        let bound = |tensor: TensorBinding, element, width, axes: &'static [_]| {
-            launcher.arg(tensor, element).axes(axes).vectorize(width)
+        let bound = |tensor: TensorBinding, element, width, dimensions: &'static [_]| {
+            launcher
+                .arg(tensor, element)
+                .dimensions(dimensions)
+                .vectorize(width)
         };
         let query = bound(
             query,
@@ -180,8 +183,8 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     query: &TileTensor<'_>,
     key: &TileTensor<'_>,
     value: &TileTensor<'_>,
-    out: &TileTensor<'_>,
-    logsumexp: ComptimeOption<&TileTensor<'static>>,
+    out: &mut TileTensor<'_>,
+    logsumexp: ComptimeOption<&mut TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
@@ -196,8 +199,8 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
     let value = value.tile(&partitioning);
-    let o = out.tile(&partitioning);
-    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile(&partitioning));
+    let o = out.tile_mut(&partitioning);
+    let lse: ComptimeOption<Tile> = logsumexp.map(|logsumexp| logsumexp.tile_mut(&partitioning));
 
     for plane in &partitioning {
         let visible = VisibleKeys::new(

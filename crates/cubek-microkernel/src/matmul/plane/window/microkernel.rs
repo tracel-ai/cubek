@@ -13,7 +13,7 @@ pub fn plane_window_microkernel(
     #[comptime] block: SoftwareMatmul,
 ) {
     for unit in plane {
-        let mut accumulator = out.at(&unit).accumulating(block, Semiring::SUM_PROD);
+        let mut accumulator = out.at(&unit).accumulating(block, Semiring::SumProd);
         accumulator.mm(&a.at(&unit), &b.at(&unit));
     }
 }

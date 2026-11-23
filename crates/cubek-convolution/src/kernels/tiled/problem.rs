@@ -4,7 +4,7 @@ use crate::definition::{ConvCost, ConvCostDim};
 use crate::launch::SpatialWindow;
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::{ElemAlignment, PhysicalAxisMap};
-use cubecl::tile::{Axis, Projection, Space};
+use cubecl::tile::{Dimension, Projection, Space};
 use cubecl::tune::Work;
 use cubek_matmul::definition::MatmulGlobalElems;
 use cubek_microkernel::matmul::{
@@ -13,9 +13,9 @@ use cubek_microkernel::matmul::{
 use cubek_std::routine::EstimatedProblem;
 use serde::{Deserialize, Serialize};
 
-pub const B: Axis = Axis(0);
-pub const CO: Axis = Axis(1);
-pub const CI: Axis = Axis(2);
+pub const B: Dimension = Dimension(0);
+pub const CO: Dimension = Dimension(1);
+pub const CI: Dimension = Dimension(2);
 
 /// How many spatial dims a convolution has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,23 +43,25 @@ impl ConvAxis {
         ((u8::MAX - Self::FIRST_SPATIAL) / Self::PER_SPATIAL_DIM) as usize;
 
     /// The axis of this measure, the label [`Self::of`] reads back.
-    pub const fn axis(self) -> Axis {
+    pub const fn axis(self) -> Dimension {
         match self {
             Self::Batch => B,
             Self::ChannelsOut => CO,
             Self::ChannelsIn => CI,
-            Self::Out(dim) => Axis(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8),
-            Self::Tap(dim) => Axis(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8 + 1),
+            Self::Out(dim) => Dimension(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8),
+            Self::Tap(dim) => {
+                Dimension(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8 + 1)
+            }
         }
     }
 
     /// The measure of `axis`, a label [`Self::axis`] made.
-    pub fn of(axis: Axis) -> Self {
+    pub fn of(axis: Dimension) -> Self {
         match axis {
             B => Self::Batch,
             CO => Self::ChannelsOut,
             CI => Self::ChannelsIn,
-            Axis(label) if label >= Self::FIRST_SPATIAL => Self::of_spatial(label),
+            Dimension(label) if label >= Self::FIRST_SPATIAL => Self::of_spatial(label),
             _ => panic!("{axis:?} is not an axis of a convolution"),
         }
     }
@@ -76,7 +78,7 @@ impl ConvAxis {
     }
 
     /// The `[out, tap]` axis pair of each of `spatial_dims` spatial dims.
-    pub fn spatial(spatial_dims: SpatialDimCount) -> impl Iterator<Item = [Axis; 2]> {
+    pub fn spatial(spatial_dims: SpatialDimCount) -> impl Iterator<Item = [Dimension; 2]> {
         (0..spatial_dims.0).map(|dim| [Self::Out(dim).axis(), Self::Tap(dim).axis()])
     }
 }
@@ -181,7 +183,7 @@ impl ConvProblem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: self.roles().axes(),
+            dimensions: self.roles().axes(),
             reading: MatmulReading::AsStored,
         }
     }
@@ -202,7 +204,7 @@ impl ConvProblem {
     }
 
     /// What `axis` measures in this problem.
-    pub fn extent(&self, axis: Axis) -> usize {
+    pub fn extent(&self, axis: Dimension) -> usize {
         match ConvAxis::of(axis) {
             ConvAxis::Batch => self.batch,
             ConvAxis::ChannelsOut => self.channels_out,

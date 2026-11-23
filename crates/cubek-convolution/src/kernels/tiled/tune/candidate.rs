@@ -4,7 +4,7 @@ use crate::kernels::tiled::{
     TileConvBlueprint,
 };
 use cubecl::CubeDim;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::autotune::{CandidatePriority, TuneCandidate};
@@ -45,7 +45,7 @@ impl CubeStagedConvCandidate {
     /// # Errors
     ///
     /// Why the device cannot run it at these settings, as [`serves`](Self::serves) says.
-    pub fn launch(&self, tensors: ConvTensors) -> Result<(), Refusal> {
+    pub fn launch(&self, tensors: ConvTensors) -> Result<(), Decline> {
         let problem = tensors.problem();
         let prepared = self.candidate.prepare(&problem)?;
         CubeStagedConvRoutine.launch_prepared(&problem, tensors, prepared)
@@ -57,7 +57,7 @@ impl CubeStagedConvCandidate {
     ///
     /// The refusal of the routine's preparation, or of the binding at a width its operands cannot
     /// serve.
-    pub fn serves(&self, tensors: &ConvTensors) -> Result<(), Refusal> {
+    pub fn serves(&self, tensors: &ConvTensors) -> Result<(), Decline> {
         let problem = tensors.problem();
         let (blueprint, grid) = self.candidate.prepare(&problem)?;
         tensors.clone().bind(&problem, &blueprint, &grid).map(drop)

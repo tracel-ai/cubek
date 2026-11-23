@@ -1,4 +1,4 @@
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 
 /// Why the tiled convolution declines a launch: operands, arguments or extents that do not state
 /// one convolution it computes, or a setting the device cannot serve.
@@ -112,8 +112,8 @@ impl ConvDecline {
     }
 }
 
-impl From<ConvDecline> for Refusal {
+impl From<ConvDecline> for Decline {
     fn from(decline: ConvDecline) -> Self {
-        Refusal::Declined { why: decline.why() }
+        Decline::Unserved { why: decline.why() }
     }
 }

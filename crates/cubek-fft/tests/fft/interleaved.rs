@@ -10,7 +10,7 @@ use cubecl::CubeElement;
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_fft::{
     ComplexTensorHandle, FftMode, FftNormalization, cfft_interleaved_launch,
@@ -277,7 +277,7 @@ pub(crate) struct CfftInterleavedLaunch;
 impl ScopeUnderTest for CfftInterleavedLaunch {
     type Case = InterleavedCfft;
 
-    fn launch(&self, client: &Client, case: &InterleavedCfft) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &InterleavedCfft) -> Result<Vec<Written>, Decline> {
         let placement = &case.placement;
         let input: Vec<f32> = case.input().iter().flat_map(|x| [x.re, x.im]).collect();
         let input = placement.complex(client, &input);
@@ -390,7 +390,7 @@ pub(crate) struct RfftInterleavedLaunch;
 impl ScopeUnderTest for RfftInterleavedLaunch {
     type Case = InterleavedRfft;
 
-    fn launch(&self, client: &Client, case: &InterleavedRfft) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &InterleavedRfft) -> Result<Vec<Written>, Decline> {
         let signal = case.signal.real(client, &case.samples());
         let spectrum = case.spectrum.complex(client, &case.spectrum.unwritten(2));
         rfft_interleaved_launch_padded(
@@ -499,7 +499,7 @@ pub(crate) struct IrfftInterleavedLaunch;
 impl ScopeUnderTest for IrfftInterleavedLaunch {
     type Case = InterleavedIrfft;
 
-    fn launch(&self, client: &Client, case: &InterleavedIrfft) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &InterleavedIrfft) -> Result<Vec<Written>, Decline> {
         let bins: Vec<f32> = case.spectrum().iter().flat_map(|x| [x.re, x.im]).collect();
         let spectrum = case.spectrum.complex(client, &bins);
         let signal = case.signal.real(client, &case.signal.unwritten(1));

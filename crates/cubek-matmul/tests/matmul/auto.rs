@@ -82,9 +82,9 @@ fn auto_sends_a_weight_stored_in_tiles_to_the_tiled_cmma() {
         return;
     }
     let auto = ByStrategy::new(Strategy::Auto, Declines::Never);
-    auto.check([Product::of(F32)
-        .m(64)
-        .n(512)
-        .k(256)
-        .rhs_in(RhsTiles { n: 64, k: 32 })]);
+    auto.check([Product::of(F32).m(64).n(512).k(256).rhs_in(RhsTiles {
+        n: 64,
+        k: 32,
+        in_reads: false,
+    })]);
 }

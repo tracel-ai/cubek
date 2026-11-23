@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_test_utils::CatalogEntry;
 
-use crate::components::instructions::ReduceOperationConfig;
+use crate::ReduceOperation;
 
 /// Which launch pattern a problem measures.
 ///
@@ -12,11 +12,11 @@ use crate::components::instructions::ReduceOperationConfig;
 /// on the same problem is what says whether fusing the two is actually worth it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReduceBenchKind {
-    /// One `reduce` launch writing a single output.
+    /// One `Reduce::execute` launch writing a single output.
     Single,
-    /// Two `reduce` launches, the values config then its `Arg*`, to get both halves.
+    /// Two `Reduce::execute` launches, the values operation then its `Arg*`, to get both halves.
     TwoLaunch,
-    /// One `reduce_with_indices` launch writing both halves.
+    /// One `Reduce::execute_with_indices` launch writing both halves.
     Fused,
 }
 
@@ -31,7 +31,7 @@ pub enum ReduceBenchPrecision {
 }
 
 impl ReduceBenchPrecision {
-    pub fn dtype(self) -> ElemType {
+    pub fn to_dtype(self) -> ElemType {
         match self {
             ReduceBenchPrecision::F32 => f32::elem_type_native(),
             ReduceBenchPrecision::F16 => half::f16::elem_type_native(),
@@ -46,7 +46,9 @@ impl ReduceBenchPrecision {
             ReduceBenchPrecision::F16 => "_f16",
         }
     }
+}
 
+impl ReduceBenchPrecision {
     fn label(self) -> &'static str {
         match self {
             ReduceBenchPrecision::F32 => "",
@@ -67,14 +69,15 @@ static PRECISIONS: LazyLock<Vec<ReduceBenchPrecision>> = LazyLock::new(|| {
     precisions
 });
 
-pub fn precisions() -> Vec<ReduceBenchPrecision> {
-    PRECISIONS.clone()
+pub fn precisions() -> &'static [ReduceBenchPrecision] {
+    &PRECISIONS
 }
 
 pub struct ReduceProblem {
+    /// The catalogued input's extent along each axis, read by axis (Position Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
-    pub config: ReduceOperationConfig,
+    pub operation: ReduceOperation,
     pub kind: ReduceBenchKind,
     pub precision: ReduceBenchPrecision,
 }
@@ -92,17 +95,17 @@ fn extended_tier() -> bool {
 }
 
 pub fn problems() -> Vec<CatalogEntry<ReduceProblem>> {
-    precisions().into_iter().flat_map(problems_at).collect()
+    precisions().iter().copied().flat_map(problems_at).collect()
 }
 
 fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProblem>> {
     let shape = || vec![32, 512, 4095];
     let id = |name: String| format!("{name}{}", precision.suffix());
     let label = |text: String| format!("{text}{}", precision.label());
-    let problem = |config, kind| ReduceProblem {
+    let problem = |operation, kind| ReduceProblem {
         shape: shape(),
         axis: 2,
-        config,
+        operation,
         kind,
         precision,
     };
@@ -111,22 +114,22 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
         CatalogEntry::new(
             id("sum_axis2_32x512x4095".to_string()),
             label("Sum axis=2 (32x512x4095)".to_string()),
-            problem(ReduceOperationConfig::Sum, ReduceBenchKind::Single),
+            problem(ReduceOperation::Sum, ReduceBenchKind::Single),
         ),
         CatalogEntry::new(
             id("arg_topk1_axis2_32x512x4095".to_string()),
             label("ArgTopK(1) axis=2 (32x512x4095)".to_string()),
-            problem(ReduceOperationConfig::ArgTopK(1), ReduceBenchKind::Single),
+            problem(ReduceOperation::ArgTopK { k: 1 }, ReduceBenchKind::Single),
         ),
         CatalogEntry::new(
             id("arg_topk2_axis2_32x512x4095".to_string()),
             label("ArgTopK(2) axis=2 (32x512x4095)".to_string()),
-            problem(ReduceOperationConfig::ArgTopK(2), ReduceBenchKind::Single),
+            problem(ReduceOperation::ArgTopK { k: 2 }, ReduceBenchKind::Single),
         ),
         CatalogEntry::new(
             id("arg_topk3_axis2_32x512x4095".to_string()),
             label("ArgTopK(3) axis=2 (32x512x4095)".to_string()),
-            problem(ReduceOperationConfig::ArgTopK(3), ReduceBenchKind::Single),
+            problem(ReduceOperation::ArgTopK { k: 3 }, ReduceBenchKind::Single),
         ),
     ];
 
@@ -141,21 +144,21 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
             label(format!(
                 "TopK({k}) values only, 1 launch, axis=2 (32x512x4095)"
             )),
-            problem(ReduceOperationConfig::TopK(k), ReduceBenchKind::Single),
+            problem(ReduceOperation::TopK { k }, ReduceBenchKind::Single),
         ));
         entries.push(CatalogEntry::new(
             id(format!("topk{k}_two_launch_axis2_32x512x4095")),
             label(format!(
                 "TopK({k}) values+indices, 2 launches, axis=2 (32x512x4095)"
             )),
-            problem(ReduceOperationConfig::TopK(k), ReduceBenchKind::TwoLaunch),
+            problem(ReduceOperation::TopK { k }, ReduceBenchKind::TwoLaunch),
         ));
         entries.push(CatalogEntry::new(
             id(format!("topk{k}_fused_axis2_32x512x4095")),
             label(format!(
                 "TopK({k}) values+indices, 1 fused launch, axis=2 (32x512x4095)"
             )),
-            problem(ReduceOperationConfig::TopK(k), ReduceBenchKind::Fused),
+            problem(ReduceOperation::TopK { k }, ReduceBenchKind::Fused),
         ));
     }
 
@@ -176,61 +179,165 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
             label(format!(
                 "TopK({k}) values+indices, 1 fused launch, axis=2 (32x512x4095)"
             )),
-            problem(ReduceOperationConfig::TopK(k), ReduceBenchKind::Fused),
+            problem(ReduceOperation::TopK { k }, ReduceBenchKind::Fused),
         ));
     }
 
-    // The same comparison for min and max, which reach `reduce_with_indices`
+    // The same comparison for min and max, which reach `Reduce::execute_with_indices`
     // through their own collapsed instructions rather than the top-k one.
-    for (name, text, config) in [
-        ("max", "Max", ReduceOperationConfig::Max),
-        ("min", "Min", ReduceOperationConfig::Min),
+    for (name, text, operation) in [
+        ("max", "Max", ReduceOperation::Max),
+        ("min", "Min", ReduceOperation::Min),
     ] {
         entries.push(CatalogEntry::new(
             id(format!("{name}_single_axis2_32x512x4095")),
             label(format!(
                 "{text} values only, 1 launch, axis=2 (32x512x4095)"
             )),
-            problem(config, ReduceBenchKind::Single),
+            problem(operation, ReduceBenchKind::Single),
         ));
         entries.push(CatalogEntry::new(
             id(format!("{name}_two_launch_axis2_32x512x4095")),
             label(format!(
                 "{text} values+indices, 2 launches, axis=2 (32x512x4095)"
             )),
-            problem(config, ReduceBenchKind::TwoLaunch),
+            problem(operation, ReduceBenchKind::TwoLaunch),
         ));
         entries.push(CatalogEntry::new(
             id(format!("{name}_fused_axis2_32x512x4095")),
             label(format!(
                 "{text} values+indices, 1 fused launch, axis=2 (32x512x4095)"
             )),
-            problem(config, ReduceBenchKind::Fused),
+            problem(operation, ReduceBenchKind::Fused),
         ));
+    }
+
+    // The shapes the default sweep spreads over, beside the one above: many short rows, few long
+    // rows, rows across the contiguous dim (strided), and a whole tensor summed into one value.
+    let spread = |SpreadShape {
+                      name,
+                      text,
+                      shape,
+                      axis,
+                      operation,
+                  }: SpreadShape| {
+        let dims = shape
+            .iter()
+            .map(|extent| extent.to_string())
+            .collect::<Vec<_>>()
+            .join("x");
+        CatalogEntry::new(
+            id(format!("{name}_axis{axis}_{dims}")),
+            label(format!("{text} axis={axis} ({dims})")),
+            ReduceProblem {
+                shape,
+                axis,
+                operation,
+                kind: ReduceBenchKind::Single,
+                precision,
+            },
+        )
+    };
+    entries.extend([
+        spread(SpreadShape {
+            name: "sum_many_short_rows",
+            text: "Sum, many short rows,",
+            shape: vec![262_144, 64],
+            axis: 1,
+            operation: ReduceOperation::Sum,
+        }),
+        spread(SpreadShape {
+            name: "sum_few_long_rows",
+            text: "Sum, few long rows,",
+            shape: vec![4, 4_194_304],
+            axis: 1,
+            operation: ReduceOperation::Sum,
+        }),
+        spread(SpreadShape {
+            name: "sum_strided",
+            text: "Sum, strided rows,",
+            shape: vec![32, 4095, 512],
+            axis: 1,
+            operation: ReduceOperation::Sum,
+        }),
+        spread(SpreadShape {
+            name: "arg_topk1_strided",
+            text: "ArgTopK(1), strided rows,",
+            shape: vec![32, 4095, 512],
+            axis: 1,
+            operation: ReduceOperation::ArgTopK { k: 1 },
+        }),
+        spread(SpreadShape {
+            name: "sum_whole_tensor",
+            text: "Sum, a whole tensor,",
+            shape: vec![1, 16_777_216],
+            axis: 1,
+            operation: ReduceOperation::Sum,
+        }),
+    ]);
+
+    // Every other operation, along the contiguous dim and across it: what each one's accumulator
+    // costs beside the sum's and the arg top-1's above.
+    for (name, text, operation) in [
+        ("mean", "Mean", ReduceOperation::Mean),
+        ("prod", "Prod", ReduceOperation::Prod),
+        ("max", "Max", ReduceOperation::Max),
+        ("min", "Min", ReduceOperation::Min),
+        ("max_abs", "MaxAbs", ReduceOperation::MaxAbs),
+        ("arg_max", "ArgMax", ReduceOperation::ArgMax),
+        ("arg_min", "ArgMin", ReduceOperation::ArgMin),
+        ("any", "Any", ReduceOperation::Any),
+        ("all", "All", ReduceOperation::All),
+    ] {
+        entries.push(spread(SpreadShape {
+            name: &format!("{name}_rows"),
+            text: &format!("{text}, rows,"),
+            shape: vec![32, 512, 4095],
+            axis: 2,
+            operation,
+        }));
+        entries.push(spread(SpreadShape {
+            name: &format!("{name}_strided"),
+            text: &format!("{text}, strided rows,"),
+            shape: vec![32, 4095, 512],
+            axis: 1,
+            operation,
+        }));
     }
 
     // A decode sampler's row: one row of logits over a vocabulary, which one cube walks alone
     // unless the row is split across cubes. Its argmax, and a top-20 to sample among.
     let vocabulary = 151_936;
-    let sampled = |config, kind| ReduceProblem {
+    let sampled = |operation, kind| ReduceProblem {
         shape: vec![1, vocabulary],
         axis: 1,
-        config,
+        operation,
         kind,
         precision,
     };
     entries.push(CatalogEntry::new(
         id(format!("arg_topk1_sampler_1x{vocabulary}")),
         label(format!("ArgTopK(1) sampler row, axis=1 (1x{vocabulary})")),
-        sampled(ReduceOperationConfig::ArgTopK(1), ReduceBenchKind::Single),
+        sampled(ReduceOperation::ArgTopK { k: 1 }, ReduceBenchKind::Single),
     ));
     entries.push(CatalogEntry::new(
         id(format!("topk20_sampler_1x{vocabulary}")),
         label(format!(
             "TopK(20) values+indices, 1 fused launch, sampler row, axis=1 (1x{vocabulary})"
         )),
-        sampled(ReduceOperationConfig::TopK(20), ReduceBenchKind::Fused),
+        sampled(ReduceOperation::TopK { k: 20 }, ReduceBenchKind::Fused),
     ));
 
     entries
+}
+
+/// One shape of the default sweep: its catalogue id `name`, its label `text`, and the reduction
+/// along `axis` by `operation`.
+struct SpreadShape<'a> {
+    pub name: &'a str,
+    pub text: &'a str,
+    /// The swept input's extent along each axis, read by axis (Position Usage).
+    pub shape: Vec<usize>,
+    pub axis: usize,
+    pub operation: ReduceOperation,
 }

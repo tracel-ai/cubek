@@ -11,7 +11,7 @@ use cubek_microkernel::row_store::CubeStage;
 pub fn cube_rms_norm_kernel<E: Float, N: Size, O: Destination>(
     input: &TileTensor<'_>,
     weight: &TileTensor<'_>,
-    out: &O::Arg<E>,
+    out: &mut O::Arg<E>,
     epsilon: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeRmsNormMicrokernel,

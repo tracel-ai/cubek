@@ -7,7 +7,7 @@ use crate::kernels::{
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Launcher;
-use cubecl::tile::launch::{Bound, Grid as LaunchGrid, Refusal};
+use cubecl::tile::launch::{Bound, Decline, Grid as LaunchGrid};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{AttentionVisibility, G};
@@ -16,7 +16,7 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// What a backward pass declines before preparing anything: an element the routines do not
 /// take, inputs of two elements, or a logsumexp not stored in `f32`.
-pub const ATTENTION_BACKWARD_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const ATTENTION_BACKWARD_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "attention's backward pass takes f32, f16 and bf16 inputs of one element, and an f32 \
           logsumexp",
 };
@@ -87,7 +87,7 @@ impl AttentionBackwardTensors {
         logsumexp: PlainTensor,
         scale: f32,
         visibility: AttentionVisibility,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let element = query.elem;
         let inputs = [&key, &value, &out, &out_gradient];
         if !Self::VERIFIED.contains(&element)
@@ -226,7 +226,7 @@ impl AttentionBackwardTensors {
         let operands = self.views.map(|operand, view| {
             launcher
                 .arg(view.binding.clone(), view.elem)
-                .axes(operand.axes())
+                .dimensions(operand.dimensions())
                 .vectorize(walk.widths.get(operand))
                 .build()
                 .expect(ADMITTED_PLAN_RUNS)
@@ -244,14 +244,14 @@ impl AttentionBackwardTensors {
         tensor: &PlainTensor,
         operand: AttentionBackwardOperand,
     ) -> Bound {
-        let view = match operand.axes().contains(&G) {
+        let view = match operand.dimensions().contains(&G) {
             true => Self::grouped(tensor, self.problem().group),
             false => tensor.clone(),
         };
         binding
             .launcher
             .arg(view.binding.clone(), view.elem)
-            .axes(operand.axes())
+            .dimensions(operand.dimensions())
             .vectorize(walk.widths.get(operand))
             .build()
             .expect(ADMITTED_PLAN_RUNS)

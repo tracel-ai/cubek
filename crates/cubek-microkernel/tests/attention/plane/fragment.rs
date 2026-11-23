@@ -2,7 +2,7 @@
 
 use crate::launch::Lines;
 use crate::launch::attention::{AttentionElements, PlaneFragmentAttentionLaunch};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
 };
@@ -21,7 +21,7 @@ impl AttentionSettings for PlaneFragmentAttentionMicrokernelSettings {
         elements: AttentionElements,
         lines: Lines,
         steps: usize,
-    ) -> Result<PlaneFragmentAttentionLaunch, Refusal> {
+    ) -> Result<PlaneFragmentAttentionLaunch, Decline> {
         PlaneFragmentAttentionLaunch::new(hw, elements, DIMS, self, lines, steps)
     }
 }

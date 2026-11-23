@@ -4,10 +4,11 @@
 //! among the keys last or first, and a mask differs from head to head.
 
 use core::fmt::Debug;
+use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_attention::kernels::{
     AttentionCache, AttentionLaunch, AttentionQueries, AttentionScoring, AttentionTensors,
@@ -87,6 +88,16 @@ pub(crate) const PROMPT_WIDE: AttentionCase = AttentionCase {
     ..PROMPT
 };
 
+/// The wide prompt at a head dim of 256, six query heads to a key head: Qwen3.8 27B's heads on
+/// one card of four under tensor parallelism, whose output a plane holds sixteen fragments wide.
+pub(crate) const PROMPT_HEAD_DIM_256: AttentionCase = AttentionCase {
+    heads: 6,
+    kv_heads: 1,
+    head_dim: 256,
+    val_dim: 256,
+    ..PROMPT_WIDE
+};
+
 /// A decode step at a model's head dim: one position of the wide prompt's heads.
 pub(crate) const DECODE_WIDE: AttentionCase = AttentionCase {
     seq_q: 1,
@@ -145,6 +156,18 @@ pub(crate) const DECODE: AttentionCase = AttentionCase {
     seq_q: 1,
     visibility: AttentionVisibility::Attended,
     ..PROMPT
+};
+
+/// A single position seeing only the last five of its keys: most of the boxes a routine splits the
+/// keys into see none of them, and merge nothing.
+pub(crate) const DECODE_WINDOWED: AttentionCase = AttentionCase {
+    visibility: AttentionVisibility::Recent {
+        window: match NonZeroUsize::new(5) {
+            Some(window) => window,
+            None => unreachable!(),
+        },
+    },
+    ..DECODE
 };
 
 /// The prompt with its queries placed first among the keys: query `i` sees the keys up to `i`.
@@ -444,14 +467,7 @@ impl<L: AttentionLaunch> Forward<L> {
     /// The routine's lead, the first setting it lists on the test device, on each of `cases`;
     /// none where the device lists none.
     pub(crate) fn at_its_lead(&self, cases: &[AttentionCase]) -> Vec<ForwardCase<SettingsOf<L>>> {
-        self.at(
-            self.launched
-                .routine()
-                .settings(&self.hw)
-                .into_iter()
-                .take(1),
-            cases,
-        )
+        self.at(L::Routine::settings(&self.hw).into_iter().take(1), cases)
     }
 
     /// Every setting the routine lists on the test device, on each of `cases`.
@@ -459,7 +475,7 @@ impl<L: AttentionLaunch> Forward<L> {
         &self,
         cases: &[AttentionCase],
     ) -> Vec<ForwardCase<SettingsOf<L>>> {
-        self.at(self.launched.routine().settings(&self.hw), cases)
+        self.at(L::Routine::settings(&self.hw), cases)
     }
 
     /// Each of `settings` on each of `cases`.
@@ -481,14 +497,14 @@ impl<L: AttentionLaunch> Forward<L> {
 
     /// The settings the routine lists on the test device.
     pub(crate) fn settings(&self) -> Vec<SettingsOf<L>> {
-        self.launched.routine().settings(&self.hw)
+        L::Routine::settings(&self.hw)
     }
 }
 
 impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
     type Case = ForwardCase<SettingsOf<L>>;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let tensors = case.case.tensors(client);
         let logsumexp = tensors.logsumexp().expect("asked for");
         let out = self.launched.launch_on(&self.hw, tensors, &case.settings)?;

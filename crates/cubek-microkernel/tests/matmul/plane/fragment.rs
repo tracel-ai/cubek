@@ -2,7 +2,7 @@
 
 use crate::launch::Lines;
 use crate::launch::matmul::{MatmulElements, PlaneFragmentLaunch};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::plane::{
     PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
 };
@@ -21,7 +21,7 @@ impl MatmulSettings for PlaneFragmentMicrokernelSettings {
         elements: MatmulElements,
         lines: Lines,
         steps: usize,
-    ) -> Result<PlaneFragmentLaunch, Refusal> {
+    ) -> Result<PlaneFragmentLaunch, Decline> {
         PlaneFragmentLaunch::new(hw, elements, self, lines, steps)
     }
 }

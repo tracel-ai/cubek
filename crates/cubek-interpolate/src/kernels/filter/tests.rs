@@ -14,24 +14,27 @@ use cubecl::{prelude::*, std::tensor::TensorHandle, zspace::shape};
 use cubecl_common::{ComptimeFloat, Ratio};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
-use super::{CubicAxis, LanczosAxis, Linear, LinearAxis, cubic_along, lanczos_along, linear_along};
+use super::{
+    CubicDimension, LanczosDimension, Linear, LinearDimension, cubic_along, lanczos_along,
+    linear_along,
+};
 
-const ROW: Axis = Axis(0);
-const COL: Axis = Axis(1);
+const ROW: Dimension = Dimension(0);
+const COL: Dimension = Dimension(1);
 const ROWS: usize = 4;
 const COLS: usize = 6;
 
 #[derive(CubeType, Clone)]
-struct AxisValue {
+struct DimensionValue {
     #[cube(comptime)]
-    axis: Axis,
+    dimension: Dimension,
     scale: f32,
 }
 
 #[cube]
-impl<T: Float> Recipe<T> for AxisValue {
+impl<T: Float> Recipe<T> for DimensionValue {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T {
-        T::cast_from(coordinates.along(self.axis)) * T::cast_from(self.scale)
+        T::cast_from(coordinates.along(self.dimension)) * T::cast_from(self.scale)
     }
 }
 
@@ -40,11 +43,11 @@ impl<T: Float> Recipe<T> for AxisValue {
 #[cube]
 fn materialize(
     source: &Tile,
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: &Partitioning,
     #[comptime] level: Level,
 ) {
-    let output = output.tile(space);
+    let output = output.tile_mut(space);
     for region in source.over(&level) {
         let mut output_region = output.at(&region);
         output_region.copy_from(&source.at(&region));
@@ -125,17 +128,17 @@ fn offset(value: f32) -> ComptimeFloat<f32> {
     ComptimeFloat::new(value).unwrap()
 }
 
-type LinearScaled = Linear<AxisValue>;
+type LinearScaled = Linear<DimensionValue>;
 
 #[cube(launch)]
 fn linear_kernel<E: Float>(
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::new::<E, LinearAxis<E>>(
+    let source = Procedural::new::<E, LinearDimension<E>>(
         comptime!(space.space().clone()),
         linear_along(
             COL,
@@ -149,14 +152,14 @@ fn linear_kernel<E: Float>(
 
 #[cube(launch)]
 fn cubic_kernel<E: Float>(
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[comptime] a: Ratio,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::new::<E, CubicAxis<E>>(
+    let source = Procedural::new::<E, CubicDimension<E>>(
         comptime!(space.space().clone()),
         cubic_along(
             COL,
@@ -171,14 +174,14 @@ fn cubic_kernel<E: Float>(
 
 #[cube(launch)]
 fn lanczos_kernel<E: Float>(
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[comptime] lobes: u8,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Procedural::new::<E, LanczosAxis<E>>(
+    let source = Procedural::new::<E, LanczosDimension<E>>(
         comptime!(space.space().clone()),
         lanczos_along(
             COL,
@@ -194,8 +197,8 @@ fn lanczos_kernel<E: Float>(
 /// A filter over a recipe that is not an [`AffineCoordinate`], which is what the filters being
 /// generic over their inner recipe buys.
 #[cube(launch)]
-fn linear_over_axis_value_kernel<E: Float>(
-    output: &TileTensor<'_>,
+fn linear_over_dimension_value_kernel<E: Float>(
+    output: &mut TileTensor<'_>,
     space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
@@ -203,8 +206,8 @@ fn linear_over_axis_value_kernel<E: Float>(
     let source = Procedural::new::<E, LinearScaled>(
         comptime!(space.space().clone()),
         LinearScaled {
-            coordinate: AxisValue {
-                axis: ROW,
+            coordinate: DimensionValue {
+                dimension: ROW,
                 scale: 0.5,
             },
         },
@@ -247,7 +250,7 @@ fn linear_is_a_triangle_with_unit_support() {
 fn a_filter_wraps_any_recipe_not_only_affine_coordinates() {
     let h = Harness::new();
     let output = h.output();
-    linear_over_axis_value_kernel::launch(
+    linear_over_dimension_value_kernel::launch(
         &h.client,
         h.launcher.cube_count(),
         h.launcher.cube_dim(),

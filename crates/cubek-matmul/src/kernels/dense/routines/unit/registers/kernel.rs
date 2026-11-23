@@ -10,7 +10,7 @@ use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, unit_registers_m
 pub fn unit_registers_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destination>(
     lhs: &TileTensor<'_>,
     rhs: &TileTensor<'_>,
-    out: &O::Arg<E>,
+    out: &mut O::Arg<E>,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitRegistersMicrokernel,
     #[define(EA, E)] _elements: [ElemType; 2],
@@ -27,7 +27,7 @@ pub fn unit_registers_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destin
                 &a,
                 &b,
                 microkernel.drained_software_matmul(),
-                Semiring::SUM_PROD,
+                Semiring::SumProd,
             );
 
             sum.zero();

@@ -8,13 +8,13 @@ use cubecl::client::Client;
 use cubecl::prelude::Scalar;
 use cubecl::quant::scheme::QuantStore;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::MatmulRoutine;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, N};
+use cubek_std::matmul_dimensions::{K, N};
 use cubek_test_utils::{HostData, HostDataVec};
 use half::bf16;
 
@@ -29,12 +29,12 @@ const BF16_TOLERANCE: f32 = 1e-2;
 pub(crate) enum Stored {
     /// Dense `bf16` values in `[-1, 1)`, row-major.
     Bf16,
-    /// NVFP4, packed along `k`, seeded by `seed`.
-    Nvfp4 { seed: usize },
-    /// An NVFP4 rhs `[n, k]` packed along `k`, seen through the transposed view `[k, n]` a
+    /// Packed along `k` in `format`, seeded by `seed`.
+    Packed { format: PackedFormat, seed: usize },
+    /// A rhs `[n, k]` packed along `k` in `format`, seen through the transposed view `[k, n]` a
     /// framework hands a tied embedding to the vocabulary head: its words run along the view's
-    /// first axis.
-    Nvfp4ViewedTransposed { seed: usize },
+    /// first dimension.
+    PackedViewedTransposed { format: PackedFormat, seed: usize },
 }
 
 /// `m × n`, `k` deep, of two operands stored as stated, written in `bf16`.
@@ -131,10 +131,10 @@ impl PackedProduct {
             .collect()
     }
 
-    /// The packed slabs of `operand`, `rows` rows of `k`, seeded by `seed`.
-    fn spec(&self, operand: MatmulOperand, seed: usize) -> PackedSlabsSpec {
+    /// The packed slabs of `operand` in `format`, `rows` rows of `k`, seeded by `seed`.
+    fn spec(&self, operand: MatmulOperand, format: PackedFormat, seed: usize) -> PackedSlabsSpec {
         PackedSlabsSpec {
-            format: PackedFormat::Nvfp4,
+            format,
             operand,
             slabs: 1,
             rows: match operand {
@@ -156,18 +156,18 @@ impl PackedProduct {
             Stored::Bf16 => {
                 StoredTensor::Plain(upload(client, &dims, &Self::halves(dims[0] * dims[1])))
             }
-            Stored::Nvfp4 { seed } => {
-                StoredTensor::Packed(PackedSlabs::new(client, self.spec(operand, seed)).matrix())
-            }
-            Stored::Nvfp4ViewedTransposed { seed } => {
-                let matrix = PackedSlabs::new(client, self.spec(operand, seed)).matrix();
+            Stored::Packed { format, seed } => StoredTensor::Packed(
+                PackedSlabs::new(client, self.spec(operand, format, seed)).matrix(),
+            ),
+            Stored::PackedViewedTransposed { format, seed } => {
+                let matrix = PackedSlabs::new(client, self.spec(operand, format, seed)).matrix();
                 StoredTensor::Packed(Self::viewed_transposed(client, matrix, self.k))
             }
         }
     }
 
     /// `matrix`, `[n, k]` packed along `k`, as a framework's transpose restates it: bound as
-    /// `[k, n]` under swapped strides, its blocks and words along its first axis.
+    /// `[k, n]` under swapped strides, its blocks and words along its first dimension.
     fn viewed_transposed(client: &Client, matrix: PackedTensor, k: usize) -> PackedTensor {
         let mut scheme = matrix.scheme();
         scheme.swap_block_dims(2, 0, 1);
@@ -193,9 +193,10 @@ impl PackedProduct {
                 row_stride: 1,
                 k_stride: self.n,
             },
-            (Stored::Nvfp4 { seed } | Stored::Nvfp4ViewedTransposed { seed }, _) => {
-                HostOperand::Packed(self.spec(operand, seed).dequantized())
-            }
+            (
+                Stored::Packed { format, seed } | Stored::PackedViewedTransposed { format, seed },
+                _,
+            ) => HostOperand::Packed(self.spec(operand, format, seed).dequantized()),
         }
     }
 
@@ -215,7 +216,7 @@ impl RoutineProduct for PackedProduct {
         hw: &Hardware,
         client: &Client,
         settings: &R::Settings,
-    ) -> Result<TensorHandle, Refusal>
+    ) -> Result<TensorHandle, Decline>
     where
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,

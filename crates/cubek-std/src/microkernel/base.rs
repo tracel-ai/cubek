@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Display};
-use cubecl::tile::launch::{Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 
 use crate::Hardware;
 use crate::microkernel::{CubePlanes, KernelEstimate};
@@ -45,7 +45,7 @@ pub trait Microkernel: Debug + Clone + PartialEq + Sized {
     /// # Errors
     ///
     /// The reason this microkernel serves no such item.
-    fn admits(_item: &Self::WorkItem) -> Result<(), Refusal> {
+    fn admits(_item: &Self::WorkItem) -> Result<(), Decline> {
         Ok(())
     }
 
@@ -65,11 +65,11 @@ pub trait Microkernel: Debug + Clone + PartialEq + Sized {
         hw: &Hardware,
         item: &Self::WorkItem,
         settings: &Self::Settings,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         Self::admits(item)?;
         Self::candidates(hw, item, settings)
             .next()
-            .ok_or(Refusal::Declined {
+            .ok_or(Decline::Unserved {
                 why: Self::decline(settings),
             })
     }

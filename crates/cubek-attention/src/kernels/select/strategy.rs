@@ -8,7 +8,7 @@ use crate::kernels::{
     HypercubeAttentionKernel, UnitAttentionRoutine,
 };
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use serde::{Deserialize, Serialize};
 
@@ -201,7 +201,7 @@ impl AttentionKernel {
         &self,
         hw: &Hardware,
         tensors: AttentionTensors,
-    ) -> Result<TensorHandle, Refusal> {
+    ) -> Result<TensorHandle, Decline> {
         match self {
             Self::Unit => DirectAttention(UnitAttentionRoutine).launch_lead_on(hw, tensors),
             Self::Cube(cube) => cube.launch_lead_on(hw, tensors),

@@ -1,0 +1,294 @@
+//! The reduce operation, [`Reduce`]: built from a [`ReduceOpStrategy`], it launches the kernel the
+//! strategy picks on the tile routines.
+
+use crate::ReduceError;
+use crate::kernels::{
+    ReduceElements, ReduceOpStrategy, ReduceTensors, ReduceWorkspace, launch_by_strategy,
+};
+use cubecl::Device;
+use cubecl::ir::ElemType;
+use cubecl::prelude::*;
+use cubek_microkernel::reduce::ReduceOperation;
+
+/// A reduction of one tensor along one axis, run by the kernel its strategy picks, with the
+/// scratch its caller gives the kernels that split a row across cubes.
+#[derive(Debug, Clone)]
+pub struct Reduce {
+    strategy: ReduceOpStrategy,
+    workspace: Option<ReduceWorkspace>,
+}
+
+impl Reduce {
+    /// The reduction whose kernel `strategy` picks, given no scratch: the kernels that split a
+    /// row across cubes decline it.
+    pub fn new(strategy: ReduceOpStrategy) -> Self {
+        Self {
+            strategy,
+            workspace: None,
+        }
+    }
+
+    /// This reduction given `workspace`, the scratch of the kernels that split a row across cubes
+    /// ([`ReduceWorkspace::bytes_for`]), which cubek never allocates.
+    pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
+        Self {
+            workspace: Some(workspace),
+            ..self
+        }
+    }
+
+    /// Reduce dim `axis` of `input` into `output` by `operation`, in `elements`, on `device`.
+    /// `output` has `input`'s shape with `axis` one wide, `k` wide for a top-k.
+    ///
+    /// # Errors
+    ///
+    /// [`ReduceError::InvalidAxis`] where `axis` is not a dim of `input`,
+    /// [`ReduceError::EmptyTopK`] where a top-k keeps `k = 0` values,
+    /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is shorter than the `k` a top-k
+    /// keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one above,
+    /// and [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy picks
+    /// cannot run the problem on this device: a [`Specific`](ReduceOpStrategy::Specific) one, or
+    /// the unit kernel the rule falls back to.
+    ///
+    /// # Panics
+    ///
+    /// Where `input` has 256 axes or more, or a row split across cubes is longer than `u32`
+    /// counts.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the operands and what the reduction computes, as a caller states them"
+    )]
+    pub fn execute(
+        &self,
+        client: &Client,
+        device: &Device,
+        input: TensorBinding,
+        output: TensorBinding,
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+    ) -> Result<(), ReduceError> {
+        validate_axis(input.shape.len(), axis)?;
+        validate_shape(
+            &input.shape,
+            &output.shape,
+            axis,
+            operation.written_per_row(),
+        )?;
+        let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
+        launch_by_strategy(self.strategy, device, self.given(tensors))
+    }
+
+    /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
+    /// indices to `indices` in `index_element`, from one launch. `indices` has `values`' shape, and
+    /// each is written at its own strides. `Max`, `Min` and `TopK` write the same pair as `ArgMax`,
+    /// `ArgMin` and `ArgTopK`.
+    ///
+    /// # Errors
+    ///
+    /// As [`execute`](Self::execute); [`ReduceError::IndicesUnsupported`] for an operation whose
+    /// values carry no index; and [`ReduceError::MismatchIndicesShape`] where `indices` differs
+    /// from `values` in shape.
+    ///
+    /// # Panics
+    ///
+    /// As [`execute`](Self::execute).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the operands and what the reduction computes, as a caller states them"
+    )]
+    pub fn execute_with_indices(
+        &self,
+        client: &Client,
+        device: &Device,
+        input: TensorBinding,
+        values: TensorBinding,
+        indices: TensorBinding,
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+        index_element: ElemType,
+    ) -> Result<(), ReduceError> {
+        let operation = indexed(operation)?;
+        validate_axis(input.shape.len(), axis)?;
+        validate_shape(
+            &input.shape,
+            &values.shape,
+            axis,
+            operation.written_per_row(),
+        )?;
+        validate_indices(&values.shape, &indices.shape)?;
+        let tensors = ReduceTensors::with_indices(
+            client,
+            input,
+            values,
+            indices,
+            axis,
+            operation,
+            elements,
+            index_element,
+        );
+        launch_by_strategy(self.strategy, device, self.given(tensors))
+    }
+}
+
+impl Reduce {
+    /// `tensors` given this reduction's workspace, where it has one.
+    fn given(&self, tensors: ReduceTensors) -> ReduceTensors {
+        match &self.workspace {
+            Some(workspace) => tensors.with_workspace(workspace.clone()),
+            None => tensors,
+        }
+    }
+}
+
+/// The operation that writes `operation`'s values with their indices: the value and its index
+/// accumulate into the same carrier, so `Max` is `ArgMax` with both halves written.
+///
+/// # Errors
+///
+/// [`ReduceError::IndicesUnsupported`] for an operation whose values carry no index.
+pub(crate) fn indexed(operation: ReduceOperation) -> Result<ReduceOperation, ReduceError> {
+    match operation {
+        ReduceOperation::Max | ReduceOperation::ArgMax => Ok(ReduceOperation::ArgMax),
+        ReduceOperation::Min | ReduceOperation::ArgMin => Ok(ReduceOperation::ArgMin),
+        ReduceOperation::TopK { k } | ReduceOperation::ArgTopK { k } => {
+            Ok(ReduceOperation::ArgTopK { k })
+        }
+        ReduceOperation::Sum => Err(unindexed_operation_named("Sum")),
+        ReduceOperation::Prod => Err(unindexed_operation_named("Prod")),
+        ReduceOperation::Mean => Err(unindexed_operation_named("Mean")),
+        ReduceOperation::MaxAbs => Err(unindexed_operation_named("MaxAbs")),
+        ReduceOperation::Any => Err(unindexed_operation_named("Any")),
+        ReduceOperation::All => Err(unindexed_operation_named("All")),
+    }
+}
+
+/// Why [`Reduce::execute_with_indices`] refuses the operation `operation_name`.
+fn unindexed_operation_named(operation_name: &'static str) -> ReduceError {
+    ReduceError::IndicesUnsupported {
+        operation: operation_name,
+    }
+}
+
+/// Whether `axis` is a dim of a tensor of rank `rank`.
+fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
+    if axis >= rank {
+        return Err(ReduceError::InvalidAxis { axis, rank });
+    }
+    Ok(())
+}
+
+/// Whether `output_shape` is `input_shape` with `axis` `written_per_row` wide, and the reduced dim
+/// at least that long.
+fn validate_shape(
+    input_shape: &[usize],
+    output_shape: &[usize],
+    axis: usize,
+    written_per_row: usize,
+) -> Result<(), ReduceError> {
+    if written_per_row == 0 {
+        return Err(ReduceError::EmptyTopK);
+    }
+    if input_shape[axis] < written_per_row {
+        return Err(ReduceError::ReduceAxisTooSmall {
+            axis_length: input_shape[axis],
+            k: written_per_row,
+        });
+    }
+    let mut expected_shape = input_shape.to_vec();
+    expected_shape[axis] = written_per_row;
+    if output_shape != expected_shape {
+        return Err(ReduceError::MismatchOutputShape {
+            expected_shape,
+            output_shape: output_shape.to_vec(),
+        });
+    }
+    Ok(())
+}
+
+/// Whether the indices' shape is the values': an index for every value.
+fn validate_indices(values_shape: &[usize], indices_shape: &[usize]) -> Result<(), ReduceError> {
+    if indices_shape != values_shape {
+        return Err(ReduceError::MismatchIndicesShape {
+            values_shape: values_shape.to_vec(),
+            indices_shape: indices_shape.to_vec(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ROWS: usize = 4;
+    const ROW_LEN: usize = 8;
+    const AXIS: usize = 1;
+
+    #[test]
+    fn a_top_k_keeping_nothing_is_outside_the_domain() {
+        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, 0], AXIS, 0);
+        assert!(matches!(result, Err(ReduceError::EmptyTopK)), "{result:?}");
+    }
+
+    #[test]
+    fn a_top_k_keeping_more_than_a_row_is_outside_the_domain() {
+        let k = ROW_LEN + 1;
+        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, k], AXIS, k);
+        assert!(
+            matches!(result, Err(ReduceError::ReduceAxisTooSmall { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn an_output_not_one_wide_along_the_axis_is_outside_the_domain() {
+        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, 2], AXIS, 1);
+        assert!(
+            matches!(result, Err(ReduceError::MismatchOutputShape { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn an_axis_past_the_rank_is_outside_the_domain() {
+        let rank = 2;
+        let result = validate_axis(rank, rank);
+        assert!(
+            matches!(result, Err(ReduceError::InvalidAxis { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn indices_of_another_shape_are_outside_the_domain() {
+        let result = validate_indices(&[ROWS, 1], &[1, ROWS]);
+        assert!(
+            matches!(result, Err(ReduceError::MismatchIndicesShape { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_sum_has_no_index_to_write() {
+        let result = indexed(ReduceOperation::Sum);
+        assert!(
+            matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_max_with_indices_writes_an_argmax() {
+        assert!(matches!(
+            indexed(ReduceOperation::Max),
+            Ok(ReduceOperation::ArgMax)
+        ));
+    }
+
+    #[test]
+    fn a_well_shaped_call_is_inside_the_domain() {
+        assert!(validate_shape(&[ROWS, ROW_LEN], &[ROWS, 1], AXIS, 1).is_ok());
+    }
+}

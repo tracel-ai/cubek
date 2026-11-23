@@ -1,8 +1,8 @@
 use crate::matmul::cube::{MatmulCubeSpace, MatmulCubeWrite};
 use crate::matmul::{MatmulBuffers, MatmulDestination, MatmulOperand, MatmulStage, MatmulWorkItem};
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Delivery, Refusal, VectorRequirement, Vectorization};
-use cubek_std::matmul_axes::{MB, NB};
+use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
+use cubek_std::matmul_dimensions::{MB, NB};
 use cubek_std::{Hardware, TMA_ALIGNMENT_BYTES};
 
 /// Who moves a cube microkernel's box of the output into global memory once its walk ends. The
@@ -21,7 +21,7 @@ pub enum CubeStagedStore {
 
 /// Why the TMA engine cannot store a cube microkernel's box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CubeStagedTmaStoreRefusal {
+pub enum CubeStagedTmaStoreDecline {
     /// The device offers no bulk tensor copy ([`Hardware::bulk_tensor_copy`]).
     NoBulkTensorCopy,
     /// The output is a sink a caller binds, which has no address for a descriptor to encode.
@@ -41,11 +41,11 @@ pub enum CubeStagedTmaStoreRefusal {
     /// The box's edge is past what one descriptor's box holds.
     BoxPastDescriptor,
     /// The product is a packed one's whose scales cut the output's rows or columns into several
-    /// blocks, so its box is stated in more than the two axes a descriptor's box moves.
+    /// blocks, so its box is stated in more than the two dimensions a descriptor's box moves.
     BlockSplit,
 }
 
-impl CubeStagedTmaStoreRefusal {
+impl CubeStagedTmaStoreDecline {
     /// Why `hw` cannot store the boxes of `item`'s product, over buffers as `buffers` states them,
     /// in the box `cube_space`, its cubes reaching the output as `write` and its planes split
     /// `planes_along_k` ways along `K`, by the TMA engine; `None` where it can.
@@ -91,7 +91,7 @@ impl CubeStagedTmaStoreRefusal {
             .moves(
                 &cube_space
                     .space
-                    .subspace(&cube_space.axes_kind.output_axes()),
+                    .subspace(&cube_space.dimensions_kind.output_dimensions()),
             )
             .is_err()
         {
@@ -109,8 +109,8 @@ impl CubeStagedStore {
         match self {
             Self::Fragments => 0,
             Self::Tma => {
-                let axes = stage.axes();
-                stage.extent(axes.m) * stage.extent(axes.n) * elem_bytes
+                let dimensions = stage.dimensions();
+                stage.extent(dimensions.m) * stage.extent(dimensions.n) * elem_bytes
                     + Delivery::TMA_STAGE_ALIGNMENT
             }
         }
@@ -127,37 +127,37 @@ impl CubeStagedStore {
     }
 }
 
-impl From<CubeStagedTmaStoreRefusal> for Refusal {
-    fn from(refusal: CubeStagedTmaStoreRefusal) -> Self {
-        let why = match refusal {
-            CubeStagedTmaStoreRefusal::NoBulkTensorCopy => {
+impl From<CubeStagedTmaStoreDecline> for Decline {
+    fn from(decline: CubeStagedTmaStoreDecline) -> Self {
+        let why = match decline {
+            CubeStagedTmaStoreDecline::NoBulkTensorCopy => {
                 "this device offers no bulk tensor copy for the TMA engine to store the box with"
             }
-            CubeStagedTmaStoreRefusal::Sink => {
+            CubeStagedTmaStoreDecline::Sink => {
                 "the output is a sink, which has no address for a descriptor to encode"
             }
-            CubeStagedTmaStoreRefusal::Shared(_) => {
+            CubeStagedTmaStoreDecline::Shared(_) => {
                 "the cubes share their boxes, and their meetings read the output back"
             }
-            CubeStagedTmaStoreRefusal::SplitAlongK => {
+            CubeStagedTmaStoreDecline::SplitAlongK => {
                 "the planes split K and merge in shared memory, which the cube copies out itself"
             }
-            CubeStagedTmaStoreRefusal::Batched => {
+            CubeStagedTmaStoreDecline::Batched => {
                 "a descriptor addresses one matrix, and the problem holds several"
             }
-            CubeStagedTmaStoreRefusal::Misaligned => {
+            CubeStagedTmaStoreDecline::Misaligned => {
                 "the output's rows are not whole 16-byte lines"
             }
-            CubeStagedTmaStoreRefusal::UnalignedStart => {
+            CubeStagedTmaStoreDecline::UnalignedStart => {
                 "the output's view starts at an address a descriptor cannot encode"
             }
-            CubeStagedTmaStoreRefusal::BoxPastDescriptor => {
+            CubeStagedTmaStoreDecline::BoxPastDescriptor => {
                 "the box's edge is past what one descriptor's box holds"
             }
-            CubeStagedTmaStoreRefusal::BlockSplit => {
+            CubeStagedTmaStoreDecline::BlockSplit => {
                 "the packed inputs' scales cut the output's rows or columns into blocks, and a descriptor's box is its rows and columns"
             }
         };
-        Refusal::Declined { why }
+        Decline::Unserved { why }
     }
 }

@@ -9,7 +9,7 @@ use crate::kernels::{
     KeyHeads, KeyHeadsBlueprint,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::key_gradient::cube::{
     CubeKeyGradientMicrokernel, CubeKeyGradientMicrokernelSettings,
 };
@@ -152,7 +152,7 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
         hw: &Hardware,
         problem: &AttentionBackwardProblem,
         settings: &Self::Settings,
-    ) -> Result<Self::Blueprint, Refusal> {
+    ) -> Result<Self::Blueprint, Decline> {
         let queries = CubeStagedQueryGradientRoutine.prepare(
             hw,
             problem,

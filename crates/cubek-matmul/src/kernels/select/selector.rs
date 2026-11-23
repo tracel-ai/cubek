@@ -12,12 +12,12 @@ use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
 };
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::block_scaled_for;
 use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_axes::K;
+use cubek_std::matmul_dimensions::K;
 use cubek_std::plan::{InOrder, Then};
 
 /// The autotune `strategy`'s plan for `problem` on `hw` is, where its plan is one autotune alone:
@@ -82,7 +82,7 @@ pub fn select(
     problem: &MatmulProblem,
     hw: &Hardware,
     groups: MatmulAutotuneGroups,
-) -> Result<MatmulPlan, Refusal> {
+) -> Result<MatmulPlan, Decline> {
     match Inputs::of(problem, hw) {
         Inputs::Float => float_plan(strategy, problem, groups),
         Inputs::Streamed => packed_plan(strategy, problem, hw, groups),
@@ -127,7 +127,7 @@ fn float_plan(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     groups: MatmulAutotuneGroups,
-) -> Result<MatmulPlan, Refusal> {
+) -> Result<MatmulPlan, Decline> {
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;
@@ -158,11 +158,11 @@ fn packed_plan(
     problem: &MatmulProblem,
     hw: &Hardware,
     groups: MatmulAutotuneGroups,
-) -> Result<MatmulPlan, Refusal> {
+) -> Result<MatmulPlan, Decline> {
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;
-    let decoded = || -> Result<MatmulPlan, Refusal> {
+    let decoded = || -> Result<MatmulPlan, Decline> {
         let plan = float_plan(strategy, problem, groups)?;
         Ok(Box::new(Then::new(Decoded, plan)))
     };
@@ -195,8 +195,10 @@ fn packed_plan(
 /// the blocks, or none, is the product's to apply.
 fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
     let input = |input: MatmulOperand| match problem.operands.get(input) {
-        OperandKind::Quantized(scheme) if Operand::axis_of(&scheme, input.axes()) == Some(K) => {
-            let operand = Operand::of_scheme(&scheme, K, input.axes())?;
+        OperandKind::Quantized(scheme)
+            if Operand::dimension_of(&scheme, input.dimensions()) == Some(K) =>
+        {
+            let operand = Operand::of_scheme(&scheme, K, input.dimensions())?;
             let block = operand.scale(K)?;
             Some((scheme, block, block * operand.scales_per_word()))
         }
@@ -216,7 +218,7 @@ fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bo
 }
 
 /// `BlockScaledTensorCores` named for a product it does not serve.
-pub const BLOCK_SCALED_TENSOR_CORES_UNSERVED: Refusal = Refusal::Declined {
+pub const BLOCK_SCALED_TENSOR_CORES_UNSERVED: Decline = Decline::Unserved {
     why: "BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a \
               block-scaled tensor-core instruction of their format; take autotune or a policy for \
               any other product",

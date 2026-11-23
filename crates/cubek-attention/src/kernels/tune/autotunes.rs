@@ -2,9 +2,8 @@
 //! positions, and a call of one.
 //!
 //! The routines serve GQA natively, each key head read once per box. They attend the first
-//! `len` positions of a cache with the queries bottom-right aligned, so a call over a cache is
-//! raced on the one chunk, or the one decode step, every key over a cache stands for
-//! ([`AttentionKey`]): no key reads how many positions a cache holds.
+//! `len` positions of a cache with the queries bottom-right aligned, so a call is raced at the
+//! depth its caller states ([`AttentionKey`]), never at how many positions a cache holds.
 
 use crate::kernels::plan::{AttentionCall, AttentionPlan};
 use crate::kernels::select::problem::QueryPositions;
@@ -120,11 +119,7 @@ fn many_queries(
     hw: &Hardware,
     priority: GroupPriority,
 ) -> TunableSet<AttentionKey, AttentionTuneInputs, ()> {
-    let mut autotune = AttentionAutotune::measured_on(
-        AttentionTuneInputs::many_queries_key,
-        "as-keyed",
-        AttentionTuneInputs::many_queries_representative,
-    );
+    let mut autotune = AttentionAutotune::new(AttentionTuneInputs::many_queries_key);
     let routines = autotune.group("microkernel", priority);
     autotune = autotune.prioritized(
         &routines,
@@ -177,11 +172,7 @@ fn one_query(
     hw: &Hardware,
     priority: GroupPriority,
 ) -> TunableSet<AttentionKey, AttentionTuneInputs, ()> {
-    let mut autotune = AttentionAutotune::measured_on(
-        AttentionTuneInputs::one_query_key,
-        "as-keyed",
-        AttentionTuneInputs::one_query_representative,
-    );
+    let mut autotune = AttentionAutotune::new(AttentionTuneInputs::one_query_key);
     let routines = autotune.group("microkernel", priority);
     autotune = autotune
         .read_cold(AttentionTuneInputs::one_query_roofline)
@@ -221,4 +212,55 @@ fn unit_lead(hw: &Hardware) -> Tunable<AttentionKey, AttentionTuneInputs, ()> {
             .map(|_| ())
             .map_err(|why| format!("the unit routine's lead does not serve this problem: {why:?}"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::{AttentionScoring, AttentionVisibility, QueryPlacement};
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::server::Overlap;
+    use cubecl::zspace::striding::row_major_contiguous_strides;
+    use cubek_matmul::kernels::tensor::PlainTensor;
+
+    /// **A race runs on the call's buffers.** A prompt's and a decode step's autotunes hand their
+    /// candidates the call's own operands, and the output every candidate and the winner write is
+    /// the call's.
+    #[test]
+    fn a_race_runs_on_the_calls_buffers() {
+        let client = cubek_test_utils::client();
+        let f16 = ElemType::Float(FloatKind::F16);
+        let (heads, kv_heads, head_dim) = (8, 2, 64);
+        let zeros = |shape: [usize; 4]| {
+            PlainTensor::zeros(&client, &shape, row_major_contiguous_strides(shape), f16)
+        };
+        let hw = Hardware::from_client(&client);
+        for queries in [1, 37] {
+            let cache = [1, kv_heads, 256, head_dim];
+            let visibility = AttentionVisibility::new(queries > 1, None, QueryPlacement::Last);
+            let call = AttentionTuneInputs::new(
+                &client,
+                zeros([1, heads, queries, head_dim]),
+                zeros(cache),
+                zeros(cache),
+                None,
+                PlainTensor::of_u32s(&client, &[1], &[queries as u32]),
+                queries,
+                None,
+                AttentionScoring::standard(visibility, head_dim),
+            )
+            .expect("an even group of a float element");
+            let raced = match queries {
+                1 => one_query(&hw, GroupPriority::DEFAULT)
+                    .generate_inputs(&call.one_query_key(), &call),
+                _ => many_queries(&hw, GroupPriority::DEFAULT)
+                    .generate_inputs(&call.many_queries_key(), &call),
+            };
+            let out = |inputs: &AttentionTuneInputs| inputs.tensors.clone().into_out().handle;
+            assert!(
+                matches!(out(&raced).overlap(&out(&call)), Overlap::Same),
+                "{queries} queries"
+            );
+        }
+    }
 }

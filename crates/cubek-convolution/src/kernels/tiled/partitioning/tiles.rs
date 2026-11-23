@@ -2,7 +2,7 @@ use super::{ConvBlock, ConvStep};
 use crate::kernels::tiled::{ConvProblem, ConvRoles, CubeStagedConvSettings};
 use cubecl::ir::ElemType;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{Axis, Level, Levels, Partitioning, StageStorage};
+use cubecl::tile::{Dimension, Level, Levels, Partitioning, StageStorage};
 use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentMicrokernel};
 use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -90,7 +90,7 @@ impl ConvTiles {
     }
 
     /// The edge of the innermost box along each axis.
-    fn leaf_block(&self) -> [(Axis, usize); 4] {
+    fn leaf_block(&self) -> [(Dimension, usize); 4] {
         let axes = self.roles.axes();
         [
             (axes.m, self.instruction.rows),
@@ -134,7 +134,7 @@ impl ConvTiles {
         problem: &ConvProblem,
         storage: &StageStorage,
         budget: usize,
-    ) -> ((Axis, usize), usize) {
+    ) -> ((Dimension, usize), usize) {
         let (axis, total) = self.step.walk(&self.roles, problem);
         // One stage holds a single ring, and the bounce window shares those bytes (the larger of
         // the two is held), so neither counts here.
@@ -184,7 +184,7 @@ impl ConvTiles {
 
     /// The levels of a launch whose stages walk `stage`: its planes' tiles, every contracted cell
     /// walked, a cube for every box of the output and one for every batch.
-    pub(super) fn levels(&self, stage: (Axis, usize)) -> Vec<Level> {
+    pub(super) fn levels(&self, stage: (Dimension, usize)) -> Vec<Level> {
         let axes = self.roles.axes();
         let planes = self.settings.microkernel.planes;
         self.leaf(stage)
@@ -199,7 +199,7 @@ impl ConvTiles {
             .build()
     }
 
-    fn leaf(&self, stage: (Axis, usize)) -> Levels {
+    fn leaf(&self, stage: (Dimension, usize)) -> Levels {
         let axes = self.roles.axes();
         let fragments = self.settings.microkernel.plane;
         Levels::leaf(&self.leaf_block())

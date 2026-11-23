@@ -4,7 +4,7 @@ use crate::kernels::{RandomRoutineProblem, VALUES};
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::{LaunchArg, TensorBinding};
-use cubecl::tile::launch::{Bound, Refusal};
+use cubecl::tile::launch::{Bound, Decline};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Partitioning};
 use cubecl::zspace::{Shape, Strides, Tiling};
@@ -39,8 +39,8 @@ pub fn launch_random_routine<R: RandomRoutine, D: Distribution>(
     settings: &R::Settings,
     distribution: D,
     seeds: SeedsLaunch,
-) -> Result<(), Refusal> {
-    let (blueprint, grid) = routine.prepare(hw, tensor.problem(), settings)?;
+) -> Result<(), Decline> {
+    let (blueprint, grid) = R::prepare(hw, tensor.problem(), settings)?;
     routine.dispatch::<D>(tensor, distribution.args(), seeds, blueprint, grid);
     Ok(())
 }
@@ -94,7 +94,7 @@ impl RandomTensor {
         });
         let output = launcher
             .arg(self.output.clone(), self.problem.element)
-            .axes(&vec![VALUES; self.output.shape.len()])
+            .dimensions(&vec![VALUES; self.output.shape.len()])
             .vectorize(width)
             .build()
             .expect(ADMITTED_PLAN_RUNS);

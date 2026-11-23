@@ -4,7 +4,7 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
-use cubecl::tile::launch::{Delivery, Refusal};
+use cubecl::tile::launch::{Decline, Delivery};
 use cubecl::tile::layout::Stagger;
 use cubecl::{
     CubeDim,
@@ -86,15 +86,15 @@ impl Hardware {
     ///
     /// # Errors
     ///
-    /// [`Refusal::PlanesUnavailable`] without plane operations, [`Refusal::ImprecisePlaneDim`]
+    /// [`Decline::PlanesUnavailable`] without plane operations, [`Decline::ImprecisePlaneDim`]
     /// where the runtime reports a range.
-    pub fn plane_dim(&self) -> Result<u32, Refusal> {
+    pub fn plane_dim(&self) -> Result<u32, Decline> {
         let hardware = &self.properties.hardware;
         if !self.properties.features.plane.contains(Plane::Ops) {
-            return Err(Refusal::PlanesUnavailable);
+            return Err(Decline::PlanesUnavailable);
         }
         if hardware.plane_size_min != hardware.plane_size_max {
-            return Err(Refusal::ImprecisePlaneDim {
+            return Err(Decline::ImprecisePlaneDim {
                 min: hardware.plane_size_min,
                 max: hardware.plane_size_max,
             });
@@ -114,7 +114,7 @@ impl Hardware {
     /// # Errors
     ///
     /// [`plane_dim`](Self::plane_dim)'s, for a fabricated width or a range.
-    pub fn plane_size(&self) -> Result<u32, Refusal> {
+    pub fn plane_size(&self) -> Result<u32, Decline> {
         match self.single_unit_planes() {
             true => Ok(1),
             false => self.plane_dim(),
@@ -144,11 +144,11 @@ impl Hardware {
     }
 
     /// The width the engine builds a cube from, whatever the device committed to: sound only
-    /// where no axis of the space rides `Unit` scope.
+    /// where no dimension of the space rides `Unit` scope.
     ///
-    /// cubek builds `cube_dim.x` from `plane_size_max` and asserts only that the axes riding
+    /// cubek builds `cube_dim.x` from `plane_size_max` and asserts only that the dimensions riding
     /// `Unit` scope multiply to it. A cut that hands disjoint work to whole planes has no `Unit`
-    /// axis, so this is the width the launch is going to use rather than a guess about the
+    /// dimension, so this is the width the launch is going to use rather than a guess about the
     /// device. Units that share an item and sum across each other need
     /// [`plane_size`](Self::plane_size) instead.
     pub fn dispatch_plane_size(&self) -> u32 {
@@ -583,8 +583,8 @@ pub const TMA_ROW_BYTES: usize = 64;
 pub const ASSUMED_VECTOR_REGISTERS: u32 = 16;
 
 /// 32-bit registers one unit addresses before a kernel spills to memory: NVIDIA's 255. The NVFP4
-/// settings read it, which a device offers only with NVIDIA's block-scaled instruction, and a unit's
-/// register block unrolls no more cells than it.
+/// settings read it, which a device offers only with NVIDIA's block-scaled instruction, and a
+/// unit's register block unrolls no more cells than it.
 pub const UNIT_REGISTERS: u32 = 255;
 
 /// Values of `k` one NVFP4 block scale covers: the format's ([`NVFP4_FORM`]), which no
@@ -721,11 +721,11 @@ mod tests {
         assert_eq!(device(1, 1, false, Some(12)).plane_size(), Ok(1));
         assert_eq!(
             device(8, 128, false, None).plane_dim(),
-            Err(Refusal::PlanesUnavailable)
+            Err(Decline::PlanesUnavailable)
         );
         assert_eq!(
             device(32, 64, true, None).plane_dim(),
-            Err(Refusal::ImprecisePlaneDim { min: 32, max: 64 })
+            Err(Decline::ImprecisePlaneDim { min: 32, max: 64 })
         );
     }
 

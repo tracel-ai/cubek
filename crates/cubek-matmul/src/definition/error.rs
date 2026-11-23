@@ -96,31 +96,31 @@ impl From<VectorizationError> for MatmulSetupError {
 }
 
 /// A launch the tile engine refused past what the device holds is a feature the device lacks, so
-/// a caller falls back as it would without the feature; any other refusal is a configuration the
+/// a caller falls back as it would without the feature; any other decline is a configuration the
 /// routine cannot run.
 #[cfg(feature = "tiled")]
-impl From<cubecl::tile::launch::Refusal> for MatmulSetupError {
-    fn from(refusal: cubecl::tile::launch::Refusal) -> Self {
-        use cubecl::tile::launch::Refusal;
-        match refusal {
-            Refusal::CubePastDevice { units, .. } => {
+impl From<cubecl::tile::launch::Decline> for MatmulSetupError {
+    fn from(decline: cubecl::tile::launch::Decline) -> Self {
+        use cubecl::tile::launch::Decline;
+        match decline {
+            Decline::CubePastDevice { units, .. } => {
                 MatmulAvailabilityError::CubeDimTooBig(CubeDim::new_1d(units)).into()
             }
-            Refusal::CubeShapePastDevice {
+            Decline::CubeShapePastDevice {
                 shape: (x, y, z), ..
             } => MatmulAvailabilityError::CubeDimTooBig(CubeDim::new_3d(x, y, z)).into(),
-            Refusal::GridPastDevice {
+            Decline::GridPastDevice {
                 count: (x, y, z), ..
             } => MatmulAvailabilityError::CubeCountTooBig(CubeCount::new_3d(x, y, z)).into(),
-            Refusal::SharedMemoryPastDevice { bytes, most } => {
+            Decline::SharedMemoryPastDevice { bytes, most } => {
                 MatmulAvailabilityError::SharedMemoryTooBig {
                     requested: bytes,
                     available: most,
                 }
                 .into()
             }
-            Refusal::PlanesUnavailable => MatmulAvailabilityError::PlaneOpsUnavailable.into(),
-            refusal => Self::InvalidConfig(Box::new(refusal)),
+            Decline::PlanesUnavailable => MatmulAvailabilityError::PlaneOpsUnavailable.into(),
+            decline => Self::InvalidConfig(Box::new(decline)),
         }
     }
 }

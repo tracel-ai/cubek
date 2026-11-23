@@ -1,6 +1,6 @@
 use super::{CubeStagedConvRoutine, PlaneWindowConvRoutine};
 use crate::kernels::tiled::{ConvRoutine, ConvTensors, CubeStagedConvSettings, launch_tuned};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 
 /// The routines a caller names, each at a setting or at the one it finds on its own.
@@ -34,7 +34,7 @@ impl ConvRoutineKind {
     /// # Errors
     ///
     /// Why the routine declines the convolution on `hw`.
-    pub fn launch_on(&self, hw: &Hardware, tensors: ConvTensors) -> Result<(), Refusal> {
+    pub fn launch_on(&self, hw: &Hardware, tensors: ConvTensors) -> Result<(), Decline> {
         if tensors.is_empty() {
             return Ok(());
         }

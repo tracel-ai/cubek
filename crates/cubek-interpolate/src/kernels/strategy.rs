@@ -4,7 +4,7 @@ use crate::kernels::{
     CubeInterpolateRoutine, CubeInterpolateRoutineSettings, CubeStagedInterpolateRoutine,
     InterpolateTensors, launch_interpolate_routine,
 };
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 
 /// How an interpolate call picks its kernel: a routine at the settings the selector reads off the
@@ -44,7 +44,7 @@ impl InterpolateKernel {
     /// # Errors
     ///
     /// Why its routine cannot run the problem here.
-    pub fn launch(&self, hw: &Hardware, tensors: &InterpolateTensors) -> Result<(), Refusal> {
+    pub fn launch(&self, hw: &Hardware, tensors: &InterpolateTensors) -> Result<(), Decline> {
         match self {
             Self::Cube(settings) => {
                 launch_interpolate_routine(&CubeInterpolateRoutine, hw, tensors, settings)

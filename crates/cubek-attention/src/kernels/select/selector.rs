@@ -10,7 +10,7 @@ use super::{AttentionKernel, AttentionOpStrategy};
 use crate::kernels::plan::{AttentionPlan, CacheRead, KernelLead, Rebuilt};
 use crate::kernels::tune::{AttentionAutotuneGroups, fastest};
 use crate::kernels::{CubeAttentionKernel, HypercubeAttentionKernel};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_std::plan::{InOrder, Then};
 
 /// The kernel a rule runs at one query position, over a float cache or a packed one.
@@ -22,7 +22,7 @@ const ONE_POSITION_RULE: AttentionKernel =
 const MANY_POSITIONS_PACKED: AttentionKernel = AttentionKernel::Cube(CubeAttentionKernel::Fragment);
 
 /// A pin of a kernel that reads no packed cache, over a packed cache.
-const PACKED_PIN_UNREAD: Refusal = Refusal::Declined {
+const PACKED_PIN_UNREAD: Decline = Decline::Unserved {
     why: "of the microkernel attention routines, only the hypercube shuffles and the staged cube read a packed cache",
 };
 
@@ -48,7 +48,7 @@ pub fn select(
     queries: QueryPositions,
     cache: KvKind,
     groups: AttentionAutotuneGroups,
-) -> Result<AttentionPlan, Refusal> {
+) -> Result<AttentionPlan, Decline> {
     let choice = Choice::of(strategy, queries);
     let float = || choice.plan(queries, CacheRead::Float, groups);
     match (cache, choice) {
@@ -244,7 +244,7 @@ mod tests {
         strategy: AttentionOpStrategy,
         queries: QueryPositions,
         cache: KvKind,
-    ) -> Result<String, cubecl::tile::launch::Refusal> {
+    ) -> Result<String, cubecl::tile::launch::Decline> {
         select(strategy, queries, cache, AttentionAutotuneGroups::default())
             .map(|plan| plan.tree().to_string())
     }

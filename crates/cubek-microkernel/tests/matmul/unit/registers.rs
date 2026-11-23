@@ -2,7 +2,7 @@
 
 use crate::launch::Lines;
 use crate::launch::matmul::{MatmulElements, UnitRegistersLaunch};
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_test_utils::ScopeUnderTest;
@@ -19,7 +19,7 @@ impl MatmulSettings for UnitRegistersMicrokernelSettings {
         elements: MatmulElements,
         lines: Lines,
         steps: usize,
-    ) -> Result<UnitRegistersLaunch, Refusal> {
+    ) -> Result<UnitRegistersLaunch, Decline> {
         UnitRegistersLaunch::new(hw, elements, self, lines, steps)
     }
 }

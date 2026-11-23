@@ -3,7 +3,7 @@
 //!
 //! A routine is the one place a kernel's hardware assumptions are stated. It takes the problem
 //! and the [`Hardware`](crate::Hardware), and returns a blueprint of compile-time decisions and
-//! the grid to run on, or a [`Refusal`](cubecl::tile::launch::Refusal) saying why this device
+//! the grid to run on, or a [`Decline`](cubecl::tile::launch::Decline) saying why this device
 //! cannot run the kernel. Anything it decides is explicit and testable; anything it cannot
 //! decide, it declines.
 //!
@@ -23,15 +23,15 @@
 //!
 //! # The grid is stated twice and checked
 //!
-//! The division counts the grid; the space states it, on whichever axes the cut puts it; the
+//! The division counts the grid; the space states it, on whichever dimensions the cut puts it; the
 //! derivation asserts the two agree and holds every candidate to the device's caps
 //! ([`LaunchSettings::validate`]). A grid this device does not launch declines that candidate.
 //!
-//! # A refusal is for the selector
+//! # A decline is for the selector
 //!
 //! Autotune drops a candidate that returns `Err`, so at least one routine of a family must be
 //! launchable everywhere. A capability query turns `Err` into `false`. Otherwise the launch
-//! expects on it, and the refusal's message is the whole deliverable.
+//! expects on it, and the decline's message is the whole deliverable.
 
 mod base;
 mod candidate;

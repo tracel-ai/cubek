@@ -42,8 +42,8 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     let first_head = heads.region(0usize);
     let shape = first_head.walk();
 
-    // The windows span the keys and one head's queries, the axes of every product out of them;
-    // a score held in fragments needs none.
+    // The windows span the keys and one head's queries, the dimensions of every product out of
+    // them; a score held in fragments needs none.
     let windows =
         ScoreWindows::held_or_open::<EA, ES>(&shape, comptime!(vec![S, Q]), microkernel.holder());
 
@@ -132,12 +132,12 @@ impl KeyGradientSums {
         #[comptime] microkernel: PlaneKeyGradientMicrokernel,
     ) -> KeyGradientSums {
         let mut key = key_gradient
-            .accumulator::<EA>(scores, query, Semiring::SUM_PROD)
+            .accumulator::<EA>(scores, query, Semiring::SumProd)
             .with_scratch(microkernel.sum_scratch());
         key.zero();
 
         let mut value = value_gradient
-            .accumulator::<EA>(scores, out_gradient, Semiring::SUM_PROD)
+            .accumulator::<EA>(scores, out_gradient, Semiring::SumProd)
             .with_scratch(microkernel.sum_scratch());
         value.zero();
 

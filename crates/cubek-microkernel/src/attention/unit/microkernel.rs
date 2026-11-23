@@ -32,7 +32,7 @@ pub fn unit_attention_microkernel<EA: Float>(
     #[comptime] microkernel: UnitAttentionMicrokernel,
 ) {
     let value_matmul = microkernel.value.software_matmul();
-    let mut sum = out.register_accumulator::<EA>(bias, value, value_matmul, Semiring::SUM_PROD);
+    let mut sum = out.register_accumulator::<EA>(bias, value, value_matmul, Semiring::SumProd);
     sum.zero();
     let (value, value_factor) = value.factor(&sum);
 
@@ -83,7 +83,7 @@ pub(crate) fn unit_attention_step<EA: Float>(
     #[comptime] microkernel: UnitAttentionMicrokernel,
 ) {
     let score_matmul = microkernel.score.software_matmul();
-    let mut score = bias.register_accumulator::<EA>(query, key, score_matmul, Semiring::SUM_PROD);
+    let mut score = bias.register_accumulator::<EA>(query, key, score_matmul, Semiring::SumProd);
     score.zero();
     let (key, key_factor) = key.factor_whole();
 

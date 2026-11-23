@@ -1,10 +1,10 @@
 //! What every max pool microkernel computes alone: each output cell the largest tap of its window
 //! that lies inside the input.
 
-use crate::launch::pool::{Channels, PoolLaunch, WindowAxis};
+use crate::launch::pool::{Channels, PoolLaunch, WindowDimension};
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
@@ -34,7 +34,7 @@ impl HostPool {
         let ([h, w], c) = (launch.input, launch.channels);
         let [rows, cols] = launch.windows;
         let [out_h, out_w] = launch.outputs();
-        let inside = |window: WindowAxis, output: usize, tap: usize, extent: usize| {
+        let inside = |window: WindowDimension, output: usize, tap: usize, extent: usize| {
             (output * window.stride + tap * window.dilation)
                 .checked_sub(window.padding)
                 .filter(|&at| at < extent)
@@ -68,7 +68,7 @@ pub(crate) struct Pool {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PoolCase {
     pub element: ElemType,
-    pub windows: [WindowAxis; 2],
+    pub windows: [WindowDimension; 2],
     pub input: [usize; 2],
     /// Channels per unit of the plane: the case has `channel_block · plane · walks` channels.
     pub channel_block: usize,
@@ -79,7 +79,7 @@ impl Pool {
     /// # Errors
     ///
     /// Why the device runs no max pool microkernel at `case`.
-    fn launch_at(&self, case: &PoolCase) -> Result<PoolLaunch, Refusal> {
+    fn launch_at(&self, case: &PoolCase) -> Result<PoolLaunch, Decline> {
         let per_unit = case.channel_block;
         let count = per_unit * self.hw.dispatch_plane_size() as usize * case.walks;
         PoolLaunch::new(
@@ -94,7 +94,7 @@ impl Pool {
 impl ScopeUnderTest for Pool {
     type Case = PoolCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let launch = self.launch_at(case)?;
         let windowed = launch.windowed;
         let ([h, w], c) = (windowed.input, windowed.channels);

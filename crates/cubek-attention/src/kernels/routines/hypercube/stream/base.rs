@@ -5,7 +5,7 @@ use crate::kernels::{
     HypercubeMerge, PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::{Space, StageStorage};
 use cubek_microkernel::attention::cube::CubeAttentionPlane;
 use cubek_microkernel::attention::hypercube::{
@@ -67,7 +67,7 @@ pub type HypercubeStreamFragmentAttentionRoutineBlueprint =
 impl HypercubeStreamFragmentAttentionRoutine {
     /// What it declines on a device that does not say how many workers it has, the count its grid
     /// is sized by.
-    pub const UNSIZED: Refusal = Refusal::Declined {
+    pub const UNSIZED: Decline = Decline::Unserved {
         why: "the stream routine sizes its grid by the device's workers, which this device does \
               not report",
     };
@@ -77,7 +77,7 @@ impl HypercubeStreamFragmentAttentionRoutine {
     /// worker never finished its launch, while the same box over one cube a worker, the cube
     /// routine and the second-launch routine match the reference with it. Until that is
     /// understood, this routine keeps the boxes whose value contracts a stage in one call.
-    pub const SCORE_RUNS: Refusal = Refusal::Declined {
+    pub const SCORE_RUNS: Decline = Decline::Unserved {
         why: "the stream routine keeps a plane's score in fragments only where the value \
               contracts a stage's keys in one call",
     };
@@ -87,7 +87,7 @@ impl HypercubeStreamFragmentAttentionRoutine {
     fn cubes(
         hw: &Hardware,
         settings: &HypercubeStreamFragmentAttentionRoutineSettings,
-    ) -> Result<NonZeroUsize, Refusal> {
+    ) -> Result<NonZeroUsize, Decline> {
         let workers = hw
             .workers()
             .and_then(|workers| NonZeroUsize::new(workers as usize))
@@ -115,7 +115,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// ([`HypercubeAttentionMicrokernelSettings::listed`]) on one cube a worker, then two.
     /// Nothing where one cube's stores do not reach another within a launch, or where the device
     /// does not say how many workers it has, where every one of them declines.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         if HypercubeMerge::LastArrival.admits(hw).is_err() || hw.workers().is_none() {
             return Vec::new();
         }
@@ -123,7 +123,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             .into_iter()
             .flat_map(|cubes| {
                 HypercubeAttentionMicrokernelSettings::FRAGMENT
-                    .listed()
+                    .listed(hw)
                     .into_iter()
                     .map(move |microkernel| Self::Settings {
                         microkernel,
@@ -136,7 +136,6 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// Its cubes' microkernel's, and the output an element at a time: the last arrival merges a
     /// row's slots one element a unit, as the slots are written, and writes them as it holds them.
     fn vectorize(
-        &self,
         microkernel: &HypercubeAttentionMicrokernel,
         partitioning: &AttentionPartitioning,
         vectorization: &mut Vectorization<AttentionOperand>,
@@ -151,7 +150,6 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// many steps of keys and values as that, whichever boxes they lie in, and leaves a partial
     /// for each box it shares, which is at most two.
     fn estimate(
-        &self,
         problem: &AttentionRoutineProblem,
         blueprint: &HypercubeStreamFragmentAttentionRoutineBlueprint,
         grid: &Grid,
@@ -167,7 +165,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
             &cube
                 .extents()
                 .into_iter()
-                .map(|(axis, extent)| (axis, if axis == S { run } else { extent }))
+                .map(|(dimension, extent)| (dimension, if dimension == S { run } else { extent }))
                 .collect::<Vec<_>>(),
         );
         blueprint
@@ -181,11 +179,10 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// asks for, its stages held as its planes read them, and the word it learns it came last in.
     /// Declines a cache of pages, which a run would walk across, and a packed one.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &AttentionRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         if let AttentionCacheLayout::Packed(_) = problem.cache {
             return Err(ATTENTION_PACKED_UNREAD);
         }
@@ -195,17 +192,13 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         HypercubeMerge::LastArrival.admits(hw)?;
         let item = problem.work_item();
         let microkernel = HypercubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
-        microkernel
-            .cube
-            .plane
-            .reads_stage(microkernel.cube.settings.layout)?;
         if let CubeAttentionPlane::Fragment(plane) = &microkernel.cube.plane
             && plane.reads_keys_in_runs()
         {
             return Err(Self::SCORE_RUNS);
         }
         if microkernel.cube.page_steps.is_some() {
-            return Err(Refusal::Declined {
+            return Err(Decline::Unserved {
                 why: "the stream routine's runs cross from one box's keys into the next's, which \
                       a cache of pages does not lie in",
             });
@@ -223,7 +216,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint = AttentionBlueprint::new(
             hw,
             problem,

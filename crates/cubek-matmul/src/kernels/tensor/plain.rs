@@ -4,9 +4,9 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::std::tensor::is_contiguous;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Axis, Geometry, Projection};
+use cubecl::tile::{Dimension, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Strides, Tiling};
@@ -96,49 +96,6 @@ impl PlainTensor {
             meta,
             ElemType::UInt(UIntKind::U32),
         ))
-    }
-
-    /// A zero-filled tensor of this one's element, its `axis` grown to `extent`, laid out in this
-    /// one's order of strides: what a tuning round measures in place of a call shorter than its
-    /// key's bucket, so the winner is elected on the bucket's longest launch whatever order the
-    /// calls come in.
-    ///
-    /// `None` where this one is tiled, where `extent` does not grow `axis`, or where a fresh buffer
-    /// cannot repeat the layout: a strided or broadcast buffer.
-    pub fn zeros_grown(&self, client: &Client, axis: usize, extent: usize) -> Option<Self> {
-        if self.is_tiled() {
-            return None;
-        }
-        let (shape, strides) = (self.binding.shape.as_slice(), &self.binding.strides[..]);
-        if extent <= shape[axis] {
-            return None;
-        }
-        // The axes innermost first; a dense buffer's strides are the running product of the extents
-        // inside them. An axis of one has no step to repeat.
-        let mut order: Vec<usize> = (0..shape.len()).collect();
-        order.sort_by_key(|&a| (strides[a], shape[a] != 1));
-        let mut step = 1;
-        for &a in &order {
-            if shape[a] != 1 && strides[a] != step {
-                return None;
-            }
-            step *= shape[a];
-        }
-        let mut grown = shape.to_vec();
-        grown[axis] = extent;
-        let mut grown_strides = vec![0; grown.len()];
-        let mut step = 1;
-        for &a in &order {
-            grown_strides[a] = step;
-            step *= grown[a];
-        }
-        let memory = client.create_from_slice(&vec![0u8; step * self.elem.size()]);
-        Some(Self::of_handle(TensorHandle::new(
-            memory,
-            Shape::from(grown),
-            grown_strides,
-            self.elem,
-        )))
     }
 
     /// Whether `client`'s runtime computes in this tensor's element and stores it in a buffer:
@@ -271,10 +228,10 @@ impl PlainTensor {
     pub fn restated(
         &self,
         blocks: &MatmulBlocks,
-        rows: Axis,
-        columns: Axis,
-        batches: &[Axis],
-    ) -> (Self, Vec<Axis>) {
+        rows: Dimension,
+        columns: Dimension,
+        batches: &[Dimension],
+    ) -> (Self, Vec<Dimension>) {
         let (shape, strides) = (&self.binding.shape, &self.binding.strides);
         let kept = batches.len();
         let dense = match kept {
@@ -310,7 +267,7 @@ impl PlainTensor {
     /// On a view the two-dim projection cannot address.
     pub fn in_buffer_order(self) -> Self {
         let (shape, strides) = (&self.binding.shape, &self.binding.strides);
-        let projection = Projection::direct(&[Axis(0), Axis(1)]);
+        let projection = Projection::direct(&[Dimension(0), Dimension(1)]);
         let dims = Geometry::new(&[(shape[0], strides[0]), (shape[1], strides[1])]);
         assert!(
             shape.rank() == 2 && projection.is_addressable(&dims),
@@ -498,6 +455,6 @@ impl From<&PlainTensor> for Placement {
 
 /// What a launch declines on a device whose runtime does not compute in the operands' element and
 /// store it in a buffer, as WGSL does not bf16: the kernel would fail to compile there.
-pub const ELEMENT_NOT_ON_DEVICE: Refusal = Refusal::Declined {
+pub const ELEMENT_NOT_ON_DEVICE: Decline = Decline::Unserved {
     why: "the device's runtime does not compute in this element and store it in a buffer",
 };

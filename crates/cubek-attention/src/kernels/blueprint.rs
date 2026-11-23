@@ -28,12 +28,12 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
     /// `microkernel` placed by `partitioning`, shared memory laid out as `shared_memory`: the
     /// blueprint once its widths are settled.
     ///
-    /// To the requirements the routine and its microkernel enqueued in `vectorization`, the
-    /// binding adds its own: each operand's buffer alignment, where its view starts, and the
-    /// masking of an operand whose innermost bound axis the tiles overhang. The keys and values
-    /// are read no further than the attended keys, a length only the kernel knows, so an operand
-    /// lined along `S` is read one element at a time. Each operand then binds at the widest width
-    /// this device reads its element in that they admit.
+    /// To the requirements the routine and its microkernel enqueued in `vectorization`, the binding
+    /// adds its own: each operand's buffer alignment, where its view starts, and the masking of an
+    /// operand whose innermost bound dimension the tiles overhang. The keys and values are read no
+    /// further than the attended keys, a length only the kernel knows, so an operand lined along
+    /// `S` is read one element at a time. Each operand then binds at the widest width this device
+    /// reads its element in that they admit.
     pub fn new(
         hw: &Hardware,
         problem: &AttentionRoutineProblem,

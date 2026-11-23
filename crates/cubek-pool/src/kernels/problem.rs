@@ -1,7 +1,7 @@
 //! The problem a routine computes.
 
 use crate::kernels::geometry::TileGeometry;
-use crate::kernels::space::{CHANNEL, PoolSpace, WindowAxis};
+use crate::kernels::space::{CHANNEL, PoolSpace, WindowDimension};
 use cubecl::ir::ElemType;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
@@ -19,7 +19,7 @@ pub struct PoolRoutineProblem {
     pub output: [usize; 2],
     pub channels: usize,
     /// The window along the rows, then along the columns.
-    pub windows: [WindowAxis; 2],
+    pub windows: [WindowDimension; 2],
     /// The element both tensors are stored in.
     pub element: ElemType,
     /// The alignment of the input's and the output's buffers in elements.

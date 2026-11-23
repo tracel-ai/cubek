@@ -1,5 +1,5 @@
 use crate::kernels::tiled::{ConvProblem, ConvRoles};
-use cubecl::tile::Axis;
+use cubecl::tile::Dimension;
 
 /// What one step of the contraction, the instruction's `k` cells, is made of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ impl ConvStep {
 
     /// The axis a stage walks and the steps along it: the contracted axis alone, or the second
     /// one where it shares the step.
-    pub(super) fn walk(self, roles: &ConvRoles, problem: &ConvProblem) -> (Axis, usize) {
+    pub(super) fn walk(self, roles: &ConvRoles, problem: &ConvProblem) -> (Dimension, usize) {
         let (axis, step) = match self {
             Self::Alone { k } => (roles.axes().k, k),
             Self::Beside { beside, .. } => (roles.contracted.beside, beside),

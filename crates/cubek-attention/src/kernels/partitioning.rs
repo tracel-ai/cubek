@@ -1,6 +1,6 @@
 use core::num::NonZeroUsize;
 use cubecl::tile::{
-    Axis, Levels, Partitioning, Space,
+    Dimension, Levels, Partitioning, Space,
     space::{ComputeScope, Coverage, PlaneOrder, UnitCube},
 };
 use cubek_microkernel::attention::{B, G, KV, Q, S};
@@ -61,12 +61,11 @@ impl AttentionPartitioning {
     /// One cube a box of rows: the count every routine but the hypercube's distributes.
     pub const ONE_CUBE_A_BOX: NonZeroUsize = NonZeroUsize::MIN;
 
-    /// `space`, every axis of the problem, partitioned with `step` the levels inside one step of
-    /// the walk through `S`, and `cubes_along_keys` cubes sharing every box
+    /// `space`, every dimension of the problem, partitioned with `step` the levels inside one step
+    /// of the walk through `S`, and `cubes_along_keys` cubes sharing every box
     /// ([`ONE_CUBE_A_BOX`](Self::ONE_CUBE_A_BOX) for a box to itself), each taking a run of the
     /// walk (the tile DSL's [`Levels::across`]), the boxes of queries taken in `queries` order.
-    /// With
-    /// `page_steps`, the walk takes a page of that many steps at a time.
+    /// With `page_steps`, the walk takes a page of that many steps at a time.
     ///
     /// The count is the one asked for, whatever the keys: it is part of what a kernel compiles,
     /// and the keys are the launch's, any length a cache holds. A buffer of fewer steps than the
@@ -119,7 +118,7 @@ impl AttentionPartitioning {
             &tile
                 .extents()
                 .into_iter()
-                .map(|(axis, extent)| (axis, if axis == S { run } else { extent }))
+                .map(|(dimension, extent)| (dimension, if dimension == S { run } else { extent }))
                 .collect::<Vec<_>>(),
         );
         Self {
@@ -130,10 +129,10 @@ impl AttentionPartitioning {
         }
     }
 
-    /// `space`, every axis of the problem, partitioned with `step` the levels inside one step of
-    /// the walk through `S`, every box of queries and heads holding the whole of `S`, and the steps
-    /// of each batch and key head's boxes laid end to end and shared by `cubes` cubes, each taking
-    /// a run that may start inside one box and end inside the next (the tile DSL's
+    /// `space`, every dimension of the problem, partitioned with `step` the levels inside one step
+    /// of the walk through `S`, every box of queries and heads holding the whole of `S`, and the
+    /// steps of each batch and key head's boxes laid end to end and shared by `cubes` cubes, each
+    /// taking a run that may start inside one box and end inside the next (the tile DSL's
     /// [`Levels::shared_by`]): every cube walks as many steps as any other, however the boxes
     /// divide them.
     pub fn shared(space: Space, step: Levels, cubes: NonZeroUsize) -> Self {
@@ -153,8 +152,8 @@ impl AttentionPartitioning {
         }
     }
 
-    /// `space`, every axis of the problem, partitioned with `inside` a unit's box, every box of
-    /// queries and heads a unit of the launch's, one batch and key head each, the units taking
+    /// `space`, every dimension of the problem, partitioned with `inside` a unit's box, every box
+    /// of queries and heads a unit of the launch's, one batch and key head each, the units taking
     /// them in row order, the queries fastest, grouped in cubes of `cube`. A cube's box is the
     /// units it holds, laid along the queries.
     pub fn over_units(space: Space, inside: Levels, cube: UnitCube) -> Self {
@@ -163,8 +162,8 @@ impl AttentionPartitioning {
         Self::spanning_launch(space, levels, ComputeScope::Unit, units)
     }
 
-    /// `space`, every axis of the problem, partitioned with `inside` a plane's box, every box of
-    /// queries and heads a plane of the launch's, one batch and key head each, the planes taking
+    /// `space`, every dimension of the problem, partitioned with `inside` a plane's box, every box
+    /// of queries and heads a plane of the launch's, one batch and key head each, the planes taking
     /// them in `order`. A cube's box is the planes it holds, laid along the queries.
     pub fn over_planes(space: Space, inside: Levels, order: PlaneOrder) -> Self {
         let planes = order.planes_per_cube();
@@ -182,9 +181,9 @@ impl AttentionPartitioning {
             &instance
                 .extents()
                 .into_iter()
-                .map(|(axis, extent)| match axis == Q {
-                    true => (axis, extent * per_cube),
-                    false => (axis, extent),
+                .map(|(dimension, extent)| match dimension == Q {
+                    true => (dimension, extent * per_cube),
+                    false => (dimension, extent),
                 })
                 .collect::<Vec<_>>(),
         );
@@ -250,12 +249,12 @@ impl AttentionPartitioning {
         self.partitioning.leaf()
     }
 
-    /// Whether the tiles overhang `axis`: a tile the problem's edge cuts short along it.
-    pub fn overhangs(&self, axis: Axis) -> bool {
-        self.partitioning.overhangs(axis)
+    /// Whether the tiles overhang `dimension`: a tile the problem's edge cuts short along it.
+    pub fn overhangs(&self, dimension: Dimension) -> bool {
+        self.partitioning.overhangs(dimension)
     }
 
-    /// The problem's space: every axis at its extent, or dynamic where a launch states it.
+    /// The problem's space: every dimension at its extent, or dynamic where a launch states it.
     pub fn space(&self) -> &Space {
         self.partitioning.space()
     }
@@ -272,7 +271,7 @@ impl AttentionPartitioning {
     /// Boxes of queries and heads one batch and key head of the problem holds.
     pub fn boxes(&self) -> usize {
         let (space, cube) = (self.partitioning.space(), self.cube_space());
-        let boxes = |axis| space.extent(axis).div_ceil(cube.extent(axis));
+        let boxes = |dimension| space.extent(dimension).div_ceil(cube.extent(dimension));
         boxes(Q) * boxes(G)
     }
 

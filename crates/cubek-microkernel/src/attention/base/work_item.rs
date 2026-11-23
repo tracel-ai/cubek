@@ -1,10 +1,10 @@
 use crate::attention::{AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S};
 use crate::matmul::{
-    MatmulAxes, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulDestination, MatmulDimensions, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulWorkItem,
 };
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::{Axis, Space};
+use cubecl::tile::{Dimension, FragmentSource, Space};
 use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::StagedOperand;
 
@@ -17,8 +17,8 @@ pub struct AttentionWorkItem {
     pub sum: ElemType,
     /// Which elements the query, keys and values may be read in.
     pub reading: AttentionReading,
-    /// Positions a page of the cache holds; `None` where the cache is not paged.
-    pub page_size: Option<usize>,
+    /// How the keys and values lie in memory.
+    pub cache: AttentionCacheKind,
     /// Query heads per key head.
     pub group: usize,
     pub head_dim: usize,
@@ -33,6 +33,17 @@ pub enum AttentionReading {
     /// The keys and values as stored only: a pool read through a page table is bound as stored,
     /// never as words. The query, which no table places, may still be converted.
     AsStored,
+}
+
+/// How an attention's keys and values lie in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AttentionCacheKind {
+    /// As sequences of floats, each side in its own element.
+    Sequences,
+    /// In pools of pages of `page_size` positions of floats, each side in its own element.
+    Pages { page_size: usize },
+    /// Codebook indices packed into words, which a stage's fill decodes as it reads them.
+    Packed,
 }
 
 /// The elements an attention's operands reach its two matrix instructions in: the query and the
@@ -139,6 +150,26 @@ impl AttentionWorkItem {
         pairs.into_iter().chain(tf32)
     }
 
+    /// The keys and the values as a kernel reading them at `read` opens its sums on them, in the
+    /// order [`stage`](Self::stage) stages them: values its stages' fill decodes
+    /// ([`FragmentSource::Decoded`]) where they lie packed, or are read at another element than
+    /// they are stored in, bound as their words ([`served_kernel_elements`]); values of their
+    /// element otherwise.
+    ///
+    /// [`served_kernel_elements`]: Self::served_kernel_elements
+    pub fn stage_sources(&self, read: AttentionRead) -> [FragmentSource; 2] {
+        let source = |stored: ElemType, read: ElemType| match (self.cache, stored == read) {
+            (AttentionCacheKind::Sequences | AttentionCacheKind::Pages { .. }, true) => {
+                FragmentSource::Values(read)
+            }
+            (AttentionCacheKind::Packed, _) | (_, false) => FragmentSource::Decoded,
+        };
+        [
+            source(self.elements.key, read.score),
+            source(self.elements.value, read.value),
+        ]
+    }
+
     /// This work item with its query and keys read in `read.score` and its values in
     /// `read.value`; the output stays as it is stored.
     pub fn read_as(&self, read: AttentionRead) -> AttentionWorkItem {
@@ -171,7 +202,7 @@ impl AttentionWorkItem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes { m: Q, n: S, k: D },
+            dimensions: MatmulDimensions { m: Q, n: S, k: D },
             reading: MatmulReading::AsStored,
         }
     }
@@ -194,15 +225,15 @@ impl AttentionWorkItem {
             blocks: None,
             rows: MatmulRows::Tiled,
             destination: MatmulDestination::Buffer,
-            axes: MatmulAxes { m: Q, n: DV, k: S },
+            dimensions: MatmulDimensions { m: Q, n: DV, k: S },
             reading: MatmulReading::AsStored,
         }
     }
 
-    /// One stage of `keys` keys and their values, each over its own axes and bound innermost
-    /// along the axis its lines run along, the keys in `key_order`.
+    /// One stage of `keys` keys and their values, each over its own dimensions and bound innermost
+    /// along the dimension its lines run along, the keys in `key_order`.
     pub fn stage(&self, keys: usize, key_order: BindingOrder) -> [StagedOperand; 2] {
-        let operand = |operand: AttentionOperand, row: Axis, extent: usize| {
+        let operand = |operand: AttentionOperand, row: Dimension, extent: usize| {
             StagedOperand::new(
                 self.elements.get(operand),
                 Space::new(&[(S, keys), (row, extent)]),

@@ -7,9 +7,9 @@ use crate::kernels::tiled::{
 };
 use core::num::NonZeroUsize;
 use cubecl::prelude::SequenceArg;
-use cubecl::tile::Axis;
-use cubecl::tile::launch::{Refusal, VectorRequirement, Vectorization};
-use cubecl::tile::ops::matmul::LhsVectorAxis;
+use cubecl::tile::Dimension;
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
+use cubecl::tile::ops::matmul::LhsVectorDimension;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_matmul::kernels::{UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings};
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
@@ -150,10 +150,10 @@ impl PlaneWindowConvRoutine {
     pub fn check_lhs_vector_axis(
         problem: &ConvProblem,
         width: usize,
-    ) -> Result<LhsVectorAxis, Refusal> {
+    ) -> Result<LhsVectorDimension, Decline> {
         let roles = problem.roles();
         let space = problem.space();
-        LhsVectorAxis::of(
+        LhsVectorDimension::of(
             &space.subspace(&roles.lhs),
             &space.subspace(&roles.rhs),
             &space.subspace(&roles.free.in_order()),
@@ -163,7 +163,7 @@ impl PlaneWindowConvRoutine {
 
     /// The axes the planes are laid over, and the extent of each as the launch reads it: a plane
     /// past the end of one has nothing to do.
-    fn bounds(problem: &ConvProblem) -> (Vec<Axis>, SequenceArg<usize>) {
+    fn bounds(problem: &ConvProblem) -> (Vec<Dimension>, SequenceArg<usize>) {
         let axes = problem.roles().plane_axes();
         let mut extents = SequenceArg::new();
         for &axis in &axes {
@@ -178,13 +178,12 @@ impl PlaneWindowConvRoutine {
     /// vectorized together with the input, one along the columns together with the output where
     /// that runs along them too.
     fn vectorization(
-        &self,
         problem: &ConvProblem,
         microkernel: &UnitRegistersMicrokernel,
         partitioning: &ConvPartitioning,
     ) -> Vectorization<MatmulOperand> {
         let mut vectorization = Vectorization::new();
-        self.vectorize(microkernel, partitioning, &mut vectorization);
+        Self::vectorize(microkernel, partitioning, &mut vectorization);
         let roles = problem.roles();
         let axes = roles.axes();
         let runs_along = |axis| axes.dim(axis);
@@ -240,7 +239,7 @@ impl Routine for PlaneWindowConvRoutine {
     /// cube order the matmul states for a CPU runtime
     /// ([`UnitRegistersMatmulRoutineSettings::cpu_col_rhs`]), which this floor takes on every
     /// device.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let base = UnitRegistersMatmulRoutineSettings::cpu_col_rhs(hw);
         [UnitBlock::Largest, UnitBlock::OneCell]
             .map(|block| Self::Settings {
@@ -255,7 +254,6 @@ impl Routine for PlaneWindowConvRoutine {
     /// The runs the input and the rhs are read in along their contiguous axes: the rest of a
     /// block's accesses depend on the problem, which [`Self::vectorization`] states.
     fn vectorize(
-        &self,
         _: &UnitRegistersMicrokernel,
         partitioning: &ConvPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -266,7 +264,6 @@ impl Routine for PlaneWindowConvRoutine {
     /// What one unit's box moves and computes: its rows of the input and its columns of the rhs
     /// over every contracted cell, read from global memory, and its block written once.
     fn estimate(
-        &self,
         problem: &ConvProblem,
         blueprint: &Self::Blueprint,
         grid: &Grid,
@@ -286,11 +283,10 @@ impl Routine for PlaneWindowConvRoutine {
     /// over the rows and the across axis, its units taking blocks along the columns in turns. The
     /// plane is as wide as the device dispatches, since units cooperate on nothing.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &ConvProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         let roles = problem.roles();
         let (rows, columns) = BlockForm::of(&roles).size(settings.block, hw, problem.sum);
         let along = |count: usize| NonZeroUsize::new(count).unwrap_or(NonZeroUsize::MIN);
@@ -316,7 +312,7 @@ impl Routine for PlaneWindowConvRoutine {
             settings.cube_order,
         );
         let partitioning = ConvPartitioning::unit_registers(problem, &microkernel, blocks, order);
-        let vectorization = self.vectorization(problem, &microkernel, &partitioning);
+        let vectorization = Self::vectorization(problem, &microkernel, &partitioning);
         let cube = CubeResources {
             plane_width,
             shared_memory: 0,

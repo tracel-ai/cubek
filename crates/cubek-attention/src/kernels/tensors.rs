@@ -4,18 +4,19 @@ use crate::kernels::conversion::converted;
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
     AttentionRoutineProblem, AttentionScoring, CacheScales, KvSource, PAGED_PACKED_UNREAD,
-    PackedAttentionCache, QueryAxis, SCALED_PACKED_UNREAD,
+    PackedAttentionCache, QueryDimension, SCALED_PACKED_UNREAD,
 };
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::TensorArg;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Delivery, Refusal};
+use cubecl::tile::launch::{Decline, Delivery};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::tile::{
-    Axis, Indexing, Launcher, Projection, TileSpec, TileTensorLaunch, launch::Grid as LaunchGrid,
+    Dimension, Indexing, Launcher, Projection, TileSpec, TileTensorLaunch,
+    launch::Grid as LaunchGrid,
 };
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
@@ -28,30 +29,30 @@ use cubek_std::routine::Grid;
 
 /// What a launch declines before preparing anything: an element the routines do not take, or
 /// operands of two elements other than an FP8 score's.
-pub const ATTENTION_ELEMENT_UNVERIFIED: Refusal = Refusal::Declined {
+pub const ATTENTION_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the microkernel attention takes an f32, f16 or bf16 query, and keys and values each in \
           one of those or in e4m3",
 };
 
 /// What a packed launch declines before preparing anything: an operand packed at a width the
 /// decode does not read, two, four and eight bits being the ones it does.
-pub const PACKED_WIDTH_UNREAD: Refusal = Refusal::Declined {
+pub const PACKED_WIDTH_UNREAD: Decline = Decline::Unserved {
     why: "the packed attention reads operands of two, four and eight bits",
 };
 
 /// What a launch declines before preparing anything: query heads that do not split evenly over
 /// the key heads.
-pub const ATTENTION_GROUP_UNEVEN: Refusal = Refusal::Declined {
+pub const ATTENTION_GROUP_UNEVEN: Decline = Decline::Unserved {
     why: "the microkernel attention's query heads are a whole group per key head",
 };
 
 /// The tensors of one attention on one client: the query, the cache it reads, each sequence's
 /// attended length, and the output.
 ///
-/// Every operand is read where it lies, by its strides: the query's heads are viewed as a group
-/// per key head, `[b, kv, g, q, d]`, and the output, allocated `[b, q, h, dv]` so that a token's
-/// heads are adjacent, is written through the same view. At a single position the group's heads
-/// lie along the query axis instead ([`QueryAxis`]). Nothing is copied. The problem the tensors
+/// Every operand is read where it lies, by its strides: the query's heads are viewed as a group per
+/// key head, `[b, kv, g, q, d]`, and the output, allocated `[b, q, h, dv]` so that a token's heads
+/// are adjacent, is written through the same view. At a single position the group's heads lie along
+/// the query dimension instead ([`QueryDimension`]). Nothing is copied. The problem the tensors
 /// state is read off them ([`problem`](Self::problem)).
 #[derive(Clone)]
 pub struct AttentionTensors {
@@ -70,7 +71,7 @@ pub struct AttentionTensors {
     /// The output as the kernel writes it, `[b, kv, g, q, dv]` over `out`'s buffer.
     out_view: PlainTensor,
     scoring: AttentionScoring,
-    axis: QueryAxis,
+    dimension: QueryDimension,
     /// The `u32` counters the cubes of a box count themselves in at, held by the caller across
     /// launches ([`with_arrivals`](Self::with_arrivals)); `None` where each launch makes its own.
     arrivals: Option<PlainTensor>,
@@ -94,7 +95,7 @@ impl core::fmt::Debug for AttentionTensors {
             .field("out", &self.out)
             .field("out_view", &self.out_view)
             .field("scoring", &self.scoring)
-            .field("axis", &self.axis)
+            .field("dimension", &self.dimension)
             .field("arrivals", &self.arrivals)
             .field("logsumexp", &self.logsumexp)
             .field("mask", &self.mask)
@@ -132,7 +133,7 @@ impl AttentionTensors {
         queries: AttentionQueries,
         kv: KvSource,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let (query, lengths, query_runs) = match queries {
             AttentionQueries::Dense { query, lengths } => (query, lengths, None),
             AttentionQueries::Packed {
@@ -192,7 +193,7 @@ impl AttentionTensors {
         value: PlainTensor,
         lengths: PlainTensor,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let queries = AttentionQueries::Dense { query, lengths };
         let kv = KvSource::new(AttentionCache::Float { key, value });
         Self::attention(client, queries, kv, scoring)
@@ -219,7 +220,7 @@ impl AttentionTensors {
         pages: PlainTensor,
         lengths: PlainTensor,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let queries = AttentionQueries::Dense { query, lengths };
         let kv = KvSource::new(AttentionCache::Float { key, value }).paged(pages);
         Self::attention(client, queries, kv, scoring)
@@ -242,7 +243,7 @@ impl AttentionTensors {
         cache: PackedAttentionCache,
         lengths: PlainTensor,
         scoring: AttentionScoring,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let queries = AttentionQueries::Dense { query, lengths };
         let kv = KvSource::new(AttentionCache::Packed(cache));
         Self::attention(client, queries, kv, scoring)
@@ -276,7 +277,7 @@ impl AttentionTensors {
         key: &PlainTensor,
         value: &PlainTensor,
         pages: Option<&PlainTensor>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         Self::admit_elements(client, query, key, value)?;
         let (q_shape, k_shape, v_shape) = (query.shape(), key.shape(), value.shape());
         assert!(
@@ -329,7 +330,7 @@ impl AttentionTensors {
         client: &Client,
         query: &PlainTensor,
         cache: &PackedAttentionCache,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         Self::admit_element(client, query)?;
         if ![cache.bits.key, cache.bits.value]
             .iter()
@@ -349,8 +350,9 @@ impl AttentionTensors {
     /// The elements of float operands, where the routines take them and `client`'s device runs
     /// them: the query in an element the device computes in, and the keys and the values each in
     /// one of those or in `e4m3` ([`VERIFIED_CACHE`](Self::VERIFIED_CACHE)), whatever the other
-    /// side's, where the device stores it. A routine reads each side as stored or converted as
-    /// it stages it ([`AttentionWorkItem::readings`](cubek_microkernel::attention::AttentionWorkItem::readings)),
+    /// side's, where the device stores it. A routine reads each side as stored or converted as it
+    /// stages it
+    /// ([`AttentionWorkItem::readings`](cubek_microkernel::attention::AttentionWorkItem::readings)),
     /// and declines a pair it reads neither way.
     ///
     /// # Errors
@@ -361,7 +363,7 @@ impl AttentionTensors {
         query: &PlainTensor,
         key: &PlainTensor,
         value: &PlainTensor,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         Self::admit_element(client, query)?;
         for side in [key, value] {
             let verified =
@@ -386,7 +388,7 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// [`ATTENTION_ELEMENT_UNVERIFIED`] and [`ELEMENT_NOT_ON_DEVICE`].
-    fn admit_element(client: &Client, query: &PlainTensor) -> Result<(), Refusal> {
+    fn admit_element(client: &Client, query: &PlainTensor) -> Result<(), Decline> {
         if !Self::VERIFIED.contains(&query.elem) {
             return Err(ATTENTION_ELEMENT_UNVERIFIED);
         }
@@ -401,7 +403,7 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// [`ATTENTION_GROUP_UNEVEN`].
-    fn group(query: &PlainTensor, kv_heads: usize) -> Result<usize, Refusal> {
+    fn group(query: &PlainTensor, kv_heads: usize) -> Result<usize, Decline> {
         let heads = query.shape()[1];
         if kv_heads == 0 || !heads.is_multiple_of(kv_heads) {
             return Err(ATTENTION_GROUP_UNEVEN);
@@ -410,7 +412,7 @@ impl AttentionTensors {
     }
 
     /// The tensors of an attention of `query`, `group` heads a key head, over `kv`: the output
-    /// allocated, and the query and the output viewed along the query axis. Where `query_runs`
+    /// allocated, and the query and the output viewed along the query dimension. Where `query_runs`
     /// says every sequence's queries lie end to end, the output does too, `[Σ q_b, h, dv]`, viewed
     /// as the query is, and the queries are read along
     /// their positions.
@@ -432,14 +434,18 @@ impl AttentionTensors {
         // Dense, as every arm of the attention seam allocates it: a token's heads are one row, so
         // the caller merges them by a reshape. The views below are a factorization of these
         // strides, which a pitched allocation would invalidate.
-        let (axis, out, out_plain) = match &query_runs {
+        let (dimension, out, out_plain) = match &query_runs {
             None => {
                 let (out, out_plain) = PlainTensor::empty_contiguous(
                     client,
                     [batch, queries, heads, value].into(),
                     out_elem,
                 );
-                (QueryAxis::new(queries, scoring.visibility), out, out_plain)
+                (
+                    QueryDimension::new(queries, scoring.visibility),
+                    out,
+                    out_plain,
+                )
             }
             Some(_) => {
                 let (out, end_to_end) =
@@ -449,19 +455,19 @@ impl AttentionTensors {
                     [batch, queries, heads, value],
                     [0, strides[0], strides[1], strides[2]],
                 ));
-                (QueryAxis::Positions, out, out_plain)
+                (QueryDimension::Positions, out, out_plain)
             }
         };
         Self {
             client: client.clone(),
-            query: axis.view(&query, group, [0, 1, 2, 3]),
-            out_view: axis.view(&out_plain, group, [0, 2, 1, 3]),
+            query: dimension.view(&query, group, [0, 1, 2, 3]),
+            out_view: dimension.view(&out_plain, group, [0, 2, 1, 3]),
             out,
             kv,
             lengths: Self::one_per_sequence(lengths, batch),
             query_runs,
             scoring,
-            axis,
+            dimension,
             arrivals: None,
             logsumexp: None,
             mask: None,
@@ -550,13 +556,13 @@ impl AttentionTensors {
             "a mask is [b, h, q, s], one cell a score"
         );
         let group = heads / self.kv.num_kv_heads();
-        self.mask = Some(self.axis.view(&mask, group, [0, 1, 2, 3]));
+        self.mask = Some(self.dimension.view(&mask, group, [0, 1, 2, 3]));
         self
     }
 
     /// The same attention, writing beside its output each query's logsumexp of its scaled scores,
-    /// `[b, h, q]` in the sum's element ([`logsumexp`](Self::logsumexp)): what a backward pass reads
-    /// its probabilities back from. A query that sees no key holds the minimum value.
+    /// `[b, h, q]` in the sum's element ([`logsumexp`](Self::logsumexp)): what a backward pass
+    /// reads its probabilities back from. A query that sees no key holds the minimum value.
     ///
     /// # Panics
     ///
@@ -576,14 +582,14 @@ impl AttentionTensors {
             [batch, heads, queries].into(),
             AttentionRoutineProblem::SUM,
         );
-        // Viewed along the query axis as the output is: a last dim one wide, then left out.
+        // Viewed along the query dimension as the output is: a last dim one wide, then left out.
         let strides = &rows.binding.strides;
         let widened = rows.viewed(Metadata::new(
             [batch, heads, queries, 1],
             [strides[0], strides[1], strides[2], 1],
         ));
         let group = heads / self.kv.num_kv_heads();
-        let view = self.axis.view(&widened, group, [0, 1, 2, 3]);
+        let view = self.dimension.view(&widened, group, [0, 1, 2, 3]);
         let (shape, strides) = (&view.binding.shape, &view.binding.strides);
         let view = view.viewed(Metadata::new(shape[..4].to_vec(), strides[..4].to_vec()));
         self.logsumexp = Some((handle, view));
@@ -615,7 +621,7 @@ impl AttentionTensors {
         };
         let kv_heads = self.kv.num_kv_heads();
         let (group, queries, visibility) =
-            self.axis
+            self.dimension
                 .read(heads / kv_heads, queries, self.scoring.visibility);
         let head = self.query.shape()[4];
         let start = PlainTensor::start_bytes;
@@ -756,19 +762,24 @@ impl AttentionTensors {
             Some(_) => Delivery::SyncPerUnit,
             None => planned,
         };
-        let arg = |tensor: &PlainTensor, axes: &'static [Axis], width: usize, element: ElemType| {
+        let arg = |tensor: &PlainTensor,
+                   dimensions: &'static [Dimension],
+                   width: usize,
+                   element: ElemType| {
             launcher
                 .arg(tensor.binding.clone(), element)
-                .axes(axes)
+                .dimensions(dimensions)
                 .vectorize(width)
         };
         let read_operand =
             |tensor: &PlainTensor,
-             axes: &'static [Axis],
+             dimensions: &'static [Dimension],
              width: usize,
              operand: AttentionOperand| match words(operand) {
-                Some(kind) => arg(tensor, axes, width, ElemType::UInt(UIntKind::U32)).packed(kind),
-                None => arg(tensor, axes, width, read.get(operand)),
+                Some(kind) => {
+                    arg(tensor, dimensions, width, ElemType::UInt(UIntKind::U32)).packed(kind)
+                }
+                None => arg(tensor, dimensions, width, read.get(operand)),
             };
         let query_delivery = delivery(
             AttentionOperand::Query,
@@ -812,7 +823,7 @@ impl AttentionTensors {
                 // A side's scale is one value over the whole side, read at no coordinate: bound
                 // over the side's head dim alone, which no page moves, it broadcasts to every
                 // value, and the microkernel applies it to the sums the side enters.
-                let per_tensor = |scale: &PlainTensor, head: Axis| {
+                let per_tensor = |scale: &PlainTensor, head: Dimension| {
                     TileTensorLaunch::new(
                         scale.binding.clone().into_tensor_arg(),
                         scale.elem,
@@ -825,11 +836,11 @@ impl AttentionTensors {
                 // The side's scale is stated first, so the table places the values under it.
                 let read_cache =
                     |tensor: &PlainTensor,
-                     axes: &'static [Axis],
+                     dimensions: &'static [Dimension],
                      width: usize,
                      operand: AttentionOperand,
                      scale: Option<TileTensorLaunch>| {
-                        let arg = read_operand(tensor, axes, width, operand)
+                        let arg = read_operand(tensor, dimensions, width, operand)
                             .delivery(delivery(operand, planned))
                             .build()
                             .expect(ADMITTED_PLAN_RUNS)

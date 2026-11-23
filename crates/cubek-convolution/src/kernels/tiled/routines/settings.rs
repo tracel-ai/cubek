@@ -1,6 +1,6 @@
 use crate::kernels::tiled::{ConvDecline, ConvProblem};
 use core::num::NonZeroUsize;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
@@ -110,7 +110,7 @@ impl CubeStagedConvSettings {
         &self,
         hw: &Hardware,
         problem: &ConvProblem,
-    ) -> Result<PlaneFragmentMicrokernel, Refusal> {
+    ) -> Result<PlaneFragmentMicrokernel, Decline> {
         let grid = self.microkernel.plane;
         if grid.holder != ComputeScope::Plane {
             return Err(ConvDecline::WgmmaUnserved.into());

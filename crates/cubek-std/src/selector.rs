@@ -5,7 +5,7 @@
 ///
 /// Growing from the floor makes the ceiling the device's: a loop that starts at a constant and
 /// shrinks until legal stops at its first try on a roomier device. Every candidate is tested, not
-/// only those before the first refusal, since a divisibility test is not monotone.
+/// only those before the first decline, since a divisibility test is not monotone.
 pub fn largest_that_fits<T: Copy>(
     ascending: impl IntoIterator<Item = T>,
     fits: impl Fn(T) -> bool,

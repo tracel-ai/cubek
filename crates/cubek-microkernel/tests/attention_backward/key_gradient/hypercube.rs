@@ -2,7 +2,7 @@
 //! and its share of the queries' gradient added into a sum.
 
 use crate::launch::attention_backward::HypercubeKeyGradientLaunch;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
@@ -21,7 +21,7 @@ impl BackwardSettings for HypercubeKeyGradientMicrokernelSettings {
         hw: &Hardware,
         item: AttentionBackwardWorkItem,
         steps: usize,
-    ) -> Result<HypercubeKeyGradientLaunch, Refusal> {
+    ) -> Result<HypercubeKeyGradientLaunch, Decline> {
         HypercubeKeyGradientLaunch::new(hw, item, self, steps)
     }
 }

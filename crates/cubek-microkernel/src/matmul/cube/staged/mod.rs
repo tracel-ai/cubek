@@ -5,7 +5,7 @@ mod microkernel;
 mod plane_layout;
 mod settings;
 mod store;
-mod wgmma_refusal;
+mod wgmma_decline;
 
 pub use base::*;
 pub use cube_write::*;
@@ -14,4 +14,4 @@ pub use microkernel::*;
 pub use plane_layout::*;
 pub use settings::*;
 pub use store::*;
-pub(crate) use wgmma_refusal::*;
+pub(crate) use wgmma_decline::*;

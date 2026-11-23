@@ -5,7 +5,7 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::{DestinationLaunch, Refusal, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -13,7 +13,7 @@ use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
 use cubek_std::Hardware;
-use cubek_std::matmul_axes::{K, M, N};
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 use cubek_std::selector::divisor_at_most;
@@ -52,14 +52,13 @@ impl UnitRegistersMatmulRoutine {
     /// `microkernel` placed by `partitioning`, its widths settled. A register block reads its
     /// operands from global memory and drains cell by cell, so the walk holds no shared memory.
     pub fn blueprint(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         microkernel: UnitRegistersMicrokernel,
         partitioning: MatmulPartitioning,
     ) -> UnitRegistersMatmulRoutineBlueprint {
         let mut vectorization = Vectorization::new();
-        self.vectorize(&microkernel, &partitioning, &mut vectorization);
+        UnitRegistersMatmulRoutine::vectorize(&microkernel, &partitioning, &mut vectorization);
         MatmulBlueprint::new(hw, problem, microkernel, partitioning, vectorization, ())
     }
 }
@@ -143,7 +142,7 @@ impl Routine for UnitRegistersMatmulRoutine {
     /// its own knobs: each plane layout, a column of as many planes as a full cube holds
     /// ([`Hardware::full_cube_planes`]) among them, each count of blocks a plane shares, the
     /// strips.
-    fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
+    fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         let lead = UnitRegistersMatmulRoutineSettings::DEFAULT;
         let blocks = UnitRegistersMicrokernel::settings(hw)
             .into_iter()
@@ -172,7 +171,6 @@ impl Routine for UnitRegistersMatmulRoutine {
     /// Nothing of its own: it walks the launch's planes and their units, and its microkernel makes
     /// every access.
     fn vectorize(
-        &self,
         microkernel: &UnitRegistersMicrokernel,
         _: &MatmulPartitioning,
         vectorization: &mut Vectorization<MatmulOperand>,
@@ -185,7 +183,6 @@ impl Routine for UnitRegistersMatmulRoutine {
     /// global memory — every unit along `n` reading the same rows and every one along `m` the same
     /// columns — and writes its block the same way. Then its microkernel, for the work.
     fn estimate(
-        &self,
         problem: &MatmulRoutineProblem,
         blueprint: &UnitRegistersMatmulRoutineBlueprint,
         grid: &Grid,
@@ -225,11 +222,10 @@ impl Routine for UnitRegistersMatmulRoutine {
     /// correct, since they take their blocks in turns, and this one is always spawnable. The
     /// width sizes the grid, never the blueprint.
     fn prepare(
-        &self,
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         settings: &Self::Settings,
-    ) -> Result<(Self::Blueprint, Grid), Refusal> {
+    ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_plain()?;
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
         let microkernel =
@@ -247,7 +243,7 @@ impl Routine for UnitRegistersMatmulRoutine {
             shared_memory: 0,
         };
         let grid = Grid::new(hw, partitioning.as_tile(), cube)?;
-        let blueprint = self.blueprint(hw, problem, microkernel, partitioning);
+        let blueprint = Self::blueprint(hw, problem, microkernel, partitioning);
         Ok((blueprint, grid))
     }
 }
@@ -307,13 +303,12 @@ mod tests {
             rhs: OperandKey::float(Some(K), MatmulBatching::Shared),
         });
         for hw in fixtures() {
-            let (blueprint, _) = UnitRegistersMatmulRoutine
-                .prepare(
-                    &hw,
-                    &col_weight,
-                    &UnitRegistersMatmulRoutineSettings::DEFAULT,
-                )
-                .expect("the floor prepares everywhere");
+            let (blueprint, _) = UnitRegistersMatmulRoutine::prepare(
+                &hw,
+                &col_weight,
+                &UnitRegistersMatmulRoutineSettings::DEFAULT,
+            )
+            .expect("the floor prepares everywhere");
             assert_eq!(blueprint.widths.rhs, blueprint.widths.lhs, "{hw:?}");
             assert_eq!(blueprint.widths.out, 1, "{hw:?}");
         }
@@ -337,10 +332,10 @@ mod tests {
     fn every_setting_prepares_on_every_device() {
         let f16 = ElemType::Float(FloatKind::F16);
         for hw in fixtures() {
-            for settings in UnitRegistersMatmulRoutine.settings(&hw) {
+            for settings in UnitRegistersMatmulRoutine::settings(&hw) {
                 for (m, n, k) in [(1, 128, 256), (37, 29, 19), (512, 4096, 4096)] {
                     let problem = MatmulRoutineProblem::dense(m, n, k, f16);
-                    let prepared = UnitRegistersMatmulRoutine.prepare(&hw, &problem, &settings);
+                    let prepared = UnitRegistersMatmulRoutine::prepare(&hw, &problem, &settings);
                     assert!(prepared.is_ok(), "{settings} on {hw:?}: {prepared:?}");
                 }
             }
@@ -368,7 +363,8 @@ mod tests {
                             lhs: OperandKey::float(Some(K), MatmulBatching::Batched),
                             rhs: OperandKey::float(Some(rhs), MatmulBatching::Shared),
                         });
-                        let prepared = UnitRegistersMatmulRoutine.prepare(&hw, &problem, &settings);
+                        let prepared =
+                            UnitRegistersMatmulRoutine::prepare(&hw, &problem, &settings);
                         assert!(
                             prepared.is_ok(),
                             "{m}x{k}x{n}, rhs along {rhs:?}, on {hw:?}: {prepared:?}"
@@ -386,8 +382,7 @@ mod tests {
         let problem = MatmulRoutineProblem::dense(512, 4096, 4096, ElemType::Float(FloatKind::F16));
         let settings = UnitRegistersMatmulRoutineSettings::DEFAULT;
         let prepare = |hw: Hardware| {
-            UnitRegistersMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            UnitRegistersMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the floor prepares everywhere")
         };
         let (wave32, wave32_grid) = prepare(devices::strix_halo());
@@ -406,14 +401,13 @@ mod tests {
         let widths = |m, n, k| {
             let problem = MatmulRoutineProblem::dense(m, n, k, f16);
             let settings = UnitRegistersMatmulRoutineSettings::DEFAULT;
-            let (blueprint, _) = UnitRegistersMatmulRoutine
-                .prepare(&hw, &problem, &settings)
+            let (blueprint, _) = UnitRegistersMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the floor prepares everywhere");
             let widths = blueprint.widths;
             (widths.lhs, widths.rhs, widths.out)
         };
         assert_eq!(widths(256, 512, 64), (4, 4, 4));
-        // A `k` the steps overhang masks the lhs, whose contiguous axis it is, at a width that
+        // A `k` the steps overhang masks the lhs, whose contiguous dimension it is, at a width that
         // divides it.
         assert_eq!(widths(256, 512, 22), (2, 4, 4));
         // An `n` the planes overhang masks the rhs and the output, likewise.
@@ -437,8 +431,7 @@ mod tests {
             rhs: OperandKey::float(Some(K), MatmulBatching::Shared),
         });
         let settings = UnitRegistersMatmulRoutineSettings::cpu_col_rhs(&hw);
-        let (blueprint, _) = UnitRegistersMatmulRoutine
-            .prepare(&hw, &col_weight, &settings)
+        let (blueprint, _) = UnitRegistersMatmulRoutine::prepare(&hw, &col_weight, &settings)
             .expect("the cpu settings prepare on a cpu");
         let blocks = UnitRegistersMatmulRoutine::blocks_per_plane(&blueprint.partitioning);
         assert_eq!(blocks, 24);

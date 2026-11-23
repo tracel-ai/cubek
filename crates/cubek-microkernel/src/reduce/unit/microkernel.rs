@@ -1,5 +1,6 @@
-use super::base::UnitReduceMicrokernel;
-use crate::reduce::{ReduceAccumulator, ReduceCarrier, ReduceLayout, read_mapped};
+use super::base::UnitDirectReduceMicrokernel;
+use crate::reduce::write::{UnitCarrierWriteMicrokernel, unit_carrier_write_microkernel};
+use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier, accumulate_read};
 use cubecl::tile::{Indexed, Tile, TopK, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -9,37 +10,46 @@ use cubecl::{self as cubecl, cube, prelude::*};
 ///
 /// Its operation picks what the row accumulates into ([`ReduceCarrier`]).
 #[cube]
-pub fn unit_reduce_microkernel<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+pub(crate) fn unit_direct_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+>(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
-    #[comptime] microkernel: UnitReduceMicrokernel,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: UnitDirectReduceMicrokernel,
 ) {
-    match microkernel.item.operation.carrier() {
-        ReduceCarrier::Values => {
-            unit_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(input, out, indices, microkernel)
-        }
-        ReduceCarrier::Indexed => {
-            unit_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(input, out, indices, microkernel)
-        }
+    match microkernel.item().operation.carrier() {
+        ReduceCarrier::Values => unit_direct_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
+        ReduceCarrier::Indexed => unit_direct_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
         ReduceCarrier::TopK { k } => {
-            let size!(K) = k;
-            unit_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+            unit_direct_reduce_top_k::<In, Acc, Out, Idx, N>(input, out, indices, microkernel, k)
         }
-        ReduceCarrier::TopValues { k } => {
-            let size!(K) = k;
-            unit_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
-                input,
-                out,
-                indices,
-                microkernel,
-            )
-        }
+        ReduceCarrier::TopValues { k } => unit_direct_reduce_top_values::<In, Acc, Out, Idx, N>(
+            input,
+            out,
+            indices,
+            microkernel,
+            k,
+        ),
     }
 }
 
 #[cube]
-fn unit_reduce<
+fn unit_direct_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -49,37 +59,67 @@ fn unit_reduce<
 >(
     input: &Tile,
     out: &mut Tile,
-    indices: &mut Tile,
-    #[comptime] microkernel: UnitReduceMicrokernel,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: UnitDirectReduceMicrokernel,
 ) {
-    let operation = microkernel.item.operation;
-    let monoid = operation.monoid();
-    let layout = microkernel.item.layout;
+    let monoid = microkernel.item().operation.monoid();
+    let load = input.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
 
     let lines = input.flat::<In, N>();
     let count = lines.shape();
 
     let mut acc = C::identity(monoid);
     for line in 0..count {
-        let read = read_mapped::<Acc, N>(
-            Vector::<Acc, N>::cast_from(lines.read(line)),
-            operation.read_map(),
+        accumulate_read::<In, Acc, N, C>(
+            &mut acc,
+            lines.read(line),
+            line,
+            row_lanes,
+            microkernel.item(),
         );
-        C::accumulate(&mut acc, read, line, layout, monoid);
     }
 
-    let values = match layout {
-        ReduceLayout::Along => count * N::value(),
-        ReduceLayout::Across => count,
-    };
-
-    C::write::<Out, Idx>(
+    unit_carrier_write_microkernel::<Out, Idx, Acc, N, C>(
         acc,
         out,
         indices,
-        values,
-        layout,
-        operation,
-        microkernel.item.writes(),
+        count * row_lanes,
+        comptime!(UnitCarrierWriteMicrokernel::new(
+            microkernel.item(),
+            row_lanes
+        )),
     );
+}
+
+/// [`unit_direct_reduce`] into a top-k of `k` slots, `K` bound in the function that uses it.
+#[cube]
+fn unit_direct_reduce_top_k<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: UnitDirectReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    unit_direct_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(input, out, indices, microkernel)
+}
+
+/// [`unit_direct_reduce`] into a top-k of `k` values without their indices, `K` bound in the
+/// function that uses it.
+#[cube]
+fn unit_direct_reduce_top_values<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: UnitDirectReduceMicrokernel,
+    #[comptime] k: usize,
+) {
+    let size!(K) = k;
+    unit_direct_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
+        input,
+        out,
+        indices,
+        microkernel,
+    )
 }

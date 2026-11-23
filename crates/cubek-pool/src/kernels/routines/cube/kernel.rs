@@ -7,12 +7,12 @@ use cubek_microkernel::pool::cube::cube_max_pool_microkernel;
 #[cube(launch)]
 pub fn cube_max_pool_kernel<E: Numeric>(
     input: &TileTensor<'_>,
-    output: &TileTensor<'_>,
+    output: &mut TileTensor<'_>,
     partitioning: Partitioning,
     #[define(E)] _element: ElemType,
 ) {
     let input = input.tile(&partitioning);
-    let output = output.tile(&partitioning);
+    let output = output.tile_mut(&partitioning);
     for cube in partitioning {
         for block in cube.walk() {
             cube_max_pool_microkernel(&block, &output.at(&block), &input.at(&block));
