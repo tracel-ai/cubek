@@ -6,15 +6,16 @@ use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
-use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
+use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{MatmulIndex, MatmulIndexTable, MatmulRoutine};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
 use cubek_std::layout::tile_order::TileWords;
+use cubek_std::matmul_dimensions::N;
 use cubek_test_utils::{HostData, HostDataVec};
 use half::f16;
 
-use crate::tiled::packed::{HostSlabs, Laid, PackedFormat, PackedSlabs, PackedSlabsSpec};
+use crate::tiled::packed::{HostSlabs, PackedFormat, PackedSlabs, PackedSlabsSpec, PackedWords};
 use crate::tiled::{RoutineProduct, upload};
 
 /// Close enough for an `f32` output.
@@ -47,7 +48,7 @@ impl Stack {
     /// engine fills a Blackwell stage of, and block by block in one software reads a load at a
     /// time. At `k` 128 a strip is four transactions, so the stagger pads it to five: each slab
     /// starts past padding.
-    pub(crate) const TILE_ORDERS: [Stack; 2] = [
+    pub(crate) const IN_TILES: [Stack; 2] = [
         Stack::TileOrder(TileWords::RowByRow, (128, 8)),
         Stack::TileOrder(TileWords::BlockByBlock, (64, 8)),
     ];
@@ -69,10 +70,10 @@ impl Stack {
     }
 
     /// How its packed words lie.
-    pub(crate) fn laid(self) -> Laid {
+    pub(crate) fn words(self) -> PackedWords {
         match self {
-            Stack::Float | Stack::Packed(_) => Laid::InRows,
-            Stack::TileOrder(words, tile) => Laid::InTiles(words, tile),
+            Stack::Float | Stack::Packed(_) => PackedWords::InRows,
+            Stack::TileOrder(words, tile) => PackedWords::InTiles(words, tile),
         }
     }
 
@@ -167,19 +168,11 @@ impl Routed {
         })
     }
 
-    /// The stack whole, packed and laid as its [`Stack`] says, its slabs not yet read as such; or
-    /// float `[k, slabs · n]` row-major.
-    pub(crate) fn stack_matrix(&self, client: &Client) -> StoredTensor {
-        match self.packed_slabs() {
-            Some(spec) => {
-                StoredTensor::Packed(PackedSlabs::new(client, spec).laid(client, self.stack.laid()))
-            }
-            None => StoredTensor::Plain(upload(
-                client,
-                &[self.slabs, self.k, self.n],
-                &values(self.slabs * self.k * self.n, 2),
-            )),
-        }
+    /// The stack whole, packed and laid as its [`Stack`] says, its slabs not yet read as such;
+    /// `None` for a float one.
+    pub(crate) fn packed_matrix(&self, client: &Client) -> Option<PackedTensor> {
+        self.packed_slabs()
+            .map(|spec| PackedSlabs::new(client, spec).stored(client, self.stack.words()))
     }
 
     /// The stack's values, `stack(slab, k, j)`, on the host.
@@ -247,14 +240,12 @@ impl RoutineProduct for Routed {
         // A route is a batch of one row: the activation's rows are its first batch dim, broadcast
         // along the picks.
         let (lhs, _) = self.stack.activation(client, &[tokens, 1, 1, k], 1);
-        let stack = match self.packed_slabs() {
-            Some(spec) => {
-                let laid = PackedSlabs::new(client, spec).laid(client, self.stack.laid());
-                StoredTensor::Packed(
-                    laid.stacked(self.slabs, cubek_std::matmul_dimensions::N)
-                        .expect("whole slabs of whole blocks and strips"),
-                )
-            }
+        let stack = match self.packed_matrix(client) {
+            Some(matrix) => StoredTensor::Packed(
+                matrix
+                    .stacked(self.slabs, N)
+                    .expect("whole slabs of whole blocks and strips"),
+            ),
             None => StoredTensor::Plain(upload(
                 client,
                 &[self.slabs, k, self.n],
@@ -476,7 +467,7 @@ pub(crate) struct GroupedRows {
     pub n: usize,
     pub sizes: [usize; 4],
     pub format: PackedFormat,
-    pub laid: Laid,
+    pub words: PackedWords,
 }
 
 impl GroupedRows {
@@ -487,14 +478,14 @@ impl GroupedRows {
             n: 96,
             sizes: [5, 0, 11, 2],
             format,
-            laid: Laid::InRows,
+            words: PackedWords::InRows,
         }
     }
 
     /// The same rows against an NVFP4 stack stored as `stack` says.
     pub(crate) fn stored(stack: Stack) -> Self {
         Self {
-            laid: stack.laid(),
+            words: stack.words(),
             ..Self::of(stack.format().expect("a grouped stack is packed"))
         }
     }

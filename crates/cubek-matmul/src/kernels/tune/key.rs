@@ -436,6 +436,8 @@ mod tests {
     use super::*;
     use cubecl::ir::FloatKind;
     use cubecl::quant::scheme::QuantScheme;
+    use cubek_std::layout::tile_order;
+    use cubek_std::matmul_dimensions::{K, N};
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -490,5 +492,50 @@ mod tests {
             key(&packed, OperandKind::Quantized(q4)),
             "MatmulTuneKey { elem: Float(F16), k: 256, n: 64, m: 4, batches: 1, lhs: OperandKey { kind: Float, layout: K, batching: Shared }, rhs: OperandKey { kind: Quantized(QuantScheme { value: Q4S, store: PackedU32(1), mode: Symmetric, tensor: None, block: Some(BlockScale { size: BlockSize([32, 1]), dtype: F16 }) }), layout: K, batching: Shared } }"
         );
+    }
+
+    /// NVFP4 of 256 by 24 in tiles whose words lie as `words` says, its layout as a key reads it.
+    fn in_tiles(words: TileWords) -> OperandLayout {
+        let scheme = tile_order::nvfp4_scheme();
+        let order = TileOrder::laid(&scheme, words, (64, 8)).expect("NVFP4 is tile order");
+        let matrix = tile_order::matrix_values(&order.kernel_values_read(256, (N, 24), 4));
+        OperandLayout::of(&matrix, OperandKind::Quantized(scheme), [K, N])
+    }
+
+    /// A packed matrix in tiles keys by its tile and the order of its words.
+    #[test]
+    fn a_packed_matrix_laid_row_by_row_keys_by_its_tile() {
+        assert_eq!(
+            in_tiles(TileWords::RowByRow),
+            OperandLayout::Tiles(K, (64, 8), TileWords::RowByRow)
+        );
+    }
+
+    /// A winner elected on tiles laid row by row is never served block by block ones.
+    #[test]
+    fn a_packed_matrix_laid_block_by_block_keys_by_its_words() {
+        assert_eq!(
+            in_tiles(TileWords::BlockByBlock),
+            OperandLayout::Tiles(K, (64, 8), TileWords::BlockByBlock)
+        );
+    }
+
+    /// The layout of a float `[256, 24]` at `strides`.
+    fn float(strides: [usize; 2]) -> OperandLayout {
+        OperandLayout::of(
+            &Metadata::new([256, 24], strides),
+            OperandKind::Float,
+            [K, N],
+        )
+    }
+
+    #[test]
+    fn a_col_matrix_keys_by_the_dimension_it_is_contiguous_along() {
+        assert_eq!(float([1, 256]), OperandLayout::Along(K));
+    }
+
+    #[test]
+    fn a_matrix_contiguous_along_no_dimension_keys_as_strided() {
+        assert_eq!(float([48, 2]), OperandLayout::Strided);
     }
 }

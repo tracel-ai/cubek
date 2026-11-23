@@ -128,7 +128,7 @@ fn every_packed_plane_shuffle_setting_reads_each_group_s_slab_of_a_stack_in_tile
     let grouped = ByGroupedRoutine::new(PlaneShuffleMatmulRoutine);
     grouped.check_some(grouped.at(
         MGroupedSettings::plane_shuffle_packed(),
-        &Stack::TILE_ORDERS.map(GroupedRows::stored),
+        &Stack::IN_TILES.map(GroupedRows::stored),
     ));
 }
 
@@ -142,7 +142,7 @@ fn every_packed_cube_staged_setting_reads_each_group_s_slab_of_a_stack_in_tile_o
     let grouped = ByGroupedRoutine::new(CubeStagedMatmulRoutine);
     grouped.check_some(grouped.at(
         MGroupedSettings::cube_staged_packed(&grouped.hw),
-        &Stack::TILE_ORDERS.map(GroupedRows::stored),
+        &Stack::IN_TILES.map(GroupedRows::stored),
     ));
 }
 
@@ -298,7 +298,7 @@ where
         let tensors = MGroupedMatmulTensors::new(
             client,
             grouped.activation(client),
-            StoredTensor::Packed(stack.laid(client, grouped.laid)),
+            StoredTensor::Packed(stack.stored(client, grouped.words)),
             upload(client, &[grouped.sizes.len()], &grouped.ends()),
             SlabDimension::Output,
         )

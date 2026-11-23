@@ -69,7 +69,7 @@ impl PackedFormat {
 /// How a test matrix's words lie: in rows, a row's words one run, or in tile order, in tiles of
 /// `(k, rows)` whose words lie as the [`TileWords`] says.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Laid {
+pub(crate) enum PackedWords {
     InRows,
     InTiles(TileWords, (usize, usize)),
 }
@@ -149,11 +149,11 @@ impl PackedSlabs {
         self.tensor.clone()
     }
 
-    /// The matrix whole, its words lying as `laid` says.
-    pub(crate) fn laid(&self, client: &Client, laid: Laid) -> PackedTensor {
-        match laid {
-            Laid::InRows => self.matrix(),
-            Laid::InTiles(words, tile) => self.in_tile_order(client, words, tile),
+    /// The matrix whole, its words lying as `words` says.
+    pub(crate) fn stored(&self, client: &Client, words: PackedWords) -> PackedTensor {
+        match words {
+            PackedWords::InRows => self.matrix(),
+            PackedWords::InTiles(words, tile) => self.in_tile_order(client, words, tile),
         }
     }
 
@@ -188,7 +188,9 @@ impl PackedSlabs {
         let scheme = tile_order::nvfp4_scheme();
         let hw = Hardware::from_client(client);
         let (k, n) = (self.spec.k, self.spec.slabs * self.spec.rows);
-        let transaction = Stagger::new(hw.transaction_bytes() * 8, 8).expect("bytes divide it");
+        let byte_bits = u8::BITS as usize;
+        let transaction =
+            Stagger::new(hw.transaction_bytes() * byte_bits, byte_bits).expect("bytes divide it");
         let order = TileOrder::laid(&scheme, words, tile)
             .expect("NVFP4 is tile order")
             .staggered(transaction)
@@ -202,13 +204,10 @@ impl PackedSlabs {
         };
         // The values as the kernel names them, `[n, k/block, block]`, counted in values.
         let packed = self.tensor.words();
+        let row_words = packed.binding.strides[0];
         let values = packed.bound_as(Metadata::new(
             [n, blocks, order.block()],
-            [
-                packed.binding.strides[0] * scheme.num_quants(),
-                order.block(),
-                1,
-            ],
+            [row_words * scheme.num_quants(), order.block(), 1],
         ));
         let values = relayout(
             values,
