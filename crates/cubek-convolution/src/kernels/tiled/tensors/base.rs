@@ -1,8 +1,8 @@
-use super::{
+use crate::components::ConvolutionOperation;
+use crate::kernels::tiled::{
     B, CI, CO, ConvBinding, ConvDecline, ConvProblem, ConvRoles, SpatialDim, SpatialDimCount,
     TileConvBlueprint,
 };
-use crate::components::ConvolutionOperation;
 use crate::launch::{SpatialExtent, SpatialWindow, TapCount};
 use cubecl::client::Client;
 use cubecl::prelude::TensorBinding;
