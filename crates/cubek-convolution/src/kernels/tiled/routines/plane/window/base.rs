@@ -2,7 +2,7 @@ use super::block::{BlockDepth, BlockForm};
 use super::kernel::plane_window_conv_kernel;
 use super::settings::{PlaneWindowConvSettings, UnitBlock};
 use crate::kernels::tiled::{
-    ConvBinding, ConvPartitioning, ConvProblem, ConvRoles, ConvRoutine, ConvStaging,
+    ConvBias, ConvBinding, ConvPartitioning, ConvProblem, ConvRoles, ConvRoutine, ConvStaging,
     TileConvBlueprint,
 };
 use core::num::NonZeroUsize;
@@ -192,6 +192,12 @@ impl PlaneWindowConvRoutine {
         let roles = problem.roles();
         let dimensions = roles.dimensions();
         let runs_along = |dimension| dimensions.dim(dimension);
+        // The bias is added through a one-wide view of the output.
+        if problem.bias == ConvBias::PerChannel {
+            vectorization.require(VectorRequirement::Elementwise {
+                operand: MatmulOperand::Out,
+            });
+        }
         let lhs_access = (runs_along(roles.inner.lhs) == Some(MatmulDim::K)).then(|| {
             VectorRequirement::Access {
                 operand: MatmulOperand::Lhs,
@@ -359,6 +365,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for PlaneWindowConvRoutine {
             input,
             rhs,
             out,
+            bias,
         } = binding;
         let (bounded, extents) = Self::bounds(problem);
         // SAFETY: every operand is a tile bound through the launcher, which masks the accesses a
@@ -372,6 +379,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for PlaneWindowConvRoutine {
                 input,
                 rhs,
                 out,
+                bias.into(),
                 launcher.partitioning_arg(),
                 blueprint.microkernel.software_matmul().split_edge(),
                 bounded,

@@ -6,6 +6,7 @@
 //! Activations are channels last and the weight and its gradient `[co, taps.., ci]`. The routines
 //! in `routines` are what runs, one folder per scope.
 
+mod bias;
 mod binding;
 mod blueprint;
 mod decline;
@@ -19,10 +20,12 @@ mod tensors;
 mod tune;
 
 pub use decline::ConvDecline;
+pub use problem::ConvBias;
 pub use routines::{ConvRoutineKind, CubeStagedConvSettings};
 pub use tensors::ConvTensors;
 pub use tune::CubeStagedConvCandidate;
 
+pub(crate) use bias::BiasTile;
 pub(crate) use binding::ConvBinding;
 pub(crate) use blueprint::TileConvBlueprint;
 pub(crate) use launch::ConvRoutine;

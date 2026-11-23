@@ -8,7 +8,7 @@ use cubek_test_utils::CatalogEntry;
 use crate::{
     ConvolutionArgs, SpatialExtent, TapCount,
     components::ConvolutionOperation,
-    kernels::tiled::{ConvProblem, ConvRoles, SpatialDimCount},
+    kernels::tiled::{ConvBias, ConvProblem, ConvRoles, SpatialDimCount},
 };
 
 /// The element a problem's operands are stored in and its sums run in.
@@ -34,6 +34,8 @@ pub struct Conv2dProblem {
     pub args: ConvolutionArgs<2>,
     pub operation: ConvolutionOperation,
     pub element: Conv2dElement,
+    /// Whether a forward adds a value to each output channel.
+    pub bias: ConvBias,
 }
 
 impl Conv2dProblem {
@@ -74,7 +76,11 @@ impl From<&Conv2dProblem> for ConvProblem {
             .expect("the host states no transposed forward");
         let [lhs, rhs, out] = problem.shapes().map(|shape| shape.to_vec());
         let shapes = MatmulOperands { lhs, rhs, out };
-        Self::from_views(
+        let bias = match problem.operation {
+            ConvolutionOperation::Forward => problem.bias,
+            _ => ConvBias::Absent,
+        };
+        let stated = Self::from_views(
             problem.operation,
             &problem.args.windows(),
             roles.views(&shapes),
@@ -82,7 +88,8 @@ impl From<&Conv2dProblem> for ConvProblem {
             ElemType::Float(FloatKind::F32),
             roles.dense_alignments(&shapes),
             MatmulOperands::all(0),
-        )
+        );
+        Self { bias, ..stated }
     }
 }
 
@@ -121,6 +128,12 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
             ([4 * batch, 64, 7, 7], [64, 64, 3, 3], 1, 1),
             Forward,
         ),
+        biased(half_problem(
+            "conv3x3_c64_bias",
+            "3x3 stride 1 with a bias (b=16 in=64x56x56 w=64x64x3x3 p=1)",
+            layer(1),
+            Forward,
+        )),
         half_problem(
             "conv3x3_c64_bwd_data",
             "3x3 stride 1 data backward (b=16 in=64x56x56 w=64x64x3x3 p=1)",
@@ -144,6 +157,12 @@ pub fn problems() -> Vec<CatalogEntry<Conv2dProblem>> {
     problems
 }
 
+/// `entry`'s problem with a bias.
+fn biased(mut entry: CatalogEntry<Conv2dProblem>) -> CatalogEntry<Conv2dProblem> {
+    entry.value.bias = ConvBias::PerChannel;
+    entry
+}
+
 /// A square-windowed problem of `f16`: `(input, weight, stride, padding)`.
 fn half_problem(
     id: &str,
@@ -164,6 +183,7 @@ fn half_problem(
             },
             operation,
             element: Conv2dElement::F16,
+            bias: ConvBias::Absent,
         },
     )
 }
@@ -194,6 +214,7 @@ fn cpu_problem(
             },
             operation,
             element: Conv2dElement::F32,
+            bias: ConvBias::Absent,
         },
     )
 }
