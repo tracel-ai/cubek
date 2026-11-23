@@ -90,7 +90,8 @@ impl<'a> CubeStagedPlacement<'a> {
         if store == CubeStagedStore::Tma {
             check_tma_store(hw, problem, &contracted, &cube_space, &microkernel)?;
         }
-        let resolved = microkernel.resolve(hw, &contracted, &cube_space)?;
+        let packings = item.packings();
+        let resolved = microkernel.resolve(hw, &contracted, packings, &cube_space)?;
         Ok(Self {
             problem,
             view,

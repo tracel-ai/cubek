@@ -68,6 +68,7 @@ impl PlaneFragmentLaunch {
                 item.elements,
                 microkernel.orders,
                 MatmulOperands::all(MatmulRead::AsBound),
+                MatmulOperands::all(None),
             ),
             plane_width as usize,
         );
