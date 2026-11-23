@@ -1,7 +1,8 @@
 //! One shape for testing any scope: a kernel, or a microkernel launched alone. A test states its
 //! cases, launches the scope on each, and says what the reference writes; [`ScopeUnderTest::check`]
 //! compares the two at the case's tolerance and hands the outcome to the active test policy. A
-//! scope the device does not run at a case is a skip, which the policy decides on, never a pass.
+//! scope that refuses a case on the device is a skip, which the policy decides on, never a pass;
+//! a launch it accepted and the device failed is a failure.
 //!
 //! The reference is the scope's own: a microkernel's is written for what it computes alone, a
 //! kernel's for what its routines compute, even where the two happen to agree.
@@ -99,14 +100,18 @@ pub trait ScopeUnderTest {
         })
     }
 
-    /// The outcome of one case the scope launched, or why it refused the case.
+    /// The outcome of one case the scope launched, or why it refused the case. Only a refusal
+    /// is a skip: a launch the scope accepted and the device then failed, compiling it, short of
+    /// a resource or running it, fails, since the scope promised what it could not keep.
     #[track_caller]
     fn attempt(&self, client: &Client, case: &Self::Case) -> Result<TestOutcome, Decline> {
         let written = self.launch(client, case)?;
         let handles: Vec<_> = written.iter().map(|output| &output.tensor.handle).collect();
         if let ExecutionOutcome::CompileError(why) = ExecutionOutcome::of_outputs(client, &handles)
         {
-            return Ok(TestOutcome::CompileError(format!("{case:?}: {why}")));
+            return Ok(TestOutcome::Validated(ValidationResult::Fail(format!(
+                "{case:?}: the launch it accepted failed: {why}"
+            ))));
         }
         let reference = self.reference(case);
         assert_eq!(
