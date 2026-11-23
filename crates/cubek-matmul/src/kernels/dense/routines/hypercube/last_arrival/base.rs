@@ -76,6 +76,10 @@ impl core::fmt::Display for HypercubeLastArrivalMatmulRoutineSettings {
 pub type HypercubeLastArrivalMatmulRoutineBlueprint =
     MatmulBlueprint<HypercubeStagedMicrokernel, StageStorage>;
 
+/// The word of shared memory each cube's last arrival learns its count in, beside its
+/// microkernel's ([`LastArrival::hand_on`](cubecl::tile::launch::LastArrival::hand_on)).
+const ARRIVAL_SLOT_BYTES: usize = size_of::<u32>();
+
 impl HypercubeLastArrivalMatmulRoutine {
     /// What it declines on a device that does not say how many workers it has, the count its grid
     /// is sized by.
@@ -252,7 +256,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let storage = resolved.storage;
         let cube = CubeResources {
             plane_width: resolved.plane_width,
-            shared_memory: resolved.shared_memory,
+            shared_memory: resolved.shared_memory + ARRIVAL_SLOT_BYTES,
         };
         let microkernel = HypercubeStagedMicrokernel {
             cube: resolved.microkernel,
