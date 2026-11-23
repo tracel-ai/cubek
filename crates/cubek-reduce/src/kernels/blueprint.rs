@@ -5,6 +5,7 @@ use crate::kernels::{
     WORKSPACE_TOO_SMALL,
 };
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
+use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::UnitCube;
 use cubecl::tile::{Levels, Partitioning, Space};
 use cubek_microkernel::reduce::{ReduceOperand, ReduceWorkItem};
@@ -95,7 +96,13 @@ pub(crate) fn prepared_from_key<R: ReduceLauncher<M>, M>(
 ) -> Result<(ReduceBlueprint<M>, Grid), Decline> {
     let (blueprint, keyed_grid) = prepare_keyed(&problem.keyed())?;
     let [input_lines, _] = problem.elem_alignments;
-    if !input_lines.admits(blueprint.width) {
+    // A caller-supplied input with a fixed line width must be read one whole line at a time.
+    let width_fits = if input_lines.is_stored_piece() {
+        input_lines == ElemAlignment::stored_piece(blueprint.width)
+    } else {
+        input_lines.admits(blueprint.width)
+    };
+    if !width_fits {
         return Err(UNBOUND_LINES_NARROWER);
     }
     let partitioning = Partitioning::new(
@@ -218,7 +225,6 @@ impl<M> ReduceBlueprint<M> {
 mod tests {
     use super::*;
     use crate::kernels::ReduceIndices;
-    use cubecl::tile::layout::ElemAlignment;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
     use cubek_std::routine::Routine;
@@ -316,19 +322,23 @@ mod tests {
         assert_eq!(grid.cubes(), own.cubes());
     }
 
-    /// An input the caller binds in pieces wider than any line the device reads declines.
     #[test]
     fn an_input_stated_wider_than_its_lines_declines() {
         use crate::kernels::UnitDirectReduceRoutine;
-        const PIECE: usize = 64;
         let hw = devices::m2_pro();
-        let dense = ReduceRoutineProblem::dense(&[64, 4096], 1, ReduceOperation::Sum);
-        let problem = ReduceRoutineProblem {
-            elem_alignments: [ElemAlignment::stored_piece(PIECE), dense.elem_alignments[1]],
-            ..dense
-        };
-        let declined = UnitDirectReduceRoutine::prepare(&hw, &problem, &unit_settings(&hw))
-            .expect_err("no device reads lines of 64");
-        assert_eq!(declined.to_string(), UNBOUND_LINES_NARROWER.to_string());
+        // The device limits the first row's width. The odd row length forces the second to scalar.
+        for (row_len, input_width) in [(4096, 64), (7, 2)] {
+            let dense = ReduceRoutineProblem::dense(&[64, row_len], 1, ReduceOperation::Sum);
+            let problem = ReduceRoutineProblem {
+                elem_alignments: [
+                    ElemAlignment::stored_piece(input_width),
+                    dense.elem_alignments[1],
+                ],
+                ..dense
+            };
+            let declined = UnitDirectReduceRoutine::prepare(&hw, &problem, &unit_settings(&hw))
+                .expect_err("the routine cannot read the caller's lines whole");
+            assert_eq!(declined.to_string(), UNBOUND_LINES_NARROWER.to_string());
+        }
     }
 }
