@@ -63,7 +63,11 @@ fn row(len: usize, largest: f32, seed: usize) -> Vec<f32> {
     (0..len)
         .map(|i| {
             let fall = ((i * 7 + seed * 13) % 23) as f32 / 23.0;
-            let sign = if (i + seed) % 3 == 0 { -1.0 } else { 1.0 };
+            let sign = if (i + seed).is_multiple_of(3) {
+                -1.0
+            } else {
+                1.0
+            };
             match i == seed % len {
                 true => largest,
                 false => sign * largest * fall,

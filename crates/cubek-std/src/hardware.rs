@@ -281,9 +281,9 @@ impl Hardware {
     pub fn e4m3_mma(&self) -> bool {
         let e4m3 = ElemType::Float(FloatKind::E4M3);
         self.properties.features.matmul.mma.iter().any(|config| {
-            config.a_type == e4m3.into()
-                && config.b_type == e4m3.into()
-                && config.cd_type == ElemType::Float(FloatKind::F32).into()
+            config.a_type == e4m3
+                && config.b_type == e4m3
+                && config.cd_type == ElemType::Float(FloatKind::F32)
         })
     }
 

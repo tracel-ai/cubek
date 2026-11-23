@@ -60,6 +60,10 @@ impl CubeStagedMatmulRoutineSettings {
     }
 }
 
+/// A plane's grid of fragments, `(along m, along n, depth)`, on a cube's planes, `(along m, along
+/// n)`.
+type GridOnPlanes = ((usize, usize, usize), (usize, usize));
+
 impl CubeStagedMatmulRoutine {
     /// Boxes against a packed input several steps of `M` a plane, `(steps, planes)` as
     /// [`in_steps`](CubeStagedMicrokernelSettings::in_steps) takes them. A cube decodes every
@@ -106,8 +110,7 @@ impl CubeStagedMatmulRoutine {
     /// deep and two. On an R9700 the first was the fastest box of every grid raced on Qwen3.8
     /// 27B's projections at 512 and 2048 rows (FP8-row against MXFP4 with row-factored scales,
     /// 156 to 187 TFLOP/s), but at its output projection at 512 rows, which the second took.
-    const EIGHT_BIT_BOXES: [((usize, usize, usize), (usize, usize)); 2] =
-        [((4, 4, 1), (4, 2)), ((4, 4, 2), (4, 2))];
+    const EIGHT_BIT_BOXES: [GridOnPlanes; 2] = [((4, 4, 1), (4, 2)), ((4, 4, 2), (4, 2))];
 
     /// The steps of `K` a stage decoding a packed input holds, each a step of the inputs' finest
     /// reads, which the stage then reads as widely as it holds whole: four, which over byte scales

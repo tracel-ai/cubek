@@ -210,7 +210,11 @@ impl PackedProduct {
             .collect();
         let scales = (0..rows)
             .map(|row| {
-                let mantissa = if (row + seed) % 2 == 0 { 1.5 } else { 1. };
+                let mantissa = if (row + seed).is_multiple_of(2) {
+                    1.5
+                } else {
+                    1.
+                };
                 mantissa * 2f32.powi(-12 - ((row * 7 + seed) % 4) as i32)
             })
             .collect();

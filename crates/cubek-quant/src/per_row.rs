@@ -212,7 +212,7 @@ fn fp8_per_row_kernel<F: Float>(
     input: &Tensor<F>,
     words: &mut Tensor<u32>,
     scales: &mut Tensor<f32>,
-    #[define(F)] _input: ElemType,
+    #[define(F)] _float: ElemType,
 ) {
     let row = CUBE_POS;
     if row >= scales.len() {
@@ -310,7 +310,7 @@ fn mxfp4_kernel<F: Float>(
     input: &Tensor<F>,
     codes: &mut Tensor<u32>,
     scales: &mut Tensor<u32>,
-    #[define(F)] _input: ElemType,
+    #[define(F)] _float: ElemType,
 ) {
     if ABSOLUTE_POS >= scales.len() {
         terminate!();
