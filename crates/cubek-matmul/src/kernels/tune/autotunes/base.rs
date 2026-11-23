@@ -159,22 +159,12 @@ impl MatmulAutotune {
         call: &MatmulCall,
         groups: MatmulAutotuneGroups,
     ) -> Option<(MatmulRoutineSettings, MatmulTuneKey)> {
-        let (identity, key) = self.fastest(call, groups)?;
-        Some((identity.routine()?, key))
-    }
-
-    /// The candidate, routine or not, this autotune settled as the fastest for `call`, and the
-    /// key it was settled under: `None` until the tuner has settled one for the key. What a
-    /// caller reporting the winner names.
-    pub fn fastest(
-        self,
-        call: &MatmulCall,
-        groups: MatmulAutotuneGroups,
-    ) -> Option<(RoutineIdentity, MatmulTuneKey)> {
         let (tuner, tunables) = self.tunables(call, groups);
         let key = tunables.generate_key(call);
-        let identity = tuner.fastest_identity(&call.tune_id, &tunables, &key)?;
-        Some((identity, key))
+        let settings = tuner
+            .fastest_identity(&call.tune_id, &tunables, &key)?
+            .routine()?;
+        Some((settings, key))
     }
 
     /// This autotune's tuner and its candidates on `call`'s device, built on first touch.
