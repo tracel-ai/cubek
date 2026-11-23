@@ -168,7 +168,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     ///
     /// # Errors
     ///
-    /// A float lhs, which the candidate as stored serves; and every error of
+    /// An lhs that is not packed, which the candidate as stored serves; and every error of
     /// [`launch`](Self::launch).
     pub fn launch_activation_decoded<M: MatmulMicrokernel, SM>(
         &self,
@@ -177,8 +177,10 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     where
         R: MatmulRoutine<M, SM>,
     {
-        if matches!(call.lhs.tensor, StoredTensor::Plain(_)) {
-            return Err("the lhs is float: the candidate reading it as stored serves it".into());
+        if !matches!(call.lhs.tensor, StoredTensor::Packed(_)) {
+            return Err(
+                "the lhs is not packed: the candidate reading it as stored serves it".into(),
+            );
         }
         let lhs = Decoded
             .input(&call, &call.lhs)

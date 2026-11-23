@@ -165,7 +165,7 @@ fn inputs(
     copy: u64,
     layout: Layout,
     host: bool,
-) -> (Inputs, Option<(Vec<f64>, Vec<f64>)>) {
+) -> (Inputs, Option<HostValues>) {
     let activation = upload(client, &normal(m * k, k, 1), [m, k]);
     let fp8 = quantize_fp8_per_row(client, &activation, F32);
     let lhs_values = host.then(|| fp8_row_values(client, &fp8.values, &fp8.scales, k));
@@ -227,6 +227,9 @@ fn inputs(
     };
     (inputs, lhs_values.zip(rhs_values))
 }
+
+/// The activation's and the weight's values on the host, each `[rows, k]`.
+type HostValues = (Vec<f64>, Vec<f64>);
 
 /// Where the weight's words and block scales lie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
