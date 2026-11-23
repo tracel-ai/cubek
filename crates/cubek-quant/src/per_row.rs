@@ -61,7 +61,7 @@ pub struct Fp8RowActivation {
     pub scales: TensorHandle,
 }
 
-/// `input`, a contiguous float `[rows, k]` of `input_elem`, quantized to FP8-row: each row's
+/// `input`, a float `[rows, k]` of `input_elem`, quantized to FP8-row: each row's
 /// scale its largest magnitude over `e4m3`'s largest, one where the row is zero, and each value
 /// over its row's scale rounded to the nearest `e4m3`.
 ///
@@ -78,9 +78,10 @@ pub fn quantize_fp8_per_row(
         k.is_multiple_of(E4M3_PER_WORD),
         "quantize_fp8_per_row: k ({k}) should hold whole words of four e4m3 values"
     );
+    // Flat, so no runtime pads its rows.
     let words = TensorHandle::empty(
         client,
-        [rows, k / E4M3_PER_WORD],
+        [rows * k / E4M3_PER_WORD],
         ElemType::UInt(UIntKind::U32),
     );
     let scales = TensorHandle::empty(client, [rows], ElemType::Float(FloatKind::F32));
@@ -126,7 +127,8 @@ pub struct RowFactoredScales {
 ///
 /// # Panics
 ///
-/// Where a row's scales are not whole words of four, `k` a multiple of 128.
+/// Where a row's scales are not whole words of four, `k` a multiple of 128, or do not lie in
+/// dense rows.
 pub fn factor_mxfp4_scales_by_row(
     client: &Client,
     block_scales: &TensorHandle,
@@ -136,13 +138,21 @@ pub fn factor_mxfp4_scales_by_row(
         blocks.is_multiple_of(SCALES_PER_WORD),
         "factor_mxfp4_scales_by_row: a row's {blocks} block scales should be whole words of four"
     );
-    let word_shape = [rows, blocks / SCALES_PER_WORD];
+    assert!(
+        is_contiguous(block_scales),
+        "factor_mxfp4_scales_by_row: the block scales should lie in dense rows, read as words"
+    );
     let words = TensorHandle::new_contiguous(
-        word_shape,
+        [rows, blocks / SCALES_PER_WORD],
         block_scales.handle.clone(),
         ElemType::UInt(UIntKind::U32),
     );
-    let offsets = TensorHandle::empty(client, word_shape, ElemType::UInt(UIntKind::U32));
+    // Flat, so no runtime pads its rows.
+    let offsets = TensorHandle::empty(
+        client,
+        [rows * blocks / SCALES_PER_WORD],
+        ElemType::UInt(UIntKind::U32),
+    );
     let row_scales = TensorHandle::empty(client, [rows], ElemType::Float(FloatKind::F32));
     let lossy_blocks = TensorHandle::zeros(client, [1], ElemType::UInt(UIntKind::U32));
     let address_type = words.required_address_type();
@@ -179,7 +189,7 @@ pub struct Mxfp4RowFactoredWeight {
     pub scales: RowFactoredScales,
 }
 
-/// `input`, a contiguous float `[rows, k]` of `input_elem`, quantized to MXFP4, then its scales
+/// `input`, a float `[rows, k]` of `input_elem`, quantized to MXFP4, then its scales
 /// factored by row ([`factor_mxfp4_scales_by_row`]). Each block's `ue8m0` scale is its largest
 /// magnitude over `e2m1`'s largest, rounded up to a power of two, so no value saturates where the
 /// OCP MX rule rounds down and saturates the largest; each value is its nearest code under it.
@@ -198,12 +208,13 @@ pub fn quantize_mxfp4_row_factored(
         k.is_multiple_of(per_word),
         "quantize_mxfp4_row_factored: k ({k}) should hold whole words of four block scales"
     );
+    // Flat, so no runtime pads their rows.
     let codes = TensorHandle::empty(
         client,
-        [rows, k / E2M1_PER_WORD],
+        [rows * k / E2M1_PER_WORD],
         ElemType::UInt(UIntKind::U32),
     );
-    let scales = TensorHandle::empty(client, [rows, k / per_word], ElemType::UInt(UIntKind::U32));
+    let scales = TensorHandle::empty(client, [rows * k / per_word], ElemType::UInt(UIntKind::U32));
     let units = rows * k / per_word;
     let cube_dim = CubeDim::new(client, units);
     let address_type = input.required_address_type();
@@ -227,9 +238,24 @@ pub fn quantize_mxfp4_row_factored(
         ElemType::UInt(UIntKind::U8),
     );
     Mxfp4RowFactoredWeight {
-        codes,
+        codes: TensorHandle::new_contiguous(
+            [rows, k / E2M1_PER_WORD],
+            codes.handle,
+            ElemType::UInt(UIntKind::U32),
+        ),
         scales: factor_mxfp4_scales_by_row(client, &block_scales),
     }
+}
+
+/// Whether `tensor` lies in dense rows, its strides its shape's.
+fn is_contiguous(tensor: &TensorHandle) -> bool {
+    let shape = tensor.shape();
+    let mut stride = 1;
+    (0..shape.rank()).rev().all(|axis| {
+        let dense = tensor.strides()[axis] == stride || shape[axis] == 1;
+        stride *= shape[axis];
+        dense
+    })
 }
 
 /// A matrix's rows and the extent of each, its innermost dimension.
@@ -241,8 +267,8 @@ fn rows_of(shape: &Shape) -> (usize, usize) {
 /// One cube a row: the row's largest magnitude, reduced across the cube, then each unit's words
 /// of four values written under it.
 ///
-/// - `input`: `[rows, k]` floats of `F`, contiguous.
-/// - `words`: `[rows, k / 4]`, the `e4m3` values four a word, the lowest first.
+/// - `input`: `[rows, k]` floats of `F`, read through its strides.
+/// - `words`: `rows · k / 4` flat, the `e4m3` values four a word, the lowest first.
 /// - `scales`: `[rows]`, each row's `f32` scale.
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn cube_fp8_per_row_quantize<F: Float>(
@@ -255,13 +281,13 @@ fn cube_fp8_per_row_quantize<F: Float>(
     if row >= scales.len() {
         terminate!();
     }
-    let word_count = words.shape(1);
-    let start = row * word_count * E4M3_PER_WORD;
+    let word_count = input.shape(1) / E4M3_PER_WORD;
+    let (start, step) = (row * input.stride(0), input.stride(1));
     let mut largest = 0f32;
     for w in range_stepped(UNIT_POS as usize, word_count, CUBE_DIM as usize) {
         #[unroll]
         for j in 0..E4M3_PER_WORD {
-            let value = f32::cast_from(input[start + w * E4M3_PER_WORD + j]);
+            let value = f32::cast_from(input[start + (w * E4M3_PER_WORD + j) * step]);
             largest = f32::max(largest, f32::abs(value));
         }
     }
@@ -276,10 +302,8 @@ fn cube_fp8_per_row_quantize<F: Float>(
         let mut quad = Vector::<f32, N>::empty();
         #[unroll]
         for j in 0..E4M3_PER_WORD {
-            quad.insert(
-                j,
-                f32::cast_from(input[start + w * E4M3_PER_WORD + j]) / scale,
-            );
+            let value = f32::cast_from(input[start + (w * E4M3_PER_WORD + j) * step]);
+            quad.insert(j, value / scale);
         }
         words[row * word_count + w] = pack_q::<f32, N, u32>(quad, QuantValue::E4M3);
     }
@@ -289,8 +313,8 @@ fn cube_fp8_per_row_quantize<F: Float>(
 /// four offsets below it. Unit zero writes the row's scale and adds the row's lossy blocks into
 /// the counter.
 ///
-/// - `scales`: `[rows, k / 128]`, the `ue8m0` block scales four a word.
-/// - `offsets`: `[rows, k / 128]`, each block's offset below its row's largest, as a `ue8m0`.
+/// - `scales`: `[rows, k / 128]`, the `ue8m0` block scales four a word, contiguous.
+/// - `offsets`: `rows · k / 128` flat, each block's offset below its row's largest, as a `ue8m0`.
 /// - `row_scales`: `[rows]`, each row's largest block scale as an `f32`.
 /// - `lossy`: one counter, the blocks below [`EXACT_LOWEST_OFFSET`].
 #[cube(launch_unchecked, address_type = "dynamic")]
@@ -339,9 +363,9 @@ fn cube_mxfp4_scales_factor_by_row(
 /// A unit a word of four block scales, 128 values: each block's scale, then its 32 codes, four
 /// words of eight.
 ///
-/// - `input`: `[rows, k]` floats of `F`, contiguous.
-/// - `codes`: `[rows, k / 8]`, the `e2m1` codes eight a word, the lowest first.
-/// - `scales`: `[rows, k / 128]`, the `ue8m0` block scales four a word.
+/// - `input`: `[rows, k]` floats of `F`, read through its strides.
+/// - `codes`: `rows · k / 8` flat, the `e2m1` codes eight a word, the lowest first.
+/// - `scales`: `rows · k / 128` flat, the `ue8m0` block scales four a word.
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn unit_mxfp4_quantize<F: Float>(
     input: &Tensor<F>,
@@ -352,16 +376,21 @@ fn unit_mxfp4_quantize<F: Float>(
     if ABSOLUTE_POS >= scales.len() {
         terminate!();
     }
-    let start = ABSOLUTE_POS * SCALES_PER_WORD * MXFP4_BLOCK;
+    let per_row = input.shape(1) / (SCALES_PER_WORD * MXFP4_BLOCK);
+    let (row, word) = (ABSOLUTE_POS / per_row, ABSOLUTE_POS % per_row);
+    let first = word * SCALES_PER_WORD * MXFP4_BLOCK;
+    let (start, step) = (row * input.stride(0), input.stride(1));
+    let flat = ABSOLUTE_POS * SCALES_PER_WORD * MXFP4_BLOCK;
     let size!(N) = E2M1_PER_WORD;
     let mut scale_word = 0u32;
     #[unroll]
     for b in 0..SCALES_PER_WORD {
-        let block = start + b * MXFP4_BLOCK;
+        let column = first + b * MXFP4_BLOCK;
         let mut largest = 0f32;
         #[unroll]
         for j in 0..MXFP4_BLOCK {
-            largest = f32::max(largest, f32::abs(f32::cast_from(input[block + j])));
+            let value = f32::cast_from(input[start + (column + j) * step]);
+            largest = f32::max(largest, f32::abs(value));
         }
         let byte = ue8m0_at_least(largest / E2M1_LARGEST);
         scale_word |= byte << comptime!(BYTE_BITS * b as u32);
@@ -372,10 +401,11 @@ fn unit_mxfp4_quantize<F: Float>(
             let mut eight = Vector::<f32, N>::empty();
             #[unroll]
             for j in 0..E2M1_PER_WORD {
-                let value = f32::cast_from(input[block + w * E2M1_PER_WORD + j]);
-                eight.insert(j, value * inverse);
+                let at = column + w * E2M1_PER_WORD + j;
+                eight.insert(j, f32::cast_from(input[start + at * step]) * inverse);
             }
-            codes[block / E2M1_PER_WORD + w] = pack_q::<f32, N, u32>(eight, QuantValue::E2M1);
+            let code_word = (flat + b * MXFP4_BLOCK) / E2M1_PER_WORD + w;
+            codes[code_word] = pack_q::<f32, N, u32>(eight, QuantValue::E2M1);
         }
     }
     scales[ABSOLUTE_POS] = scale_word;

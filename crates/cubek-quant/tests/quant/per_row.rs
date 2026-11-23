@@ -179,6 +179,10 @@ fn quantize_mxfp4_row_factored_reconstructs_the_input() {
             assert_eq!(got, expected, "block {b}'s largest lands on 6");
         }
     }
-    assert_eq!(row_scales, vec![4.0; rows], "each row under its largest block's 2^2");
+    assert_eq!(
+        row_scales,
+        vec![4.0; rows],
+        "each row under its largest block's 2^2"
+    );
     assert_eq!(read_u32(&client, &quantized.scales.lossy_blocks), vec![1]);
 }
