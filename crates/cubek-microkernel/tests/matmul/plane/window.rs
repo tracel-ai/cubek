@@ -5,7 +5,7 @@
 use crate::launch::matmul::{MatmulElements, MatmulLaunch, PlaneWindowLaunch, PlaneWindowShape};
 use crate::matmul::{F16, F32, HostMatmul};
 use cubecl::prelude::*;
-use cubecl::tile::launch::Refusal;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
@@ -26,7 +26,7 @@ struct PlaneWindow {
 }
 
 impl PlaneWindow {
-    fn launch_of(&self, case: &WindowCase) -> Result<PlaneWindowLaunch, Refusal> {
+    fn launch_of(&self, case: &WindowCase) -> Result<PlaneWindowLaunch, Decline> {
         PlaneWindowLaunch::new(
             &self.hw,
             case.elements,
@@ -67,7 +67,7 @@ impl PlaneWindow {
 impl ScopeUnderTest for PlaneWindow {
     type Case = WindowCase;
 
-    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Refusal> {
+    fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         HostMatmul::written_by(&self.launch_of(case)?, client, -1e4)
     }
 

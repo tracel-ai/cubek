@@ -360,7 +360,7 @@ impl PlaneWindowLaunch {
         elements: MatmulElements,
         settings: &UnitRegistersMicrokernelSettings,
         shape: PlaneWindowShape,
-    ) -> Result<Self, Refusal> {
+    ) -> Result<Self, Decline> {
         let microkernel = UnitRegistersMicrokernel::best(hw, &elements.work_item(), settings)?;
         let levels = microkernel
             .block_tiling()
@@ -391,7 +391,7 @@ impl MatmulLaunch for PlaneWindowLaunch {
         lhs: TensorArg,
         rhs: TensorArg,
         out: TensorArg,
-    ) -> Result<(), Refusal> {
+    ) -> Result<(), Decline> {
         let launcher = self.one_cube.launcher(client, self.units)?;
         let [lhs, rhs, out] =
             self.elements

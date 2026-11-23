@@ -55,7 +55,7 @@ impl HostMatmul {
         launch: &impl MatmulLaunch,
         client: &Client,
         fill: f32,
-    ) -> Result<Vec<Written>, Refusal> {
+    ) -> Result<Vec<Written>, Decline> {
         let [m, n, k] = launch.shape();
         let product = Self::new(launch.shape());
         let elements = launch.elements();
