@@ -177,7 +177,7 @@ impl Seeded {
 
     /// A case's output of `shape` in `dtype`, poisoned: NaN for values, an index no window
     /// reaches for indices, so a cell the pool never writes fails the comparison.
-    fn poisoned(client: &Client, shape: &[usize], dtype: ElemType) -> TensorHandle {
+    pub(crate) fn poisoned(client: &Client, shape: &[usize], dtype: ElemType) -> TensorHandle {
         let poison = match dtype {
             ElemType::Float(_) => f32::NAN,
             _ => 77_777.0,
