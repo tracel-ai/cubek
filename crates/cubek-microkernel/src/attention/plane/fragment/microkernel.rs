@@ -1,4 +1,4 @@
-use super::{PlaneFragmentAttentionMicrokernel, ScoreHolder};
+use super::{PlaneFragmentAttentionMicrokernel, QueryHolder, ScoreHolder};
 use crate::attention::{DV, G, Q, S};
 use crate::matmul::MatmulOperands;
 use crate::matmul::plane::plane_fragment_microkernel;
@@ -72,8 +72,9 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
     /// Every plane's rows over `walk` before any key: its score placed by the walk, and its sum
     /// opened at zero on `out`, the output it is shaped by, against `value` and the score's
     /// probabilities, and `key` and `value` without the scales the softmax and the sum take out of
-    /// them, which its stages are filled from ([`StagedCache`]). `query` is staged, and `planes`
-    /// the planes its walker lays it over along each dimension.
+    /// them, which its stages are filled from ([`StagedCache`]). `query` is staged, or where the
+    /// microkernel holds it in registers the cube's own window of it, which each plane loads here
+    /// ([`QueryHolder`]), and `planes` the planes its walker lays it over along each dimension.
     pub fn open(
         walk: &Walk,
         query: &Tile,
@@ -87,12 +88,23 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         let softmax = score.softmax::<EA>(microkernel);
         let sum = Self::open_sum(out, &score, value, microkernel);
         let cache = StagedCache::new(key, value, &sum);
+        let query = match microkernel.query_holder() {
+            QueryHolder::Stage => query.clone(),
+            QueryHolder::Registers => {
+                let held = score.held_query(query);
+                for plane in walk.planes() {
+                    let mut fragments = held.at(&plane);
+                    fragments.copy_from(&query.at(&plane));
+                }
+                held
+            }
+        };
         PlaneFragmentAttention::<EA, EV> {
             sum,
             score,
             cache,
             softmax,
-            query: query.clone(),
+            query,
             probabilities: PhantomData,
             microkernel,
             planes,
@@ -286,6 +298,17 @@ impl StageScore {
                 StageScore::new_Window(scores.at(plane), probabilities.at(plane))
             }
             StageScore::Fragments(logits) => StageScore::new_Fragments(logits.at(plane)),
+        }
+    }
+
+    /// The fragments each plane holds of `query` in its registers, as this score's fragments
+    /// contract them, unfilled ([`Tile::held_for`]).
+    pub fn held_query(&self, query: &Tile) -> Tile {
+        match self {
+            StageScore::Fragments(logits) => query.held_for(logits),
+            StageScore::Window(_, _) => {
+                unreachable!("a query is held in registers beside a score kept in fragments")
+            }
         }
     }
 
@@ -486,14 +509,28 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
 ) {
     let walk = rows.walk().range(0, steps);
     let decoded = microkernel.decoded_stage();
-    // The query spans no key: staged once, before the walk, as the plane's own copy.
-    let mut staged_query =
-        query.stage_for(&walk, StageStorage::Strided, microkernel.decoded_query());
-    staged_query.copy_from(query);
+    // The query spans no key: staged once, before the walk, as the plane's own copy, or held in
+    // its registers.
+    let staged = match microkernel.query_holder() {
+        QueryHolder::Stage => {
+            let mut staged =
+                query.stage_for(&walk, StageStorage::Strided, microkernel.decoded_query());
+            staged.copy_from(query);
+            sync_plane();
+            staged
+        }
+        QueryHolder::Registers => query.clone(),
+    };
 
-    sync_plane();
-
-    let score = StageScore::open::<EA, EV>(&walk, &staged_query, microkernel);
+    let score = StageScore::open::<EA, EV>(&walk, &staged, microkernel);
+    let query = match microkernel.query_holder() {
+        QueryHolder::Stage => staged,
+        QueryHolder::Registers => {
+            let mut held = score.held_query(&staged);
+            held.copy_from(&staged);
+            held
+        }
+    };
     let mut softmax = score.softmax::<EA>(microkernel);
     let mut sum = PlaneFragmentAttention::<EA, EV>::open_sum(out, &score, value, microkernel);
     let cache = StagedCache::new(key, value, &sum);
@@ -515,7 +552,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
                 stage,
                 &mut sum,
                 &mut softmax,
-                &staged_query,
+                &query,
                 key,
                 &cache.key_factor,
                 value,

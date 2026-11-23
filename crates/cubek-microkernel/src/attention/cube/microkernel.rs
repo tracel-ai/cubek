@@ -491,19 +491,24 @@ impl CubeAttentionMicrokernel {
         #[comptime] storage: StageStorage,
     ) -> PlaneFragmentAttention<EA, EV> {
         // The query spans no key: staged once for every plane, before the walk, laid out as the
-        // stages of keys and values are.
-        let mut staged_query = query.stage_for(
-            &walk,
-            comptime!(microkernel.query_storage(&query.space())),
-            microkernel.plane.decoded_query(),
-        );
-
-        staged_query.copy_from(query);
+        // stages of keys and values are, or left where it lies for the planes to hold.
+        let query = match microkernel.plane.stages_query() {
+            true => {
+                let mut staged = query.stage_for(
+                    &walk,
+                    comptime!(microkernel.query_storage(&query.space())),
+                    microkernel.plane.decoded_query(),
+                );
+                staged.copy_from(query);
+                staged
+            }
+            false => query.clone(),
+        };
 
         let mut planes = match microkernel.plane {
             CubeAttentionPlane::Fragment(plane) => PlaneFragmentAttention::<EA, EV>::open(
                 &walk,
-                &staged_query,
+                &query,
                 out,
                 key,
                 value,

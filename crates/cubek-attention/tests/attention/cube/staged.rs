@@ -1,7 +1,13 @@
 //! The cube staged routine: a cube's planes of fragments contracting the stages it fills.
 
 use cubek_attention::kernels::{CubeStagedAttentionRoutine, CubeStagedAttentionRoutineSettings};
-use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
+use core::num::NonZeroUsize;
+use cubek_microkernel::attention::cube::{
+    CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
+};
+use cubek_microkernel::attention::plane::{
+    PlaneFragmentAttentionMicrokernelSettings, QueryHolder,
+};
 use cubek_std::microkernel::StageLayout;
 use cubek_test_utils::ScopeUnderTest;
 
@@ -48,6 +54,32 @@ fn a_swizzled_stage_matches_the_host() {
                 ..lead
             });
     forward.check(forward.at(swizzled, &[PROMPT_WIDE]));
+}
+
+/// Planes holding their query in registers, which read it from global memory once, past the last
+/// query a box cuts: one fragment of rows a plane and several, over one and several key fragments
+/// a step. A device that keeps no score in fragments, or whose shared memory does not hold the
+/// stages, declines.
+#[test]
+fn a_query_held_in_registers_matches_the_host() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    let held = [(1, 1, 1), (2, 2, 1), (6, 4, 1), (2, 4, 2)].map(|(heads, planes, keys)| {
+        let lead = CubeStagedAttentionRoutineSettings::DEFAULT;
+        CubeStagedAttentionRoutineSettings {
+            microkernel: CubeAttentionMicrokernelSettings {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings::fragments(1, keys)
+                        .querying(QueryHolder::Registers),
+                ),
+                heads: NonZeroUsize::new(heads).unwrap(),
+                planes_along_queries: NonZeroUsize::new(planes).unwrap(),
+                layout: StageLayout::PaddedRows,
+                ..lead.microkernel
+            },
+            ..lead
+        }
+    });
+    forward.check(forward.at(held, &[PROMPT_WIDE, PROMPT_HEAD_DIM_256]));
 }
 
 /// Every setting the routine lists at a head dim of 256, where the output's rows a correction

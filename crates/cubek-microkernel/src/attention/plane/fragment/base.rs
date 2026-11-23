@@ -1,4 +1,6 @@
-use crate::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, ScoreHolder};
+use crate::attention::plane::{
+    PlaneFragmentAttentionMicrokernelSettings, QueryHolder, ScoreHolder,
+};
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
 };
@@ -59,6 +61,28 @@ impl PlaneFragmentAttentionMicrokernel {
     /// decouple the two products.
     pub fn score_holder(&self) -> ScoreHolder {
         self.settings.score
+    }
+
+    /// Where the plane keeps its query across the walk: its settings', which
+    /// [`holds_query`](Self::holds_query) says the plane can.
+    pub fn query_holder(&self) -> QueryHolder {
+        self.settings.query
+    }
+
+    /// Whether a plane keeping its score in `holder` keeps `item`'s query, read in `read`, where
+    /// `settings` ask: registers hold only the `A` of a score in fragments, as it is stored.
+    fn holds_query(
+        settings: &PlaneFragmentAttentionMicrokernelSettings,
+        holder: ScoreHolder,
+        item: &AttentionWorkItem,
+        read: AttentionRead,
+    ) -> bool {
+        match settings.query {
+            QueryHolder::Stage => true,
+            QueryHolder::Registers => {
+                holder == ScoreHolder::Fragments && item.elements.query == read.score
+            }
+        }
     }
 
     /// The edge a fragment of the output spans along the value dim, which a drain writes at once.
@@ -143,6 +167,7 @@ impl PlaneFragmentAttentionMicrokernel {
             FragmentSource::Decoded => read.value,
             _ => read.score,
         };
+        let stored = *item;
         let item = &item.read_as(read);
         let (score_item, value_item) = (Self::score_item(item), Self::value_item(item));
         let grid = PlaneFragmentMicrokernelSettings {
@@ -162,6 +187,7 @@ impl PlaneFragmentAttentionMicrokernel {
         };
         holders
             .iter()
+            .filter(|&&holder| Self::holds_query(&settings, holder, &stored, read))
             .filter_map(|&holder| {
                 let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
                 let value = holder.rescaled_reader_plane(

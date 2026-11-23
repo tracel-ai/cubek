@@ -20,6 +20,21 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     pub scratch: Scratch,
     /// Where the plane keeps the score between its two multiplications.
     pub score: ScoreHolder,
+    /// Where the plane's query stays across the keys' walk.
+    pub query: QueryHolder,
+}
+
+/// Where a plane's query stays across its walk over the keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QueryHolder {
+    /// The stage in shared memory its cube or the plane fills before the walk, which each step
+    /// loads its fragments from.
+    Stage,
+    /// The plane's registers: its fragments loaded once from global memory. The stage's bytes hold
+    /// keys instead, so more planes share each stage of them, and no step reads the query from
+    /// shared memory. It is the `A` of the score's manual `mma`, so it asks for a score kept in
+    /// fragments ([`ScoreHolder::Fragments`]) and a query read at the element it is stored in.
+    Registers,
 }
 
 /// Where a plane keeps a stage's score between its two multiplications. The tile layer picks the
@@ -129,6 +144,7 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         seq_kv: NonZeroUsize::new(2).unwrap(),
         scratch: Scratch::OneTile,
         score: ScoreHolder::Fragments,
+        query: QueryHolder::Stage,
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -153,6 +169,11 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         }
     }
 
+    /// These settings keeping the query in `query`.
+    pub const fn querying(self, query: QueryHolder) -> Self {
+        Self { query, ..self }
+    }
+
     /// These settings keeping the score in `score`.
     pub const fn held_in(self, score: ScoreHolder) -> Self {
         Self { score, ..self }
@@ -167,8 +188,12 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             Scratch::OneTile | Scratch::None => {}
         }
         match self.score {
-            ScoreHolder::Fragments => Ok(()),
-            ScoreHolder::Window => write!(f, " score=window"),
+            ScoreHolder::Fragments => {}
+            ScoreHolder::Window => write!(f, " score=window")?,
+        }
+        match self.query {
+            QueryHolder::Stage => Ok(()),
+            QueryHolder::Registers => write!(f, " query=registers"),
         }
     }
 }

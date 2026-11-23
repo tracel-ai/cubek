@@ -192,8 +192,13 @@ impl CubeAttentionMicrokernel {
         let planes = self.layout().planes() * self.plane.window_bytes(item);
         let (query, ring) = match self.plane.reads() {
             CubePlaneReads::Stage => {
-                let query = self.staged_query(item);
-                let query = query.bytes(hw, &self.query_storage(&query.space));
+                let query = match self.plane.stages_query() {
+                    true => {
+                        let query = self.staged_query(item);
+                        query.bytes(hw, &self.query_storage(&query.space))
+                    }
+                    false => 0,
+                };
                 let stage: usize = item
                     .stage(self.seq_kv(), self.key_order())
                     .iter()

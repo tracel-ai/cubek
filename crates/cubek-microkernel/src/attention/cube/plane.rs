@@ -1,6 +1,6 @@
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
-    PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
+    PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings, QueryHolder,
 };
 use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem};
 use cubecl::ir::ElemType;
@@ -119,6 +119,15 @@ impl CubeAttentionPlane {
         match self {
             Self::Fragment(_) => CubePlaneReads::Stage,
             Self::Shuffle(_) => CubePlaneReads::Global,
+        }
+    }
+
+    /// Whether the cube stages its query for its planes: they read it from a stage, none where they
+    /// hold it in registers ([`QueryHolder`]) or read it where it lies.
+    pub fn stages_query(&self) -> bool {
+        match self {
+            Self::Fragment(plane) => plane.query_holder() == QueryHolder::Stage,
+            Self::Shuffle(_) => false,
         }
     }
 
