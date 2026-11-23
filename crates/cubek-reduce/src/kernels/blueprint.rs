@@ -322,23 +322,29 @@ mod tests {
         assert_eq!(grid.cubes(), own.cubes());
     }
 
+    fn sum_with_fixed_input_width(row_len: usize, input_width: usize) -> ReduceRoutineProblem {
+        let mut problem = ReduceRoutineProblem::dense(&[64, row_len], 1, ReduceOperation::Sum);
+        problem.elem_alignments[0] = ElemAlignment::stored_piece(input_width);
+        problem
+    }
+
     #[test]
-    fn an_input_stated_wider_than_its_lines_declines() {
+    fn an_input_wider_than_the_device_can_read_declines() {
         use crate::kernels::UnitDirectReduceRoutine;
         let hw = devices::m2_pro();
-        // The device limits the first row's width. The odd row length forces the second to scalar.
-        for (row_len, input_width) in [(4096, 64), (7, 2)] {
-            let dense = ReduceRoutineProblem::dense(&[64, row_len], 1, ReduceOperation::Sum);
-            let problem = ReduceRoutineProblem {
-                elem_alignments: [
-                    ElemAlignment::stored_piece(input_width),
-                    dense.elem_alignments[1],
-                ],
-                ..dense
-            };
-            let declined = UnitDirectReduceRoutine::prepare(&hw, &problem, &unit_settings(&hw))
-                .expect_err("the routine cannot read the caller's lines whole");
-            assert_eq!(declined.to_string(), UNBOUND_LINES_NARROWER.to_string());
-        }
+        let problem = sum_with_fixed_input_width(4096, 64);
+        let declined = UnitDirectReduceRoutine::prepare(&hw, &problem, &unit_settings(&hw))
+            .expect_err("the device cannot read 64 elements per line");
+        assert_eq!(declined.to_string(), UNBOUND_LINES_NARROWER.to_string());
+    }
+
+    #[test]
+    fn a_two_wide_input_declines_when_the_row_requires_scalar_reads() {
+        use crate::kernels::UnitDirectReduceRoutine;
+        let hw = devices::m2_pro();
+        let problem = sum_with_fixed_input_width(7, 2);
+        let declined = UnitDirectReduceRoutine::prepare(&hw, &problem, &unit_settings(&hw))
+            .expect_err("a scalar read would split the caller's two-element line");
+        assert_eq!(declined.to_string(), UNBOUND_LINES_NARROWER.to_string());
     }
 }
