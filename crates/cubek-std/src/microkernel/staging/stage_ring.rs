@@ -79,11 +79,13 @@ impl StageRing {
     /// every width it could bind at: the powers of two up to the widest line `hw` reads.
     ///
     /// An operand whose fill converts it ([`StageFill::Converted`]) is not carried by the register
-    /// prefetch, which reads a plain source at its own width: its ring prefetches into its slots.
+    /// prefetch: its ring prefetches into its slots. One whose fill decodes a packed input
+    /// ([`StageFill::Decoded`]) is, counted as the packed words and scale words the tile DSL
+    /// holds of it.
     ///
     /// The tile DSL holds one stage ahead in registers, so a ring of more than two stages would
-    /// leave the slots past the second idle; and it holds at most [`Prefetch::fits`] scalars a unit
-    /// of every operand's stage ([`StagedOperand::most_prefetched`]).
+    /// leave the slots past the second idle; and it holds at most [`Prefetch::fits`] registers a
+    /// unit of every operand's stage ([`StagedOperand::most_prefetched`]).
     pub fn resolve(self, hw: &Hardware, operands: &[StagedOperand], units: usize) -> Self {
         if operands
             .iter()
@@ -147,11 +149,48 @@ mod tests {
     #[test]
     fn an_operand_converted_by_its_fill_prefetches_into_its_slots() {
         let [lhs, rhs] = small_stage();
-        let converted = [lhs.converted_by_fill(), rhs];
+        let converted = [
+            StagedOperand {
+                fill: StageFill::Converted,
+                ..lhs
+            },
+            rhs,
+        ];
         assert_eq!(
             StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&devices::m2_pro(), &converted, 128),
             StageRing::DOUBLE
         );
+    }
+
+    /// The register prefetch carries an operand its fill decodes, so its ring keeps the registers,
+    /// on a GPU of each plane width and on a CPU.
+    #[test]
+    fn an_operand_decoded_by_its_fill_prefetches_in_registers() {
+        let [lhs, rhs] = small_stage();
+        let decoded = [lhs, rhs.decoded_by_fill(4)];
+        for hw in [
+            devices::m2_pro(),
+            devices::strix_halo(),
+            devices::cdna_wave64(),
+            devices::h100(),
+            devices::cpu_12(),
+        ] {
+            assert_eq!(
+                StageRing::DOUBLE_THROUGH_REGISTERS.resolve(&hw, &decoded, 128),
+                StageRing::DOUBLE_THROUGH_REGISTERS,
+                "{hw:?}"
+            );
+        }
+    }
+
+    /// A decoded operand counts its packed words and a scale word a line, as the tile DSL holds
+    /// them: far less than the values it is decoded into.
+    #[test]
+    fn a_decoded_operand_counts_its_words_and_scale_words() {
+        let [_, rhs] = small_stage();
+        let hw = devices::strix_halo();
+        let decoded = rhs.clone().decoded_by_fill(4);
+        assert!(decoded.most_prefetched(&hw, 32) < rhs.most_prefetched(&hw, 32));
     }
 
     /// The tile DSL holds one stage ahead in registers and refuses a deeper ring at expansion,

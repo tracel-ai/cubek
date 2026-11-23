@@ -585,6 +585,7 @@ mod base {
             item.elements,
             blueprint.microkernel.plane.orders,
             MatmulOperands::all(MatmulRead::AsBound),
+            MatmulOperands::all(None),
         );
         assert_eq!(registers.resolve(&hw, &operands, cube_units), registers);
         assert_eq!(
@@ -631,13 +632,15 @@ mod base {
                     kept += 1;
                     let stage = blueprint.partitioning.stage();
                     let units = grid.planes().count * grid.planes().width;
-                    let fetched =
-                        |elements: usize, width: usize| Prefetch::scalars(elements, units, width);
+                    let fetched = |elements: usize, width: usize| {
+                        let turns = Prefetch::turns(elements, units, width);
+                        Prefetch::straight_registers(turns, width, F16.size_bits())
+                    };
                     let held = fetched(stage.extent(M) * stage.extent(K), blueprint.widths.lhs)
                         + fetched(stage.extent(K) * stage.extent(N), blueprint.widths.rhs);
                     assert!(
                         Prefetch::fits(held),
-                        "{settings} on {hw:?}, {problem:?}: {held} scalars a unit"
+                        "{settings} on {hw:?}, {problem:?}: {held} registers a unit"
                     );
                 }
             }
@@ -645,10 +648,13 @@ mod base {
         assert!(kept > 0, "no listed setting kept its register prefetch");
     }
 
-    /// A packed input is read from words, which the register prefetch does not carry: every float
-    /// setting prefetching into registers, prepared on a q4 weight, prefetches into its slots.
+    /// A float setting reads a packed input a block at a time, its block scales bound a scale
+    /// alone, as bytes, which the register prefetch does not hold as words: every float setting
+    /// prefetching into registers, prepared on a q4 weight, prefetches into its slots. The packed
+    /// settings, whose reads bind the scales as words, keep it
+    /// (`a_packed_register_ring_is_kept_on_every_scheme_its_read_decodes`).
     #[test]
-    fn a_packed_input_keeps_no_register_prefetch() {
+    fn a_packed_input_read_a_scale_alone_keeps_no_register_prefetch() {
         use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
         use cubecl::tile::stage::Prefetch;
         use cubek_std::layout::stored::{Operand, Packing};

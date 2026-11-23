@@ -21,9 +21,14 @@ pub struct StagedOperand {
 pub enum StageFill {
     /// Copies it as it is bound, at its own width.
     AsStored,
-    /// Converts it: rounds tf32, decodes e2m1 or decodes a packed input. The register prefetch
-    /// reads a plain source at its own width and does not carry that.
+    /// Converts it: rounds tf32 or decodes e2m1 stored as its own element. The register prefetch
+    /// does not carry that.
     Converted,
+    /// Decodes a packed input of `value_bits` a value under block scales stored as packed words,
+    /// which the register prefetch carries: it holds the packed loads and the word of each line's
+    /// block scale across a contraction and decodes them into the stage after
+    /// ([`Prefetch::decoded_registers`]).
+    Decoded { value_bits: usize },
 }
 
 impl StagedOperand {
@@ -44,7 +49,17 @@ impl StagedOperand {
         }
     }
 
-    /// This operand with a fill that converts it, as a fill decoding a packed input does.
+    /// This operand with a fill that decodes it from values of `value_bits` packed into words,
+    /// under block scales stored as packed words.
+    pub fn decoded_by_fill(self, value_bits: usize) -> Self {
+        Self {
+            fill: StageFill::Decoded { value_bits },
+            ..self
+        }
+    }
+
+    /// This operand with a fill that converts it, as one rounding it to tf32 or reading it at
+    /// another element does.
     pub fn converted_by_fill(self) -> Self {
         Self {
             fill: StageFill::Converted,
@@ -87,14 +102,28 @@ impl StagedOperand {
         Space::new(&dimensions)
     }
 
-    /// Scalars one of `units` units holds of a stage of it fetched into registers, at its most
-    /// over every width it could bind at on `hw`: the powers of two up to the widest line `hw`
-    /// reads. Asked before the operands' widths are settled.
+    /// 32-bit registers one of `units` units holds of a stage of it fetched into registers, as
+    /// the tile DSL counts them ([`Prefetch`]). Asked before the operands' widths are settled: a
+    /// fill copying it as it lies at its most over every width it could bind at on `hw`, the
+    /// powers of two up to the widest line `hw` reads; a decoding fill at the widest line of the
+    /// element it is decoded into, which its stage binds at, each load landing one line.
     pub fn most_prefetched(&self, hw: &Hardware, units: usize) -> usize {
-        self.widths(hw)
-            .map(|width| Prefetch::scalars(self.cells(), units.max(1), width))
-            .max()
-            .expect("the widths hold one element")
+        let units = units.max(1);
+        match self.fill {
+            StageFill::Decoded { value_bits } => {
+                let line = hw.vector_ceiling(self.element);
+                let turns = Prefetch::turns(self.cells(), units, line);
+                Prefetch::decoded_registers(turns, line, value_bits, line)
+            }
+            StageFill::AsStored | StageFill::Converted => self
+                .widths(hw)
+                .map(|width| {
+                    let turns = Prefetch::turns(self.cells(), units, width);
+                    Prefetch::straight_registers(turns, width, self.element.size_bits())
+                })
+                .max()
+                .expect("the widths hold one element"),
+        }
     }
 
     /// Every width it could bind at on `hw`: the powers of two up to the widest line `hw` reads.

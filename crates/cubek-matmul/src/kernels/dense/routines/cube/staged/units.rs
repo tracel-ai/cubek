@@ -85,6 +85,12 @@ impl CubeStagedMatmulRoutine {
     const PACKED_ONE_STEP_BOXES: [((usize, usize), (usize, usize)); 3] =
         [((1, 1), (1, 1)), ((1, 1), (1, 2)), ((1, 1), (1, 4))];
 
+    /// Boxes against a packed input two steps of `M` a plane, one plane high: a group of a few dozen
+    /// rows, as a prompt's routes leave each of many experts, fills one such box where a taller one
+    /// computes mostly the padding of its group.
+    const PACKED_GROUP_BOXES: [((usize, usize), (usize, usize)); 3] =
+        [((2, 2), (1, 2)), ((2, 2), (1, 4)), ((2, 4), (1, 2))];
+
     /// Planes sharing a one-step box along `K`. One plane walking all of `K` stalls on each
     /// stage's fill, and a projection with few columns has too few cubes to hide it; past eight,
     /// a stage of `K` that many planes deep outgrows shared memory.
@@ -131,8 +137,23 @@ impl CubeStagedMatmulRoutine {
         settings
     }
 
+    /// The settings a grouped product against a packed input races beside
+    /// [`packed_settings`](Self::packed_settings): the group boxes, one stage at a time. Its cubes in
+    /// the grid's order.
+    pub fn packed_group_settings(&self) -> Vec<CubeStagedMatmulRoutineSettings> {
+        Self::PACKED_GROUP_BOXES
+            .map(|(steps, planes)| {
+                CubeStagedMatmulRoutineSettings::on_grid(
+                    CubeStagedMicrokernelSettings::in_steps(steps, planes, StageRing::SINGLE)
+                        .stage_steps(Self::PACKED_STAGE_STEPS[0]),
+                )
+            })
+            .to_vec()
+    }
+
     /// The settings a product against a packed input races on `hw`: the lead, the boxes several
-    /// steps tall the float routine races, one stage at a time and with a second in flight, each
+    /// steps tall the float routine races, one stage at a time, with a second in flight, and one
+    /// stage with the next held in registers while it is contracted, each
     /// at every count of steps of `K` a stage holds ([`PACKED_STAGE_STEPS`](Self::PACKED_STAGE_STEPS)),
     /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
     /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
@@ -147,14 +168,17 @@ impl CubeStagedMatmulRoutine {
     /// A step of `K` is planned on the inputs' finest reads, one scale block where scales are
     /// bytes ([`CubeStagedMicrokernel::planned`](cubek_microkernel::matmul::cube::CubeStagedMicrokernel::planned)).
     pub fn packed_settings(&self, hw: &Hardware) -> Vec<CubeStagedMatmulRoutineSettings> {
-        let boxed = [StageRing::SINGLE, StageRing::DOUBLE]
-            .into_iter()
-            .flat_map(|ring| {
-                Self::PACKED_BOXES.map(|(steps, planes)| {
-                    CubeStagedMicrokernelSettings::in_steps(steps, planes, ring)
-                })
-            })
-            .flat_map(|settings| Self::PACKED_STAGE_STEPS.map(|steps| settings.stage_steps(steps)));
+        let boxed = [
+            StageRing::SINGLE,
+            StageRing::DOUBLE,
+            StageRing::SINGLE_THROUGH_REGISTERS,
+        ]
+        .into_iter()
+        .flat_map(|ring| {
+            Self::PACKED_BOXES
+                .map(|(steps, planes)| CubeStagedMicrokernelSettings::in_steps(steps, planes, ring))
+        })
+        .flat_map(|settings| Self::PACKED_STAGE_STEPS.map(|steps| settings.stage_steps(steps)));
         let one_step = self
             .packed_one_step_settings()
             .into_iter()

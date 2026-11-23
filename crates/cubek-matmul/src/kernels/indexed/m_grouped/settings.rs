@@ -164,9 +164,18 @@ impl MGroupedSettings<CubeStagedMatmulRoutineSettings> {
     }
 
     /// The cube staged routine's settings worth racing on `hw` against a packed stack, each over
-    /// chunks of the tile its cubes hold.
+    /// chunks of the tile its cubes hold: the dense routine's, then those sized for a group
+    /// ([`packed_group_settings`](CubeStagedMatmulRoutine::packed_group_settings)), whose few
+    /// dozen rows a dense box pads several times over.
     pub fn cube_staged_packed(hw: &Hardware) -> Vec<Self> {
-        Self::over_cube_tiles(CubeStagedMatmulRoutine.packed_settings(hw))
+        let routine = CubeStagedMatmulRoutine;
+        let mut settings = routine.packed_settings(hw);
+        for candidate in routine.packed_group_settings() {
+            if !settings.contains(&candidate) {
+                settings.push(candidate);
+            }
+        }
+        Self::over_cube_tiles(settings)
     }
 
     fn over_cube_tiles(settings: Vec<CubeStagedMatmulRoutineSettings>) -> Vec<Self> {

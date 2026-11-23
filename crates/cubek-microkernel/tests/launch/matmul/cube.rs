@@ -194,7 +194,8 @@ impl CubeStagedLaunch {
             ComputeScope::Cube,
             steps,
         );
-        let resolved = microkernel.resolve(hw, &contracted, &placed.cube_space())?;
+        let resolved =
+            microkernel.resolve(hw, &contracted, item.packings(), &placed.cube_space())?;
         if resolved.shared_memory > hw.shared_memory_budget() {
             return Err(Decline::Unserved {
                 why: "the cube's stages hold more shared memory than the device has",
