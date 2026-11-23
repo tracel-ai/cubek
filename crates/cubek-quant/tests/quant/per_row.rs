@@ -1,6 +1,5 @@
 //! FP8-row, and MXFP4 with row-factored scales: that each launch writes the levels its scheme
-//! names, and that the values
-//! they reconstruct are the input's, to the format's rounding.
+//! names, and that the values they reconstruct are the input's, to the format's rounding.
 
 use cubecl::{
     client::Client,
@@ -16,27 +15,12 @@ use cubek_quant::per_row::{
 
 use super::harness::f32_tensor;
 
-/// Values of `e2m1`'s codes, the lowest three bits, the fourth its sign.
-const E2M1: [f32; 8] = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0];
-
 fn e2m1(code: u32) -> f32 {
-    let magnitude = E2M1[(code & 0x7) as usize];
-    if code & 0x8 != 0 {
-        -magnitude
-    } else {
-        magnitude
-    }
+    cubecl_common::e2m1::from_bits(code as u8).to_f32()
 }
 
 fn e4m3(byte: u8) -> f32 {
-    let sign = if byte & 0x80 != 0 { -1.0 } else { 1.0 };
-    let exponent = ((byte >> 3) & 0xF) as i32;
-    let mantissa = (byte & 0x7) as f32;
-    let magnitude = match exponent {
-        0 => mantissa / 8.0 * 2f32.powi(-6),
-        _ => (1.0 + mantissa / 8.0) * 2f32.powi(exponent - 7),
-    };
-    sign * magnitude
+    cubecl_common::e4m3::from_bits(byte).to_f32()
 }
 
 fn ue8m0(byte: u8) -> f32 {
@@ -154,21 +138,23 @@ fn factoring_mxfp4_scales_by_row_stores_offsets_below_the_largest() {
     assert_eq!(lossy, vec![expected_lossy]);
 }
 
-/// A float weight straight to MXFP4 with row-factored scales: each block's codes the nearest
-/// `e2m1` under its scale,
-/// its largest landing on `6`, and its value under the two levels the input's to `e2m1`'s
-/// rounding. A block of zeros stays zero, under the smallest scale, which the lossy count takes
-/// for a block that rounds.
+/// A float weight straight to MXFP4 with row-factored scales, three rows of twelve blocks: each
+/// block's codes the nearest `e2m1` under its scale, its largest landing on `6`, and its value
+/// under the two levels the input's to `e2m1`'s rounding. A block of zeros stays zero, under the
+/// smallest scale, which the lossy count takes for a block that rounds.
 #[test]
 fn quantize_mxfp4_row_factored_reconstructs_the_input() {
     let client = cubecl::test_device().client();
-    let (rows, k) = (2, 256);
+    let (rows, k) = (3, 384);
+    let blocks = k / MXFP4_BLOCK;
+    // Each row's blocks under `2^-3` to `2^2`, twice over: the largest five steps above the least.
+    let largest_of = |block: usize| 6.0 * 2f32.powi((block % 6) as i32 - 3);
     let mut data = Vec::new();
     for r in 0..rows {
-        for b in 0..k / MXFP4_BLOCK {
+        for b in 0..blocks {
             match (r, b) {
                 (1, 3) => data.extend(vec![0.0; MXFP4_BLOCK]),
-                _ => data.extend(row(MXFP4_BLOCK, 6.0 * 2f32.powi(b as i32 - 3), b + r)),
+                _ => data.extend(row(MXFP4_BLOCK, largest_of(b), b + r)),
             }
         }
     }
@@ -179,7 +165,6 @@ fn quantize_mxfp4_row_factored_reconstructs_the_input() {
     let codes = read_u32(&client, &quantized.codes);
     let offsets = read_bytes(&client, &quantized.scales.block_scales);
     let row_scales = read_f32(&client, &quantized.scales.row_scales);
-    let blocks = k / MXFP4_BLOCK;
     for (at, &expected) in data.iter().enumerate() {
         let (r, b) = (at / k, at / MXFP4_BLOCK);
         let code = (codes[at / 8] >> (4 * (at % 8))) & 0xF;
@@ -190,12 +175,10 @@ fn quantize_mxfp4_row_factored_reconstructs_the_input() {
             (got - expected).abs() <= scale,
             "value {at}: {got} for {expected}"
         );
-        let largest = 6.0 * 2f32.powi((b % blocks) as i32 - 3);
-        if expected == largest {
+        if expected == largest_of(b % blocks) {
             assert_eq!(got, expected, "block {b}'s largest lands on 6");
         }
     }
-    // Every row's largest block is its last, so its offset is one.
-    assert_eq!(row_scales, vec![2f32.powi(blocks as i32 - 4); rows]);
+    assert_eq!(row_scales, vec![4.0; rows], "each row under its largest block's 2^2");
     assert_eq!(read_u32(&client, &quantized.scales.lossy_blocks), vec![1]);
 }
