@@ -2,7 +2,8 @@
 //! weight to MXFP4 with row-factored scales, both on the device, the weight stored in the tile
 //! order a load reads it in, then multiplied through the plan the selection picks, which races
 //! its candidates on the first launch. Each line is a Qwen3.8 27B projection `[out, in]` at a
-//! prompt's rows: its TFLOP/s over copies of the weight that outgrow the cache, and its worst
+//! prompt's rows: its TFLOP/s in device time over copies of the weight that outgrow the cache,
+//! each written into its own output, and its worst
 //! error over sampled cells against the product of the quantized inputs in `f64`.
 //!
 //! ```sh
@@ -28,7 +29,7 @@ use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, RowScaledTensor, 
 use cubek_matmul::kernels::tune::MatmulAutotuneGroups;
 use cubek_matmul::tiled::storage;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
-use cubek_quant::per_row::{MXFP4_BLOCK, quantize_fp8_per_row, quantize_mxfp4_row_factored};
+use cubek_quant::per_row::{quantize_fp8_per_row, quantize_row_factored};
 use cubek_std::Hardware;
 use cubek_std::layout::stored::Operand;
 use cubek_std::layout::tile_order;
@@ -79,14 +80,17 @@ fn main() {
             // The first launch races the candidates.
             let out = plan.launch(&calls[0]).expect("a plan serves the product");
             let error = worst_error(&client, &out, &lhs.1, &weights[0].1, (m, n, k));
+            let launches = || {
+                for i in 0..LAUNCHES {
+                    plan.launch(&calls[i % copies])
+                        .expect("served once already");
+                }
+            };
+            launches();
             block_on(client.sync()).expect("sync");
-            let start = std::time::Instant::now();
-            for i in 0..LAUNCHES {
-                plan.launch(&calls[i % copies])
-                    .expect("served once already");
-            }
-            block_on(client.sync()).expect("sync");
-            let seconds = start.elapsed().as_secs_f64() / LAUNCHES as f64;
+            let (_, ticks) = client.profile(launches, "w4a8 fp8-row").expect("profile");
+            let device = block_on(ticks.resolve()).expect("device ticks").duration();
+            let seconds = device.as_secs_f64() / LAUNCHES as f64;
             let tflops = 2.0 * (m * n * k) as f64 / seconds / 1e12;
             println!("{name:<8} m={m:<5} {tflops:>6.1} TFLOP/s  err {error:.1e}");
         }
@@ -125,7 +129,9 @@ fn read<T: CubeElement>(client: &Client, handle: &TensorHandle) -> Vec<T> {
 
 /// An `[m, k]` activation quantized to FP8-row, and its values on the host.
 fn activation(client: &Client, m: usize, k: usize) -> (StoredTensor, Vec<f64>) {
-    let fp8 = quantize_fp8_per_row(client, &upload(client, &normal(m * k, 1), [m, k]), F32);
+    let input = upload(client, &normal(m * k, 1), [m, k]);
+    let fp8 =
+        quantize_fp8_per_row(client, &input, F32, &QuantScheme::fp8_per_row()).expect("FP8-row");
     let scales = read::<f32>(client, &fp8.scales);
     let host = read::<u8>(client, &fp8.values)
         .iter()
@@ -152,26 +158,34 @@ fn weight(
     k: usize,
     copy: usize,
 ) -> (StoredTensor, Vec<f64>) {
-    let weight = upload(client, &normal(n * k, 2 + copy as u64), [n, k]);
-    let mxfp4 = quantize_mxfp4_row_factored(client, &weight, F32);
-    let (codes, scales) = (mxfp4.codes, mxfp4.scales);
-    let host = host_weight(client, &codes, &scales.block_scales, &scales.row_scales, k);
-    // The scheme over `[k, n]`, its words down `k`: the statement tile order stores.
     let scheme = QuantScheme::mxfp4_row_factored();
+    let block = block_of(&scheme);
+    let contracted = ElemType::Float(FloatKind::E4M3);
+    let weight = upload(client, &normal(n * k, 2 + copy as u64), [n, k]);
+    let quantized = quantize_row_factored(client, &weight, F32, &scheme, contracted)
+        .expect("MXFP4's blocks are powers of two");
+    let (codes, scales) = (quantized.codes, quantized.scales);
+    let host = host_weight(
+        client,
+        &codes,
+        &scales.block_scales,
+        &scales.row_scales,
+        (k, block),
+    );
+    // The scheme over `[k, n]`, its words down `k`: the statement tile order stores.
     let along_k = QuantScheme::default()
         .with_value(scheme.value)
-        .per_block([MXFP4_BLOCK as u8, 1], ScaleDtype::UE8M0)
+        .per_block([block as u8, 1], ScaleDtype::UE8M0)
         .per_row(ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(1));
     let read = Operand::of_scheme(&scheme, K, [N, K]).expect("blocks along k");
     let element = cubek_std::value_element(scheme.value).expect("float codes");
-    let contracted = ElemType::Float(FloatKind::E4M3);
     let step = MatmulStep::stored_on(hw, MatmulOperand::Rhs, read, element, contracted)
         .expect("the device contracts the weight");
     let order = storage::tile_order_on(hw, &along_k, (step.along(K), step.along(N)), (k, n))
         .expect("tile order stores the weight");
     let words_per_load = hw.load_values(WORD);
-    let blocks = k / MXFP4_BLOCK;
+    let blocks = k / block;
     let bound = |handle: &cubecl::server::Handle, meta: Metadata| TensorBinding {
         handle: handle.clone().binding(),
         strides: meta.strides,
@@ -191,7 +205,7 @@ fn weight(
     };
     let values = tiled(
         &codes.handle,
-        Metadata::new([n, blocks, MXFP4_BLOCK], [k, MXFP4_BLOCK, 1]),
+        Metadata::new([n, blocks, block], [k, block, 1]),
         &tile_order::values_dimensions(N),
         Field::from(scheme.value),
         order.values_storage(N, words_per_load),
@@ -234,17 +248,25 @@ fn host_weight(
     codes: &TensorHandle,
     offsets: &TensorHandle,
     row_scales: &TensorHandle,
-    k: usize,
+    (k, block): (usize, usize),
 ) -> Vec<f64> {
     let (codes, offsets) = (read::<u32>(client, codes), read::<u8>(client, offsets));
     let row_scales = read::<f32>(client, row_scales);
     (0..codes.len() * 8)
         .map(|at| {
             let code = ((codes[at / 8] >> (4 * (at % 8))) & 0xF) as u8;
-            let offset = 2f64.powi(i32::from(offsets[at / MXFP4_BLOCK]) - 127);
+            let offset = 2f64.powi(i32::from(offsets[at / block]) - 127);
             f64::from(e2m1::from_bits(code).to_f32()) * offset * f64::from(row_scales[at / k])
         })
         .collect()
+}
+
+/// The values a block of `scheme` holds along `k`.
+fn block_of(scheme: &QuantScheme) -> usize {
+    scheme
+        .block_size()
+        .expect("a block-scaled scheme")
+        .to_dim_vec(1)[0] as usize
 }
 
 /// The call of `lhs · rhs`, `rhs` the weight `[n, k]` as the product reads it, `[k, n]`.
@@ -267,7 +289,7 @@ fn call(
         lhs: input(lhs, Metadata::new([m, k], [k, 1])),
         rhs: input(rhs, Metadata::new([k, n], [1, k])),
         out: F16,
-        destination: None,
+        destination: Some(TensorHandle::empty(client, [m, n], F16)),
     }
 }
 
