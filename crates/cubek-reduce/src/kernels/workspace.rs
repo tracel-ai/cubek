@@ -61,9 +61,9 @@ impl ReduceWorkspace {
             &problem,
         );
         ReduceWorkspaceBytes {
-            partials_bytes: (partials.value_count * elements.accumulator.size()) as u64,
-            partial_indices_bytes: (partials.index_count * size_of::<u32>()) as u64,
-            arrivals_bytes: (partials.arrival_count * size_of::<u32>()) as u64,
+            partials_bytes: partials.value_count as u64 * elements.accumulator.size() as u64,
+            partial_indices_bytes: partials.index_count as u64 * size_of::<u32>() as u64,
+            arrivals_bytes: partials.arrival_count as u64 * size_of::<u32>() as u64,
         }
     }
 }
@@ -72,9 +72,9 @@ impl ReduceWorkspace {
     /// The cells its buffers hold, its partials in `accumulator`.
     pub(crate) fn partials_in(&self, accumulator: ElemType) -> ReducePartials {
         ReducePartials {
-            value_count: self.partials.size_in_used() as usize / accumulator.size(),
-            index_count: self.partial_indices.size_in_used() as usize / size_of::<u32>(),
-            arrival_count: self.arrivals.size_in_used() as usize / size_of::<u32>(),
+            value_count: (self.partials.size_in_used() / accumulator.size() as u64) as usize,
+            index_count: (self.partial_indices.size_in_used() / size_of::<u32>() as u64) as usize,
+            arrival_count: (self.arrivals.size_in_used() / size_of::<u32>() as u64) as usize,
         }
     }
 }

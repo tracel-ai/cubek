@@ -180,7 +180,7 @@ fn launch_at<R: ReduceRoutine<M>, M>(
 mod tests {
     use super::*;
     use crate::kernels::ReducePartials;
-    use crate::kernels::testing::{swept_devices, swept_problems};
+    use crate::kernels::testing::swept_problems;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
     use std::sync::Arc;
@@ -351,17 +351,16 @@ mod tests {
         }
     }
 
-    /// The rule reads a problem's key alone, so the routine it picks for the key must prepare the
-    /// problem.
-    #[test]
-    fn the_picked_routine_prepares_every_problem_of_its_key() {
-        for hw in swept_devices() {
-            for problem in swept_problems() {
-                let pick = picked(&hw, &problem.keyed()).expect("the unit routine serves a key");
-                assert!(prepares(pick, &hw, &problem), "{pick:?} of {problem:?}");
-            }
+    /// Checks that the routine the rule picks on `hw` for a key, which it reads alone, prepares the
+    /// problems of that key.
+    fn prepares_every_problem_of_its_key(hw: &Hardware) {
+        for problem in swept_problems() {
+            let pick = picked(hw, &problem.keyed()).expect("the unit routine serves a key");
+            assert!(prepares(pick, hw, &problem), "{pick:?} of {problem:?}");
         }
     }
+
+    on_each_device!(the_picked_routine, prepares_every_problem_of_its_key);
 
     /// The rule's routine, launched.
     mod launched {

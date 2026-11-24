@@ -5,7 +5,6 @@ use crate::eval::benchmarks::benchmark::two_launch_operations;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::benchmarks::results::{
     RAMP_MAX_ELEM_COUNT, ReduceInput, ReduceValues, cpu_reference_result, strategy_result,
-    strategy_result_with_indices,
 };
 use crate::kernels::ReduceOpStrategy;
 
@@ -56,24 +55,15 @@ impl ReduceCorrectness {
         problem: &ReduceProblem,
         input: ReduceInput,
     ) -> Result<HostData, String> {
-        match problem.kind {
-            ReduceBenchKind::Single | ReduceBenchKind::TwoLaunch => strategy_result(
-                client,
-                problem.shape.clone(),
-                problem.axis,
-                *strategy,
-                problem.operation,
-                input,
-            ),
-            ReduceBenchKind::Fused => strategy_result_with_indices(
-                client,
-                problem.shape.clone(),
-                problem.axis,
-                *strategy,
-                problem.operation,
-                input,
-            ),
-        }
+        strategy_result(
+            client,
+            problem.shape.clone(),
+            problem.axis,
+            *strategy,
+            problem.operation,
+            input,
+            problem.kind == ReduceBenchKind::Fused,
+        )
     }
 
     /// What [`kernel_output`](Self::kernel_output) should hold: the values half of a fused launch,
@@ -149,9 +139,12 @@ fn seeded_input(problem: &ReduceProblem, seeds: &[u64]) -> ReduceInput {
 }
 
 #[cfg(test)]
-mod proof_shape_tests {
-    use super::proof_shape;
-    use crate::eval::benchmarks::results::RAMP_MAX_ELEM_COUNT;
+mod tests {
+    use super::*;
+    use crate::ReduceOperation;
+    use crate::eval::benchmarks::problem::ReduceBenchPrecision;
+    use crate::kernels::ReduceKernel;
+    use cubek_test_utils::Correctness;
 
     /// A proof shape whose values a ramp permutes: a power of two at most the ramp's longest.
     fn fits_a_ramp(proof: &[usize]) -> bool {
@@ -187,5 +180,39 @@ mod proof_shape_tests {
     #[test]
     fn keeps_a_whole_tensor_one_row() {
         assert_eq!(proof_shape(&[1, 16_777_216], 1), vec![1, 2048]);
+    }
+
+    const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit);
+
+    /// A reduction whose reference is cheap, launched as `kind` says.
+    fn small_problem(kind: ReduceBenchKind) -> ReduceProblem {
+        ReduceProblem {
+            shape: vec![4, 300],
+            axis: 1,
+            operation: ReduceOperation::Max,
+            kind,
+            precision: ReduceBenchPrecision::F32,
+        }
+    }
+
+    #[test]
+    fn a_right_kernel_is_proved() {
+        let proved = ReduceCorrectness::verify(&UNIT, &small_problem(ReduceBenchKind::Single));
+        assert_eq!(proved, Ok(()));
+    }
+
+    /// The kernel and the reference draw one input from the seed.
+    #[test]
+    fn a_fused_kernels_values_are_the_references() {
+        let problem = small_problem(ReduceBenchKind::Fused);
+        let written = ReduceCorrectness
+            .kernel_result(&UNIT, &problem, &[7])
+            .expect("the unit kernel serves every problem");
+        let expected = ReduceCorrectness
+            .reference_result(&problem, &[7], None)
+            .expect("the reference reduces every problem");
+        assert_equals_approx(&written, &expected, problem.tolerance())
+            .as_test_outcome()
+            .enforce();
     }
 }

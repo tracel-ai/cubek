@@ -159,7 +159,7 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::testing::{swept_devices, swept_problems};
+    use crate::kernels::testing::swept_problems;
     use crate::kernels::{
         BATCH, CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine,
         HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceRoutine,
@@ -167,6 +167,7 @@ mod tests {
     };
     use cubecl::ir::FloatKind;
     use cubecl::std::tensor::TensorHandle;
+    use cubek_std::Hardware;
     use cubek_std::routine::Routine;
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -221,56 +222,53 @@ mod tests {
         }
     }
 
-    /// Checks that each setting of `R` that prepares the problem a key stands for prepares the
+    /// Checks that each setting of `R` that prepares on `hw` the problem a key stands for prepares the
     /// problems of that key.
-    fn prepares_every_problem_of_its_keys<R: ReduceRoutine<M>, M>() {
-        for hw in swept_devices() {
-            for problem in swept_problems() {
-                let keyed = problem.keyed();
-                for settings in R::settings(&hw) {
-                    let declined = R::prepare(&hw, &keyed, &settings).is_ok()
-                        && R::prepare(&hw, &problem, &settings).is_err();
-                    assert!(!declined, "{settings} of {problem:?}");
-                }
+    fn prepares_every_problem_of_its_keys<R: ReduceRoutine<M>, M>(hw: &Hardware) {
+        for problem in swept_problems() {
+            let keyed = problem.keyed();
+            for settings in R::settings(hw) {
+                let declined = R::prepare(hw, &keyed, &settings).is_ok()
+                    && R::prepare(hw, &problem, &settings).is_err();
+                assert!(!declined, "{settings} of {problem:?}");
             }
         }
     }
 
-    #[test]
-    fn a_plane_candidate_prepares_every_problem_of_its_keys() {
-        prepares_every_problem_of_its_keys::<PlaneShuffleReduceRoutine, _>();
-    }
+    on_each_device!(
+        a_unit_candidate_prepares_every_problem_of_its_keys,
+        prepares_every_problem_of_its_keys::<UnitDirectReduceRoutine, _>
+    );
+    on_each_device!(
+        a_plane_candidate_prepares_every_problem_of_its_keys,
+        prepares_every_problem_of_its_keys::<PlaneShuffleReduceRoutine, _>
+    );
+    on_each_device!(
+        a_cube_candidate_prepares_every_problem_of_its_keys,
+        prepares_every_problem_of_its_keys::<CubeStagedReduceRoutine, _>
+    );
+    on_each_device!(
+        a_last_arrival_candidate_prepares_every_problem_of_its_keys,
+        prepares_every_problem_of_its_keys::<HypercubeLastArrivalReduceRoutine, _>
+    );
+    on_each_device!(
+        an_atomic_candidate_prepares_every_problem_of_its_keys,
+        prepares_every_problem_of_its_keys::<HypercubeAtomicReduceRoutine, _>
+    );
 
-    #[test]
-    fn a_cube_candidate_prepares_every_problem_of_its_keys() {
-        prepares_every_problem_of_its_keys::<CubeStagedReduceRoutine, _>();
-    }
-
-    #[test]
-    fn a_last_arrival_candidate_prepares_every_problem_of_its_keys() {
-        prepares_every_problem_of_its_keys::<HypercubeLastArrivalReduceRoutine, _>();
-    }
-
-    #[test]
-    fn an_atomic_candidate_prepares_every_problem_of_its_keys() {
-        prepares_every_problem_of_its_keys::<HypercubeAtomicReduceRoutine, _>();
-    }
-
-    #[test]
-    fn a_unit_candidate_prepares_every_problem_of_its_keys() {
-        prepares_every_problem_of_its_keys::<UnitDirectReduceRoutine, _>();
-    }
-
-    /// The unit routine is what runs where every other declines.
-    #[test]
-    fn the_unit_routine_prepares_every_problem() {
-        for hw in swept_devices() {
-            for problem in swept_problems() {
-                let prepared = UnitDirectReduceRoutine::prepare_first_served(&hw, &problem);
-                assert!(prepared.is_ok(), "{problem:?}");
-            }
+    /// Checks that the unit routine, which runs where every other declines, prepares every problem on
+    /// `hw`.
+    fn prepares_every_problem(hw: &Hardware) {
+        for problem in swept_problems() {
+            let prepared = UnitDirectReduceRoutine::prepare_first_served(hw, &problem);
+            assert!(prepared.is_ok(), "{problem:?}");
         }
     }
+
+    on_each_device!(
+        the_unit_routine_prepares_every_problem,
+        prepares_every_problem
+    );
 
     /// Its winner may be one that takes the scratch.
     #[test]

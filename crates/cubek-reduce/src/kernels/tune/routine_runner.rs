@@ -160,11 +160,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::testing::{reduces_like_the_cpu, sum_of_long_rows};
+    use crate::kernels::testing::{BufferScopeChecker, sum_of_long_rows};
     use crate::kernels::{CubeStagedReduceRoutine, UnitDirectReduceRoutine};
     use cubecl::tile::launch::StoredTileOperand;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
+    use cubek_test_utils::ScopeChecker;
 
     /// The first candidate of the cube routine on a device that runs none of it.
     fn declining() -> ReduceRoutineRunner<CubeStagedReduceRoutine> {
@@ -308,7 +309,7 @@ mod tests {
 
     #[test]
     fn a_candidate_that_prepares_the_tensors_reduces_them() {
-        reduces_like_the_cpu(run_unit, sum_of_long_rows());
+        BufferScopeChecker::new(run_unit).check([sum_of_long_rows()]);
     }
 
     /// `tensors` summed by the atomic hypercube's first candidate on `hw`.
@@ -327,6 +328,6 @@ mod tests {
 
     #[test]
     fn an_atomic_candidate_sums_into_an_output_it_zeroes() {
-        reduces_like_the_cpu(run_atomic, sum_of_long_rows());
+        BufferScopeChecker::new(run_atomic).check([sum_of_long_rows()]);
     }
 }

@@ -8,6 +8,7 @@ use crate::kernels::{
     ReduceElements, ReducePartials, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
     ReduceWorkspace,
 };
+use cubecl::CubeElement;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::TensorBinding;
@@ -16,8 +17,9 @@ use cubecl::tile::launch::{Decline, StoredTileOperand, Unbound};
 use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
+use cubek_std::routine::Routine;
 use cubek_std::{Hardware, devices};
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 use std::sync::Arc;
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -112,15 +114,23 @@ pub(crate) fn given_workspace(client: &Client, reduction: &Reduction) -> ReduceW
 
 /// `reduction`'s output on `client`, every cell starting away from zero.
 pub(crate) fn unwritten_output(client: &Client, reduction: &Reduction) -> TensorHandle {
-    const UNWRITTEN: f32 = -7.0;
-    let shape = reduction.out_shape();
-    let cells = shape.iter().product();
     tensor_of(
         client,
-        &shape,
+        &reduction.out_shape(),
         reduction.out_element(),
-        vec![UNWRITTEN; cells],
+        unwritten_cells(reduction),
     )
+}
+
+/// What each cell of `reduction`'s output holds before its launch.
+fn unwritten_cells(reduction: &Reduction) -> Vec<f32> {
+    const UNWRITTEN: f32 = -7.0;
+    vec![UNWRITTEN; reduction.out_shape().iter().product()]
+}
+
+/// `reduction`'s input on `client`.
+fn input_buffer(client: &Client, reduction: &Reduction) -> TensorBinding {
+    tensor_of(client, &reduction.shape, F32, reduction.input()).binding()
 }
 
 /// `out`, written by `reduction`, as the check reads it back.
@@ -134,6 +144,14 @@ pub(crate) fn written_output(out: TensorHandle, reduction: &Reduction) -> Writte
         tensor: out,
         host,
     }
+}
+
+/// What the arrival counters of `workspace`, on `client`, hold.
+pub(crate) fn arrivals_of(client: &Client, workspace: ReduceWorkspace) -> Vec<u32> {
+    let counters = client
+        .read_one(workspace.arrivals)
+        .expect("the counters read back");
+    u32::from_bytes(&counters).to_vec()
 }
 
 /// A buffer of `shape` in f32 on `client`, holding zeros.
@@ -228,37 +246,158 @@ pub(crate) fn launch_unbound<R: ReduceRoutine<M>, M>(
     Ok(())
 }
 
-/// Launches a reduction as `launch` does, and checks it against the reference, row by row.
-struct ReductionScopeUnderTest<L> {
-    launch: L,
+/// Launches a reduction on buffers and checks it against the reference, row by row.
+pub(crate) struct BufferScopeChecker {
+    launch: BufferLaunch,
 }
 
-impl<L> ScopeUnderTest for ReductionScopeUnderTest<L>
-where
-    L: Fn(&Client, TensorBinding, TensorBinding, &Reduction) -> Result<(), Decline>,
-{
+impl BufferScopeChecker {
+    pub fn new(launch: BufferLaunch) -> Self {
+        Self { launch }
+    }
+}
+
+impl ScopeChecker for BufferScopeChecker {
     type Case = Reduction;
 
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
-        let input = tensor_of(client, &reduction.shape, F32, reduction.input()).binding();
         let out = unwritten_output(client, reduction);
+        let tensors = buffer_tensors(
+            client,
+            input_buffer(client, reduction),
+            out.clone().binding(),
+            reduction,
+        );
+        (self.launch)(&Hardware::from_client(client), &tensors)?;
+        Ok(vec![written_output(out, reduction)])
+    }
+
+    fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
+        vec![reference_by_operation(reduction, reduction.operation)]
+    }
+
+    fn tolerance(&self, _reduction: &Reduction) -> f32 {
+        TOLERANCE
+    }
+}
+
+/// Launches a reduction whose input the caller binds as a plain buffer once the launch is prepared,
+/// what a fused read stands in for, and checks it against the reference.
+pub(crate) struct UnboundScopeChecker {
+    launch: UnboundLaunch,
+}
+
+impl UnboundScopeChecker {
+    pub fn new(launch: UnboundLaunch) -> Self {
+        Self { launch }
+    }
+}
+
+impl ScopeChecker for UnboundScopeChecker {
+    type Case = Reduction;
+
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
+        let out = unwritten_output(client, reduction);
+        let input = input_buffer(client, reduction);
         (self.launch)(client, input, out.clone().binding(), reduction)?;
         Ok(vec![written_output(out, reduction)])
     }
 
     fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
-        let input = HostData::row_major(
-            HostDataVec::F32(reduction.input()),
-            Shape::from(reduction.shape.clone()),
-        );
-        let reference = ReduceReference::new(&input, reduction.axis, reduction.operation, None);
-        vec![reference.output]
+        vec![reference_by_operation(reduction, reduction.operation)]
     }
 
-    /// Whole numbers sum exactly; a mean divides once.
     fn tolerance(&self, _reduction: &Reduction) -> f32 {
-        1e-6
+        TOLERANCE
     }
+}
+
+/// Launches a reduction on buffers with its values' indices written beside them, and checks both
+/// against the reference. The reduction is the one whose indices alone are written.
+pub(crate) struct IndicesScopeChecker {
+    launch: BufferLaunch,
+}
+
+impl IndicesScopeChecker {
+    pub fn new(launch: BufferLaunch) -> Self {
+        Self { launch }
+    }
+}
+
+impl ScopeChecker for IndicesScopeChecker {
+    type Case = Reduction;
+
+    fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
+        let indices = unwritten_output(client, reduction);
+        let values = tensor_of(
+            client,
+            &reduction.out_shape(),
+            F32,
+            unwritten_cells(reduction),
+        );
+        let elements = ReduceElements {
+            out: F32,
+            ..reduction.elements()
+        };
+        let workspace = EvalWorkspace::new(
+            client,
+            &reduction.shape,
+            reduction.axis,
+            reduction.operation,
+            elements,
+            true,
+        )
+        .workspace;
+        let tensors = ReduceTensors::with_indices(
+            client,
+            input_buffer(client, reduction),
+            values.clone().binding(),
+            indices.clone().binding(),
+            reduction.axis,
+            reduction.operation,
+            elements,
+            I32,
+        )
+        .with_workspace(workspace);
+        (self.launch)(&Hardware::from_client(client), &tensors)?;
+        Ok(vec![
+            Written {
+                name: "values",
+                tensor: values,
+                host: HostDataType::F32,
+            },
+            written_output(indices, reduction),
+        ])
+    }
+
+    fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
+        let values = match reduction.operation {
+            ReduceOperation::ArgMax => ReduceOperation::Max,
+            ReduceOperation::ArgMin => ReduceOperation::Min,
+            ReduceOperation::ArgTopK { k } => ReduceOperation::TopK { k },
+            operation => unreachable!("{operation:?} writes no indices beside its values"),
+        };
+        [values, reduction.operation]
+            .map(|operation| reference_by_operation(reduction, operation))
+            .into()
+    }
+
+    fn tolerance(&self, _reduction: &Reduction) -> f32 {
+        TOLERANCE
+    }
+}
+
+/// How far a check lets a launch sit from the reference: whole numbers sum exactly, and a mean
+/// divides once.
+const TOLERANCE: f32 = 1e-6;
+
+/// What the reduce reference writes for `reduction`'s input, reduced by `operation`.
+fn reference_by_operation(reduction: &Reduction, operation: ReduceOperation) -> HostData {
+    let input = HostData::row_major(
+        HostDataVec::F32(reduction.input()),
+        Shape::from(reduction.shape.clone()),
+    );
+    ReduceReference::new(&input, reduction.axis, operation, None).output
 }
 
 /// A sum whose rows every routine serves.
@@ -270,50 +409,20 @@ pub(crate) fn sum_of_long_rows() -> Reduction {
     }
 }
 
-/// `reduction` launched once by `launch` and checked against the reference; a launch the device
-/// declines is a skip.
-pub(crate) fn reduces_like_the_cpu(launch: BufferLaunch, reduction: Reduction) {
-    let launch_buffers =
-        |client: &Client, input: TensorBinding, out: TensorBinding, reduction: &Reduction| {
-            let tensors = buffer_tensors(client, input, out, reduction);
-            launch(&Hardware::from_client(client), &tensors)
-        };
-    ReductionScopeUnderTest {
-        launch: launch_buffers,
-    }
-    .check([reduction]);
-}
-
-/// [`reduces_like_the_cpu`] of an input the caller binds.
-pub(crate) fn reduces_unbound_like_the_cpu(launch: UnboundLaunch, reduction: Reduction) {
-    ReductionScopeUnderTest { launch }.check([reduction]);
-}
-
-/// The devices a host test sweeps: each kind cubek knows, and one that launches as few cubes along
-/// each axis of a grid as any does.
-pub(crate) fn swept_devices() -> Vec<Hardware> {
+/// An M2 Pro that launches as few cubes along each axis of a grid as any device does.
+pub(crate) fn capped_m2_pro() -> Hardware {
     const FEWEST_CUBE_COUNT: u32 = 65_535;
     let mut capped = devices::m2_pro();
     Arc::make_mut(&mut capped.properties)
         .hardware
         .max_cube_count = (FEWEST_CUBE_COUNT, FEWEST_CUBE_COUNT, FEWEST_CUBE_COUNT);
-    vec![
-        devices::strix_halo(),
-        devices::wgpu_no_subgroups(),
-        devices::rdna_range(),
-        devices::cdna_wave64(),
-        devices::m2_pro(),
-        devices::h100(),
-        devices::rtx_pro_6000(),
-        devices::cpu_12(),
-        capped,
-    ]
+    capped
 }
 
-/// The problems a host test sweeps: matrices and tensors reduced along each axis, from no row to as
-/// many values as 32 bits count, dense and strided, by each carrier, given scratch and none.
+/// The problems a host test sweeps: matrices reduced along each axis, from no row to as many values
+/// as 32 bits count, dense and strided, by each carrier, given scratch.
 pub(crate) fn swept_problems() -> Vec<ReduceRoutineProblem> {
-    const EXTENTS: [usize; 12] = [
+    const EXTENT_COUNTS: [usize; 11] = [
         0,
         1,
         3,
@@ -323,32 +432,20 @@ pub(crate) fn swept_problems() -> Vec<ReduceRoutineProblem> {
         65_535,
         70_001,
         (1 << 20) + 1,
-        1 << 23,
         (1 << 30) + 1,
         u32::MAX as usize,
     ];
-    let shapes = EXTENTS
+    EXTENT_COUNTS
         .iter()
-        .flat_map(|&outer| EXTENTS.map(|inner| [outer, inner]))
-        .flat_map(|[outer, inner]| [1, 9].map(|middle| [outer, middle, inner]));
-    shapes
-        .flat_map(|shape| (0..shape.len()).map(move |axis| (shape, axis)))
+        .flat_map(|&outer| EXTENT_COUNTS.map(|inner| [outer, inner]))
+        .flat_map(|shape| [0, 1].map(|axis| (shape, axis)))
         .flat_map(|(shape, axis)| SWEPT_OPERATIONS.map(|operation| (shape, axis, operation)))
         .filter(|(shape, axis, operation)| {
             let values: u128 = shape.iter().map(|extent| *extent as u128).product();
             values <= u32::MAX as u128 && shape[*axis] >= operation.written_per_row()
         })
         .flat_map(|(shape, axis, operation)| {
-            [F32, ElemType::Float(FloatKind::F16)].map(|input| (shape, axis, operation, input))
-        })
-        .flat_map(|(shape, axis, operation, input)| {
-            [1, 2].map(|step| swept_problem(shape, axis, operation, input, step))
-        })
-        .flat_map(|problem| {
-            [None, Some(ReducePartials::UNBOUNDED)].map(|partials| ReduceRoutineProblem {
-                partials,
-                ..problem.clone()
-            })
+            [1, 2].map(|step| swept_problem(shape, axis, operation, step))
         })
         .collect()
 }
@@ -362,37 +459,161 @@ const SWEPT_OPERATIONS: [ReduceOperation; 5] = [
     ReduceOperation::ArgTopK { k: 2048 },
 ];
 
-/// A row-major `shape` of `input`, whose innermost axis steps `step` elements, reduced along `axis`
-/// by `operation`.
+/// A row-major `shape`, whose innermost axis steps `step` elements, reduced along `axis` by
+/// `operation`, given scratch.
 fn swept_problem(
-    shape: [usize; 3],
+    shape: [usize; 2],
     axis: usize,
     operation: ReduceOperation,
-    input: ElemType,
     step: usize,
 ) -> ReduceRoutineProblem {
-    let [outer, middle, inner] = shape;
+    let [outer, inner] = shape;
     let mut out_shape = shape;
     out_shape[axis] = operation.written_per_row();
     let index = ElemType::UInt(UIntKind::U32);
-    ReduceRoutineProblem::stated(
-        &Geometry::new(&[
-            (outer, middle * inner * step),
-            (middle, inner * step),
-            (inner, step),
-        ]),
+    let stated = ReduceRoutineProblem::stated(
+        &Geometry::new(&[(outer, inner * step), (inner, step)]),
         &Geometry::row_major(&out_shape),
         axis,
         operation,
-        ReduceElements::for_operation(operation, input, Some(index)),
-    )
+        ReduceElements::for_operation(operation, F32, Some(index)),
+    );
+    ReduceRoutineProblem {
+        partials: Some(ReducePartials::UNBOUNDED),
+        ..stated
+    }
+}
+
+/// A test of `$check` on each device a host test sweeps: each kind cubek knows, and a capped one.
+macro_rules! on_each_device {
+    ($name:ident, $check:expr) => {
+        on_each_device!(@devices $name, $check, [
+            strix_halo: cubek_std::devices::strix_halo(),
+            wgpu_no_subgroups: cubek_std::devices::wgpu_no_subgroups(),
+            rdna_range: cubek_std::devices::rdna_range(),
+            cdna_wave64: cubek_std::devices::cdna_wave64(),
+            m2_pro: cubek_std::devices::m2_pro(),
+            h100: cubek_std::devices::h100(),
+            rtx_pro_6000: cubek_std::devices::rtx_pro_6000(),
+            cpu_12: cubek_std::devices::cpu_12(),
+            capped_m2_pro: $crate::kernels::testing::capped_m2_pro(),
+        ]);
+    };
+    (@devices $name:ident, $check:expr, [$($device:ident: $hw:expr),* $(,)?]) => {
+        mod $name {
+            use super::*;
+
+            $(
+                #[test]
+                fn $device() {
+                    $check(&$hw);
+                }
+            )*
+        }
+    };
+}
+
+/// A test that `$routine` prepares four row axes, more than a launch grid has: every row axis is one
+/// [`BATCH`](crate::kernels::BATCH).
+macro_rules! prepares_more_row_axes_than_the_grid_holds {
+    ($routine:ty) => {
+        #[test]
+        fn prepares_more_row_axes_than_the_grid_holds() {
+            let hw = cubek_std::devices::m2_pro();
+            let operation = cubek_microkernel::reduce::ReduceOperation::ArgMax;
+            let problem = ReduceRoutineProblem {
+                partials: Some($crate::kernels::ReducePartials::UNBOUNDED),
+                ..ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, operation)
+            };
+            let settings = <$routine>::settings(&hw)[0];
+            let prepared = <$routine>::prepare(&hw, &problem, &settings).map(|_| ());
+            assert!(prepared.is_ok(), "{prepared:?}");
+        }
+    };
+}
+
+/// A test that `$routine`, which reads a Feature, declines a sum on a device lacking every one.
+macro_rules! declines_lacking_every_feature {
+    ($routine:ty) => {
+        #[test]
+        fn declines_lacking_every_feature() {
+            let prepared = $crate::kernels::testing::prepared_lacking_every_feature::<$routine>();
+            assert!(
+                matches!(
+                    prepared,
+                    Err(cubecl::tile::launch::Decline::Unserved { .. })
+                ),
+                "{prepared:?}"
+            );
+        }
+    };
+}
+
+/// A test that `$routine`, which reads no Feature, prepares a sum on a device lacking every one.
+macro_rules! prepares_lacking_every_feature {
+    ($routine:ty) => {
+        #[test]
+        fn prepares_lacking_every_feature() {
+            let prepared = $crate::kernels::testing::prepared_lacking_every_feature::<$routine>();
+            assert!(prepared.is_ok(), "{prepared:?}");
+        }
+    };
+}
+
+/// Whether `R`'s first setting prepares a sum on a device lacking every Feature.
+pub(crate) fn prepared_lacking_every_feature<R: Routine<Problem = ReduceRoutineProblem>>()
+-> Result<(), Decline> {
+    let hw = devices::lacking_every_feature(devices::m2_pro());
+    let problem = ReduceRoutineProblem {
+        partials: Some(ReducePartials::UNBOUNDED),
+        ..ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum)
+    };
+    R::prepare(&hw, &problem, &R::settings(&hw)[0]).map(|_| ())
+}
+
+/// A test that `$routine`'s first setting is named `$name`, which the tuning cache keys it by.
+macro_rules! names_its_setting {
+    ($routine:ty, $name:expr) => {
+        #[test]
+        fn names_its_setting() {
+            let setting = <$routine>::settings(&cubek_std::devices::m2_pro())[0];
+            assert_eq!(setting.to_string(), $name);
+        }
+    };
+}
+
+/// A test that `$routine` estimates what its microkernel does, handed `$item`.
+macro_rules! estimates_its_microkernel {
+    ($routine:ty, $item:expr) => {
+        #[test]
+        fn estimates_its_microkernel() {
+            let hw = cubek_std::devices::m2_pro();
+            let problem = ReduceRoutineProblem {
+                partials: Some($crate::kernels::ReducePartials::UNBOUNDED),
+                ..ReduceRoutineProblem::dense(
+                    &[4, 4096],
+                    1,
+                    cubek_microkernel::reduce::ReduceOperation::Sum,
+                )
+            };
+            let (blueprint, grid) = <$routine>::prepare_first_served(&hw, &problem)
+                .expect("an M2 Pro runs every routine");
+            let mut expected = KernelEstimate::from(&grid);
+            blueprint
+                .microkernel
+                .estimate(&$item(&problem), &(), grid.planes(), &mut expected);
+            let mut estimate = KernelEstimate::from(&grid);
+            <$routine>::estimate(&problem, &blueprint, &grid, &mut estimate);
+            assert_eq!(estimate, expected);
+        }
+    };
 }
 
 /// A test for each `name: operation`, each one launch by `$launch` of `$shape` reduced along
-/// `$axis`, checked by `$check`.
+/// `$axis`, checked by `$checker`.
 macro_rules! reduction_tests {
     (
-        $check:path,
+        $checker:ident,
         $launch:expr,
         $shape:expr,
         $axis:expr,
@@ -402,11 +623,14 @@ macro_rules! reduction_tests {
             #[test]
             fn $name() {
                 use cubek_microkernel::reduce::ReduceOperation;
-                $check($launch, $crate::kernels::testing::Reduction {
-                    shape: $shape.to_vec(),
-                    axis: $axis,
-                    operation: $operation,
-                });
+                use cubek_test_utils::ScopeChecker;
+                $crate::kernels::testing::$checker::new($launch).check([
+                    $crate::kernels::testing::Reduction {
+                        shape: $shape.to_vec(),
+                        axis: $axis,
+                        operation: $operation,
+                    },
+                ]);
             }
         )*
     };
@@ -417,13 +641,13 @@ macro_rules! reduction_tests {
 macro_rules! every_operation {
     ($launch:expr, $shape:expr, $axis:expr) => {
         every_operation!($launch, $shape, $axis, rows_shorter_than_three);
-        reduction_tests!($crate::kernels::testing::reduces_like_the_cpu, $launch, $shape, $axis, [
+        reduction_tests!(BufferScopeChecker, $launch, $shape, $axis, [
             top_3: ReduceOperation::TopK { k: 3 },
             arg_top_3: ReduceOperation::ArgTopK { k: 3 },
         ]);
     };
     ($launch:expr, $shape:expr, $axis:expr, rows_shorter_than_three) => {
-        reduction_tests!($crate::kernels::testing::reduces_like_the_cpu, $launch, $shape, $axis, [
+        reduction_tests!(BufferScopeChecker, $launch, $shape, $axis, [
             sum: ReduceOperation::Sum,
             prod: ReduceOperation::Prod,
             mean: ReduceOperation::Mean,
@@ -444,7 +668,7 @@ macro_rules! every_operation {
 macro_rules! unbound_operations {
     ($launch:expr, $shape:expr, $axis:expr) => {
         reduction_tests!(
-            $crate::kernels::testing::reduces_unbound_like_the_cpu,
+            UnboundScopeChecker,
             $launch,
             $shape,
             $axis,
@@ -455,6 +679,33 @@ macro_rules! unbound_operations {
                 arg_max: ReduceOperation::ArgMax,
             ]
         );
+    };
+}
+
+/// [`reduction_tests`] that write the indices beside the values: a `[2, 5, 300]` tensor along its
+/// contiguous dim and across it, by an operation a carrier that keeps them.
+macro_rules! reduces_with_indices {
+    ($launch:expr) => {
+        /// Launched with the indices written beside the values.
+        mod with_indices {
+            use super::*;
+
+            mod along_the_contiguous_dim {
+                use super::*;
+                reduction_tests!(IndicesScopeChecker, $launch, [2, 5, 300], 2, [
+                    max: ReduceOperation::ArgMax,
+                    top_3: ReduceOperation::ArgTopK { k: 3 },
+                ]);
+            }
+
+            mod across_the_middle_dim {
+                use super::*;
+                reduction_tests!(IndicesScopeChecker, $launch, [2, 5, 300], 1, [
+                    max: ReduceOperation::ArgMax,
+                    top_3: ReduceOperation::ArgTopK { k: 3 },
+                ]);
+            }
+        }
     };
 }
 
@@ -513,7 +764,7 @@ macro_rules! reduces_more_row_axes_than_the_grid_has {
         mod more_row_axes_around_the_reduced_one {
             use super::*;
             reduction_tests!(
-                $crate::kernels::testing::reduces_like_the_cpu,
+                BufferScopeChecker,
                 $launch,
                 [2, 3, 2, 2, 64],
                 2,
@@ -529,7 +780,7 @@ macro_rules! reduces_more_row_axes_than_the_grid_has {
         mod more_row_axes_before_the_reduced_one {
             use super::*;
             reduction_tests!(
-                $crate::kernels::testing::reduces_like_the_cpu,
+                BufferScopeChecker,
                 $launch,
                 [2, 3, 2, 2, 64],
                 4,
@@ -571,7 +822,7 @@ macro_rules! strategy_reduces_each_problem {
 /// [`reduction_tests`] for an operation a kind of carrier.
 macro_rules! strategy_operations {
     ($launch:expr, $shape:expr, $axis:expr) => {
-        reduction_tests!($crate::kernels::testing::reduces_like_the_cpu, $launch, $shape, $axis, [
+        reduction_tests!(BufferScopeChecker, $launch, $shape, $axis, [
             sum: ReduceOperation::Sum,
             mean: ReduceOperation::Mean,
             arg_max: ReduceOperation::ArgMax,

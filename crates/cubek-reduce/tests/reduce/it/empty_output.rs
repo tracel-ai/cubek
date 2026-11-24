@@ -5,6 +5,8 @@
 //! core count, a cube still holds at least one unit. These pin that such a call returns, through
 //! the rule, which is what burn's unspecified reduce strategy asks for.
 
+use cubecl::client::Client;
+use cubecl::ir::ElemType;
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_reduce::kernels::{Reduce, ReduceElements};
 use cubek_reduce::{ReduceError, ReduceOperation};
@@ -22,27 +24,27 @@ fn elements() -> ReduceElements {
     }
 }
 
+/// A `[0, columns]` buffer of `dtype` on `client`.
+fn empty(client: &Client, columns: usize, dtype: ElemType) -> TensorBinding {
+    TestInput::builder(client.clone(), Shape::new([0, columns]))
+        .dtype(dtype)
+        .layout(StridedLayout::Explicit(vec![columns, 1]))
+        .zeros()
+        .generate_without_host_data()
+        .binding()
+}
+
 /// Sum the rows of a `[0, 8]` input into a `[0, 1]` output.
 fn try_reduce() -> Result<(), ReduceError> {
-    let client = cubecl::test_device().client();
+    let device = cubecl::test_device();
+    let client = device.client();
     let dtype = f32::elem_type_native();
-
-    let input = TestInput::builder(client.clone(), Shape::new([0, 8]))
-        .dtype(dtype)
-        .layout(StridedLayout::Explicit(vec![8, 1]))
-        .zeros()
-        .generate_without_host_data();
-    let output = TestInput::builder(client.clone(), Shape::new([0, 1]))
-        .dtype(dtype)
-        .layout(StridedLayout::Explicit(vec![1, 1]))
-        .zeros()
-        .generate_without_host_data();
 
     Reduce::new(RULE).execute(
         &client,
-        &cubecl::test_device(),
-        input.binding(),
-        output.binding(),
+        &device,
+        empty(&client, 8, dtype),
+        empty(&client, 1, dtype),
         1,
         ReduceOperation::Sum,
         elements(),
@@ -51,32 +53,17 @@ fn try_reduce() -> Result<(), ReduceError> {
 
 /// The same shapes through the fused path, which prepares its launch the same way.
 fn try_reduce_with_indices() -> Result<(), ReduceError> {
-    let client = cubecl::test_device().client();
+    let device = cubecl::test_device();
+    let client = device.client();
     let dtype = f32::elem_type_native();
     let index_dtype = u32::elem_type_native();
 
-    let input = TestInput::builder(client.clone(), Shape::new([0, 8]))
-        .dtype(dtype)
-        .layout(StridedLayout::Explicit(vec![8, 1]))
-        .zeros()
-        .generate_without_host_data();
-    let values = TestInput::builder(client.clone(), Shape::new([0, 1]))
-        .dtype(dtype)
-        .layout(StridedLayout::Explicit(vec![1, 1]))
-        .zeros()
-        .generate_without_host_data();
-    let indices = TestInput::builder(client.clone(), Shape::new([0, 1]))
-        .dtype(index_dtype)
-        .layout(StridedLayout::Explicit(vec![1, 1]))
-        .zeros()
-        .generate_without_host_data();
-
     Reduce::new(RULE).execute_with_indices(
         &client,
-        &cubecl::test_device(),
-        input.binding(),
-        values.binding(),
-        indices.binding(),
+        &device,
+        empty(&client, 8, dtype),
+        empty(&client, 1, dtype),
+        empty(&client, 1, index_dtype),
         1,
         ReduceOperation::Max,
         elements(),
@@ -85,13 +72,13 @@ fn try_reduce_with_indices() -> Result<(), ReduceError> {
 }
 
 #[test]
-fn an_empty_output_is_not_launched() {
+fn a_call_whose_output_holds_nothing_returns() {
     let result = try_reduce();
     assert!(result.is_ok(), "expected Ok, got {result:?}");
 }
 
 #[test]
-fn an_empty_output_is_not_launched_with_indices() {
+fn a_call_with_indices_whose_outputs_hold_nothing_returns() {
     let result = try_reduce_with_indices();
     assert!(result.is_ok(), "expected Ok, got {result:?}");
 }

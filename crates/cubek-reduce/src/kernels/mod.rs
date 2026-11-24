@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 #[macro_use]
-mod testing;
+pub(crate) mod testing;
 
 mod blueprint;
 mod operation;

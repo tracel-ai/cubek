@@ -61,7 +61,7 @@ impl cubek_test_utils::Category for Category {
 
     /// # Panics
     ///
-    /// Where `problem`'s axis is not one of its shape's.
+    /// Where `problem`'s axis is not one of its shape's, or holds no value.
     fn work(&self, problem: &ReduceProblem) -> Option<CategoryWork> {
         Some(work_of(problem))
     }
@@ -89,5 +89,88 @@ fn work_of(problem: &ReduceProblem) -> CategoryWork {
         compute: Some(ComputeWork::direct(launches * values, accumulation_dtype())),
         bytes_read: launches * values * value_dtype.size(),
         bytes_written: cells * cell_bytes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ReduceOperation;
+    use crate::eval::benchmarks::ReduceBenchPrecision;
+    use crate::kernels::ReduceKernel;
+    use cubek_test_utils::Category as _;
+
+    /// A sum of four rows of 300 f32 values, launched as `kind` says.
+    fn problem(operation: ReduceOperation, kind: ReduceBenchKind) -> ReduceProblem {
+        ReduceProblem {
+            shape: vec![4, 300],
+            axis: 1,
+            operation,
+            kind,
+            precision: ReduceBenchPrecision::F32,
+        }
+    }
+
+    #[test]
+    fn its_id_is_the_one_the_history_holds() {
+        assert_eq!(Category.id(), "reduce");
+    }
+
+    #[test]
+    fn its_label_is_the_familys() {
+        assert_eq!(Category.label(), "Reduce");
+    }
+
+    #[test]
+    fn it_lists_problems() {
+        assert!(!Category.problems().is_empty());
+    }
+
+    #[test]
+    fn it_lists_every_strategy() {
+        assert_eq!(Category.strategies().len(), ReduceOpStrategy::ALL.len());
+    }
+
+    #[test]
+    fn it_times_on_the_device() {
+        let device = cubek_test_utils::timing_method(TimingMethod::Device);
+        assert_eq!(Category.timing_method(), device);
+    }
+
+    #[test]
+    fn it_checks_its_problems() {
+        assert!(Category.correctness().is_some());
+    }
+
+    #[test]
+    fn a_launch_reads_every_value() {
+        let work = work_of(&problem(ReduceOperation::Sum, ReduceBenchKind::Single));
+        assert_eq!(work.bytes_read, 4 * 300 * size_of::<f32>());
+    }
+
+    #[test]
+    fn two_launches_read_every_value_twice() {
+        let work = work_of(&problem(ReduceOperation::Max, ReduceBenchKind::TwoLaunch));
+        assert_eq!(work.bytes_read, 2 * 4 * 300 * size_of::<f32>());
+    }
+
+    #[test]
+    fn a_fused_launch_writes_a_value_and_its_index_a_cell() {
+        let work = work_of(&problem(ReduceOperation::Max, ReduceBenchKind::Fused));
+        assert_eq!(
+            work.bytes_written,
+            4 * (size_of::<f32>() + size_of::<u32>())
+        );
+    }
+
+    #[test]
+    fn a_bench_times_each_sample() {
+        const SAMPLE_COUNT: usize = 10;
+        let unit = ReduceOpStrategy::Specific(ReduceKernel::Unit);
+        let problem = problem(ReduceOperation::Sum, ReduceBenchKind::Single);
+        let samples = Category
+            .bench(&unit, &problem, SAMPLE_COUNT)
+            .expect("the unit kernel serves every problem");
+        assert_eq!(samples.durations.len(), SAMPLE_COUNT);
     }
 }

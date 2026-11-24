@@ -63,24 +63,21 @@ impl ReduceInput {
     }
 }
 
-/// A ramp of `elem_count` values over `[-1, 1)`, spread by [`RAMP_STRIDE_ELEM_COUNT`] so no run of it is
-/// sorted.
+/// A ramp of `elem_count` values over `[-1, 1)`, spread by [`RAMP_STRIDE_ELEM_COUNT`] so no run of it
+/// is sorted: a permutation of its steps where they are a power of two.
 fn ramp_of_elem_count(elem_count: usize) -> Vec<f32> {
-    assert!(
-        elem_count.is_power_of_two() && elem_count <= RAMP_MAX_ELEM_COUNT,
-        "a ramp of {elem_count} values is not a permutation, or is finer than f16 resolves"
-    );
     (0..elem_count)
         .map(|i| (i * RAMP_STRIDE_ELEM_COUNT % elem_count) as f32 / elem_count as f32 * 2.0 - 1.0)
         .collect()
 }
 
-/// Run `strategy` on `input` and return its output as a [`HostData`].
+/// Run `strategy` on `input` and return its values output as a [`HostData`]: by the fused
+/// `Reduce::execute_with_indices` path where `with_indices`, so the path a fused benchmark times is
+/// the one checked, and by `Reduce::execute` otherwise.
 ///
 /// # Panics
 ///
-/// Where `axis` is not an axis of `shape`, or `input` is a ramp whose shape holds a count of
-/// values that is not a power of two at most [`RAMP_MAX_ELEM_COUNT`].
+/// Where `shape` has fewer axes than `axis` counts.
 pub(crate) fn strategy_result(
     client: Client,
     shape: Vec<usize>,
@@ -88,102 +85,56 @@ pub(crate) fn strategy_result(
     strategy: ReduceOpStrategy,
     operation: ReduceOperation,
     input: ReduceInput,
+    with_indices: bool,
 ) -> Result<HostData, String> {
-    let input_dtype = input.dtype;
-    let output_dtype = output_dtype_for(operation, input_dtype);
-    let accumulation_dtype = accumulation_dtype();
-
-    let input_handle = input
-        .tensor(client.clone(), shape.clone())
-        .generate_without_host_data();
-
-    let out_shape = output_shape_for(&shape, axis, operation);
-    let output_handle = unwritten(&client, out_shape, output_dtype);
-
-    let elements = ReduceElements {
-        input: input_dtype,
-        accumulator: accumulation_dtype,
-        out: output_dtype,
-    };
-
-    let workspace = EvalWorkspace::new(&client, &shape, axis, operation, elements, false).workspace;
-    let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        kernels::Reduce::new(strategy)
-            .with_workspace(workspace)
-            .execute(
-                c,
-                &cubecl::test_device(),
-                input_handle.clone().binding(),
-                output_handle.clone().binding(),
-                axis,
-                operation,
-                elements,
-            )
-            .into()
-    });
-
-    read_back(&client, outcome, output_handle)
-}
-
-/// Like [`strategy_result`], but runs the fused `Reduce::execute_with_indices` path and
-/// returns its **values** output.
-///
-/// The benchmark catalogue times the fused path, so it has to be able to
-/// validate the fused path too: running the plain `Reduce::execute` here instead would
-/// silently check a kernel that is not the one being measured.
-///
-/// # Panics
-///
-/// As [`strategy_result`].
-pub(crate) fn strategy_result_with_indices(
-    client: Client,
-    shape: Vec<usize>,
-    axis: usize,
-    strategy: ReduceOpStrategy,
-    operation: ReduceOperation,
-    input: ReduceInput,
-) -> Result<HostData, String> {
-    let input_dtype = input.dtype;
     let index_dtype = u32::elem_type_native();
-    let accumulation_dtype = accumulation_dtype();
-
+    let elements = ReduceElements {
+        input: input.dtype,
+        accumulator: accumulation_dtype(),
+        out: match with_indices {
+            true => input.dtype,
+            false => output_dtype_for(operation, input.dtype),
+        },
+    };
     let input_handle = input
         .tensor(client.clone(), shape.clone())
         .generate_without_host_data();
-
     let out_shape = output_shape_for(&shape, axis, operation);
-    let values_handle = unwritten(&client, out_shape.clone(), input_dtype);
-    let indices_handle = unwritten(&client, out_shape, index_dtype);
-
-    let elements = ReduceElements {
-        input: input_dtype,
-        accumulator: accumulation_dtype,
-        out: input_dtype,
-    };
-
-    let workspace = EvalWorkspace::new(&client, &shape, axis, operation, elements, true).workspace;
-    let outcome = launch_and_capture_outcome(
-        &client,
-        &[&values_handle.handle, &indices_handle.handle],
-        |c| {
-            kernels::Reduce::new(strategy)
-                .with_workspace(workspace)
+    let values = unwritten(&client, out_shape.clone(), elements.out);
+    let indices = unwritten(&client, out_shape, index_dtype);
+    let workspace =
+        EvalWorkspace::new(&client, &shape, axis, operation, elements, with_indices).workspace;
+    let reduce = kernels::Reduce::new(strategy).with_workspace(workspace);
+    let device = cubecl::test_device();
+    let outcome = launch_and_capture_outcome(&client, &[&values.handle, &indices.handle], |c| {
+        match with_indices {
+            true => reduce
                 .execute_with_indices(
                     c,
-                    &cubecl::test_device(),
+                    &device,
                     input_handle.clone().binding(),
-                    values_handle.clone().binding(),
-                    indices_handle.clone().binding(),
+                    values.clone().binding(),
+                    indices.clone().binding(),
                     axis,
                     operation,
                     elements,
                     index_dtype,
                 )
-                .into()
-        },
-    );
-
-    read_back(&client, outcome, values_handle)
+                .into(),
+            false => reduce
+                .execute(
+                    c,
+                    &device,
+                    input_handle.clone().binding(),
+                    values.clone().binding(),
+                    axis,
+                    operation,
+                    elements,
+                )
+                .into(),
+        }
+    });
+    read_back(&client, outcome, values)
 }
 
 /// What an output holds before its launch: a value no comparison's result comes near, so a kernel
@@ -268,8 +219,10 @@ pub(crate) fn accumulation_dtype() -> ElemType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::ReduceKernel;
+    use cubecl::ir::{FloatKind, UIntKind};
+    use cubek_test_utils::assert_equals_approx;
 
-    /// Every value of a ramp lies in `[-1, 1)`.
     #[test]
     fn a_ramp_lies_within_its_range() {
         const ELEM_COUNT: usize = 64;
@@ -277,7 +230,6 @@ mod tests {
         assert!(ramp.iter().all(|value| (-1.0..1.0).contains(value)));
     }
 
-    /// A ramp holds each of its steps once.
     #[test]
     fn a_ramp_is_a_permutation_of_its_steps() {
         const ELEM_COUNT: usize = 64;
@@ -287,17 +239,78 @@ mod tests {
         assert_eq!(ramp.len(), ELEM_COUNT);
     }
 
-    /// A count that is not a power of two is no permutation under the stride.
-    #[test]
-    #[should_panic]
-    fn a_ramp_of_a_count_not_a_power_of_two_panics() {
-        ramp_of_elem_count(100);
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+    const SHAPE: [usize; 2] = [4, 16];
+    const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit);
+
+    fn ramp() -> ReduceInput {
+        ReduceInput {
+            dtype: F32,
+            values: ReduceValues::Ramp,
+        }
     }
 
-    /// Past what f16 resolves, a ramp's steps would collide.
+    /// Checks that the unit kernel and the reference write the same values of a [`SHAPE`] reduced
+    /// along its rows by `launched`, as the reference reduces by `referenced`.
+    fn agrees_with_the_reference(
+        launched: ReduceOperation,
+        referenced: ReduceOperation,
+        with_indices: bool,
+    ) {
+        let client = cubecl::test_device().client();
+        let shape = SHAPE.to_vec();
+        let written = strategy_result(
+            client.clone(),
+            shape.clone(),
+            1,
+            UNIT,
+            launched,
+            ramp(),
+            with_indices,
+        )
+        .expect("the unit kernel serves every problem");
+        let expected = cpu_reference_result(client, shape, 1, referenced, ramp(), None)
+            .expect("the reference reduces every problem");
+        assert_equals_approx(&written, &expected, 1e-6)
+            .as_test_outcome()
+            .enforce();
+    }
+
     #[test]
-    #[should_panic]
-    fn a_ramp_finer_than_f16_panics() {
-        ramp_of_elem_count(RAMP_MAX_ELEM_COUNT * 2);
+    fn a_launch_writes_what_the_reference_does() {
+        agrees_with_the_reference(ReduceOperation::Max, ReduceOperation::Max, false);
+    }
+
+    #[test]
+    fn a_fused_launchs_values_are_the_references() {
+        agrees_with_the_reference(
+            ReduceOperation::TopK { k: 2 },
+            ReduceOperation::TopK { k: 2 },
+            true,
+        );
+    }
+
+    #[test]
+    fn a_coordinate_is_written_in_u32() {
+        let written = output_dtype_for(ReduceOperation::ArgMax, F32);
+        assert_eq!(written, ElemType::UInt(UIntKind::U32));
+    }
+
+    #[test]
+    fn a_value_is_written_in_the_inputs_element() {
+        assert_eq!(output_dtype_for(ReduceOperation::Max, F32), F32);
+    }
+
+    #[test]
+    fn every_launch_accumulates_in_f32() {
+        assert_eq!(accumulation_dtype(), F32);
+    }
+
+    #[test]
+    fn the_reference_advances_by_a_cell() {
+        assert_eq!(
+            cpu_reference_total(&SHAPE, 1, ReduceOperation::TopK { k: 2 }),
+            8
+        );
     }
 }

@@ -7,8 +7,9 @@
 
 use cubecl::zspace::{Shape, Strides};
 use cubek_reduce::kernels::ReduceOpStrategy;
+use cubek_test_utils::ScopeChecker;
 
-use super::test_case::{CUBE, PLANE, RULE, TestCase, UNIT};
+use super::test_case::{CUBE, Op, PLANE, RULE, ReduceScopeChecker, TestCase, UNIT};
 
 /// `rows` rows 64 values long, side by side, reduced by `strategy` across their contiguous dim.
 fn case(strategy: ReduceOpStrategy, rows: usize) -> TestCase {
@@ -36,17 +37,17 @@ macro_rules! top_k_tests {
 
             #[test]
             fn top_k() {
-                case($strategy, $rows).test_topk($k);
+                ReduceScopeChecker.check([case($strategy, $rows).reduced_by(Op::TopK($k))]);
             }
 
             #[test]
             fn arg_top_k() {
-                case($strategy, $rows).test_argtopk($k);
+                ReduceScopeChecker.check([case($strategy, $rows).reduced_by(Op::ArgTopK($k))]);
             }
 
             #[test]
             fn top_k_with_indices() {
-                case($strategy, $rows).test_topk_with_indices($k);
+                ReduceScopeChecker.check([case($strategy, $rows).reduced_by(Op::TopKWithIndices($k))]);
             }
         }
     };

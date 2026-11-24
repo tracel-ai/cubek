@@ -11,7 +11,8 @@ use cubek_std::microkernel::CubePlanes;
 use cubek_std::routine::{CubeResources, Grid};
 
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its owners,
-/// and the lanes each operand binds at.
+/// and the lanes the input binds at, which those
+/// of the output follow: the rows a load of it reaches.
 ///
 /// One type for every routine of this kind, named per routine by an alias: what differs between
 /// them is the microkernel.
@@ -21,11 +22,9 @@ pub struct ReduceBlueprint<M> {
     pub partitioning: Partitioning,
     /// The lanes of a line of the input.
     pub lane_count: usize,
-    /// The lanes of a line of the output: one along the reduced dim, the input's across it.
-    pub out_lane_count: usize,
 }
 
-/// The lanes the input binds at on `hw`, then the output, at most `widest_line`, the widest line the
+/// The lanes the input binds at on `hw`, at most `widest_line`, the widest line the
 /// carrier keeps apart: to the requirements the microkernel enqueued in `vectorization`, the
 /// binding adds each buffer's alignment, and a line that never runs past a row along the reduced
 /// dim, or past the rows across it. Settled before the partitioning, whose owners hold a line of
@@ -35,12 +34,12 @@ pub struct ReduceBlueprint<M> {
 ///
 /// [`UNBOUND_LINES_NARROWER`] where `problem`'s input is one the caller binds, stated at another
 /// width than the lines the input is read in.
-pub(crate) fn reduce_lane_counts(
+pub(crate) fn reduce_lane_count(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
     mut vectorization: Vectorization<ReduceOperand>,
     widest_line: Option<usize>,
-) -> Result<[usize; 2], Decline> {
+) -> Result<usize, Decline> {
     for (operand, alignment) in [ReduceOperand::Input, ReduceOperand::Out]
         .into_iter()
         .zip(problem.elem_alignments)
@@ -60,13 +59,12 @@ pub(crate) fn reduce_lane_counts(
     });
     let ceiling = hw.vector_ceiling(problem.elements.input);
     let widest = widest_line.map_or(ceiling, |widest| widest.min(ceiling));
-    let lane_counts = [ReduceOperand::Input, ReduceOperand::Out]
-        .map(|operand| vectorization.width(operand, |_| widest));
+    let lane_count = vectorization.width(ReduceOperand::Input, |_| widest);
     let [input_lines, _] = problem.elem_alignments;
-    if input_lines.is_stored_piece() && input_lines != ElemAlignment::stored_piece(lane_counts[0]) {
+    if input_lines.is_stored_piece() && input_lines != ElemAlignment::stored_piece(lane_count) {
         return Err(UNBOUND_LINES_NARROWER);
     }
-    Ok(lane_counts)
+    Ok(lane_count)
 }
 
 /// What a reduce routine hands its microkernel's estimate of `problem` on `grid`: the work item and
@@ -82,7 +80,7 @@ pub(crate) fn estimated_work(
 ///
 /// # Errors
 ///
-/// Where the device cannot launch that grid.
+/// Where the device launches no such grid.
 pub(crate) fn placed(
     hw: &Hardware,
     space: Space,
@@ -99,7 +97,7 @@ pub(crate) fn placed(
 ///
 /// # Errors
 ///
-/// As [`placed`].
+/// Where the device cannot launch that grid.
 pub(crate) fn unit_launch(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
@@ -128,7 +126,7 @@ pub(crate) fn unit_launch(
 ///
 /// # Errors
 ///
-/// As [`placed`].
+/// Where the device cannot launch a cube a part.
 pub(crate) fn split_launch(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
@@ -155,20 +153,6 @@ pub(crate) fn each_microkernel_with<M: Copy, K: Copy, S, const N: usize>(
         .into_iter()
         .flat_map(|microkernel| knobs.map(|knob| settings(microkernel, knob)))
         .collect()
-}
-
-impl<M> ReduceBlueprint<M> {
-    /// `microkernel` placed by `partitioning`, the input bound at the first of `lane_counts` and
-    /// the output at the second.
-    pub fn new(microkernel: M, partitioning: Partitioning, lane_counts: [usize; 2]) -> Self {
-        let [lane_count, out_lane_count] = lane_counts;
-        Self {
-            microkernel,
-            partitioning,
-            lane_count,
-            out_lane_count,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -232,24 +216,24 @@ mod tests {
     fn the_widest_line_bounds_the_width() {
         let hw = devices::m2_pro();
         let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
-        let [lane_count, _] = reduce_lane_counts(&hw, &problem, Vectorization::new(), Some(1))
+        let lane_count = reduce_lane_count(&hw, &problem, Vectorization::new(), Some(1))
             .expect("a buffer's input should take any line the device reads");
         assert_eq!(lane_count, 1);
     }
 
     #[test]
-    fn rows_across_the_axis_go_out_a_line_at_a_time() {
+    fn rows_across_the_axis_are_read_a_line_at_a_time() {
         let hw = devices::m2_pro();
         let dense = ReduceRoutineProblem::dense(&[4096, 4], 0, ReduceOperation::ArgMax);
-        let [_, out_lane_count] = reduce_lane_counts(&hw, &dense, Vectorization::new(), None)
+        let lane_count = reduce_lane_count(&hw, &dense, Vectorization::new(), None)
             .expect("a buffer's input should take any line the device reads");
-        assert!(out_lane_count > 1);
+        assert!(lane_count > 1);
     }
 
-    /// Indices beside the values align the output's width too: a strided indices buffer narrows it
-    /// to one.
+    /// Indices beside the values go out at their lanes, so a strided indices buffer narrows them to
+    /// one.
     #[test]
-    fn strided_indices_narrow_the_outputs_width() {
+    fn strided_indices_narrow_the_width() {
         let hw = devices::m2_pro();
         let dense = ReduceRoutineProblem::dense(&[4096, 4], 0, ReduceOperation::ArgMax);
         let problem = ReduceRoutineProblem {
@@ -259,9 +243,11 @@ mod tests {
             }),
             ..dense
         };
-        let [_, out_lane_count] = reduce_lane_counts(&hw, &problem, Vectorization::new(), None)
+        let mut vectorization = Vectorization::new();
+        vectorization.require(problem.work_item().requirement());
+        let lane_count = reduce_lane_count(&hw, &problem, vectorization, None)
             .expect("a buffer's input should take any line the device reads");
-        assert_eq!(out_lane_count, 1);
+        assert_eq!(lane_count, 1);
     }
 
     /// A unit-an-owner launch groups its units in cubes of `PLANE_COUNT` planes the device's width.
@@ -293,7 +279,7 @@ mod tests {
     #[test]
     fn an_input_wider_than_the_device_can_read_declines() {
         let problem = sum_with_fixed_input_lanes(4096, 64);
-        let declined = reduce_lane_counts(&devices::m2_pro(), &problem, Vectorization::new(), None)
+        let declined = reduce_lane_count(&devices::m2_pro(), &problem, Vectorization::new(), None)
             .expect_err("the device cannot read 64 elements per line");
         assert_eq!(declined, UNBOUND_LINES_NARROWER);
     }
@@ -301,7 +287,7 @@ mod tests {
     #[test]
     fn a_two_wide_input_declines_when_the_row_requires_scalar_reads() {
         let problem = sum_with_fixed_input_lanes(7, 2);
-        let declined = reduce_lane_counts(&devices::m2_pro(), &problem, Vectorization::new(), None)
+        let declined = reduce_lane_count(&devices::m2_pro(), &problem, Vectorization::new(), None)
             .expect_err("a scalar read would split the caller's two-element line");
         assert_eq!(declined, UNBOUND_LINES_NARROWER);
     }

@@ -158,7 +158,7 @@ impl From<ReduceRoutineRunner<HypercubeAtomicReduceRoutine>> for ReduceCandidate
 mod tests {
     use super::*;
     use crate::kernels::testing::{
-        Reduction, bound_back, reduces_unbound_like_the_cpu, sum_of_long_rows, unbound_tensors,
+        Reduction, UnboundScopeChecker, bound_back, sum_of_long_rows, unbound_tensors,
     };
     use crate::kernels::{ReduceElements, ReduceRoutine, ReduceRoutineProblem, launch_tuned};
     use cubecl::ir::{ElemType, FloatKind};
@@ -167,6 +167,7 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::routine::Routine;
     use cubek_std::{Hardware, devices};
+    use cubek_test_utils::ScopeChecker;
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
     const SHAPE: [usize; 2] = [4, 8];
@@ -289,42 +290,32 @@ mod tests {
 
     #[test]
     fn a_unit_candidate_reduces_the_input_its_caller_binds() {
-        reduces_unbound_like_the_cpu(
-            launch_candidate::<UnitDirectReduceRoutine, _>,
-            sum_of_long_rows(),
-        );
+        UnboundScopeChecker::new(launch_candidate::<UnitDirectReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
     }
 
     #[test]
     fn a_plane_candidate_reduces_the_input_its_caller_binds() {
-        reduces_unbound_like_the_cpu(
-            launch_candidate::<PlaneShuffleReduceRoutine, _>,
-            sum_of_long_rows(),
-        );
+        UnboundScopeChecker::new(launch_candidate::<PlaneShuffleReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
     }
 
     #[test]
     fn a_cube_candidate_reduces_the_input_its_caller_binds() {
-        reduces_unbound_like_the_cpu(
-            launch_candidate::<CubeStagedReduceRoutine, _>,
-            sum_of_long_rows(),
-        );
+        UnboundScopeChecker::new(launch_candidate::<CubeStagedReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
     }
 
     #[test]
     fn a_last_arrival_candidate_reduces_the_input_its_caller_binds() {
-        reduces_unbound_like_the_cpu(
-            launch_candidate::<HypercubeLastArrivalReduceRoutine, _>,
-            sum_of_long_rows(),
-        );
+        UnboundScopeChecker::new(launch_candidate::<HypercubeLastArrivalReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
     }
 
     #[test]
     fn an_atomic_candidate_reduces_the_input_its_caller_binds() {
-        reduces_unbound_like_the_cpu(
-            launch_candidate::<HypercubeAtomicReduceRoutine, _>,
-            sum_of_long_rows(),
-        );
+        UnboundScopeChecker::new(launch_candidate::<HypercubeAtomicReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
     }
 
     /// A round settles a key on the candidate it found fastest.

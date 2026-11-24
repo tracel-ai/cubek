@@ -3,8 +3,6 @@ use crate::reduce::cube::{
     cube_staged_reduce_microkernel,
 };
 use crate::reduce::{Accumulable, ReduceOperand, ReduceOperation, ReduceWorkItem};
-use cubecl::ir::Type;
-use cubecl::ir::features::AtomicUsage;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -14,8 +12,8 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 /// Rows split across cubes, each adding the sum of its part into the rows' cells of an output that
 /// holds zero before it, by atomic adds.
 ///
-/// It sums, and runs where the cube's microkernel runs and the device adds atomically in the
-/// accumulator's element, which its output is written in.
+/// It sums, and runs where the cube's microkernel runs. That the device adds atomically in the output's
+/// element is its launch's to check, which knows it.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeAtomicReduceMicrokernel {
     #[cube(comptime)]
@@ -64,20 +62,15 @@ impl core::fmt::Display for HypercubeAtomicReduceMicrokernel {
     }
 }
 
-/// The atomic hypercube of each of the cube's candidates, where `item` sums and the device adds
-/// atomically in its accumulator's element.
-fn candidates_adding_atomically(
+/// The atomic hypercube of each of the cube's candidates, where `item` sums.
+fn candidates_of_a_sum(
     hw: &Hardware,
     item: &ReduceWorkItem,
     settings: &CubeStagedReduceMicrokernelSettings,
 ) -> impl Iterator<Item = HypercubeAtomicReduceMicrokernel> {
-    let adds = hw
-        .properties
-        .atomic_type_usage(Type::atomic(item.accumulator))
-        .contains(AtomicUsage::Add);
     let sums = item.operation == ReduceOperation::Sum;
     CubeStagedReduceMicrokernel::candidates(hw, item, settings)
-        .filter(move |_| adds && sums)
+        .filter(move |_| sums)
         .map(HypercubeAtomicReduceMicrokernel::new)
 }
 
@@ -87,7 +80,7 @@ impl Microkernel for HypercubeAtomicReduceMicrokernel {
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the atomic hypercube needs the cube reduce, a sum, and an atomic add of the accumulator's element";
+    const DECLINE: &'static str = "the atomic hypercube needs the cube reduce, and a sum";
 
     /// As the cube it is built from.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
@@ -99,7 +92,7 @@ impl Microkernel for HypercubeAtomicReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        candidates_adding_atomically(hw, item, settings)
+        candidates_of_a_sum(hw, item, settings)
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {

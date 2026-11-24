@@ -73,12 +73,11 @@ impl Routine for PlaneShuffleReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let microkernel =
-            PlaneShuffleReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let lane_counts = Self::lane_counts(hw, problem, &microkernel, microkernel.widest_line())?;
-        let microkernel = microkernel.across_rows(hw, lane_counts[0], problem.row_count());
+        let (microkernel, lane_count) =
+            best_microkernel!(PlaneShuffleReduceMicrokernel, hw, problem, settings);
+        let microkernel = microkernel.across_rows(hw, lane_count, problem.row_count());
         let levels = microkernel
-            .levels(&problem.owner_box_at_lane_count(lane_counts[0]))
+            .levels(&problem.owner_box_at_lane_count(lane_count))
             .launch_planes(
                 &[BATCH],
                 PlaneOrder::new(&[(BATCH, settings.plane_count)], CubeOrder::RowMajor),
@@ -90,7 +89,11 @@ impl Routine for PlaneShuffleReduceRoutine {
         };
         let (partitioning, grid) = placed(hw, problem.space(), levels, cube)?;
         Ok((
-            ReduceBlueprint::new(microkernel, partitioning, lane_counts),
+            ReduceBlueprint {
+                microkernel,
+                partitioning,
+                lane_count,
+            },
             grid,
         ))
     }
@@ -108,6 +111,12 @@ impl Routine for PlaneShuffleReduceRoutine {
 
 impl ReduceRoutine<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine {
     const NAME: &'static str = "plane-shuffle-reduce";
+
+    type Out = TileTensorLaunch;
+
+    fn out_arg(out: Bound) -> TileTensorLaunch {
+        out.arg()
+    }
 
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
@@ -142,35 +151,16 @@ mod tests {
     use super::*;
     use crate::kernels::launch_first_served;
     use crate::kernels::testing::{BufferLaunch, UnboundLaunch, launch_unbound};
-    use cubecl::tile::launch::Decline;
-    use cubek_microkernel::reduce::ReduceOperation;
-    use cubek_std::devices;
 
-    #[test]
-    fn prepares_more_row_axes_than_the_grid_holds() {
-        let hw = devices::m2_pro();
-        let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
-        let settings = PlaneShuffleReduceRoutine::settings(&hw)[0];
-        let prepared = PlaneShuffleReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(prepared.is_ok(), "{prepared:?}");
-    }
-
-    /// A plane needs the plane instructions its lanes meet by.
-    #[test]
-    fn declines_lacking_every_feature() {
-        let hw = devices::lacking_every_feature(devices::m2_pro());
-        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
-        let settings = PlaneShuffleReduceRoutine::settings(&hw)[0];
-        let prepared = PlaneShuffleReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(
-            matches!(prepared, Err(Decline::Unserved { .. })),
-            "{prepared:?}"
-        );
-    }
+    prepares_more_row_axes_than_the_grid_holds!(PlaneShuffleReduceRoutine);
+    declines_lacking_every_feature!(PlaneShuffleReduceRoutine);
+    names_its_setting!(PlaneShuffleReduceRoutine, "lane_slots=32 planes=4");
+    estimates_its_microkernel!(PlaneShuffleReduceRoutine, ReduceRoutineProblem::work_item);
 
     const LAUNCH: BufferLaunch = launch_first_served::<PlaneShuffleReduceRoutine, _>;
     const UNBOUND: UnboundLaunch = launch_unbound::<PlaneShuffleReduceRoutine, _>;
 
     reduces_each_dim!(LAUNCH, UNBOUND);
     reduces_more_row_axes_than_the_grid_has!(LAUNCH);
+    reduces_with_indices!(LAUNCH);
 }

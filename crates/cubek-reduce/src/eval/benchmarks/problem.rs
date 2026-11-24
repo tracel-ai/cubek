@@ -117,15 +117,14 @@ impl ReduceProblem {
 }
 
 /// Whether `CUBEK_BENCH_TIER` asks for more than the default sweep, as it does
-/// for interpolate. Unset or `light` keeps the cheap catalogue.
+/// for interpolate.
 fn extended_tier() -> bool {
-    !matches!(
-        std::env::var("CUBEK_BENCH_TIER")
-            .unwrap_or_default()
-            .to_lowercase()
-            .as_str(),
-        "" | "light"
-    )
+    is_extended_tier(&std::env::var("CUBEK_BENCH_TIER").unwrap_or_default())
+}
+
+/// Whether `tier` is more than the default sweep: unset or `light` keeps the cheap catalogue.
+fn is_extended_tier(tier: &str) -> bool {
+    !matches!(tier.to_lowercase().as_str(), "" | "light")
 }
 
 /// Every problem, at each precision this device reduces in.
@@ -375,4 +374,83 @@ struct SpreadShape<'a> {
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn no_tier_is_the_default_sweep() {
+        assert!(!is_extended_tier(""));
+    }
+
+    #[test]
+    fn the_light_tier_is_the_default_sweep() {
+        assert!(!is_extended_tier("Light"));
+    }
+
+    #[test]
+    fn another_tier_is_more_than_the_default_sweep() {
+        assert!(is_extended_tier("heavy"));
+    }
+
+    #[test]
+    fn f16_is_stored_in_f16() {
+        let dtype = ReduceBenchPrecision::F16.to_dtype();
+        assert_eq!(dtype, half::f16::elem_type_native());
+    }
+
+    #[test]
+    fn f32_is_offered_everywhere() {
+        let client = cubecl::test_device().client();
+        assert!(ReduceBenchPrecision::F32.is_offered_on(&client));
+    }
+
+    #[test]
+    fn an_f32_row_carries_no_suffix() {
+        assert_eq!(ReduceBenchPrecision::F32.suffix(), "");
+    }
+
+    #[test]
+    fn an_f16_rows_ids_carry_its_suffix() {
+        let suffix = ReduceBenchPrecision::F16.suffix();
+        let rows = problems_at(ReduceBenchPrecision::F16);
+        assert!(rows.iter().all(|row| row.id.ends_with(suffix)));
+    }
+
+    #[test]
+    fn an_f16_rows_labels_name_it() {
+        let rows = problems_at(ReduceBenchPrecision::F16);
+        assert!(rows.iter().all(|row| row.label.ends_with("[f16]")));
+    }
+
+    #[test]
+    fn every_problems_id_is_its_own() {
+        let problems = problems();
+        let ids: HashSet<&str> = problems.iter().map(|problem| problem.id.as_ref()).collect();
+        assert_eq!(ids.len(), problems.len());
+    }
+
+    /// A problem of `operation`.
+    fn problem_of(operation: ReduceOperation) -> ReduceProblem {
+        ReduceProblem {
+            shape: vec![4, 8],
+            axis: 1,
+            operation,
+            kind: ReduceBenchKind::Single,
+            precision: ReduceBenchPrecision::F32,
+        }
+    }
+
+    #[test]
+    fn a_selection_is_exact() {
+        assert_eq!(problem_of(ReduceOperation::ArgMax).tolerance(), 0.0);
+    }
+
+    #[test]
+    fn a_sum_may_round() {
+        assert!(problem_of(ReduceOperation::Sum).tolerance() > 0.0);
+    }
 }

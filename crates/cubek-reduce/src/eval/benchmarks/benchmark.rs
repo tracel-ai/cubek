@@ -316,8 +316,9 @@ impl Benchmark for ReduceBenchmark {
 
 #[cfg(test)]
 mod tests {
-    use super::{InputOrder, two_launch_operations};
-    use crate::ReduceOperation;
+    use super::*;
+    use crate::eval::benchmarks::ReduceBenchPrecision;
+    use crate::kernels::ReduceKernel;
 
     #[test]
     fn ascending_is_read_by_its_name() {
@@ -411,5 +412,33 @@ mod tests {
         assert!(row.windows(2).all(|w| w[1] > w[0]));
         assert_eq!(row[0], 0.0);
         assert_eq!(row[shape[2] - 1], (shape[2] - 1) as f32);
+    }
+
+    /// Checks that the unit kernel is timed on a small `kind` of reduction.
+    fn times(kind: ReduceBenchKind) {
+        let problem = ReduceProblem {
+            shape: vec![4, 300],
+            axis: 1,
+            operation: ReduceOperation::Max,
+            kind,
+            precision: ReduceBenchPrecision::F32,
+        };
+        let unit = ReduceOpStrategy::Specific(ReduceKernel::Unit);
+        assert!(bench(&unit, &problem, 2).is_ok());
+    }
+
+    #[test]
+    fn one_launch_is_timed() {
+        times(ReduceBenchKind::Single);
+    }
+
+    #[test]
+    fn two_launches_are_timed() {
+        times(ReduceBenchKind::TwoLaunch);
+    }
+
+    #[test]
+    fn a_fused_launch_is_timed() {
+        times(ReduceBenchKind::Fused);
     }
 }

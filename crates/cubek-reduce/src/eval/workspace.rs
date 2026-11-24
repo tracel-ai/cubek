@@ -42,7 +42,7 @@ impl EvalWorkspace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl::CubeElement;
+    use crate::kernels::testing::arrivals_of;
     use cubecl::ir::{ElemType, FloatKind};
 
     #[test]
@@ -52,9 +52,7 @@ mod tests {
         let elements =
             ReduceElements::for_operation(operation, ElemType::Float(FloatKind::F32), None);
         let given = EvalWorkspace::new(&client, &[3, 70001], 1, operation, elements, false);
-        let counters = client
-            .read_one(given.workspace.arrivals)
-            .expect("the counters read back");
-        assert!(u32::from_bytes(&counters).iter().all(|count| *count == 0));
+        let counts = arrivals_of(&client, given.workspace);
+        assert!(counts.iter().all(|count| *count == 0));
     }
 }

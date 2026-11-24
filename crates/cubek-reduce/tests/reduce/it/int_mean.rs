@@ -11,12 +11,12 @@ use crate::reduce::it::test_case::UNIT;
 fn a_mean_of_i32_keeps_the_digits_an_f32_drops() {
     /// One past the integers an `f32` holds one by one.
     const VALUE: i32 = (1 << 24) + 1;
-    const ROW_LEN: usize = 5;
+    const ROW_VALUE_COUNT: usize = 5;
     let client = cubecl::test_device().client();
     let i32_dtype = i32::elem_type_native();
 
-    let row = client.create_from_slice(i32::as_bytes(&[VALUE; ROW_LEN]));
-    let input = TensorHandle::new_contiguous([1, ROW_LEN], row, i32_dtype);
+    let row = client.create_from_slice(i32::as_bytes(&[VALUE; ROW_VALUE_COUNT]));
+    let input = TensorHandle::new_contiguous([1, ROW_VALUE_COUNT], row, i32_dtype);
     let out = TensorHandle::empty(&client, [1, 1], i32_dtype);
 
     Reduce::new(UNIT)

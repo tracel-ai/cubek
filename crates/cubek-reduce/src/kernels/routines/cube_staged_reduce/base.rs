@@ -64,21 +64,24 @@ impl Routine for CubeStagedReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let microkernel =
-            CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let lane_counts = Self::lane_counts(hw, problem, &microkernel, microkernel.widest_line())?;
-        let microkernel = microkernel.across_rows(hw, lane_counts[0], problem.row_count());
+        let (microkernel, lane_count) =
+            best_microkernel!(CubeStagedReduceMicrokernel, hw, problem, settings);
+        let microkernel = microkernel.across_rows(hw, lane_count, problem.row_count());
         let levels = microkernel
-            .levels(&problem.owner_box_at_lane_count(lane_counts[0]))
+            .levels(&problem.owner_box_at_lane_count(lane_count))
             .cubes(&[BATCH])
             .build();
         let cube = CubeResources {
             plane_width: microkernel.launch_plane_width() as u32,
-            shared_memory: microkernel.shared_memory_bytes_at_width(lane_counts[0]),
+            shared_memory: microkernel.shared_memory_bytes_at_lane_count(lane_count),
         };
         let (partitioning, grid) = placed(hw, problem.space(), levels, cube)?;
         Ok((
-            ReduceBlueprint::new(microkernel, partitioning, lane_counts),
+            ReduceBlueprint {
+                microkernel,
+                partitioning,
+                lane_count,
+            },
             grid,
         ))
     }
@@ -96,6 +99,12 @@ impl Routine for CubeStagedReduceRoutine {
 
 impl ReduceRoutine<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
     const NAME: &'static str = "cube-staged-reduce";
+
+    type Out = TileTensorLaunch;
+
+    fn out_arg(out: Bound) -> TileTensorLaunch {
+        out.arg()
+    }
 
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
@@ -131,31 +140,13 @@ mod tests {
     use super::*;
     use crate::kernels::launch_first_served;
     use crate::kernels::testing::{BufferLaunch, UnboundLaunch, launch_unbound};
-    use cubecl::tile::launch::Decline;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    #[test]
-    fn prepares_more_row_axes_than_the_grid_holds() {
-        let hw = devices::m2_pro();
-        let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
-        let settings = CubeStagedReduceRoutine::settings(&hw)[0];
-        let prepared = CubeStagedReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(prepared.is_ok(), "{prepared:?}");
-    }
-
-    /// The device has no planes.
-    #[test]
-    fn declines_lacking_every_feature() {
-        let hw = devices::lacking_every_feature(devices::m2_pro());
-        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
-        let settings = CubeStagedReduceRoutine::settings(&hw)[0];
-        let prepared = CubeStagedReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(
-            matches!(prepared, Err(Decline::Unserved { .. })),
-            "{prepared:?}"
-        );
-    }
+    prepares_more_row_axes_than_the_grid_holds!(CubeStagedReduceRoutine);
+    declines_lacking_every_feature!(CubeStagedReduceRoutine);
+    names_its_setting!(CubeStagedReduceRoutine, "planes=4 lane_slots=32");
+    estimates_its_microkernel!(CubeStagedReduceRoutine, ReduceRoutineProblem::work_item);
 
     /// A cube meets only its own planes, so it needs no store reaching another cube.
     #[test]
@@ -176,4 +167,5 @@ mod tests {
 
     reduces_each_dim!(LAUNCH, UNBOUND);
     reduces_more_row_axes_than_the_grid_has!(LAUNCH);
+    reduces_with_indices!(LAUNCH);
 }

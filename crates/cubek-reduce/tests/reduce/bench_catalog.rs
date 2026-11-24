@@ -18,38 +18,58 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
         .value
 }
 
-fn run(strategy_id: &str, problem_id: &str) {
-    let strategy: ReduceOpStrategy = lookup(Category.strategies(), strategy_id);
-    let problem: ReduceProblem = lookup(Category.problems(), problem_id);
-
-    let correctness = Category
-        .correctness()
-        .expect("the reduce catalogue checks its problems");
-    let actual = match correctness.kernel_result(&strategy, &problem, &SEEDS) {
-        Ok(host) => host,
-        Err(e) => return TestOutcome::CompileError(e).enforce(),
-    };
-    let expected = correctness
-        .reference_result(&problem, &SEEDS, None)
-        .unwrap_or_else(|e| panic!("reference failed for {problem_id}: {e}"));
-
-    assert_equals_approx(&actual, &expected, problem.tolerance())
-        .as_test_outcome()
-        .enforce();
+/// Checks the strategy of one id on the problem of another, against the reference.
+struct CatalogChecker {
+    strategy_id: &'static str,
+    problem_id: &'static str,
 }
 
-/// Takes the f32 id and derives the f16 one, since the catalogue offers f16
-/// rows only where the device can fold them and there is nothing to look up
-/// otherwise.
-fn run_f16(strategy_id: &str, problem_id: &str) {
-    let f16 = ReduceBenchPrecision::F16;
-    if !f16.is_offered_on(&cubecl::test_device().client()) {
-        return TestOutcome::Validated(ValidationResult::Skipped(
-            "no f16 row on this device".to_string(),
-        ))
-        .enforce();
+impl CatalogChecker {
+    pub fn new(strategy_id: &'static str, problem_id: &'static str) -> Self {
+        Self {
+            strategy_id,
+            problem_id,
+        }
     }
-    run(strategy_id, &format!("{problem_id}{}", f16.suffix()));
+
+    pub fn check(&self) {
+        self.check_problem(self.problem_id);
+    }
+
+    /// The check of the problem's f16 row, which the catalogue offers only where the device folds
+    /// f16, so there is nothing to look up otherwise: a skip.
+    pub fn check_f16(&self) {
+        let f16 = ReduceBenchPrecision::F16;
+        match f16.is_offered_on(&cubecl::test_device().client()) {
+            true => self.check_problem(&format!("{}{}", self.problem_id, f16.suffix())),
+            false => TestOutcome::Validated(ValidationResult::Skipped(
+                "no f16 row on this device".to_string(),
+            ))
+            .enforce(),
+        }
+    }
+}
+
+impl CatalogChecker {
+    fn check_problem(&self, problem_id: &str) {
+        let strategy: ReduceOpStrategy = lookup(Category.strategies(), self.strategy_id);
+        let problem: ReduceProblem = lookup(Category.problems(), problem_id);
+
+        let correctness = Category
+            .correctness()
+            .expect("the reduce catalogue checks its problems");
+        let actual = match correctness.kernel_result(&strategy, &problem, &SEEDS) {
+            Ok(host) => host,
+            Err(e) => return TestOutcome::CompileError(e).enforce(),
+        };
+        let expected = correctness
+            .reference_result(&problem, &SEEDS, None)
+            .unwrap_or_else(|e| panic!("reference failed for {problem_id}: {e}"));
+
+        assert_equals_approx(&actual, &expected, problem.tolerance())
+            .as_test_outcome()
+            .enforce();
+    }
 }
 
 /// Each pair is checked at both precisions, under a module named for the shape
@@ -71,12 +91,12 @@ macro_rules! bench_catalog {
 
                     #[test]
                     fn f32() {
-                        run(STRATEGY, PROBLEM);
+                        CatalogChecker::new(STRATEGY, PROBLEM).check();
                     }
 
                     #[test]
                     fn f16() {
-                        run_f16(STRATEGY, PROBLEM);
+                        CatalogChecker::new(STRATEGY, PROBLEM).check_f16();
                     }
                 })+
             })+

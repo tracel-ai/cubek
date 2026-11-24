@@ -199,7 +199,7 @@ impl ReduceRoutineProblem {
     ///
     /// # Panics
     ///
-    /// As [`stated`](Self::stated).
+    /// Where [`stated`](Self::stated) does, of their geometries.
     pub(crate) fn of_buffers(
         input: &TensorBinding,
         out: &TensorBinding,
@@ -221,7 +221,7 @@ impl ReduceRoutineProblem {
     ///
     /// # Panics
     ///
-    /// As [`stated`](Self::stated).
+    /// Where the geometry and `out`'s state no problem ([`stated`](Self::stated)).
     pub(crate) fn of_unbound(
         input: &Geometry,
         lane_count: usize,
@@ -253,17 +253,18 @@ impl ReduceRoutineProblem {
     /// This problem with the indices of its values written beside them in `element`, to
     /// `indices`: a line of rows runs along the innermost axis only where that buffer steps one
     /// element along it too.
-    pub(crate) fn writing_indices(mut self, element: ElemType, indices: &TensorBinding) -> Self {
+    pub(crate) fn writing_indices(&self, element: ElemType, indices: &TensorBinding) -> Self {
         let indices = Geometry::from(indices);
-        let axis = self.axis;
-        self.contiguous = self
-            .contiguous
-            .filter(|&inner| inner == axis || steps_one(&indices, inner));
-        self.indices = Some(ReduceIndices {
-            element,
-            elem_alignment: ElemAlignment::new(indices.shape(), indices.strides()),
-        });
-        self
+        Self {
+            contiguous: self
+                .contiguous
+                .filter(|&inner| inner == self.axis || steps_one(&indices, inner)),
+            indices: Some(ReduceIndices {
+                element,
+                elem_alignment: ElemAlignment::new(indices.shape(), indices.strides()),
+            }),
+            ..self.clone()
+        }
     }
 
     /// `binding`, an operand of the input's axes holding `along` in place of the reduced axis
@@ -448,9 +449,9 @@ impl ReduceRoutineProblem {
             .div_ceil(self.box_row_count_at_lane_count(lane_count))
     }
 
-    /// Rows an owner holds: those one load reaches along [`BATCH`], `lane_count` side by side
-    /// across the reduced axis, one along it.
-    fn box_row_count_at_lane_count(&self, lane_count: usize) -> usize {
+    /// Rows an owner holds, and the lanes of a line it writes them in: those one load reaches along
+    /// [`BATCH`], `lane_count` side by side across the reduced axis, one along it.
+    pub(crate) fn box_row_count_at_lane_count(&self, lane_count: usize) -> usize {
         self.input_load_at_lane_count(lane_count)
             .extent_along(BATCH)
     }
@@ -490,7 +491,7 @@ impl ReduceRoutineProblem {
     ///
     /// # Panics
     ///
-    /// As [`stated`](Self::stated).
+    /// Where `axis` is past `shape`'s.
     pub(crate) fn of_shape(
         shape: &[usize],
         axis: usize,
@@ -1035,5 +1036,74 @@ mod tests {
         assert!(space.is_dynamic(REDUCED));
         assert!(space.is_dynamic(BATCH));
         assert!(!space.is_dynamic(SLOTS));
+    }
+
+    #[test]
+    fn buffers_are_read_where_they_lie() {
+        let problem = ReduceRoutineProblem::of_buffers(
+            &buffer_at_strides(&[4, 8], &[16, 1]),
+            &buffer_at_strides(&[4, 1], &[1, 1]),
+            1,
+            ReduceOperation::Sum,
+            sum_elements(),
+        );
+        assert_eq!(
+            problem.elem_alignments[0],
+            ElemAlignment::new(&[4, 8], &[16, 1])
+        );
+    }
+
+    #[test]
+    fn a_labelled_buffer_steps_its_merged_row_axes() {
+        let problem = ReduceRoutineProblem::dense(&[2, 3, 4], 2, ReduceOperation::Sum);
+        let (labelled, _) = problem.labelled(buffer_at_strides(&[2, 3, 4], &[12, 4, 1]), REDUCED);
+        let axes: Vec<(usize, usize)> = labelled
+            .shape
+            .iter()
+            .copied()
+            .zip(labelled.strides.iter().copied())
+            .collect();
+        assert_eq!(axes, vec![(6, 4), (4, 1)]);
+    }
+
+    #[test]
+    fn a_work_item_says_whether_the_indices_are_written() {
+        let problem = ReduceRoutineProblem {
+            indices: Some(ReduceIndices {
+                element: U32,
+                elem_alignment: ElemAlignment::ONE,
+            }),
+            ..ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::ArgMax)
+        };
+        assert!(problem.work_item().with_indices);
+    }
+
+    #[test]
+    fn a_split_space_holds_the_partials() {
+        const PARTIAL_COUNT: usize = 12;
+        let problem = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum);
+        let space = problem.split_space_with_partial_count(PARTIAL_COUNT);
+        assert_eq!(space.extent(PARTIALS), PARTIAL_COUNT);
+    }
+
+    #[test]
+    fn a_split_owner_holds_a_part_of_its_rows() {
+        const PART_VALUE_COUNT: usize = 5;
+        let problem = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum);
+        assert_eq!(
+            problem.split_owner_box(1, PART_VALUE_COUNT),
+            [(BATCH, 1), (SLOTS, 1), (REDUCED, PART_VALUE_COUNT)]
+        );
+    }
+
+    #[test]
+    fn a_shape_alone_states_a_dense_problem() {
+        let problem =
+            ReduceRoutineProblem::of_shape(&[4, 8], 1, ReduceOperation::Sum, sum_elements(), false);
+        let dense = ReduceRoutineProblem {
+            elem_alignments: [8, 4].map(ElemAlignment::dense_rows),
+            ..ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum)
+        };
+        assert_eq!(problem, dense);
     }
 }

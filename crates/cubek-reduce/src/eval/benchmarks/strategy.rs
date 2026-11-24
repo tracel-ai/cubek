@@ -15,3 +15,19 @@ pub(crate) fn strategies() -> Vec<CatalogEntry<ReduceOpStrategy>> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_strategy_is_listed() {
+        let listed: Vec<_> = strategies().into_iter().map(|entry| entry.value).collect();
+        assert_eq!(listed, ReduceOpStrategy::ALL);
+    }
+
+    #[test]
+    fn no_id_holds_a_dash() {
+        assert!(strategies().iter().all(|entry| !entry.id.contains('-')));
+    }
+}

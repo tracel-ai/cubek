@@ -119,8 +119,9 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
 
 #[cfg(test)]
 mod tests {
-    use crate::kernels::launch_tuned;
+    use super::*;
     use crate::kernels::testing::BufferLaunch;
+    use cubek_std::devices;
 
     const LAUNCH: BufferLaunch = |_, tensors| {
         launch_tuned(tensors.clone(), &cubecl::test_device())
@@ -129,4 +130,23 @@ mod tests {
     };
 
     strategy_reduces_each_problem!(LAUNCH);
+
+    /// Every setting of every routine, the floor and the groups' layout.
+    #[test]
+    fn every_setting_of_every_routine_races() {
+        let hw = devices::m2_pro();
+        let settings = UnitDirectReduceRoutine::settings(&hw).len()
+            + PlaneShuffleReduceRoutine::settings(&hw).len()
+            + CubeStagedReduceRoutine::settings(&hw).len()
+            + HypercubeLastArrivalReduceRoutine::settings(&hw).len()
+            + HypercubeAtomicReduceRoutine::settings(&hw).len();
+        assert_eq!(candidates(hw).len(), settings + 2);
+    }
+
+    #[test]
+    fn a_candidate_is_identified_by_its_routine_and_setting() {
+        let runner =
+            ReduceRoutineRunner::<UnitDirectReduceRoutine>::list(&devices::m2_pro()).remove(0);
+        assert_eq!(identity_of(&runner).to_string(), *runner.strategy());
+    }
 }

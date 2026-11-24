@@ -200,7 +200,7 @@ pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) = prepared;
-    UnitDirectZeroReduceRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
+    UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid);
     HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input);
     Ok(())
 }
@@ -222,7 +222,15 @@ pub(crate) fn launch_first_served<R: ReduceRoutine<M>, M>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::testing::BufferLaunch;
+    use crate::kernels::testing::{
+        BufferLaunch, BufferScopeChecker, Reduction, UnboundScopeChecker, bound_back,
+        sum_of_long_rows, unbound_tensors,
+    };
+    use cubecl::client::Client;
+    use cubecl::prelude::TensorBinding;
+    use cubecl::tile::launch::StoredTileOperand;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_test_utils::ScopeChecker;
 
     #[test]
     fn the_autotune_comes_first() {
@@ -303,5 +311,76 @@ mod tests {
             |hw, tensors| launch_kernel(ReduceKernel::HypercubeLastArrival, hw, tensors);
 
         strategy_reduces_each_problem!(LAUNCH);
+    }
+
+    /// `tensors` reduced by the kernel `strategy` picks.
+    fn launches_by(strategy: ReduceOpStrategy) -> Result<(), ReduceError> {
+        let tensors = ReduceTensors::zeros(&[4, 300], 1, ReduceOperation::Max);
+        launch_by_strategy(strategy, &cubecl::test_device(), tensors)
+    }
+
+    #[test]
+    fn the_autotune_launches() {
+        assert!(launches_by(ReduceOpStrategy::Autotune).is_ok());
+    }
+
+    #[test]
+    fn the_rule_launches() {
+        let rule = ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile);
+        assert!(launches_by(rule).is_ok());
+    }
+
+    /// The atomic hypercube sums only.
+    #[test]
+    fn a_pinned_kernel_declines_what_it_does_not_run() {
+        let launched = launches_by(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic));
+        assert!(
+            matches!(launched, Err(ReduceError::Declined(_))),
+            "{launched:?}"
+        );
+    }
+
+    /// The atomic hypercube launched on `tensors` into their output, zeroed first.
+    ///
+    /// # Errors
+    ///
+    /// Why it runs no such reduction here.
+    fn launch_zeroed(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
+        let prepared = HypercubeAtomicReduceRoutine::prepare_first_served(hw, tensors.problem())?;
+        launch_zeroed_atomic(hw, tensors, prepared)
+    }
+
+    /// [`launch_zeroed`] of an input the caller binds.
+    ///
+    /// # Errors
+    ///
+    /// As [`launch_zeroed`].
+    fn launch_zeroed_unbound(
+        client: &Client,
+        input: TensorBinding,
+        out: TensorBinding,
+        reduction: &Reduction,
+    ) -> Result<(), Decline> {
+        let tensors =
+            unbound_tensors::<HypercubeAtomicReduceRoutine, _>(client, &input, out, reduction)?;
+        let hw = Hardware::from_client(client);
+        let prepared = HypercubeAtomicReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
+        launch_zeroed_atomic_unbound::<StoredTileOperand>(
+            &hw,
+            &tensors,
+            prepared,
+            bound_back(input),
+        )
+    }
+
+    /// An output that starts away from zero holds the sum alone.
+    #[test]
+    fn the_atomic_hypercube_sums_into_a_zeroed_output() {
+        BufferScopeChecker::new(launch_zeroed).check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn the_atomic_hypercube_sums_an_unbound_input_into_a_zeroed_output() {
+        UnboundScopeChecker::new(launch_zeroed_unbound).check([sum_of_long_rows()]);
     }
 }

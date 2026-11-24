@@ -72,12 +72,15 @@ impl Routine for UnitDirectReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let microkernel =
-            UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let lane_counts = Self::lane_counts(hw, problem, &microkernel, microkernel.widest_line())?;
-        let (partitioning, grid) = unit_launch(hw, problem, lane_counts[0], settings.plane_count)?;
+        let (microkernel, lane_count) =
+            best_microkernel!(UnitDirectReduceMicrokernel, hw, problem, settings);
+        let (partitioning, grid) = unit_launch(hw, problem, lane_count, settings.plane_count)?;
         Ok((
-            ReduceBlueprint::new(microkernel, partitioning, lane_counts),
+            ReduceBlueprint {
+                microkernel,
+                partitioning,
+                lane_count,
+            },
             grid,
         ))
     }
@@ -95,6 +98,12 @@ impl Routine for UnitDirectReduceRoutine {
 
 impl ReduceRoutine<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
     const NAME: &'static str = "unit-direct-reduce";
+
+    type Out = TileTensorLaunch;
+
+    fn out_arg(out: Bound) -> TileTensorLaunch {
+        out.arg()
+    }
 
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
@@ -131,6 +140,11 @@ mod tests {
     use crate::kernels::testing::{BufferLaunch, UnboundLaunch, launch_unbound};
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
+
+    prepares_more_row_axes_than_the_grid_holds!(UnitDirectReduceRoutine);
+    prepares_lacking_every_feature!(UnitDirectReduceRoutine);
+    names_its_setting!(UnitDirectReduceRoutine, "lane_slots=32 planes=4");
+    estimates_its_microkernel!(UnitDirectReduceRoutine, ReduceRoutineProblem::work_item);
 
     /// Checks that an argmax of `shape` along `axis` compiles on an M2 Pro the microkernel, lanes
     /// and kernel of `other`, a shape of its rank and layout: the rows and the row length are the
@@ -169,29 +183,10 @@ mod tests {
         compiles_what_another_shape_compiles(&[2, 5, 300], &[4, 9, 308], 1);
     }
 
-    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH).
-    #[test]
-    fn prepares_more_row_axes_than_the_grid_holds() {
-        let hw = devices::m2_pro();
-        let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
-        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
-        let prepared = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(prepared.is_ok(), "{prepared:?}");
-    }
-
-    /// The unit routine reads no Feature.
-    #[test]
-    fn prepares_lacking_every_feature() {
-        let hw = devices::lacking_every_feature(devices::m2_pro());
-        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
-        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
-        let prepared = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(prepared.is_ok(), "{prepared:?}");
-    }
-
     const LAUNCH: BufferLaunch = launch_first_served::<UnitDirectReduceRoutine, _>;
     const UNBOUND: UnboundLaunch = launch_unbound::<UnitDirectReduceRoutine, _>;
 
     reduces_each_dim!(LAUNCH, UNBOUND);
     reduces_more_row_axes_than_the_grid_has!(LAUNCH);
+    reduces_with_indices!(LAUNCH);
 }
