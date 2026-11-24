@@ -2,14 +2,13 @@
 //! against the ceiling each autotune's routines are bound by.
 
 use crate::kernels::plan::MatmulCall;
-use crate::kernels::tensor::StoredTensor;
+use crate::kernels::select::packed::block_scaled_instruction_reads;
 use crate::kernels::tune::key::MatmulTuneKey;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::throughput::{MemoryAccess, compute_throughput_key};
 use cubecl::tune::Work;
 use cubek_std::autotune::{Ceiling, Roofline};
-use cubek_std::matmul_dimensions::K;
-use cubek_std::{Hardware, Instructions, block_scaled_for};
+use cubek_std::{Hardware, Instructions};
 
 /// What a product costs, for the roofline a round stops at: the contraction's operations and the
 /// bytes of the three operands. A packed input counts its packed bytes, what a kernel streaming it
@@ -45,27 +44,11 @@ pub(super) fn few_rows(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
 pub(super) fn many_rows(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
     Roofline {
         client: call.client.clone(),
-        ceiling: match block_scaled_reads_both(call) {
+        ceiling: match block_scaled_instruction_reads(&call.hw, &call.operands()) {
             true => Ceiling::Memory(MemoryAccess::Read),
             false => matmul_ceiling(&call.hw, key.shape().elem),
         },
         work: work(key, call),
-    }
-}
-
-/// Whether a block-scaled instruction of the device reads both of `call`'s inputs as stored.
-fn block_scaled_reads_both(call: &MatmulCall) -> bool {
-    let read = |tensor: &StoredTensor| match tensor {
-        StoredTensor::Packed(packed) => Some((packed.scheme(), packed.operand().scale(K)?)),
-        _ => None,
-    };
-    match (read(&call.lhs.tensor), read(&call.rhs.tensor)) {
-        (Some((lhs, lhs_block)), Some((rhs, rhs_block))) => {
-            block_scaled_for(&call.hw, (&lhs, lhs_block), (&rhs, rhs_block))
-                .next()
-                .is_some()
-        }
-        _ => false,
     }
 }
 

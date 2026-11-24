@@ -1,3 +1,4 @@
+use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::Product;
 use crate::kernels::tune::key::{MatmulTuneKey, create_key};
@@ -7,6 +8,7 @@ use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::MatmulOperands;
 use cubek_std::Hardware;
 use cubek_std::plan::BoxedPlan;
 use std::sync::Arc;
@@ -44,7 +46,17 @@ impl MatmulCall {
 
     /// The kind of product its inputs make: what a candidate listed for the other kind declines.
     pub(crate) fn product(&self) -> Product {
-        Product::of([self.lhs.tensor.kind(), self.rhs.tensor.kind()])
+        let operands = self.operands();
+        Product::of([operands.lhs, operands.rhs])
+    }
+
+    /// What each operand is: its inputs as they are stored, its output float.
+    pub(crate) fn operands(&self) -> MatmulOperands<OperandKind> {
+        MatmulOperands {
+            lhs: self.lhs.tensor.kind(),
+            rhs: self.rhs.tensor.kind(),
+            out: OperandKind::Float,
+        }
     }
 
     /// This call writing into its destination, allocated here at the product's shape where the

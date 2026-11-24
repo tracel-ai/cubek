@@ -1,11 +1,15 @@
-//! What the selection ([`super::selector::select`]) asks of a packed input: whether the kernels
-//! stream its scheme ([`matmul_supported`]).
+//! What the selection ([`super::selector::select`]) asks of packed inputs: whether the kernels
+//! stream one's scheme ([`matmul_supported`]), and whether a block-scaled instruction reads both
+//! (`block_scaled_instruction_reads`).
 
+use super::problem::OperandKind;
+use crate::kernels::CubeStagedMatmulRoutine;
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubek_microkernel::matmul::MatmulOperand;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::NVFP4_BLOCK;
-use cubek_std::layout::stored::Operand;
+use cubek_std::layout::stored::{Operand, Packing};
+use cubek_std::matmul_dimensions::K;
 
 /// Whether the packed kernels stream `input` packed under `scheme`: the packed int formats
 /// (`q4f`/`q4s`/`q8f`/`q8s`), the fp4 one (`e2m1`) or the fp8 ones (`e4m3`/`e5m2`), in
@@ -55,6 +59,27 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOpera
         .and_then(|dimension| Operand::of_scheme(scheme, dimension, dimensions))
         .is_some();
     value && numbers && laid
+}
+
+/// Whether a block-scaled instruction of `hw` reads both inputs of `operands` as they are stored,
+/// their words along `k` ([`CubeStagedMatmulRoutine::block_scaled_step`]).
+pub(crate) fn block_scaled_instruction_reads(
+    hw: &Hardware,
+    operands: &MatmulOperands<OperandKind>,
+) -> bool {
+    let inputs = operands.map(|operand, kind| match kind {
+        OperandKind::Quantized(scheme) => packed_along_k(operand, scheme),
+        OperandKind::Float => None,
+    });
+    CubeStagedMatmulRoutine::block_scaled_step(hw, &inputs).is_some()
+}
+
+/// How `operand` is packed under `scheme`, where its words run along `k`.
+fn packed_along_k(operand: MatmulOperand, scheme: QuantScheme) -> Option<Packing> {
+    let dimensions = operand.dimensions();
+    let along = Operand::dimension_of(&scheme, dimensions)?;
+    let operand = Operand::of_scheme(&scheme, K, dimensions)?;
+    (along == K).then_some(Packing { operand, scheme })
 }
 
 /// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.

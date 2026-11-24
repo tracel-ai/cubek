@@ -3,8 +3,8 @@
 //! [`Hardware`] fixtures with no GPU. The selector runs first; measuring is one of its answers,
 //! and for it the answer is an autotune, not a kernel.
 
-use super::packed::matmul_supported;
-use super::problem::{MatmulProblem, OperandKind};
+use super::packed::{block_scaled_instruction_reads, matmul_supported};
+use super::problem::MatmulProblem;
 use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use crate::kernels::plan::{Decoded, FrameworkDequantized, MatmulPlan, RoutinePlan};
 use crate::kernels::tune::{MatmulAutotune, MatmulAutotuneGroups};
@@ -13,11 +13,7 @@ use crate::kernels::{
     UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
 };
 use cubecl::tile::launch::Decline;
-use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
-use cubek_std::block_scaled_for;
-use cubek_std::layout::stored::Operand;
-use cubek_std::matmul_dimensions::K;
 use cubek_std::plan::{InOrder, Then};
 
 /// The autotune `strategy`'s plan for `problem` on `hw` is, where its plan is one autotune alone:
@@ -54,9 +50,9 @@ pub fn measured_autotune(
 ///
 /// # Errors
 ///
-/// A pin that cannot serve the problem: `BlockScaledTensorCores` but on two packed inputs a block-scaled
-/// instruction of its GPU takes. The launch panics on it: a pin is a contract with the caller, not a
-/// preference.
+/// A pin that cannot serve the problem: `BlockScaledTensorCores` but on two packed inputs a
+/// block-scaled instruction of its GPU reads. The launch panics on it: a pin is a contract with the
+/// caller, not a preference.
 pub fn select(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
@@ -159,39 +155,13 @@ fn packed_plan(
         // Past one row the packed inputs are decoded and run on the tiled routines.
         Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
         Specific(K::PlaneShuffle) => Ok(packed_plane_shuffle()),
-        Specific(K::BlockScaledTensorCores) if block_scaled_tensor_cores_serve(problem, hw) => {
+        Specific(K::BlockScaledTensorCores)
+            if block_scaled_instruction_reads(hw, &problem.operands) =>
+        {
             Ok(MatmulAutotune::BlockScaled.plan(groups))
         }
         Specific(K::BlockScaledTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
     }
-}
-
-/// Whether a pin of the block-scaled tensor cores serves this product: both inputs packed with their
-/// words along `k`, their block scales along `k` too, whole words of them in `k`, and a block-scaled
-/// instruction of the device that reads them ([`block_scaled_for`]). A per-tensor scale above the
-/// blocks, or none, is the product's to apply. Autotune asks nothing of this: its candidates decline
-/// what they cannot run.
-fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
-    let input = |input: MatmulOperand| match problem.operands.get(input) {
-        OperandKind::Quantized(scheme)
-            if Operand::dimension_of(&scheme, input.dimensions()) == Some(K) =>
-        {
-            let operand = Operand::of_scheme(&scheme, K, input.dimensions())?;
-            let block = operand.scale(K)?;
-            Some((scheme, block, block * operand.scales_per_word()))
-        }
-        OperandKind::Quantized(_) | OperandKind::Float => None,
-    };
-    let (Some((lhs, lhs_block, lhs_word)), Some((rhs, rhs_block, rhs_word))) =
-        (input(MatmulOperand::Lhs), input(MatmulOperand::Rhs))
-    else {
-        return false;
-    };
-    problem.k.is_multiple_of(lhs_word)
-        && problem.k.is_multiple_of(rhs_word)
-        && block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
-            .next()
-            .is_some()
 }
 
 /// `BlockScaledTensorCores` named for a product it does not serve.

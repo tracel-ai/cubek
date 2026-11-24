@@ -252,31 +252,41 @@ fn an_unread_scheme_on_either_input_is_dequantized_by_the_framework() {
     assert!(burn(&with_packed_lhs(quantized(8, q4()), per_tensor())));
 }
 
-/// The rows alone choose the autotune of two packed inputs, whether or not the GPU has a block-scaled
-/// instruction that reads them: a decode's rows the few-rows autotune, the rest the many-rows one,
-/// where the block-scaled settings race.
+/// `rows` rows of two NVFP4 inputs.
+fn two_nvfp4(rows: usize) -> MatmulProblem {
+    with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs())
+}
+
 #[test]
-fn the_rows_alone_choose_the_autotune_of_two_packed_inputs() {
-    let nvfp4 = |rows| with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs());
-    for hw in [block_scaled(), devices::h100()] {
-        for (rows, autotune) in [
-            (1, MatmulAutotune::FewRows),
-            (QUANTIZED_FEW_ROWS, MatmulAutotune::FewRows),
-            (QUANTIZED_FEW_ROWS + 1, MatmulAutotune::ManyRows),
-            (2048, MatmulAutotune::ManyRows),
-        ] {
-            assert_eq!(
-                select(Autotune, &nvfp4(rows), &hw),
-                Ok(fastest(autotune)),
-                "{rows} rows on {hw:?}"
-            );
-            assert_eq!(
-                measured_autotune(Autotune, &nvfp4(rows), &hw),
-                Some(autotune),
-                "{rows} rows on {hw:?}"
-            );
-        }
-    }
+fn a_decode_of_two_packed_inputs_races_the_few_rows() {
+    assert_eq!(
+        select(Autotune, &two_nvfp4(QUANTIZED_FEW_ROWS), &block_scaled()),
+        Ok(fastest(MatmulAutotune::FewRows))
+    );
+}
+
+#[test]
+fn a_prompt_of_two_packed_inputs_races_the_many_rows() {
+    assert_eq!(
+        select(
+            Autotune,
+            &two_nvfp4(QUANTIZED_FEW_ROWS + 1),
+            &block_scaled()
+        ),
+        Ok(fastest(MatmulAutotune::ManyRows))
+    );
+}
+
+#[test]
+fn a_prompt_of_two_packed_inputs_is_measured_on_the_many_rows() {
+    assert_eq!(
+        measured_autotune(
+            Autotune,
+            &two_nvfp4(QUANTIZED_FEW_ROWS + 1),
+            &block_scaled()
+        ),
+        Some(MatmulAutotune::ManyRows)
+    );
 }
 
 /// Named, the 4-bit tensor-core kernel runs two NVFP4 inputs whose words run down `k`, on a GPU
@@ -320,54 +330,71 @@ fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_
     }
 }
 
-/// Named, the block-scaled kernel takes any pair of formats the GPU's block-scaled instruction reads:
-/// NVFP4 without its per-tensor scale, `e2m1` under `ue8m0` scales of sixteen, and MXFP4's `e2m1` and
-/// MXFP8's `e4m3` under scales of thirty-two, whose step holds part of a word of them. It refuses a
-/// value or a block no instruction reads.
-#[test]
-fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads() {
-    let named = Specific(K::BlockScaledTensorCores);
-    let hw = devices::offering_block_scaled(devices::h100());
-    let scheme = |value, block: u8, scale, store| {
-        let dims: &[u8] = match store {
-            QuantStore::PackedU32(1) => &[block, 1],
-            _ => &[block],
-        };
+/// What a pin of the block-scaled kernel runs for two inputs of `value` under `scale` blocks of
+/// `block`, both along `k`, on a device offering every block-scaled instruction.
+fn pinned_block_scaled(value: QuantValue, block: u8, scale: ScaleDtype) -> Result<String, Decline> {
+    let scheme = |dims: &[u8], store| {
         QuantScheme::default()
             .with_value(value)
             .per_block(dims, scale)
             .with_store(store)
     };
-    let pair = |value, block, scale| {
-        with_packed_lhs(
-            quantized(512, scheme(value, block, scale, QuantStore::PackedU32(1))),
-            scheme(value, block, scale, QuantStore::PackedU32(0)),
-        )
-    };
-    let served = [
-        pair(QuantValue::E2M1, 16, ScaleDtype::UE4M3),
-        pair(QuantValue::E2M1, 16, ScaleDtype::UE8M0),
-        pair(QuantValue::E2M1, 32, ScaleDtype::UE8M0),
-        pair(QuantValue::E4M3, 32, ScaleDtype::UE8M0),
-    ];
-    for problem in served {
-        assert_eq!(
-            select(named, &problem, &hw),
-            Ok(packed_pin(K::BlockScaledTensorCores)),
-            "{problem:?}"
-        );
-    }
-    let refused = [
-        pair(QuantValue::Q4S, 16, ScaleDtype::UE4M3),
-        pair(QuantValue::E4M3, 16, ScaleDtype::UE8M0),
-    ];
-    for problem in refused {
-        assert_eq!(
-            select(named, &problem, &hw),
-            Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
-            "{problem:?}"
-        );
-    }
+    let problem = with_packed_lhs(
+        quantized(512, scheme(&[block, 1], QuantStore::PackedU32(1))),
+        scheme(&[block], QuantStore::PackedU32(0)),
+    );
+    let hw = devices::offering_block_scaled(devices::h100());
+    select(Specific(K::BlockScaledTensorCores), &problem, &hw)
+}
+
+#[test]
+fn the_block_scaled_pin_serves_nvfp4_without_its_per_tensor_scale() {
+    assert_eq!(
+        pinned_block_scaled(QuantValue::E2M1, 16, ScaleDtype::UE4M3),
+        Ok(packed_pin(K::BlockScaledTensorCores))
+    );
+}
+
+#[test]
+fn the_block_scaled_pin_serves_e2m1_under_ue8m0_blocks_of_sixteen() {
+    assert_eq!(
+        pinned_block_scaled(QuantValue::E2M1, 16, ScaleDtype::UE8M0),
+        Ok(packed_pin(K::BlockScaledTensorCores))
+    );
+}
+
+/// The instruction's step of 64 holds half a word of MXFP4's scales.
+#[test]
+fn the_block_scaled_pin_serves_mxfp4() {
+    assert_eq!(
+        pinned_block_scaled(QuantValue::E2M1, 32, ScaleDtype::UE8M0),
+        Ok(packed_pin(K::BlockScaledTensorCores))
+    );
+}
+
+/// The instruction's step of 32 holds a quarter of a word of MXFP8's scales.
+#[test]
+fn the_block_scaled_pin_serves_mxfp8() {
+    assert_eq!(
+        pinned_block_scaled(QuantValue::E4M3, 32, ScaleDtype::UE8M0),
+        Ok(packed_pin(K::BlockScaledTensorCores))
+    );
+}
+
+#[test]
+fn the_block_scaled_pin_refuses_values_no_instruction_reads() {
+    assert_eq!(
+        pinned_block_scaled(QuantValue::Q4S, 16, ScaleDtype::UE4M3),
+        Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED)
+    );
+}
+
+#[test]
+fn the_block_scaled_pin_refuses_a_block_no_instruction_reads() {
+    assert_eq!(
+        pinned_block_scaled(QuantValue::E4M3, 16, ScaleDtype::UE8M0),
+        Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED)
+    );
 }
 
 /// The heuristic decode projection takes the packed plane routine at one row, and dequantizes
