@@ -1,10 +1,10 @@
 //! The reduce family's rule: which routine runs a problem when nothing is measured.
 
 use crate::kernels::{
-    BATCH, CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    HypercubeLastArrivalReduceSettings, PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceKernel,
-    ReduceRoutine, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors,
-    UnitDirectReduceRoutine, launch_kernel,
+    BATCH, CubeStagedReduceRoutine, CubeStagedReduceSettings, HypercubeLastArrivalReduceRoutine,
+    HypercubeLastArrivalReduceSettings, PlaneShuffleReduceRoutine, PlaneShuffleReduceSettings,
+    ReduceBlueprint, ReduceKernel, ReduceRoutine, ReduceRoutineProblem, ReduceSplitExtents,
+    ReduceTensors, UnitDirectReduceRoutine, UnitDirectReduceSettings, launch_kernel,
 };
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::ReduceCarrier;
@@ -12,9 +12,42 @@ use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
 use cubek_std::routine::{Grid, Routine};
 
-/// `tensors` reduced by the routine the rule picks on `hw`, read top to bottom. The rule reads the
-/// problem the call's Tune Key stands for ([`ReduceRoutineProblem::keyed`]), so every call of one
-/// key runs the same routine at the same setting:
+/// `tensors` reduced by the routine [`picked`] on `hw` for the problem the call's Tune Key stands for
+/// ([`ReduceRoutineProblem::keyed`]), so every call of one key runs the same routine at the same
+/// setting; by the unit routine, which serves every problem, where none is picked.
+///
+/// # Errors
+///
+/// Why that routine cannot run the problem here.
+pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
+    match picked(hw, &tensors.problem().keyed()) {
+        Some(ReducePick::UnitDirect(settings)) => {
+            launch_at::<UnitDirectReduceRoutine, _>(hw, tensors, &settings)
+        }
+        Some(ReducePick::PlaneShuffle(settings)) => {
+            launch_at::<PlaneShuffleReduceRoutine, _>(hw, tensors, &settings)
+        }
+        Some(ReducePick::CubeStaged(settings)) => {
+            launch_at::<CubeStagedReduceRoutine, _>(hw, tensors, &settings)
+        }
+        Some(ReducePick::HypercubeLastArrival(settings)) => {
+            launch_at::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors, &settings)
+        }
+        None => launch_kernel(ReduceKernel::Unit, hw, tensors),
+    }
+}
+
+/// A reduce routine at one of its settings, as the rule picks one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReducePick {
+    UnitDirect(UnitDirectReduceSettings),
+    PlaneShuffle(PlaneShuffleReduceSettings),
+    CubeStaged(CubeStagedReduceSettings),
+    HypercubeLastArrival(HypercubeLastArrivalReduceSettings),
+}
+
+/// The routine that runs the calls `keyed` stands for on `hw`, where one prepares it, read top to
+/// bottom:
 ///
 /// 1. Rows enough that a unit each fills the device, each row short enough that a unit walks it
 ///    alone as fast as a plane would: the unit routine.
@@ -23,50 +56,38 @@ use cubek_std::routine::{Grid, Routine};
 /// 3. Rows a cube each would leave the device idle, and a split that fills it: the hypercube, at
 ///    its first setting whose cubes fill the device, or at the one with the most cubes.
 /// 4. Otherwise the cube routine.
-/// 5. Where the cube declines the problem, the unit routine, which serves every problem.
-///
-/// # Errors
-///
-/// Why the unit routine cannot run the problem here, which no device refuses.
-pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
-    let keyed = tensors.problem().keyed();
-    if let Some((settings, blueprint)) =
-        filling_the_device::<UnitDirectReduceRoutine, _>(hw, &keyed)
-        && unit_keeps_up(hw, &keyed, blueprint.width)
-        && launched::<UnitDirectReduceRoutine, _>(hw, tensors, &settings)
+/// 5. Where the cube declines the problem, the unit routine.
+fn picked(hw: &Hardware, keyed: &ReduceRoutineProblem) -> Option<ReducePick> {
+    if let Some((settings, blueprint)) = filling_the_device::<UnitDirectReduceRoutine, _>(hw, keyed)
+        && unit_keeps_up(hw, keyed, blueprint.lane_count)
     {
-        return Ok(());
+        return Some(ReducePick::UnitDirect(settings));
     }
-    if let Some((settings, _)) = filling_the_device::<PlaneShuffleReduceRoutine, _>(hw, &keyed)
-        && launched::<PlaneShuffleReduceRoutine, _>(hw, tensors, &settings)
-    {
-        return Ok(());
+    if let Some((settings, _)) = filling_the_device::<PlaneShuffleReduceRoutine, _>(hw, keyed) {
+        return Some(ReducePick::PlaneShuffle(settings));
     }
-    if let Some(settings) = hypercube_filling_the_device(hw, &keyed)
-        && launched::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors, &settings)
-    {
-        return Ok(());
+    if let Some(settings) = hypercube_filling_the_device(hw, keyed) {
+        return Some(ReducePick::HypercubeLastArrival(settings));
     }
-    if let Some((settings, _, _)) = first_served::<CubeStagedReduceRoutine, _>(hw, &keyed)
-        && launched::<CubeStagedReduceRoutine, _>(hw, tensors, &settings)
-    {
-        return Ok(());
+    if let Some((settings, _, _)) = first_served::<CubeStagedReduceRoutine, _>(hw, keyed) {
+        return Some(ReducePick::CubeStaged(settings));
     }
-    launch_kernel(ReduceKernel::Unit, hw, tensors)
+    first_served::<UnitDirectReduceRoutine, _>(hw, keyed)
+        .map(|(settings, _, _)| ReducePick::UnitDirect(settings))
 }
 
-/// Whether a unit reading a row alone, `width` values a line, keeps up with a plane reading it
+/// Whether a unit reading a row alone, `lane_count` values a line, keeps up with a plane reading it
 /// together. Across the reduced dim it does: neighbouring units read neighbouring rows, so their
 /// reads meet. Along it, a unit walks its row line after line where a plane takes a line a lane,
 /// so it keeps up only while the row holds no more lines than a plane has lanes, or where the
 /// device runs no plane routine.
-fn unit_keeps_up(hw: &Hardware, problem: &ReduceRoutineProblem, width: usize) -> bool {
+fn unit_keeps_up(hw: &Hardware, problem: &ReduceRoutineProblem, lane_count: usize) -> bool {
     if problem.lines_along() == BATCH {
         return true;
     }
     hw.plane_dim()
         .ok()
-        .is_none_or(|lanes| problem.reduced_extent().div_ceil(width) <= lanes as usize)
+        .is_none_or(|lanes| problem.reduced_extent().div_ceil(lane_count) <= lanes as usize)
 }
 
 /// The setting of the hypercube's launch where a box of rows a cube leaves the device idle and
@@ -89,7 +110,8 @@ fn hypercube_filling_the_device(
         .into_iter()
         .filter(|settings| {
             !most_lines_only
-                || settings.unit_lines == HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
+                || settings.unit_line_count
+                    == HypercubeLastArrivalReduceSettings::UNIT_LINE_COUNTS[0]
         });
     for settings in settings {
         let Ok((blueprint, _)) = HypercubeLastArrivalReduceRoutine::prepare(hw, problem, &settings)
@@ -98,8 +120,8 @@ fn hypercube_filling_the_device(
         };
         let units = blueprint.microkernel.part().units() as u32;
         let fill = hw.cubes_to_fill(units)? as usize;
-        let boxes = problem.row_boxes_at_width(blueprint.width);
-        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning).parts as usize;
+        let boxes = problem.row_box_count_at_lane_count(blueprint.lane_count);
+        let parts = ReduceSplitExtents::new(problem, &blueprint.partitioning).part_count as usize;
         if boxes >= fill {
             return None;
         }
@@ -139,21 +161,26 @@ fn filling_the_device<R: ReduceRoutine<M>, M>(
         .map(|(settings, blueprint, _)| (settings, blueprint))
 }
 
-/// Whether `R` at `settings` launched on `tensors`: `false` where it declines their problem.
-fn launched<R: ReduceRoutine<M>, M>(
+/// `tensors` reduced by `R` at `settings` on `hw`.
+///
+/// # Errors
+///
+/// As [`select`].
+fn launch_at<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     tensors: &ReduceTensors,
     settings: &R::Settings,
-) -> bool {
-    R::prepare(hw, tensors.problem(), settings)
-        .map(|(blueprint, grid)| R::launch(tensors, blueprint, grid))
-        .is_ok()
+) -> Result<(), Decline> {
+    let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
+    R::launch(tensors, blueprint, grid);
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::ReduceWorkspaceBytes;
+    use crate::kernels::ReducePartials;
+    use crate::kernels::testing::{swept_devices, swept_problems};
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
     use std::sync::Arc;
@@ -165,16 +192,16 @@ mod tests {
         assert!(unit_keeps_up(&devices::m2_pro(), &problem, 1));
     }
 
-    /// Lines of `WIDTH` values, rows as long as a plane's lanes' lines.
-    const WIDTH: usize = 4;
+    /// Values a line holds.
+    const LANE_COUNT: usize = 4;
 
     /// Along it, a unit keeps up while the row holds no more lines than a plane has lanes.
     #[test]
     fn a_unit_keeps_up_along_a_row_no_longer_than_a_plane() {
         let hw = devices::m2_pro();
         let lanes = hw.plane_dim().expect("an M2 Pro commits to a plane width") as usize;
-        let short = ReduceRoutineProblem::dense(&[8, lanes * WIDTH], 1, ReduceOperation::Sum);
-        assert!(unit_keeps_up(&hw, &short, WIDTH));
+        let short = ReduceRoutineProblem::dense(&[8, lanes * LANE_COUNT], 1, ReduceOperation::Sum);
+        assert!(unit_keeps_up(&hw, &short, LANE_COUNT));
     }
 
     /// Along it, a unit falls behind on a row longer than a plane's lanes' lines.
@@ -182,8 +209,9 @@ mod tests {
     fn a_unit_falls_behind_along_a_row_longer_than_a_plane() {
         let hw = devices::m2_pro();
         let lanes = hw.plane_dim().expect("an M2 Pro commits to a plane width") as usize;
-        let long = ReduceRoutineProblem::dense(&[8, lanes * WIDTH + 1], 1, ReduceOperation::Sum);
-        assert!(!unit_keeps_up(&hw, &long, WIDTH));
+        let long =
+            ReduceRoutineProblem::dense(&[8, lanes * LANE_COUNT + 1], 1, ReduceOperation::Sum);
+        assert!(!unit_keeps_up(&hw, &long, LANE_COUNT));
     }
 
     /// On a device with no committed plane width, nothing outruns the unit.
@@ -197,52 +225,52 @@ mod tests {
     /// A sum of `shape` along its last axis, given the scratch the hypercube takes.
     fn sum_given_scratch(shape: &[usize]) -> ReduceRoutineProblem {
         ReduceRoutineProblem {
-            workspace: ReduceWorkspaceBytes::UNBOUNDED,
+            partials: Some(ReducePartials::UNBOUNDED),
             ..ReduceRoutineProblem::dense(shape, shape.len() - 1, ReduceOperation::Sum)
         }
     }
 
     /// A row of few enough values that only the hypercube's shorter parts fill an M2 Pro, and of
     /// enough that its longest parts split it.
-    const SPLIT_ROW: usize = 400_000;
+    const SPLIT_VALUE_COUNT: usize = 400_000;
 
     #[test]
     fn the_hypercube_takes_its_first_parts_that_fill_the_device() {
         let hw = devices::m2_pro();
-        let problem = sum_given_scratch(&[1, SPLIT_ROW]);
+        let problem = sum_given_scratch(&[1, SPLIT_VALUE_COUNT]);
         let settings = hypercube_filling_the_device(&hw, &problem).expect("the row splits");
         assert_eq!(
-            settings.unit_lines,
-            HypercubeLastArrivalReduceSettings::UNIT_LINES[1]
+            settings.unit_line_count,
+            HypercubeLastArrivalReduceSettings::UNIT_LINE_COUNTS[1]
         );
     }
 
     #[test]
     fn the_hypercube_takes_its_most_cubes_where_none_fills_the_device() {
-        let [_, _, shortest] = HypercubeLastArrivalReduceSettings::UNIT_LINES;
+        let [_, _, shortest] = HypercubeLastArrivalReduceSettings::UNIT_LINE_COUNTS;
         let problem = sum_given_scratch(&[1, 8192]);
         let settings =
             hypercube_filling_the_device(&devices::m2_pro(), &problem).expect("the row splits");
-        assert_eq!(settings.unit_lines, shortest);
+        assert_eq!(settings.unit_line_count, shortest);
     }
 
     #[test]
     fn a_top_k_takes_the_hypercubes_longest_parts() {
         let problem = ReduceRoutineProblem {
             operation: ReduceOperation::TopK { k: 2 },
-            ..sum_given_scratch(&[1, SPLIT_ROW])
+            ..sum_given_scratch(&[1, SPLIT_VALUE_COUNT])
         };
         let settings =
             hypercube_filling_the_device(&devices::m2_pro(), &problem).expect("the row splits");
         assert_eq!(
-            settings.unit_lines,
-            HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
+            settings.unit_line_count,
+            HypercubeLastArrivalReduceSettings::UNIT_LINE_COUNTS[0]
         );
     }
 
     #[test]
     fn rows_that_fill_the_device_are_not_split() {
-        let problem = sum_given_scratch(&[10_000, SPLIT_ROW]);
+        let problem = sum_given_scratch(&[10_000, SPLIT_VALUE_COUNT]);
         assert_eq!(
             hypercube_filling_the_device(&devices::m2_pro(), &problem),
             None
@@ -264,7 +292,7 @@ mod tests {
         Arc::make_mut(&mut hw.properties)
             .hardware
             .num_streaming_multiprocessors = None;
-        let problem = sum_given_scratch(&[1, SPLIT_ROW]);
+        let problem = sum_given_scratch(&[1, SPLIT_VALUE_COUNT]);
         assert_eq!(hypercube_filling_the_device(&hw, &problem), None);
     }
 
@@ -303,5 +331,41 @@ mod tests {
         let filling =
             filling_the_device::<UnitDirectReduceRoutine, _>(&devices::m2_pro(), &problem);
         assert!(filling.is_none());
+    }
+
+    /// Whether the routine `pick` names prepares `problem` on `hw`, at its setting.
+    fn prepares(pick: ReducePick, hw: &Hardware, problem: &ReduceRoutineProblem) -> bool {
+        match pick {
+            ReducePick::UnitDirect(settings) => {
+                UnitDirectReduceRoutine::prepare(hw, problem, &settings).is_ok()
+            }
+            ReducePick::PlaneShuffle(settings) => {
+                PlaneShuffleReduceRoutine::prepare(hw, problem, &settings).is_ok()
+            }
+            ReducePick::CubeStaged(settings) => {
+                CubeStagedReduceRoutine::prepare(hw, problem, &settings).is_ok()
+            }
+            ReducePick::HypercubeLastArrival(settings) => {
+                HypercubeLastArrivalReduceRoutine::prepare(hw, problem, &settings).is_ok()
+            }
+        }
+    }
+
+    /// The rule reads a problem's key alone, so the routine it picks for the key must prepare the
+    /// problem.
+    #[test]
+    fn the_picked_routine_prepares_every_problem_of_its_key() {
+        for hw in swept_devices() {
+            for problem in swept_problems() {
+                let pick = picked(&hw, &problem.keyed()).expect("the unit routine serves a key");
+                assert!(prepares(pick, &hw, &problem), "{pick:?} of {problem:?}");
+            }
+        }
+    }
+
+    /// The rule's routine, launched.
+    mod launched {
+        use super::*;
+        strategy_reduces_each_problem!(select);
     }
 }

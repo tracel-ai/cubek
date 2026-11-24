@@ -116,3 +116,17 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
         ))
         .finish()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::launch_tuned;
+    use crate::kernels::testing::BufferLaunch;
+
+    const LAUNCH: BufferLaunch = |_, tensors| {
+        launch_tuned(tensors.clone(), &cubecl::test_device())
+            .expect("the floor serves every problem");
+        Ok(())
+    };
+
+    strategy_reduces_each_problem!(LAUNCH);
+}

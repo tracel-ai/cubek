@@ -12,7 +12,7 @@ use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
 #[cfg(test)]
-use crate::kernels::tests::zeros;
+use crate::kernels::testing::zeros;
 
 /// Why an unbound reduction declines where its microkernel reads narrower lines than the caller's
 /// input is stated at ([`ReduceTensors::unbound`]): the caller computes its lines whole.
@@ -57,12 +57,13 @@ impl<In> ReduceTensors<In> {
         &self.client
     }
 
-    /// These tensors with `workspace`, the last-arrival hypercube's scratch
-    /// ([`ReduceWorkspace::bytes_for`]): without one, it declines.
+    /// These tensors with `workspace`, the last-arrival hypercube's scratch, which holds at least
+    /// the bytes [`ReduceWorkspace::bytes_for`] states for this reduction: without one, it declines,
+    /// and a smaller one is outside the reduction's Domain.
     pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
         Self {
             problem: ReduceRoutineProblem {
-                workspace: workspace.bytes(),
+                partials: Some(workspace.partials_in(self.problem.elements.accumulator)),
                 ..self.problem
             },
             workspace: Some(workspace),
@@ -77,7 +78,8 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// # Panics
     ///
-    /// Where `input` has no axis, `axis` is not one of its axes, or `out`'s shape is not that.
+    /// Where `axis` is not an axis of `input`, as of one that has none, or `out`'s shape is not the
+    /// one above.
     pub fn new(
         client: &Client,
         input: TensorBinding,
@@ -136,7 +138,7 @@ impl ReduceTensors<TensorBinding> {
 
 impl ReduceTensors<Geometry> {
     /// `out = operation(input)` along dim `axis`, the input laid out as `input` but bound by the
-    /// caller once the launch is prepared and read at exactly `width`: what a fused read stands
+    /// caller once the launch is prepared and read at exactly `lane_count`: what a fused read stands
     /// for, whose lines the caller's code computes whole.
     ///
     /// # Panics
@@ -145,14 +147,14 @@ impl ReduceTensors<Geometry> {
     pub fn unbound(
         client: &Client,
         input: Geometry,
-        width: usize,
+        lane_count: usize,
         out: TensorBinding,
         axis: usize,
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Self {
         let problem =
-            ReduceRoutineProblem::of_unbound(&input, width, &out, axis, operation, elements);
+            ReduceRoutineProblem::of_unbound(&input, lane_count, &out, axis, operation, elements);
         Self {
             client: client.clone(),
             input,
@@ -171,23 +173,13 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
     pub(crate) fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
-        ReduceBinding {
-            workspace: self.workspace.clone(),
-            ..ReduceBinding::bound(
-                &self.client,
-                &self.problem,
-                [&self.input, &self.out],
-                self.indices.as_ref(),
-                blueprint,
-                grid,
-            )
-        }
+        ReduceBinding::bound(self, blueprint, grid)
     }
 }
 
 impl ReduceTensors<Geometry> {
     /// The problem as the input's own geometry states it, its alignment the geometry's rather than
-    /// the width the caller binds it at.
+    /// the lanes the caller binds it at.
     pub(crate) fn stated_problem(&self) -> ReduceRoutineProblem {
         self.problem.with_input_aligned_as(&self.input)
     }
@@ -199,17 +191,7 @@ impl ReduceTensors<Geometry> {
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
     ) -> ReduceBinding<Unbound, Bound> {
-        ReduceBinding {
-            workspace: self.workspace.clone(),
-            ..ReduceBinding::unbound(
-                &self.client,
-                &self.problem,
-                &self.input,
-                &self.out,
-                blueprint,
-                grid,
-            )
-        }
+        ReduceBinding::unbound(self, blueprint, grid)
     }
 }
 
@@ -242,70 +224,72 @@ impl<In, Out> ReduceBinding<In, Out> {
 }
 
 impl ReduceBinding {
-    /// `input` and `out`, and `indices` beside them where there are, bound as `blueprint`
-    /// states them for `problem`, on `grid`.
-    fn bound<M>(
-        client: &Client,
-        problem: &ReduceRoutineProblem,
-        [input, out]: [&TensorBinding; 2],
-        indices: Option<&TensorBinding>,
-        blueprint: &ReduceBlueprint<M>,
-        grid: &Grid,
-    ) -> Self {
-        let launcher = launcher_of(client, problem, blueprint, grid);
-        let (input, dimensions) = problem.labelled(input.clone(), REDUCED);
+    /// The operands of `tensors`, and their indices where they have any, bound as `blueprint` states
+    /// them, on `grid`.
+    fn bound<M>(tensors: &ReduceTensors, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> Self {
+        let problem = &tensors.problem;
+        let launcher = launcher_of(&tensors.client, problem, blueprint, grid);
+        let (input, dimensions) = problem.labelled(tensors.input.clone(), REDUCED);
         let input = launcher
             .arg(input, problem.elements.input)
             .dimensions(&dimensions)
             .boundary(problem.input_boundary())
-            .vectorize(blueprint.width)
+            .vectorize(blueprint.lane_count)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
-        let out = out_bound(&launcher, out, problem.elements.out, problem, blueprint);
-        let indices = indices.map(|indices| {
-            let element = problem
-                .indices
-                .expect("indices beside the values have an element")
-                .element;
-            out_bound(&launcher, indices, element, problem, blueprint)
-        });
+        let indices = tensors
+            .indices
+            .as_ref()
+            .zip(problem.indices)
+            .map(|(indices, stated)| {
+                out_bound(&launcher, indices, stated.element, problem, blueprint)
+            });
         ReduceBinding {
-            launcher,
             input,
-            out,
+            out: out_bound(
+                &launcher,
+                &tensors.out,
+                problem.elements.out,
+                problem,
+                blueprint,
+            ),
             indices,
-            workspace: None,
+            workspace: tensors.workspace.clone(),
+            launcher,
         }
     }
 }
 
 impl ReduceBinding<Unbound, Bound> {
-    /// The spec and geometry of `input`, which the caller binds, as `blueprint` states them for
-    /// `problem`, on `grid`, and `out` bound.
+    /// The spec and geometry of the input of `tensors`, which the caller binds, as `blueprint`
+    /// states them, on `grid`, and their output bound.
     fn unbound<M>(
-        client: &Client,
-        problem: &ReduceRoutineProblem,
-        input: &Geometry,
-        out: &TensorBinding,
+        tensors: &ReduceTensors<Geometry>,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
     ) -> Self {
-        let launcher = launcher_of(client, problem, blueprint, grid);
-        let (input, dimensions) = problem.labelled_geometry(input, REDUCED);
+        let problem = &tensors.problem;
+        let launcher = launcher_of(&tensors.client, problem, blueprint, grid);
+        let (input, dimensions) = problem.labelled_geometry(&tensors.input, REDUCED);
         let input = launcher
             .unbound(&input)
             .dimensions(&dimensions)
             .boundary(problem.input_boundary())
-            .vectorize(blueprint.width)
+            .vectorize(blueprint.lane_count)
             .build_spec()
             .expect(ADMITTED_PLAN_RUNS);
-        let out = out_bound(&launcher, out, problem.elements.out, problem, blueprint);
         ReduceBinding {
-            launcher,
             input,
-            out,
+            out: out_bound(
+                &launcher,
+                &tensors.out,
+                problem.elements.out,
+                problem,
+                blueprint,
+            ),
             indices: None,
-            workspace: None,
+            workspace: tensors.workspace.clone(),
+            launcher,
         }
     }
 }
@@ -327,7 +311,7 @@ fn launcher_of<M>(
 }
 
 /// `buffer`, an output of `problem` or the indices beside it, bound in `element` at the output's
-/// width.
+/// lanes.
 fn out_bound<M>(
     launcher: &Launcher,
     buffer: &TensorBinding,
@@ -341,12 +325,12 @@ fn out_bound<M>(
         buffer.clone(),
         SLOTS,
         element,
-        blueprint.out_width,
+        blueprint.out_lane_count,
     )
 }
 
 /// `buffer`, one a launch of `problem` writes holding `along` in place of the reduced axis, bound
-/// in `element` at `width` ([`ReduceRoutineProblem::labelled`]).
+/// in `element` at `lane_count` ([`ReduceRoutineProblem::labelled`]).
 ///
 /// # Panics
 ///
@@ -358,13 +342,13 @@ pub(crate) fn bound_at(
     buffer: TensorBinding,
     along: Dimension,
     element: ElemType,
-    width: usize,
+    lane_count: usize,
 ) -> Bound {
     let (buffer, dimensions) = problem.labelled(buffer, along);
     launcher
         .arg(buffer, element)
         .dimensions(&dimensions)
-        .vectorize(width)
+        .vectorize(lane_count)
         .build()
         .expect(ADMITTED_PLAN_RUNS)
 }
@@ -376,7 +360,7 @@ impl ReduceTensors {
     pub(crate) fn zeros(shape: &[usize], axis: usize, operation: ReduceOperation) -> Self {
         let client = cubecl::test_device().client();
         let problem = ReduceRoutineProblem::dense(shape, axis, operation);
-        let out_shape = problem.shape_with_reduced_extent(operation.written_per_row());
+        let out_shape = problem.shape_with_reduced_count(operation.written_per_row());
         Self::new(
             &client,
             zeros(&client, shape),

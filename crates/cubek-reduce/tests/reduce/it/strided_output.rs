@@ -4,7 +4,7 @@
 
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_reduce::ReduceOperation;
-use cubek_reduce::eval::cpu_reference::reference;
+use cubek_reduce::eval::cpu_reference::ReduceReference;
 use cubek_reduce::kernels::{Reduce, ReduceElements, ReduceOpStrategy};
 use cubek_test_utils::{HostData, HostDataType, StridedLayout, TestInput, assert_equals_approx};
 
@@ -42,7 +42,7 @@ fn sums_into_column_major_cells(strategy: ReduceOpStrategy) {
         .expect("a sum writes its cells at their own strides");
 
     let written = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-    let expected = reference(&input_host, 0, ReduceOperation::Sum, None);
+    let expected = ReduceReference::new(&input_host, 0, ReduceOperation::Sum, None).output;
     assert_equals_approx(&written, &expected, 0.0)
         .as_test_outcome()
         .enforce();

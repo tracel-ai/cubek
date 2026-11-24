@@ -2,13 +2,10 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubek_reduce::eval::benchmarks::{
-    ReduceBenchPrecision, ReduceCorrectness, ReduceProblem, precisions, problems, strategies,
-};
-use cubek_reduce::eval::cpu_reference::comparison_epsilon;
+use cubek_reduce::eval::benchmarks::{Category, ReduceBenchPrecision, ReduceProblem};
 use cubek_reduce::kernels::ReduceOpStrategy;
 use cubek_test_utils::{
-    CatalogEntry, Correctness, TestOutcome, ValidationResult, assert_equals_approx,
+    CatalogEntry, Category as _, TestOutcome, ValidationResult, assert_equals_approx,
 };
 
 const SEEDS: [u64; 2] = [12, 34];
@@ -22,18 +19,21 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
 }
 
 fn run(strategy_id: &str, problem_id: &str) {
-    let strategy: ReduceOpStrategy = lookup(strategies(), strategy_id);
-    let problem: ReduceProblem = lookup(problems(), problem_id);
+    let strategy: ReduceOpStrategy = lookup(Category.strategies(), strategy_id);
+    let problem: ReduceProblem = lookup(Category.problems(), problem_id);
 
-    let actual = match ReduceCorrectness.kernel_result(&strategy, &problem, &SEEDS) {
+    let correctness = Category
+        .correctness()
+        .expect("the reduce catalogue checks its problems");
+    let actual = match correctness.kernel_result(&strategy, &problem, &SEEDS) {
         Ok(host) => host,
         Err(e) => return TestOutcome::CompileError(e).enforce(),
     };
-    let expected = ReduceCorrectness
+    let expected = correctness
         .reference_result(&problem, &SEEDS, None)
         .unwrap_or_else(|e| panic!("reference failed for {problem_id}: {e}"));
 
-    assert_equals_approx(&actual, &expected, comparison_epsilon(problem.operation))
+    assert_equals_approx(&actual, &expected, problem.tolerance())
         .as_test_outcome()
         .enforce();
 }
@@ -43,7 +43,7 @@ fn run(strategy_id: &str, problem_id: &str) {
 /// otherwise.
 fn run_f16(strategy_id: &str, problem_id: &str) {
     let f16 = ReduceBenchPrecision::F16;
-    if !precisions().contains(&f16) {
+    if !f16.is_offered_on(&cubecl::test_device().client()) {
         return TestOutcome::Validated(ValidationResult::Skipped(
             "no f16 row on this device".to_string(),
         ))

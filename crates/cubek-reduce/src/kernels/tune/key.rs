@@ -1,7 +1,7 @@
 //! What tells one reduction from another for the autotune ([`ReduceKey`]).
 
 use crate::kernels::{
-    ReduceElements, ReduceIndices, ReduceRoutineProblem, ReduceTensors, ReduceWorkspaceBytes,
+    ReduceElements, ReduceIndices, ReducePartials, ReduceRoutineProblem, ReduceTensors,
 };
 use cubecl::AutotuneKey;
 use cubecl::ir::ElemType;
@@ -15,71 +15,76 @@ use serde::{Deserialize, Serialize};
 /// whether its caller gave scratch. How many axes the rows run along is not: every routine places
 /// its owners along one dimension of rows whatever the rank.
 ///
+/// The problem a key stands for is as large as any of the key's, so a routine that prepares it on a
+/// device prepares them all.
+///
 /// **The rows are bucketed in powers of two, whatever the autotune level.** cubecl's anchor scales
 /// its base by the level, so a bucket would be a power of three or five, which no line of a key
 /// divides: the problem a key stands for would be read a value a line, and the candidates ranked
-/// at a width its calls do not run.
+/// at lanes its calls do not run.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct ReduceKey {
     elements: ReduceElements,
     indices: Option<ElemType>,
     operation: ReduceOperation,
     lines_along: Dimension,
-    /// The widest line, a power of two, the input's buffer takes.
-    input_line: usize,
-    /// The widest line, a power of two, the output's buffer takes, and the indices' beside it.
-    out_line: usize,
-    /// How many values a row holds, at its bucket ([`bucket_of_reduced_values`](Self::bucket_of_reduced_values)).
-    reduced: usize,
-    /// How many rows there are, at their bucket ([`bucket_of_rows`](Self::bucket_of_rows)).
-    rows: usize,
+    /// The lanes of the widest line, a power of two, the input's buffer takes.
+    input_lane_count: usize,
+    /// The lanes of the widest line, a power of two, the output's buffer takes, and the indices'
+    /// beside it.
+    out_lane_count: usize,
+    /// How many values a row holds, at its bucket ([`bucket_of_row_value_count`]).
+    row_value_count: usize,
+    /// How many rows there are, at their bucket ([`bucket_of_row_count`]).
+    row_count: usize,
     /// Whether the caller gave scratch: a call given none cannot run a winner that takes it.
     scratch: bool,
 }
 
-impl ReduceKey {
-    /// The extent a key holds for rows of `values` values: the power of four at or above them,
-    /// from 16 to 2^20.
-    fn bucket_of_reduced_values(values: usize) -> usize {
-        power_at_or_above(4, values).clamp(16, LARGEST_BUCKET)
-    }
+/// The count a key holds for rows of `row_value_count` values: the power of four at or above it,
+/// sixteen at least.
+fn bucket_of_row_value_count(row_value_count: usize) -> usize {
+    const FEWEST_COUNT: usize = 16;
+    power_at_or_above(4, row_value_count).max(FEWEST_COUNT)
+}
 
-    /// The extent a key holds for `rows` rows: the power of eight at or above them, at most 2^20.
-    fn bucket_of_rows(rows: usize) -> usize {
-        power_at_or_above(8, rows).min(LARGEST_BUCKET)
+/// The count a key holds for `row_count` rows: the power of eight at or above it, none apart from
+/// some, which spawn no cube.
+fn bucket_of_row_count(row_count: usize) -> usize {
+    match row_count {
+        0 => 0,
+        row_count => power_at_or_above(8, row_count),
     }
 }
 
-/// The extent past which every call shares a bucket.
-const LARGEST_BUCKET: usize = 1 << 20;
-
-/// The power of `base` at or above `extent`, one for none.
-fn power_at_or_above(base: usize, extent: usize) -> usize {
-    let below = base.pow(extent.max(1).ilog(base));
-    match below < extent {
+/// The power of `base` at or above `count`, one for none.
+fn power_at_or_above(base: usize, count: usize) -> usize {
+    let below = base.pow(count.max(1).ilog(base));
+    match below < count {
         true => below * base,
         false => below,
     }
 }
 
-/// The widest line a key tells apart: past every device's vector width.
-const WIDEST_KEYED_LINE: usize = 64;
+/// The lanes of the widest line a key tells apart: past every device's vector width.
+const WIDEST_KEYED_LANE_COUNT: usize = 64;
 
-/// The widest line, a power of two at most [`WIDEST_KEYED_LINE`], that `alignment` takes.
+/// The lanes of the widest line, a power of two at most [`WIDEST_KEYED_LANE_COUNT`], that
+/// `alignment` takes.
 fn widest_line_of(alignment: ElemAlignment) -> usize {
-    let mut line = WIDEST_KEYED_LINE;
-    while !alignment.admits(line) {
-        line /= 2;
+    let mut lane_count = WIDEST_KEYED_LANE_COUNT;
+    while !alignment.admits(lane_count) {
+        lane_count /= 2;
     }
-    line
+    lane_count
 }
 
-/// The widest line, a power of two at most [`WIDEST_KEYED_LINE`], that divides `values`: the
-/// widest that keeps every line within one row `values` long.
-fn widest_line_within_row_of_values(values: usize) -> usize {
-    match values {
-        0 => WIDEST_KEYED_LINE,
-        values => (1 << values.trailing_zeros()).min(WIDEST_KEYED_LINE),
+/// The lanes of the widest line, a power of two at most [`WIDEST_KEYED_LANE_COUNT`], that divides
+/// `value_count`: the widest that keeps every line within one row of that many values.
+fn widest_line_within_value_count(value_count: usize) -> usize {
+    match value_count {
+        0 => WIDEST_KEYED_LANE_COUNT,
+        value_count => (1 << value_count.trailing_zeros()).min(WIDEST_KEYED_LANE_COUNT),
     }
 }
 
@@ -91,7 +96,7 @@ impl From<&ReduceTensors> for ReduceKey {
 
 impl From<&ReduceTensors<Geometry>> for ReduceKey {
     /// The key of the call whose input the caller binds, read off the input's own geometry
-    /// rather than the width the caller binds it at: the key a call binding that input gets, so a
+    /// rather than the lanes the caller binds it at: the key a call binding that input gets, so a
     /// fused reduction finds the candidate its unfused round settled.
     fn from(tensors: &ReduceTensors<Geometry>) -> Self {
         Self::from(&tensors.stated_problem())
@@ -99,39 +104,42 @@ impl From<&ReduceTensors<Geometry>> for ReduceKey {
 }
 
 impl From<&ReduceRoutineProblem> for ReduceKey {
+    /// # Panics
+    ///
+    /// Where `axis` is not an axis of `problem`.
     fn from(problem: &ReduceRoutineProblem) -> Self {
         let [input, out] = problem.elem_alignments;
-        let out_line = problem.indices.map_or(widest_line_of(out), |indices| {
+        let out_lane_count = problem.indices.map_or(widest_line_of(out), |indices| {
             widest_line_of(out).min(widest_line_of(indices.elem_alignment))
         });
         // A line runs within its axis, whatever the buffer's alignment says.
-        let input_line =
-            widest_line_of(input).min(widest_line_within_row_of_values(problem.line_stays_in()));
+        let input_lane_count =
+            widest_line_of(input).min(widest_line_within_value_count(problem.line_stays_in()));
         Self::new(
             problem.elements,
             problem.indices.map(|indices| indices.element),
             problem.operation,
             problem.lines_along(),
-            input_line,
-            out_line,
-            Self::bucket_of_reduced_values(problem.reduced_extent()),
-            Self::bucket_of_rows(problem.row_count()),
-            problem.workspace != ReduceWorkspaceBytes::default(),
+            input_lane_count,
+            out_lane_count,
+            bucket_of_row_value_count(problem.reduced_extent()),
+            bucket_of_row_count(problem.row_count()),
+            problem.partials.is_some(),
         )
     }
 }
 
 impl From<&ReduceKey> for ReduceRoutineProblem {
-    /// A matrix of `rows` rows of `reduced` values: the reduced axis the inner one where the lines
+    /// A matrix of the key's rows and their values: the reduced axis the inner one where the lines
     /// lie along it, the outer where they lie across it, each buffer aligned to the widest line
     /// the key holds for it.
     fn from(key: &ReduceKey) -> Self {
         let (shape, axis) = match key.lines_along == REDUCED {
-            true => (vec![key.rows, key.reduced], 1),
-            false => (vec![key.reduced, key.rows], 0),
+            true => (vec![key.row_count, key.row_value_count], 1),
+            false => (vec![key.row_value_count, key.row_count], 0),
         };
         let [input_alignment, out_alignment] =
-            [key.input_line, key.out_line].map(ElemAlignment::dense_rows);
+            [key.input_lane_count, key.out_lane_count].map(ElemAlignment::dense_rows);
         Self {
             elem_alignments: [input_alignment, out_alignment],
             contiguous: Some(shape.len() - 1),
@@ -143,10 +151,7 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
                 element,
                 elem_alignment: out_alignment,
             }),
-            workspace: match key.scratch {
-                true => ReduceWorkspaceBytes::UNBOUNDED,
-                false => ReduceWorkspaceBytes::default(),
-            },
+            partials: key.scratch.then_some(ReducePartials::UNBOUNDED),
         }
     }
 }
@@ -154,9 +159,15 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::BATCH;
+    use crate::kernels::testing::{swept_devices, swept_problems};
+    use crate::kernels::{
+        BATCH, CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine,
+        HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceRoutine,
+        UnitDirectReduceRoutine,
+    };
     use cubecl::ir::FloatKind;
     use cubecl::std::tensor::TensorHandle;
+    use cubek_std::routine::Routine;
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
@@ -172,40 +183,100 @@ mod tests {
             ReduceOperation::Sum,
             ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
         );
-        assert_eq!(ReduceKey::from(&problem).input_line, 1);
+        assert_eq!(ReduceKey::from(&problem).input_lane_count, 1);
     }
 
     /// A row length's bucket is the power of four at or above it.
     #[test]
     fn a_row_length_is_keyed_by_a_power_of_four() {
-        assert_eq!(ReduceKey::bucket_of_reduced_values(4097), 16384);
+        assert_eq!(bucket_of_row_value_count(4097), 16384);
     }
 
     #[test]
     fn a_row_length_a_power_of_four_is_its_own_bucket() {
-        assert_eq!(ReduceKey::bucket_of_reduced_values(4096), 4096);
+        assert_eq!(bucket_of_row_value_count(4096), 4096);
     }
 
     /// A row count's bucket is the power of eight at or above it.
     #[test]
     fn a_row_count_is_keyed_by_a_power_of_eight() {
-        assert_eq!(ReduceKey::bucket_of_rows(65), 512);
+        assert_eq!(bucket_of_row_count(65), 512);
     }
 
-    /// Past the largest bucket, every row count shares it.
     #[test]
-    fn a_row_count_past_the_largest_bucket_is_keyed_by_it() {
-        assert_eq!(
-            ReduceKey::bucket_of_rows(LARGEST_BUCKET + 1),
-            LARGEST_BUCKET
-        );
+    fn no_row_is_keyed_apart_from_some() {
+        assert_eq!(bucket_of_row_count(0), 0);
+    }
+
+    /// A key stands for problems of that key, so it stands for itself.
+    #[test]
+    fn a_keys_own_problem_has_that_key() {
+        for problem in swept_problems() {
+            let key = ReduceKey::from(&problem);
+            assert_eq!(
+                ReduceKey::from(&ReduceRoutineProblem::from(&key)),
+                key,
+                "{problem:?}"
+            );
+        }
+    }
+
+    /// Checks that each setting of `R` that prepares the problem a key stands for prepares the
+    /// problems of that key.
+    fn prepares_every_problem_of_its_keys<R: ReduceRoutine<M>, M>() {
+        for hw in swept_devices() {
+            for problem in swept_problems() {
+                let keyed = problem.keyed();
+                for settings in R::settings(&hw) {
+                    let declined = R::prepare(&hw, &keyed, &settings).is_ok()
+                        && R::prepare(&hw, &problem, &settings).is_err();
+                    assert!(!declined, "{settings} of {problem:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_plane_candidate_prepares_every_problem_of_its_keys() {
+        prepares_every_problem_of_its_keys::<PlaneShuffleReduceRoutine, _>();
+    }
+
+    #[test]
+    fn a_cube_candidate_prepares_every_problem_of_its_keys() {
+        prepares_every_problem_of_its_keys::<CubeStagedReduceRoutine, _>();
+    }
+
+    #[test]
+    fn a_last_arrival_candidate_prepares_every_problem_of_its_keys() {
+        prepares_every_problem_of_its_keys::<HypercubeLastArrivalReduceRoutine, _>();
+    }
+
+    #[test]
+    fn an_atomic_candidate_prepares_every_problem_of_its_keys() {
+        prepares_every_problem_of_its_keys::<HypercubeAtomicReduceRoutine, _>();
+    }
+
+    #[test]
+    fn a_unit_candidate_prepares_every_problem_of_its_keys() {
+        prepares_every_problem_of_its_keys::<UnitDirectReduceRoutine, _>();
+    }
+
+    /// The unit routine is what runs where every other declines.
+    #[test]
+    fn the_unit_routine_prepares_every_problem() {
+        for hw in swept_devices() {
+            for problem in swept_problems() {
+                let prepared = UnitDirectReduceRoutine::prepare_first_served(&hw, &problem);
+                assert!(prepared.is_ok(), "{problem:?}");
+            }
+        }
     }
 
     /// Its winner may be one that takes the scratch.
     #[test]
     fn a_call_given_scratch_is_keyed_by_it() {
         let problem = ReduceRoutineProblem {
-            workspace: ReduceWorkspaceBytes::UNBOUNDED,
+            partials: Some(ReducePartials::UNBOUNDED),
             ..ReduceRoutineProblem::dense(&[4, 300], 1, ReduceOperation::Sum)
         };
         assert!(ReduceKey::from(&problem).scratch);
@@ -217,11 +288,11 @@ mod tests {
         assert!(!ReduceKey::from(&problem).scratch);
     }
 
-    const REDUCED_BUCKET: usize = 1024;
-    const ROWS_BUCKET: usize = 64;
-    const LINE: usize = 4;
+    const ROW_VALUE_COUNT: usize = 1024;
+    const ROW_COUNT: usize = 64;
+    const LANE_COUNT: usize = 4;
 
-    /// The key of sums in lines of [`LINE`] that lie along `lines_along`.
+    /// The key of sums in lines of [`LANE_COUNT`] that lie along `lines_along`.
     fn key_of_lines(lines_along: Dimension) -> ReduceKey {
         ReduceKey {
             elements: ReduceElements {
@@ -232,10 +303,10 @@ mod tests {
             indices: None,
             operation: ReduceOperation::Sum,
             lines_along,
-            input_line: LINE,
-            out_line: LINE,
-            reduced: REDUCED_BUCKET,
-            rows: ROWS_BUCKET,
+            input_lane_count: LANE_COUNT,
+            out_lane_count: LANE_COUNT,
+            row_value_count: ROW_VALUE_COUNT,
+            row_count: ROW_COUNT,
             scratch: false,
         }
     }
@@ -243,7 +314,7 @@ mod tests {
     /// The problem [`key_of_lines`] stands for: `shape`, reduced along `axis`.
     fn problem_in_lines(shape: &[usize], axis: usize) -> ReduceRoutineProblem {
         ReduceRoutineProblem {
-            elem_alignments: [ElemAlignment::dense_rows(LINE); 2],
+            elem_alignments: [ElemAlignment::dense_rows(LANE_COUNT); 2],
             ..ReduceRoutineProblem::dense(shape, axis, ReduceOperation::Sum)
         }
     }
@@ -252,7 +323,7 @@ mod tests {
     fn a_key_along_the_axis_stands_for_rows_of_its_buckets() {
         assert_eq!(
             ReduceRoutineProblem::from(&key_of_lines(REDUCED)),
-            problem_in_lines(&[ROWS_BUCKET, REDUCED_BUCKET], 1)
+            problem_in_lines(&[ROW_COUNT, ROW_VALUE_COUNT], 1)
         );
     }
 
@@ -260,19 +331,19 @@ mod tests {
     fn a_key_across_the_axis_stands_for_columns_of_its_buckets() {
         assert_eq!(
             ReduceRoutineProblem::from(&key_of_lines(BATCH)),
-            problem_in_lines(&[REDUCED_BUCKET, ROWS_BUCKET], 0)
+            problem_in_lines(&[ROW_VALUE_COUNT, ROW_COUNT], 0)
         );
     }
 
     #[test]
     fn a_keys_problem_along_the_axis_has_that_key() {
-        let problem = problem_in_lines(&[ROWS_BUCKET, REDUCED_BUCKET], 1);
+        let problem = problem_in_lines(&[ROW_COUNT, ROW_VALUE_COUNT], 1);
         assert_eq!(ReduceKey::from(&problem), key_of_lines(REDUCED));
     }
 
     #[test]
     fn a_keys_problem_across_the_axis_has_that_key() {
-        let problem = problem_in_lines(&[REDUCED_BUCKET, ROWS_BUCKET], 0);
+        let problem = problem_in_lines(&[ROW_VALUE_COUNT, ROW_COUNT], 0);
         assert_eq!(ReduceKey::from(&problem), key_of_lines(BATCH));
     }
 
@@ -281,8 +352,8 @@ mod tests {
     #[test]
     fn an_unbound_call_keys_as_its_bound_call() {
         let client = cubecl::test_device().client();
-        let shape = [ROWS_BUCKET, REDUCED_BUCKET];
-        let out = TensorHandle::empty(&client, [ROWS_BUCKET, 1], F32);
+        let shape = [ROW_COUNT, ROW_VALUE_COUNT];
+        let out = TensorHandle::empty(&client, [ROW_COUNT, 1], F32);
         let key = key_of_lines(REDUCED);
         let tensors = ReduceTensors::unbound(
             &client,
@@ -293,24 +364,30 @@ mod tests {
             key.operation,
             key.elements,
         );
-        assert_eq!(ReduceKey::from(&tensors).input_line, WIDEST_KEYED_LINE);
+        assert_eq!(
+            ReduceKey::from(&tensors).input_lane_count,
+            WIDEST_KEYED_LANE_COUNT
+        );
     }
 
     /// A key holds the widest line its input takes: rows 300 long take lines of 4.
     #[test]
     fn a_key_holds_the_widest_line_its_input_takes() {
-        const ROW_LEN: usize = 300;
+        const ROW_VALUE_COUNT: usize = 300;
         let key = ReduceKey::from(&ReduceRoutineProblem::dense(
-            &[8, ROW_LEN],
+            &[8, ROW_VALUE_COUNT],
             1,
             ReduceOperation::Sum,
         ));
-        assert_eq!(key.input_line, 4);
+        assert_eq!(key.input_lane_count, 4);
     }
 
     #[test]
-    fn a_stored_piece_takes_its_own_width() {
-        const PIECE: usize = 8;
-        assert_eq!(widest_line_of(ElemAlignment::stored_piece(PIECE)), PIECE);
+    fn a_stored_piece_takes_its_own_lanes() {
+        const PIECE_LANE_COUNT: usize = 8;
+        assert_eq!(
+            widest_line_of(ElemAlignment::stored_piece(PIECE_LANE_COUNT)),
+            PIECE_LANE_COUNT
+        );
     }
 }

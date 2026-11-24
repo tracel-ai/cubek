@@ -1,23 +1,29 @@
 //! The trait every reduce routine implements: how it launches what it prepared.
 
-use crate::kernels::{ReduceBinding, ReduceBlueprint, ReduceRoutineProblem, ReduceTensors};
+use crate::kernels::{
+    ReduceBinding, ReduceBlueprint, ReduceRoutineProblem, ReduceTensors, reduce_lane_counts,
+};
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::launch::{Bound, StoredTileOperand, TileOperand, Unbound};
+use cubecl::tile::launch::{
+    Bound, Decline, StoredTileOperand, TileOperand, Unbound, Vectorization,
+};
 use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubek_microkernel::reduce::{
-    IndexedReduceCarrierFamily, ReduceCarrier, ReduceCarrierFamily, TopKReduceCarrierFamily,
-    TopValuesReduceCarrierFamily, ValuesReduceCarrierFamily,
+    IndexedReduceCarrierFamily, ReduceCarrier, ReduceCarrierFamily, ReduceOperand,
+    TopKReduceCarrierFamily, TopValuesReduceCarrierFamily, ValuesReduceCarrierFamily,
 };
+use cubek_std::Hardware;
+use cubek_std::microkernel::Microkernel;
 use cubek_std::routine::{Grid, Routine};
 
 /// A reduce routine around microkernel `M`: it prepares a [`ReduceBlueprint`] and launches it on
 /// tensors.
 ///
 /// A reduce routine's own code reads nothing: every access is its microkernel's, so its
-/// `vectorize` hands the whole pass to the microkernel.
+/// `vectorize` hands the whole pass to the microkernel, whatever its placement.
 pub(crate) trait ReduceRoutine<M>:
-    Routine<Problem = ReduceRoutineProblem, Blueprint = ReduceBlueprint<M>>
+    Routine<Problem = ReduceRoutineProblem, Partitioning = (), Blueprint = ReduceBlueprint<M>>
 {
     /// The routine's prefix in kebab case, which names its tunables (`"cube-staged-reduce"`).
     const NAME: &'static str;
@@ -31,6 +37,26 @@ pub(crate) trait ReduceRoutine<M>:
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
     );
+
+    /// The lanes `problem`'s input and output bind at on `hw` by what `microkernel`, whose lines are
+    /// at most `widest_line` wide, asks of them ([`reduce_lane_counts`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`reduce_lane_counts`].
+    fn lane_counts(
+        hw: &Hardware,
+        problem: &ReduceRoutineProblem,
+        microkernel: &Self::Microkernel,
+        widest_line: Option<usize>,
+    ) -> Result<[usize; 2], Decline>
+    where
+        Self: Routine<Microkernel: Microkernel<Operand = ReduceOperand>>,
+    {
+        let mut vectorization = Vectorization::new();
+        Self::vectorize(microkernel, &(), &mut vectorization);
+        reduce_lane_counts(hw, problem, vectorization, widest_line)
+    }
 
     /// [`dispatch`](Self::dispatch) into the carrier `problem`'s operation accumulates into.
     fn dispatch_carrier<I: TileOperand>(

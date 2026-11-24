@@ -6,8 +6,8 @@ use crate::kernels::ReduceOpStrategy;
 const KEBAB_SEPARATOR: char = '-';
 
 /// Every strategy: the autotune, the rule, and each kernel pinned.
-pub fn strategies() -> Vec<CatalogEntry<ReduceOpStrategy>> {
-    ReduceOpStrategy::all()
+pub(crate) fn strategies() -> Vec<CatalogEntry<ReduceOpStrategy>> {
+    ReduceOpStrategy::ALL
         .into_iter()
         .map(|strategy| {
             let id = strategy.name().replace(KEBAB_SEPARATOR, "_");

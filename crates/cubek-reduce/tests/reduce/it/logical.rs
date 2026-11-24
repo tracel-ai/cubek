@@ -9,7 +9,7 @@ use cubecl::{
     zspace::Shape,
 };
 use cubek_reduce::ReduceOperation;
-use cubek_reduce::eval::cpu_reference::reference;
+use cubek_reduce::eval::cpu_reference::ReduceReference;
 use cubek_reduce::kernels::{Reduce, ReduceElements};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, StridedLayout, TestInput, TestOutcome,
@@ -77,7 +77,7 @@ fn reduces_the_mask_like_the_reference(operation: ReduceOperation) {
     match outcome {
         ExecutionOutcome::Executed => {
             let written = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
-            let expected = reference(&input_host, 1, operation, None);
+            let expected = ReduceReference::new(&input_host, 1, operation, None).output;
             assert_equals_approx(&written, &expected, 0.0)
                 .as_test_outcome()
                 .enforce();

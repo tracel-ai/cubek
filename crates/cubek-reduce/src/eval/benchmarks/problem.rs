@@ -1,5 +1,6 @@
 use std::sync::LazyLock;
 
+use cubecl::client::Client;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_test_utils::CatalogEntry;
 
@@ -38,6 +39,14 @@ impl ReduceBenchPrecision {
         }
     }
 
+    /// Whether `client`'s device reduces in it.
+    pub fn is_offered_on(self, client: &Client) -> bool {
+        match self {
+            ReduceBenchPrecision::F32 => true,
+            ReduceBenchPrecision::F16 => cubek_test_utils::supports_f16_arithmetic(client),
+        }
+    }
+
     /// The suffix its rows' ids carry. An f32 row carries none: the catalogue
     /// tests and `CUBEK_BENCH_PROBLEMS` name those ids verbatim.
     pub fn suffix(self) -> &'static str {
@@ -59,27 +68,52 @@ impl ReduceBenchPrecision {
 
 /// The precisions this device can reduce in, so a runtime without f16 yields
 /// no f16 rows. Computed once: a device's f16 support can't change, and every
-/// catalogue listing and generated `f16()` test would otherwise re-query it.
+/// catalogue listing would otherwise re-query it.
 static PRECISIONS: LazyLock<Vec<ReduceBenchPrecision>> = LazyLock::new(|| {
     let client = cubecl::test_device().client();
-    let mut precisions = vec![ReduceBenchPrecision::F32];
-    if cubek_test_utils::supports_f16_arithmetic(&client) {
-        precisions.push(ReduceBenchPrecision::F16);
-    }
-    precisions
+    [ReduceBenchPrecision::F32, ReduceBenchPrecision::F16]
+        .into_iter()
+        .filter(|precision| precision.is_offered_on(&client))
+        .collect()
 });
 
-pub fn precisions() -> &'static [ReduceBenchPrecision] {
+fn precisions() -> &'static [ReduceBenchPrecision] {
     &PRECISIONS
 }
 
+/// One reduction of the catalogue: the shape it reads, what it computes, and how it is launched.
 pub struct ReduceProblem {
-    /// The catalogued input's extent along each axis, read by axis (Position Usage).
+    /// The catalogued input's extent along each axis, read by axis (Position Usage) and walked in
+    /// their order (Arrival Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,
     pub kind: ReduceBenchKind,
     pub precision: ReduceBenchPrecision,
+}
+
+impl ReduceProblem {
+    /// How far a kernel's output may sit from the reference before it is wrong.
+    ///
+    /// A selection instruction returns a value taken out of the input, or its
+    /// coordinate, so any slack at all leaves the comparison unable to fail. Only
+    /// the accumulating ones round, and over tens of millions of f32 elements some
+    /// kernels accumulate noticeable noise; tightening those belongs in the
+    /// per-routine integration tests.
+    pub fn tolerance(&self) -> f32 {
+        match self.operation {
+            ReduceOperation::Sum | ReduceOperation::Mean | ReduceOperation::Prod => 1.0,
+            ReduceOperation::Max
+            | ReduceOperation::Min
+            | ReduceOperation::MaxAbs
+            | ReduceOperation::ArgMax
+            | ReduceOperation::ArgMin
+            | ReduceOperation::TopK { .. }
+            | ReduceOperation::ArgTopK { .. }
+            | ReduceOperation::Any
+            | ReduceOperation::All => 0.0,
+        }
+    }
 }
 
 /// Whether `CUBEK_BENCH_TIER` asks for more than the default sweep, as it does
@@ -94,7 +128,8 @@ fn extended_tier() -> bool {
     )
 }
 
-pub fn problems() -> Vec<CatalogEntry<ReduceProblem>> {
+/// Every problem, at each precision this device reduces in.
+pub(crate) fn problems() -> Vec<CatalogEntry<ReduceProblem>> {
     precisions().iter().copied().flat_map(problems_at).collect()
 }
 
@@ -335,7 +370,8 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
 struct SpreadShape<'a> {
     pub name: &'a str,
     pub text: &'a str,
-    /// The swept input's extent along each axis, read by axis (Position Usage).
+    /// The swept input's extent along each axis, read by axis (Position Usage) and walked in their
+    /// order (Arrival Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,

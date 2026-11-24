@@ -5,7 +5,6 @@ use cubek_microkernel::zero::unit::UnitDirectZeroMicrokernel;
 
 /// Every unit of the launch, zeroing its cells of `out`.
 ///
-/// Its operands' leaves:
 /// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k).
 #[allow(
     clippy::extra_unused_type_parameters,

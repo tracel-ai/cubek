@@ -4,6 +4,10 @@
 //! routine prepares, the routines, one folder per routine, and how a caller picks one: a strategy,
 //! the rule, and the autotune.
 
+#[cfg(test)]
+#[macro_use]
+mod testing;
+
 mod blueprint;
 mod operation;
 mod problem;
@@ -11,8 +15,6 @@ mod routines;
 mod select;
 mod strategy;
 mod tensors;
-#[cfg(test)]
-mod tests;
 mod tune;
 mod workspace;
 

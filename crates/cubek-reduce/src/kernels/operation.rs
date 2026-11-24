@@ -28,8 +28,9 @@ impl Reduce {
         }
     }
 
-    /// This reduction given `workspace`, the last-arrival hypercube's scratch
-    /// ([`ReduceWorkspace::bytes_for`]), which cubek never allocates.
+    /// This reduction given `workspace`, the last-arrival hypercube's scratch, which cubek never
+    /// allocates. It holds at least the bytes [`ReduceWorkspace::bytes_for`] states for each
+    /// reduction it is given to: a reduction given less is outside the Domain.
     pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
         Self {
             workspace: Some(workspace),
@@ -47,12 +48,12 @@ impl Reduce {
     /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is empty, or shorter than the `k` a
     /// top-k keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one
     /// above, and [`ReduceError::Declined`] with the kernel's decline where a
-    /// [`Specific`](ReduceOpStrategy::Specific) kernel cannot run the problem on this device.
+    /// [`Specific`](ReduceOpStrategy::Specific) kernel cannot run the problem on this device, or the
+    /// workspace is smaller than [`with_workspace`](Self::with_workspace) asks.
     ///
     /// # Panics
     ///
-    /// Where `input` has 256 axes or more, or a row split across cubes is longer than `u32`
-    /// counts.
+    /// Where `input` has 256 axes or more.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -67,15 +68,9 @@ impl Reduce {
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Result<(), ReduceError> {
-        validate_axis(input.shape.len(), axis)?;
-        validate_shape(
-            &input.shape,
-            &output.shape,
-            axis,
-            operation.written_per_row(),
-        )?;
-        let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
-        launch_by_strategy(self.strategy, device, self.given(tensors))
+        reduce(
+            self, client, device, input, output, axis, operation, elements,
+        )
     }
 
     /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
@@ -106,36 +101,96 @@ impl Reduce {
         elements: ReduceElements,
         index_element: ElemType,
     ) -> Result<(), ReduceError> {
-        let operation = indexed(operation)?;
-        validate_axis(input.shape.len(), axis)?;
-        validate_shape(
-            &input.shape,
-            &values.shape,
-            axis,
-            operation.written_per_row(),
-        )?;
-        validate_indices(&values.shape, &indices.shape)?;
-        let tensors = ReduceTensors::with_indices(
+        reduce_with_indices(
+            self,
             client,
-            input,
-            values,
-            indices,
+            device,
+            [input, values, indices],
             axis,
             operation,
             elements,
             index_element,
-        );
-        launch_by_strategy(self.strategy, device, self.given(tensors))
+        )
     }
 }
 
-impl Reduce {
-    /// `tensors` given this reduction's workspace, where it has one.
-    fn given(&self, tensors: ReduceTensors) -> ReduceTensors {
-        match &self.workspace {
-            Some(workspace) => tensors.with_workspace(workspace.clone()),
-            None => tensors,
-        }
+/// [`Reduce::execute`] as `reduction` states it.
+///
+/// # Errors
+///
+/// As [`Reduce::execute`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the operands and what the reduction computes, as a caller states them"
+)]
+fn reduce(
+    reduction: &Reduce,
+    client: &Client,
+    device: &Device,
+    input: TensorBinding,
+    output: TensorBinding,
+    axis: usize,
+    operation: ReduceOperation,
+    elements: ReduceElements,
+) -> Result<(), ReduceError> {
+    validate_axis(input.shape.len(), axis)?;
+    validate_shape(
+        &input.shape,
+        &output.shape,
+        axis,
+        operation.written_per_row(),
+    )?;
+    let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
+    launch_by_strategy(reduction.strategy, device, given(reduction, tensors))
+}
+
+/// [`Reduce::execute_with_indices`] as `reduction` states it, of an input, its values and their
+/// indices, in that order.
+///
+/// # Errors
+///
+/// As [`Reduce::execute_with_indices`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the operands and what the reduction computes, as a caller states them"
+)]
+fn reduce_with_indices(
+    reduction: &Reduce,
+    client: &Client,
+    device: &Device,
+    [input, values, indices]: [TensorBinding; 3],
+    axis: usize,
+    operation: ReduceOperation,
+    elements: ReduceElements,
+    index_element: ElemType,
+) -> Result<(), ReduceError> {
+    let operation = indexed(operation)?;
+    validate_axis(input.shape.len(), axis)?;
+    validate_shape(
+        &input.shape,
+        &values.shape,
+        axis,
+        operation.written_per_row(),
+    )?;
+    validate_indices(&values.shape, &indices.shape)?;
+    let tensors = ReduceTensors::with_indices(
+        client,
+        input,
+        values,
+        indices,
+        axis,
+        operation,
+        elements,
+        index_element,
+    );
+    launch_by_strategy(reduction.strategy, device, given(reduction, tensors))
+}
+
+/// `tensors` given the workspace `reduction` has, where it has one.
+fn given(reduction: &Reduce, tensors: ReduceTensors) -> ReduceTensors {
+    match &reduction.workspace {
+        Some(workspace) => tensors.with_workspace(workspace.clone()),
+        None => tensors,
     }
 }
 
@@ -219,20 +274,20 @@ fn validate_indices(values_shape: &[usize], indices_shape: &[usize]) -> Result<(
 mod tests {
     use super::*;
 
-    const ROWS: usize = 4;
-    const ROW_LEN: usize = 8;
+    const ROW_COUNT: usize = 4;
+    const ROW_VALUE_COUNT: usize = 8;
     const AXIS: usize = 1;
 
     #[test]
     fn a_top_k_keeping_nothing_is_outside_the_domain() {
-        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, 0], AXIS, 0);
+        let result = validate_shape(&[ROW_COUNT, ROW_VALUE_COUNT], &[ROW_COUNT, 0], AXIS, 0);
         assert!(matches!(result, Err(ReduceError::EmptyTopK)), "{result:?}");
     }
 
     #[test]
     fn a_top_k_keeping_more_than_a_row_is_outside_the_domain() {
-        let k = ROW_LEN + 1;
-        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, k], AXIS, k);
+        let k = ROW_VALUE_COUNT + 1;
+        let result = validate_shape(&[ROW_COUNT, ROW_VALUE_COUNT], &[ROW_COUNT, k], AXIS, k);
         assert!(
             matches!(result, Err(ReduceError::ReduceAxisTooSmall { .. })),
             "{result:?}"
@@ -241,7 +296,7 @@ mod tests {
 
     #[test]
     fn an_output_not_one_wide_along_the_axis_is_outside_the_domain() {
-        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, 2], AXIS, 1);
+        let result = validate_shape(&[ROW_COUNT, ROW_VALUE_COUNT], &[ROW_COUNT, 2], AXIS, 1);
         assert!(
             matches!(result, Err(ReduceError::MismatchOutputShape { .. })),
             "{result:?}"
@@ -260,7 +315,7 @@ mod tests {
 
     #[test]
     fn indices_of_another_shape_are_outside_the_domain() {
-        let result = validate_indices(&[ROWS, 1], &[1, ROWS]);
+        let result = validate_indices(&[ROW_COUNT, 1], &[1, ROW_COUNT]);
         assert!(
             matches!(result, Err(ReduceError::MismatchIndicesShape { .. })),
             "{result:?}"
@@ -332,6 +387,6 @@ mod tests {
 
     #[test]
     fn a_well_shaped_call_is_inside_the_domain() {
-        assert!(validate_shape(&[ROWS, ROW_LEN], &[ROWS, 1], AXIS, 1).is_ok());
+        assert!(validate_shape(&[ROW_COUNT, ROW_VALUE_COUNT], &[ROW_COUNT, 1], AXIS, 1).is_ok());
     }
 }

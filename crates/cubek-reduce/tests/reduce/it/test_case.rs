@@ -1,4 +1,5 @@
 use cubecl::client::Client;
+use cubecl::tile::Geometry;
 use cubecl::tile::launch::Decline;
 use cubecl::{
     ir::{ElemType, FloatKind},
@@ -15,8 +16,8 @@ use cubek_test_utils::{
     StridedLayout, TestInput, Written,
 };
 
-use cubek_reduce::eval::cpu_reference::{contiguous_strides, reference};
-use cubek_reduce::eval::workspace::workspace_for;
+use cubek_reduce::eval::EvalWorkspace;
+use cubek_reduce::eval::cpu_reference::ReduceReference;
 
 /// The unit kernel: a unit reduces each row.
 pub const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit);
@@ -183,7 +184,7 @@ impl TestCase {
             ReduceOperation::ArgTopK { k } | ReduceOperation::TopK { k } if is_parallel => {
                 parallel_multiple_output_strides(self.shape.as_slice(), &self.stride, axis, k)
             }
-            _ => contiguous_strides(output_shape.as_slice()),
+            _ => Strides::new(Geometry::row_major(output_shape.as_slice()).strides()),
         };
         // Poisoned: NaN where the output holds values, an index no row reaches where it holds
         // indices or flags, so a cell the kernel never writes fails the comparison.
@@ -283,7 +284,7 @@ impl Op {
         };
         core::iter::once(operation)
             .chain(picked)
-            .map(|operation| reference(input, axis, operation, None))
+            .map(|operation| ReduceReference::new(input, axis, operation, None).output)
             .collect()
     }
 
@@ -350,14 +351,15 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
         let device = cubecl::test_device();
         let elements =
             ReduceElements::for_operation(operation, case.input_dtype, Some(outputs[0].0));
-        let workspace = workspace_for(
+        let workspace = EvalWorkspace::new(
             client,
             &case.shape,
             axis,
             operation,
             elements,
             op.with_indices(),
-        );
+        )
+        .workspace;
         let reduce = Reduce::new(case.strategy).with_workspace(workspace);
         let launched = match op.with_indices() {
             true => reduce.execute_with_indices(

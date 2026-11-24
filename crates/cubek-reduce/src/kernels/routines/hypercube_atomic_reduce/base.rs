@@ -1,7 +1,7 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
-    each_microkernel_with, estimate_reduce, microkernel_widths, split_launch,
+    each_microkernel_with, estimated_work, split_launch,
 };
 use core::convert::identity;
 use cubecl::client::Client;
@@ -11,14 +11,14 @@ use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{
     AccumulateArgLaunch, Bound, Decline, StoredTileOperand, TileOperand, Unbound, Vectorization,
 };
-use cubecl::tile::{Geometry, Partitioning, TileTensorLaunch};
+use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::{
     CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
 };
 use cubek_microkernel::reduce::{ReduceCarrierFamily, ReduceOperand, ReduceOperation};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{Grid, Routine};
+use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Every row split into parts along the reduced dim, a cube a part, which reduces it as the cube
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
@@ -34,18 +34,22 @@ pub(crate) struct HypercubeAtomicReduceRoutine;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeAtomicReduceSettings {
     pub microkernel: CubeStagedReduceMicrokernelSettings,
-    pub unit_lines: usize,
+    pub unit_line_count: usize,
 }
 
 impl HypercubeAtomicReduceSettings {
     /// Lines each unit reads of a part, the longest parts first: the fewest atomic adds that still
     /// spread a row over the device.
-    pub const UNIT_LINES: [usize; 3] = [32, 8, 2];
+    pub const UNIT_LINE_COUNTS: [usize; 3] = [32, 8, 2];
 }
 
 impl core::fmt::Display for HypercubeAtomicReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} unit_lines={}", self.microkernel, self.unit_lines)
+        write!(
+            f,
+            "{} unit_lines={}",
+            self.microkernel, self.unit_line_count
+        )
     }
 }
 
@@ -56,24 +60,24 @@ impl Routine for HypercubeAtomicReduceRoutine {
     type Microkernel = CubeStagedReduceMicrokernel;
     type Settings = HypercubeAtomicReduceSettings;
     type Blueprint = HypercubeAtomicReduceBlueprint;
-    type Partitioning = Partitioning;
+    type Partitioning = ();
 
     /// Each cube microkernel setting crossed with
-    /// [`UNIT_LINES`](HypercubeAtomicReduceSettings::UNIT_LINES).
+    /// [`UNIT_LINE_COUNTS`](HypercubeAtomicReduceSettings::UNIT_LINE_COUNTS).
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         each_microkernel_with(
             CubeStagedReduceMicrokernel::settings(hw),
-            HypercubeAtomicReduceSettings::UNIT_LINES,
-            |microkernel, unit_lines| HypercubeAtomicReduceSettings {
+            HypercubeAtomicReduceSettings::UNIT_LINE_COUNTS,
+            |microkernel, unit_line_count| HypercubeAtomicReduceSettings {
                 microkernel,
-                unit_lines,
+                unit_line_count,
             },
         )
     }
 
     fn vectorize(
         microkernel: &CubeStagedReduceMicrokernel,
-        _partitioning: &Partitioning,
+        _partitioning: &(),
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -100,18 +104,21 @@ impl Routine for HypercubeAtomicReduceRoutine {
         }
         let microkernel =
             CubeStagedReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line())?;
+        let lane_counts = Self::lane_counts(hw, problem, &microkernel, microkernel.widest_line())?;
+        let cube = CubeResources {
+            plane_width: microkernel.units() as u32,
+            shared_memory: microkernel.shared_memory_bytes_at_width(lane_counts[0]),
+        };
         let (partitioning, grid) = split_launch(
             hw,
             problem,
             |_| problem.space(),
-            microkernel.units(),
-            settings.unit_lines,
-            widths[0],
-            microkernel.shared_memory_bytes_at_width(widths[0]),
+            cube,
+            settings.unit_line_count,
+            lane_counts[0],
         )?;
         Ok((
-            ReduceBlueprint::new(microkernel, partitioning, widths),
+            ReduceBlueprint::new(microkernel, partitioning, lane_counts),
             grid,
         ))
     }
@@ -122,7 +129,8 @@ impl Routine for HypercubeAtomicReduceRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        estimate_reduce(problem, &blueprint.microkernel, grid, estimate);
+        let (item, planes) = estimated_work(problem, grid);
+        blueprint.microkernel.estimate(&item, &(), planes, estimate);
     }
 }
 
@@ -182,8 +190,8 @@ fn launch_atomic<I: TileOperand>(
     grid: Grid,
 ) {
     let elements = problem.elements;
-    let (spec, width) = (binding.out.spec.clone(), binding.out.vector_size);
-    let out = AccumulateArgLaunch::new(binding.out.tensor(), width, spec);
+    let (spec, lane_count) = (binding.out.spec.clone(), binding.out.vector_size);
+    let out = AccumulateArgLaunch::new(binding.out.tensor(), lane_count, spec);
     // SAFETY: both operands are bound through the launcher, which masks the reads and writes of a
     // tile the problem's edge cuts short, and the kernel indexes no buffer but through its tiles;
     // the output only receives atomic adds. Its shared memory is the slots its microkernel
@@ -193,7 +201,7 @@ fn launch_atomic<I: TileOperand>(
             client,
             grid.launch.cube_count,
             grid.launch.cube_dim,
-            blueprint.width,
+            blueprint.lane_count,
             binding.input,
             out,
             binding.launcher.partitioning_arg(),
@@ -206,6 +214,11 @@ fn launch_atomic<I: TileOperand>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::testing::{
+        Reduction, bound_back, reduces_like_the_cpu, reduces_unbound_like_the_cpu, unbound_tensors,
+    };
+    use crate::kernels::{ReduceKernel, launch_kernel, launch_zeroed_atomic_unbound};
+    use cubecl::prelude::TensorBinding;
     use cubecl::tile::launch::Decline;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
@@ -243,14 +256,89 @@ mod tests {
             CubeStagedReduceMicrokernel::settings(&hw)
                 .into_iter()
                 .flat_map(|microkernel| {
-                    HypercubeAtomicReduceSettings::UNIT_LINES.map(|unit_lines| {
+                    HypercubeAtomicReduceSettings::UNIT_LINE_COUNTS.map(|unit_line_count| {
                         HypercubeAtomicReduceSettings {
                             microkernel,
-                            unit_lines,
+                            unit_line_count,
                         }
                     })
                 })
                 .collect();
         assert_eq!(HypercubeAtomicReduceRoutine::settings(&hw), expected);
+    }
+
+    /// A sum of `shape` along `axis`, the only operation it serves.
+    fn sum(shape: &[usize], axis: usize) -> Reduction {
+        Reduction {
+            shape: shape.to_vec(),
+            axis,
+            operation: ReduceOperation::Sum,
+        }
+    }
+
+    /// The atomic hypercube launched on `tensors` as a strategy that pins it launches it, into
+    /// their output, zeroed first.
+    fn launch_pinned(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
+        launch_kernel(ReduceKernel::HypercubeAtomic, hw, tensors)
+    }
+
+    /// [`launch_unbound`] into `out` zeroed first by the zero routine, as its tuned candidate does.
+    fn launch_zeroed_unbound(
+        client: &Client,
+        input: TensorBinding,
+        out: TensorBinding,
+        reduction: &Reduction,
+    ) -> Result<(), Decline> {
+        let tensors =
+            unbound_tensors::<HypercubeAtomicReduceRoutine, _>(client, &input, out, reduction)?;
+        let hw = Hardware::from_client(client);
+        let prepared = HypercubeAtomicReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
+        launch_zeroed_atomic_unbound::<StoredTileOperand>(
+            &hw,
+            &tensors,
+            prepared,
+            bound_back(input),
+        )
+    }
+
+    #[test]
+    fn sums_one_long_row() {
+        reduces_like_the_cpu(launch_pinned, sum(&[1, 1, 9000], 2));
+    }
+
+    #[test]
+    fn sums_one_long_row_unbound() {
+        reduces_unbound_like_the_cpu(launch_zeroed_unbound, sum(&[1, 1, 9000], 2));
+    }
+
+    #[test]
+    fn sums_rows_along_the_contiguous_dim() {
+        reduces_like_the_cpu(launch_pinned, sum(&[2, 3, 5000], 2));
+    }
+
+    #[test]
+    fn sums_rows_along_the_contiguous_dim_unbound() {
+        reduces_unbound_like_the_cpu(launch_zeroed_unbound, sum(&[2, 3, 5000], 2));
+    }
+
+    #[test]
+    fn sums_rows_across_the_contiguous_dim() {
+        reduces_like_the_cpu(launch_pinned, sum(&[3, 2100, 4], 1));
+    }
+
+    #[test]
+    fn sums_rows_across_the_contiguous_dim_unbound() {
+        reduces_unbound_like_the_cpu(launch_zeroed_unbound, sum(&[3, 2100, 4], 1));
+    }
+
+    /// Four rows, whose output's lie side by side in memory.
+    #[test]
+    fn sums_the_rows_of_a_matrix() {
+        reduces_like_the_cpu(launch_pinned, sum(&[4, 9000], 1));
+    }
+
+    #[test]
+    fn sums_the_rows_of_a_matrix_unbound() {
+        reduces_unbound_like_the_cpu(launch_zeroed_unbound, sum(&[4, 9000], 1));
     }
 }

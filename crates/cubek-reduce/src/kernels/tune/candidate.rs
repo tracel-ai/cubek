@@ -84,7 +84,7 @@ enum ReduceCandidateLauncherDispatch {
 impl ReduceCandidateLauncher {
     /// `tensors`, whose input the caller binds, reduced at the candidate's setting
     /// ([`ReduceRoutineRunner::launch_unbound`]).
-    fn launch_unbound<I: TileOperand>(
+    pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
@@ -109,7 +109,7 @@ impl ReduceCandidateLauncher {
     }
 
     /// The candidate's name, which the tuning cache is keyed by.
-    fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         match &self.dispatch {
             ReduceCandidateLauncherDispatch::UnitDirect(candidate) => candidate.strategy(),
             ReduceCandidateLauncherDispatch::PlaneShuffle(candidate) => candidate.strategy(),
@@ -157,12 +157,12 @@ impl From<ReduceRoutineRunner<HypercubeAtomicReduceRoutine>> for ReduceCandidate
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::tests::{bound_back, zeros};
-    use crate::kernels::{ReduceElements, ReduceRoutineProblem};
-    use cubecl::CubeElement;
-    use cubecl::bytes::Bytes;
+    use crate::kernels::testing::{
+        Reduction, bound_back, reduces_unbound_like_the_cpu, sum_of_long_rows, unbound_tensors,
+    };
+    use crate::kernels::{ReduceElements, ReduceRoutine, ReduceRoutineProblem, launch_tuned};
     use cubecl::ir::{ElemType, FloatKind};
-    use cubecl::std::tensor::TensorHandle;
+    use cubecl::prelude::TensorBinding;
     use cubecl::tile::launch::StoredTileOperand;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::routine::Routine;
@@ -266,45 +266,90 @@ mod tests {
         );
     }
 
-    /// Zeros summed into an output of ones.
+    /// `reduction` launched unbound by `R`'s first candidate on `client`'s device.
+    ///
+    /// # Errors
+    ///
+    /// Why the candidate declines it.
+    fn launch_candidate<R, M>(
+        client: &Client,
+        input: TensorBinding,
+        out: TensorBinding,
+        reduction: &Reduction,
+    ) -> Result<(), Decline>
+    where
+        R: ReduceRoutine<M> + Routine<Microkernel = M, Settings: core::fmt::Display>,
+        ReduceCandidate: From<ReduceRoutineRunner<R>>,
+    {
+        let hw = Hardware::from_client(client);
+        let tensors = unbound_tensors::<R, M>(client, &input, out, reduction)?;
+        let candidate = ReduceCandidate::from(ReduceRoutineRunner::<R>::list(&hw).remove(0));
+        candidate.launch_unbound::<StoredTileOperand>(&tensors, bound_back(input))
+    }
+
     #[test]
     fn a_unit_candidate_reduces_the_input_its_caller_binds() {
-        const ROWS: usize = 4;
-        let client = cubecl::test_device().client();
-        let input = zeros(&client, &[ROWS, 8]);
-        let written = client.create(Bytes::from_elems(vec![1.0f32; ROWS]));
-        let tensors = ReduceTensors::unbound(
-            &client,
-            Geometry::from(&input),
-            1,
-            TensorHandle::new_contiguous([ROWS, 1], written.clone(), F32).binding(),
-            1,
-            ReduceOperation::Sum,
-            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
+        reduces_unbound_like_the_cpu(
+            launch_candidate::<UnitDirectReduceRoutine, _>,
+            sum_of_long_rows(),
         );
-        let hw = Hardware::from_client(&client);
-        let candidate = ReduceCandidate::from(
-            ReduceRoutineRunner::<UnitDirectReduceRoutine>::list(&hw).remove(0),
+    }
+
+    #[test]
+    fn a_plane_candidate_reduces_the_input_its_caller_binds() {
+        reduces_unbound_like_the_cpu(
+            launch_candidate::<PlaneShuffleReduceRoutine, _>,
+            sum_of_long_rows(),
         );
-        candidate
-            .launch_unbound::<StoredTileOperand>(&tensors, bound_back(input))
-            .expect("the unit routine serves every problem");
-        let sums = client.read_one(written).expect("the output reads back");
-        assert_eq!(f32::from_bytes(&sums), [0.0; ROWS]);
+    }
+
+    #[test]
+    fn a_cube_candidate_reduces_the_input_its_caller_binds() {
+        reduces_unbound_like_the_cpu(
+            launch_candidate::<CubeStagedReduceRoutine, _>,
+            sum_of_long_rows(),
+        );
+    }
+
+    #[test]
+    fn a_last_arrival_candidate_reduces_the_input_its_caller_binds() {
+        reduces_unbound_like_the_cpu(
+            launch_candidate::<HypercubeLastArrivalReduceRoutine, _>,
+            sum_of_long_rows(),
+        );
+    }
+
+    #[test]
+    fn an_atomic_candidate_reduces_the_input_its_caller_binds() {
+        reduces_unbound_like_the_cpu(
+            launch_candidate::<HypercubeAtomicReduceRoutine, _>,
+            sum_of_long_rows(),
+        );
+    }
+
+    /// A round settles a key on the candidate it found fastest.
+    #[test]
+    fn a_settled_key_has_a_fastest_candidate() {
+        let device = cubecl::test_device();
+        let tensors = ReduceTensors::zeros(&[3, 8], 1, ReduceOperation::Sum);
+        let key = ReduceKey::from(&tensors);
+        launch_tuned(tensors, &device).expect("the floor serves every problem");
+        assert!(ReduceCandidate::fastest(&device.client(), &device, &key).is_some());
     }
 
     /// A sum no caller asks for: it accumulates in less than it reads.
     #[test]
     fn a_key_no_reduction_settled_has_no_fastest_candidate() {
         let device = cubecl::test_device();
-        let key = ReduceKey::from(&ReduceRoutineProblem {
+        let problem = ReduceRoutineProblem {
             elements: ReduceElements {
                 input: ElemType::Float(FloatKind::F64),
                 accumulator: ElemType::Float(FloatKind::F16),
                 out: F32,
             },
-            ..ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum)
-        });
+            ..ReduceRoutineProblem::dense(&SHAPE, 1, ReduceOperation::Sum)
+        };
+        let key = ReduceKey::from(&problem);
         assert!(ReduceCandidate::fastest(&device.client(), &device, &key).is_none());
     }
 }

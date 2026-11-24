@@ -8,7 +8,8 @@
 //!
 //! A caller that binds the input itself, as a fused reduction reads it, states its tensors as
 //! [`kernels::ReduceTensors`] and launches the [`kernels::ReduceCandidate`] the autotune found
-//! fastest for their [`kernels::ReduceKey`].
+//! fastest for their [`kernels::ReduceKey`]. Under the `benchmarks` feature,
+//! `eval::benchmarks::Category` is its entry in the benchmark catalogue.
 
 pub mod kernels;
 
