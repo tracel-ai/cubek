@@ -1,5 +1,6 @@
 use super::{
-    MatmulAutotuneGroups, MatmulTunables, RoutineIdentity, candidate_list, floor, roofline,
+    MatmulAutotuneGroups, MatmulTunables, RoutineIdentity, block_scaled, candidate_list, floor,
+    roofline,
 };
 use crate::kernels::tune::{MatmulPackedCandidate, MatmulRoutineCandidate};
 use crate::kernels::{
@@ -14,7 +15,9 @@ use cubek_std::Hardware;
 /// it as stored, in rows or in tiles, decoding it into its stages, the same with a packed
 /// activation decoded first
 /// ([`launch_activation_decoded`](MatmulPackedCandidate::launch_activation_decoded)), and the
-/// last-arrival routine reading it as stored, several cubes sharing each box along `K`.
+/// last-arrival routine reading it as stored, several cubes sharing each box along `K`; and against
+/// two packed inputs the block-scaled settings ([`block_scaled::listed`]), the device's block-scaled
+/// instruction reading both as they lie.
 ///
 /// The unit routine prepares everywhere, though a round orders the candidates by priority and its
 /// small block often tiles a key the others mask. The last-arrival routine sizes its grid by the
@@ -22,7 +25,7 @@ use cubek_std::Hardware;
 pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTunables {
     let mut autotune = candidate_list();
     let microkernel = autotune.group("microkernel", groups.many_rows);
-    autotune
+    let autotune = autotune
         .bounded(roofline::many_rows)
         .identified(
             &microkernel,
@@ -71,7 +74,8 @@ pub(super) fn candidates(hw: Hardware, groups: MatmulAutotuneGroups) -> MatmulTu
             MatmulRoutineCandidate::list(UnitRegistersMatmulRoutine, &hw),
             RoutineIdentity::new,
             MatmulRoutineCandidate::launch,
-        )
+        );
+    block_scaled::listed(autotune, &microkernel, &hw)
         .identified(
             &microkernel,
             MatmulPackedCandidate::of(

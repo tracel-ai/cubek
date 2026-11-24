@@ -34,27 +34,8 @@ pub fn measured_autotune(
     }
     match Inputs::of(problem, hw) {
         Inputs::Float => Some(MatmulAutotune::new(problem)),
-        Inputs::Streamed => Some(packed_autotune(problem, hw)),
+        Inputs::Streamed => Some(MatmulAutotune::packed(problem)),
         Inputs::Unread => None,
-    }
-}
-
-/// The autotune a product of streamed packed inputs measures on: the block-scaled one past the
-/// few-rows bound where the device's block-scaled instruction reads both inputs as stored
-/// ([`block_scaled_tensor_cores_serve`]), the one its rows go to otherwise
-/// ([`MatmulAutotune::packed`]).
-///
-/// Two packed inputs that instruction reads are already in its format, so taking it rounds
-/// nothing the product was not given: the choice is the kernel's alone, and past a decode's rows
-/// the instruction's four-bit steps contract four times the `K` a decoded stage does from the same
-/// bytes. At a decode's rows the product is bound by the weight's bytes, which the few-rows
-/// candidates read as well, so they keep it.
-fn packed_autotune(problem: &MatmulProblem, hw: &Hardware) -> MatmulAutotune {
-    match MatmulAutotune::packed(problem) {
-        MatmulAutotune::ManyRows if block_scaled_tensor_cores_serve(problem, hw) => {
-            MatmulAutotune::BlockScaled
-        }
-        rows => rows,
     }
 }
 
@@ -66,16 +47,15 @@ fn packed_autotune(problem: &MatmulProblem, hw: &Hardware) -> MatmulAutotune {
 ///
 /// Float inputs are read by the kernel the strategy chooses. Packed inputs under schemes the
 /// kernels stream are read as they are stored by the plane shuffle at one row, by the kernel a
-/// pin names, and by autotune's candidates, past a decode's rows on the block-scaled tensor cores
-/// where those read both inputs (`packed_autotune`); elsewhere they are decoded first
-/// and read by the kernel the strategy chooses for float inputs. Where a packed input's scheme is
-/// one no kernel here reads, the framework dequantizes the packed inputs first. Which input is
-/// packed never matters.
+/// pin names, and by autotune's candidates, the block-scaled tensor cores among them past a decode's
+/// rows; elsewhere they are decoded first and read by the kernel the strategy chooses for float
+/// inputs. Where a packed input's scheme is one no kernel here reads, the framework dequantizes the
+/// packed inputs first. Which input is packed never matters.
 ///
 /// # Errors
 ///
-/// A pin that cannot serve the problem: `BlockScaledTensorCores` but on two NVFP4 inputs its GPU's
-/// 4-bit instruction takes. The launch panics on it: a pin is a contract with the caller, not a
+/// A pin that cannot serve the problem: `BlockScaledTensorCores` but on two packed inputs a block-scaled
+/// instruction of its GPU takes. The launch panics on it: a pin is a contract with the caller, not a
 /// preference.
 pub fn select(
     strategy: MatmulOpStrategy,
@@ -169,7 +149,7 @@ fn packed_plan(
     // What every narrow candidate counts, which is not the trailing extent.
     let single_row = problem.streamed_rows == Some(1);
     match strategy {
-        Autotune => Ok(packed_autotune(problem, hw).plan(groups)),
+        Autotune => Ok(MatmulAutotune::packed(problem).plan(groups)),
         // The packed plane routine with the heuristic's own fallback behind it, since it can still
         // decline a contraction its steps do not close, which no rule here sees.
         Heuristic(H::Tile) if single_row => Ok(Box::new(InOrder::new(vec![
@@ -186,13 +166,11 @@ fn packed_plan(
     }
 }
 
-/// Whether the block-scaled tensor cores serve this product, on a GPU whose block-scaled
-/// instruction takes it: both inputs packed with their words along `k` under block scales along
-/// `k` ([`block_scaled_for`]), one block for both, a step of the instruction whole words of each
-/// input's scales, and `k` whole words of them too. A step that cuts a word of scales is a window
-/// the tile DSL refuses to read, which leaves MXFP4's step of 64 and MXFP8's of 32, under words
-/// of four scales of thirty-two, to the planes that decode as they load. A per-tensor scale above
-/// the blocks, or none, is the product's to apply.
+/// Whether a pin of the block-scaled tensor cores serves this product: both inputs packed with their
+/// words along `k`, their block scales along `k` too, whole words of them in `k`, and a block-scaled
+/// instruction of the device that reads them ([`block_scaled_for`]). A per-tensor scale above the
+/// blocks, or none, is the product's to apply. Autotune asks nothing of this: its candidates decline
+/// what they cannot run.
 fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bool {
     let input = |input: MatmulOperand| match problem.operands.get(input) {
         OperandKind::Quantized(scheme)
@@ -211,10 +189,9 @@ fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bo
     };
     problem.k.is_multiple_of(lhs_word)
         && problem.k.is_multiple_of(rhs_word)
-        && block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block)).any(|instruction| {
-            let step = instruction.shape.k as usize;
-            step.is_multiple_of(lhs_word) && step.is_multiple_of(rhs_word)
-        })
+        && block_scaled_for(hw, (&lhs, lhs_block), (&rhs, rhs_block))
+            .next()
+            .is_some()
 }
 
 /// `BlockScaledTensorCores` named for a product it does not serve.

@@ -2,12 +2,14 @@
 //! against the ceiling each autotune's routines are bound by.
 
 use crate::kernels::plan::MatmulCall;
+use crate::kernels::tensor::StoredTensor;
 use crate::kernels::tune::key::MatmulTuneKey;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::throughput::{MemoryAccess, compute_throughput_key};
 use cubecl::tune::Work;
 use cubek_std::autotune::{Ceiling, Roofline};
-use cubek_std::{Hardware, Instructions};
+use cubek_std::matmul_dimensions::K;
+use cubek_std::{Hardware, Instructions, block_scaled_for};
 
 /// What a product costs, for the roofline a round stops at: the contraction's operations and the
 /// bytes of the three operands. A packed input counts its packed bytes, what a kernel streaming it
@@ -37,12 +39,33 @@ pub(super) fn few_rows(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
 /// makes: a product's flops per byte is roughly its rows, and the device's own balance sits
 /// among them. So the autotune names the largest matrix instruction the device offers at the
 /// product's element accumulating in `f32`, plain arithmetic where it offers none, and the read
-/// bus, and argues the stop from whichever is higher for the key ([`Ceiling::Either`]).
+/// bus, and argues the stop from whichever is higher for the key ([`Ceiling::Either`]). Two packed
+/// inputs a block-scaled instruction reads can run past the 16-bit peak, and nothing measures that
+/// instruction's own, so there the bus is the one wall stated.
 pub(super) fn many_rows(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
     Roofline {
         client: call.client.clone(),
-        ceiling: matmul_ceiling(&call.hw, key.shape().elem),
+        ceiling: match block_scaled_reads_both(call) {
+            true => Ceiling::Memory(MemoryAccess::Read),
+            false => matmul_ceiling(&call.hw, key.shape().elem),
+        },
         work: work(key, call),
+    }
+}
+
+/// Whether a block-scaled instruction of the device reads both of `call`'s inputs as stored.
+fn block_scaled_reads_both(call: &MatmulCall) -> bool {
+    let read = |tensor: &StoredTensor| match tensor {
+        StoredTensor::Packed(packed) => Some((packed.scheme(), packed.operand().scale(K)?)),
+        _ => None,
+    };
+    match (read(&call.lhs.tensor), read(&call.rhs.tensor)) {
+        (Some((lhs, lhs_block)), Some((rhs, rhs_block))) => {
+            block_scaled_for(&call.hw, (&lhs, lhs_block), (&rhs, rhs_block))
+                .next()
+                .is_some()
+        }
+        _ => false,
     }
 }
 

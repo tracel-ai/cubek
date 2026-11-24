@@ -252,22 +252,18 @@ fn an_unread_scheme_on_either_input_is_dequantized_by_the_framework() {
     assert!(burn(&with_packed_lhs(quantized(8, q4()), per_tensor())));
 }
 
-/// Autotune sends two NVFP4 inputs to the 4-bit tensor cores past a decode's rows on a GPU with the
-/// 4-bit instruction, and keeps a decode's rows on the few-rows autotune; on a GPU without it the
-/// rows decide alone. One packed input never reaches the block-scaled autotune: the other would be
-/// rounded to the instruction's format.
+/// The rows alone choose the autotune of two packed inputs, whether or not the GPU has a block-scaled
+/// instruction that reads them: a decode's rows the few-rows autotune, the rest the many-rows one,
+/// where the block-scaled settings race.
 #[test]
-fn autotune_names_the_4_bit_kernel_past_a_decode_on_two_nvfp4_inputs() {
+fn the_rows_alone_choose_the_autotune_of_two_packed_inputs() {
     let nvfp4 = |rows| with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs());
-    for (hw, many_rows) in [
-        (block_scaled(), MatmulAutotune::BlockScaled),
-        (devices::h100(), MatmulAutotune::ManyRows),
-    ] {
+    for hw in [block_scaled(), devices::h100()] {
         for (rows, autotune) in [
             (1, MatmulAutotune::FewRows),
             (QUANTIZED_FEW_ROWS, MatmulAutotune::FewRows),
-            (QUANTIZED_FEW_ROWS + 1, many_rows),
-            (2048, many_rows),
+            (QUANTIZED_FEW_ROWS + 1, MatmulAutotune::ManyRows),
+            (2048, MatmulAutotune::ManyRows),
         ] {
             assert_eq!(
                 select(Autotune, &nvfp4(rows), &hw),
@@ -281,17 +277,12 @@ fn autotune_names_the_4_bit_kernel_past_a_decode_on_two_nvfp4_inputs() {
             );
         }
     }
-    assert_eq!(
-        select(Autotune, &quantized(2048, nvfp4_along_k()), &block_scaled()),
-        Ok(fastest(MatmulAutotune::ManyRows))
-    );
 }
 
 /// Named, the 4-bit tensor-core kernel runs two NVFP4 inputs whose words run down `k`, on a GPU
 /// with the 4-bit instruction, at any row count, and nothing else: it refuses a float input,
 /// another scheme, and a GPU without the instruction. No rule names it: a rule never measures, and
-/// this kernel's settings are chosen by measuring. Autotune's own reach is
-/// [`autotune_names_the_4_bit_kernel_past_a_decode_on_two_nvfp4_inputs`].
+/// this kernel's settings are chosen by measuring.
 #[test]
 fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_instruction() {
     let named = Specific(K::BlockScaledTensorCores);
@@ -329,11 +320,10 @@ fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_
     }
 }
 
-/// Named, the block-scaled kernel takes any pair of formats the GPU's block-scaled instruction
-/// reads a word of scales a step of: NVFP4 without its per-tensor scale, and `e2m1` under
-/// `ue8m0` scales of sixteen. It refuses a value no instruction reads, and MXFP4's `e2m1` and
-/// MXFP8's `e4m3` under scales of thirty-two, whose step of the instruction cuts a word of
-/// scales, a window the tile DSL does not read.
+/// Named, the block-scaled kernel takes any pair of formats the GPU's block-scaled instruction reads:
+/// NVFP4 without its per-tensor scale, `e2m1` under `ue8m0` scales of sixteen, and MXFP4's `e2m1` and
+/// MXFP8's `e4m3` under scales of thirty-two, whose step holds part of a word of them. It refuses a
+/// value or a block no instruction reads.
 #[test]
 fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads() {
     let named = Specific(K::BlockScaledTensorCores);
@@ -357,6 +347,8 @@ fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads() {
     let served = [
         pair(QuantValue::E2M1, 16, ScaleDtype::UE4M3),
         pair(QuantValue::E2M1, 16, ScaleDtype::UE8M0),
+        pair(QuantValue::E2M1, 32, ScaleDtype::UE8M0),
+        pair(QuantValue::E4M3, 32, ScaleDtype::UE8M0),
     ];
     for problem in served {
         assert_eq!(
@@ -368,8 +360,6 @@ fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads() {
     let refused = [
         pair(QuantValue::Q4S, 16, ScaleDtype::UE4M3),
         pair(QuantValue::E4M3, 16, ScaleDtype::UE8M0),
-        pair(QuantValue::E2M1, 32, ScaleDtype::UE8M0),
-        pair(QuantValue::E4M3, 32, ScaleDtype::UE8M0),
     ];
     for problem in refused {
         assert_eq!(
