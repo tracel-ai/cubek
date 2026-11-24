@@ -1,10 +1,7 @@
 use super::base::ConvRoles;
 use super::groups::ConvGrouping;
-use crate::kernels::tiled::{ConvDecline, SpatialDimCount};
-use cubecl::prelude::TensorBinding;
-use cubecl::tile::launch::Decline;
+use crate::kernels::tiled::SpatialDimCount;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::MatmulOperands;
 
 /// The order a view lists the dims of an operand's buffer in, where the roles move the output
@@ -47,7 +44,7 @@ impl ViewOrder {
 
 impl ViewOrder {
     /// `values`, one per dim of a buffer, in the order of its view.
-    pub(super) fn view(
+    pub(in crate::kernels::tiled) fn view(
         self,
         spatial_dims: SpatialDimCount,
         grouping: ConvGrouping,
@@ -55,25 +52,6 @@ impl ViewOrder {
     ) -> Vec<usize> {
         let buffer_dims = self.buffer_dims(spatial_dims, grouping);
         buffer_dims.into_iter().map(|dim| values[dim]).collect()
-    }
-
-    /// `tensor` with its dims listed in this order.
-    pub(super) fn permute(
-        self,
-        mut tensor: TensorBinding,
-        spatial_dims: SpatialDimCount,
-        grouping: ConvGrouping,
-    ) -> Result<TensorBinding, Decline> {
-        let buffer_dims = self.buffer_dims(spatial_dims, grouping);
-        if buffer_dims.iter().copied().eq(0..tensor.shape.len()) {
-            return Ok(tensor);
-        }
-        if tensor.tiling.is_tiled() {
-            return Err(ConvDecline::PermutedTiled.into());
-        }
-        tensor.shape = Shape::from(self.view(spatial_dims, grouping, &tensor.shape));
-        tensor.strides = Strides::new(&self.view(spatial_dims, grouping, &tensor.strides));
-        Ok(tensor)
     }
 }
 

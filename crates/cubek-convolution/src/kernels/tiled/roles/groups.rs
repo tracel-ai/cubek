@@ -1,9 +1,6 @@
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{ConvDecline, G};
-use cubecl::prelude::TensorBinding;
 use cubecl::tile::Dimension;
-use cubecl::tile::launch::Decline;
-use cubecl::zspace::{Shape, Strides};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 
 /// Whether the channels are split into groups, each a convolution of its own.
@@ -40,40 +37,6 @@ pub enum ChannelAxis {
     First,
     /// An activation's channels.
     Last,
-}
-
-impl ChannelAxis {
-    /// `tensor` with its channel axis cut into `[groups, channels / groups]` where `grouping` is
-    /// grouped, by shape and strides alone. An axis the groups do not divide is the caller's to
-    /// have refused.
-    ///
-    /// # Errors
-    ///
-    /// [`ConvDecline::PermutedTiled`], where `grouping` is grouped and `tensor` is tiled.
-    pub fn split(
-        self,
-        mut tensor: TensorBinding,
-        grouping: ConvGrouping,
-    ) -> Result<TensorBinding, Decline> {
-        let ConvGrouping::Grouped(groups) = grouping else {
-            return Ok(tensor);
-        };
-        if tensor.tiling.is_tiled() {
-            return Err(ConvDecline::PermutedTiled.into());
-        }
-        let axis = match self {
-            Self::First => 0,
-            Self::Last => tensor.shape.len() - 1,
-        };
-        let (extent, stride) = (tensor.shape[axis], tensor.strides[axis]);
-        let per_group = extent / groups;
-        let (mut shape, mut strides) = (tensor.shape.to_vec(), tensor.strides.to_vec());
-        shape.splice(axis..=axis, [groups, per_group]);
-        strides.splice(axis..=axis, [stride * per_group, stride]);
-        tensor.shape = Shape::from(shape);
-        tensor.strides = Strides::new(&strides);
-        Ok(tensor)
-    }
 }
 
 /// Which operand of an operation holds the input channels, which the output channels and which is

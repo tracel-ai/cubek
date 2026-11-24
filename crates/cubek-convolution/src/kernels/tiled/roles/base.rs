@@ -4,6 +4,7 @@ use super::gather::ConvGather;
 use super::groups::{ConvChannelOperands, ConvGrouping};
 use super::views::ViewOrder;
 use crate::components::ConvolutionOperation;
+use crate::kernels::tiled::tensors::axes;
 use crate::kernels::tiled::{B, CI, CO, ConvDecline, ConvDimension, SpatialDimCount};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::Dimension;
@@ -120,27 +121,6 @@ impl ConvRoles {
         }
     }
 
-    /// Whether `rhs` and `out`, viewed through the roles, and the input's `extent` of `dimension`
-    /// (`None` where the input does not carry it) all give `dimension` the same extent.
-    pub fn agree_on(
-        &self,
-        dimension: Dimension,
-        extent: Option<usize>,
-        [rhs, out]: [&TensorBinding; 2],
-    ) -> bool {
-        let free = self.free.in_order();
-        let named = [(&self.rhs[..], rhs), (&free[..], out)];
-        let mut extents =
-            extent
-                .into_iter()
-                .chain(named.iter().filter_map(|(dimensions, tensor)| {
-                    let dim = dimensions.iter().position(|&named| named == dimension)?;
-                    Some(tensor.shape[dim])
-                }));
-        let first = extents.next();
-        extents.all(|extent| Some(extent) == first)
-    }
-
     /// The dimensions a plane window launch lays its planes over: the rows, the columns, the one
     /// across and the outer ones.
     pub fn plane_dimensions(&self) -> Vec<Dimension> {
@@ -154,8 +134,7 @@ impl ConvRoles {
     ///
     /// [`ConvDecline::PermutedTiled`], where the dims move and `rhs` is tiled.
     pub fn rhs_view(&self, rhs: TensorBinding) -> Result<TensorBinding, Decline> {
-        self.rhs_order
-            .permute(rhs, self.spatial_dims, self.grouping)
+        axes::permute(self.rhs_order, rhs, self.spatial_dims, self.grouping)
     }
 
     /// `out`, a tensor of the operation's output in its own layout, with its dims listed in the
@@ -165,8 +144,7 @@ impl ConvRoles {
     ///
     /// [`ConvDecline::PermutedTiled`], where the dims move and `out` is tiled.
     pub fn out_view(&self, out: TensorBinding) -> Result<TensorBinding, Decline> {
-        self.out_order
-            .permute(out, self.spatial_dims, self.grouping)
+        axes::permute(self.out_order, out, self.spatial_dims, self.grouping)
     }
 
     /// `tensor`, the `operand` of the operation in its own layout, with its channels split by
@@ -180,7 +158,7 @@ impl ConvRoles {
         operand: MatmulOperand,
         tensor: TensorBinding,
     ) -> Result<TensorBinding, Decline> {
-        self.channels.axis(operand).split(tensor, self.grouping)
+        axes::split_channels(self.channels.axis(operand), tensor, self.grouping)
     }
 }
 

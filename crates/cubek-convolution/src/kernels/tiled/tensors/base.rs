@@ -1,3 +1,4 @@
+use super::axes;
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{
     B, CO, ChannelAxis, ConvBias, ConvBinding, ConvChannelOperands, ConvDecline, ConvGrouping,
@@ -263,10 +264,9 @@ impl ConvTensors {
                 Some(extents.batch.read_shape(&input.shape)),
             ),
         ];
-        if let Some(&(_, declined, _)) = checks
-            .iter()
-            .find(|&&(dimension, _, extent)| !roles.agree_on(dimension, extent, [&rhs, &out]))
-        {
+        if let Some(&(_, declined, _)) = checks.iter().find(|&&(dimension, _, extent)| {
+            !axes::agree_on(&roles, dimension, extent, [&rhs, &out])
+        }) {
             return Err(declined.into());
         }
         let tensors = Self {
@@ -299,7 +299,8 @@ impl ConvTensors {
         if element != self.dtypes.acc_global {
             return Err(ConvDecline::BiasElement.into());
         }
-        let bias = ChannelAxis::First.split(bias, ConvGrouping::of(problem.groups))?;
+        let bias =
+            axes::split_channels(ChannelAxis::First, bias, ConvGrouping::of(problem.groups))?;
         Ok(Self {
             bias: Some(bias),
             ..self

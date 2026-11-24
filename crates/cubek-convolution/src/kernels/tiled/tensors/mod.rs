@@ -1,3 +1,4 @@
+pub(super) mod axes;
 mod base;
 #[cfg(test)]
 mod tests;

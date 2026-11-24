@@ -210,15 +210,14 @@ fn the_channel_axis_splits_by_shape_and_strides() {
 
     let activation = dense([1, 6, 6, 64]);
     let [n, h, w, c] = [0, 1, 2, 3].map(|dim| activation.strides[dim]);
-    let split = ChannelAxis::Last
-        .split(activation, grouping)
-        .expect("untiled");
+    let split =
+        super::axes::split_channels(ChannelAxis::Last, activation, grouping).expect("untiled");
     assert_eq!(split.shape.to_vec(), [1, 6, 6, 4, 16]);
     assert_eq!(split.strides.to_vec(), [n, h, w, c * 16, c]);
 
     let weight = dense([32, 3, 3, 16]);
     let [f, kh, kw, c] = [0, 1, 2, 3].map(|dim| weight.strides[dim]);
-    let split = ChannelAxis::First.split(weight, grouping).expect("untiled");
+    let split = super::axes::split_channels(ChannelAxis::First, weight, grouping).expect("untiled");
     assert_eq!(split.shape.to_vec(), [4, 8, 3, 3, 16]);
     assert_eq!(split.strides.to_vec(), [f * 8, f, kh, kw, c]);
 }
