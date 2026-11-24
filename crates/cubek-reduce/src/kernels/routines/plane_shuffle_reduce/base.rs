@@ -1,6 +1,6 @@
 use super::kernel::{plane_shuffle_reduce_kernel, plane_shuffle_reduce_with_indices_kernel};
 use crate::kernels::{
-    BATCH, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    BATCH, ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem,
     each_microkernel_with, estimate_reduce, microkernel_widths,
 };
 use cubecl::client::Client;
@@ -108,7 +108,7 @@ impl Routine for PlaneShuffleReduceRoutine {
     }
 }
 
-impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine {
+impl ReduceRoutine<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine {
     const NAME: &'static str = "plane-shuffle-reduce";
 
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
@@ -168,7 +168,6 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH).
     #[test]
     fn prepares_more_row_axes_than_the_grid_holds() {
         let hw = devices::m2_pro();
@@ -178,7 +177,7 @@ mod tests {
         assert!(prepared.is_ok(), "{prepared:?}");
     }
 
-    /// tracel:kernel::routine-tested-without-features: no planes, so a Decline.
+    /// A plane needs the plane instructions its lanes meet by.
     #[test]
     fn declines_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());

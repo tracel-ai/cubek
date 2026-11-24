@@ -1,6 +1,6 @@
 use super::kernel::unit_direct_zero_reduce_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
+    ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
     reduce_widths, unit_launch,
 };
 use cubecl::client::Client;
@@ -91,7 +91,7 @@ impl Routine for UnitDirectZeroReduceRoutine {
     }
 }
 
-impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
+impl ReduceRoutine<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
     const NAME: &'static str = "unit-direct-zero-reduce";
 
     /// The output zeroed; the input is never read.
@@ -173,7 +173,7 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// tracel:kernel::routine-tested-without-features: zeroing reads none.
+    /// Zeroing reads no Feature.
     #[test]
     fn prepares_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());

@@ -235,3 +235,19 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
             );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_extent_of_32_bits_is_kept() {
+        assert_eq!(u32_of_extent(u32::MAX as usize), u32::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "a reduced extent fits in 32 bits")]
+    fn an_extent_past_32_bits_panics() {
+        u32_of_extent(u32::MAX as usize + 1);
+    }
+}

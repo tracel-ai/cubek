@@ -41,8 +41,7 @@ pub(crate) fn plane_shuffle_reduce_kernel<
     }
 }
 
-/// Every plane of the launch, reducing its rows into the carrier its operation accumulates into, and
-/// writing the values to `out` and their indices to `indices`, laid out as `out`.
+/// [`plane_shuffle_reduce_kernel()`] with the rows' indices written beside their values.
 ///
 /// Its operands' leaves:
 /// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in

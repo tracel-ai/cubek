@@ -1,6 +1,6 @@
 use super::kernel::hypercube_atomic_reduce_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
+    ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
     each_microkernel_with, estimate_reduce, microkernel_widths, split_launch,
 };
 use core::convert::identity;
@@ -25,8 +25,7 @@ use cubek_std::routine::{Grid, Routine};
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
 /// The output must hold zero before it runs ([`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
-/// zeroes it), since it only ever adds. Its cubes run along
-/// [`REDUCED`](crate::kernels::REDUCED), then [`BATCH`](crate::kernels::BATCH).
+/// zeroes it), since it only ever adds.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HypercubeAtomicReduceRoutine;
 
@@ -127,7 +126,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
     }
 }
 
-impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine {
+impl ReduceRoutine<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine {
     const NAME: &'static str = "hypercube-atomic-reduce";
 
     /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
@@ -211,7 +210,7 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// tracel:kernel::routine-tested-without-features: no atomics, so a Decline.
+    /// The device has no atomics.
     #[test]
     fn declines_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());
@@ -222,5 +221,36 @@ mod tests {
             matches!(prepared, Err(Decline::Unserved { .. })),
             "{prepared:?}"
         );
+    }
+
+    /// An M2 Pro adds floats atomically, so it is the max that declines.
+    #[test]
+    fn declines_a_max() {
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Max);
+        let settings = HypercubeAtomicReduceRoutine::settings(&hw)[0];
+        let prepared = HypercubeAtomicReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert!(
+            matches!(prepared, Err(Decline::Unserved { .. })),
+            "{prepared:?}"
+        );
+    }
+
+    #[test]
+    fn each_microkernel_setting_reads_its_longest_parts_first() {
+        let hw = devices::m2_pro();
+        let expected: Vec<HypercubeAtomicReduceSettings> =
+            CubeStagedReduceMicrokernel::settings(&hw)
+                .into_iter()
+                .flat_map(|microkernel| {
+                    HypercubeAtomicReduceSettings::UNIT_LINES.map(|unit_lines| {
+                        HypercubeAtomicReduceSettings {
+                            microkernel,
+                            unit_lines,
+                        }
+                    })
+                })
+                .collect();
+        assert_eq!(HypercubeAtomicReduceRoutine::settings(&hw), expected);
     }
 }

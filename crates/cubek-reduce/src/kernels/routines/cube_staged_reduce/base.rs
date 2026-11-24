@@ -1,6 +1,6 @@
 use super::kernel::{cube_staged_reduce_kernel, cube_staged_reduce_with_indices_kernel};
 use crate::kernels::{
-    BATCH, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, estimate_reduce,
+    BATCH, ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem, estimate_reduce,
     microkernel_widths,
 };
 use cubecl::client::Client;
@@ -96,7 +96,7 @@ impl Routine for CubeStagedReduceRoutine {
     }
 }
 
-impl ReduceLauncher<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
+impl ReduceRoutine<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
     const NAME: &'static str = "cube-staged-reduce";
 
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
@@ -157,8 +157,6 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH),
-    /// so it prepares.
     #[test]
     fn prepares_more_row_axes_than_the_grid_holds() {
         let hw = devices::m2_pro();
@@ -168,7 +166,7 @@ mod tests {
         assert!(prepared.is_ok(), "{prepared:?}");
     }
 
-    /// tracel:kernel::routine-tested-without-features: no planes, so a Decline.
+    /// The device has no planes.
     #[test]
     fn declines_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());
