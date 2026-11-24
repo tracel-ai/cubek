@@ -49,7 +49,7 @@ pub(super) fn many_rows(key: &MatmulTuneKey, call: &MatmulCall) -> Roofline {
 /// The ceiling of a product on matrix instructions: the largest the device offers at `elem`
 /// accumulating in `f32`, plain arithmetic where it offers none, or the read bus, whichever is
 /// higher for the key.
-pub(crate) fn matmul_ceiling(hw: &Hardware, elem: ElemType) -> Ceiling {
+pub fn matmul_ceiling(hw: &Hardware, elem: ElemType) -> Ceiling {
     let accumulate = ElemType::Float(FloatKind::F32);
     let instruction = hw
         .properties

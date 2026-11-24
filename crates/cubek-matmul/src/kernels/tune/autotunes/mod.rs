@@ -54,4 +54,4 @@ mod roofline;
 mod tests;
 
 pub use base::*;
-pub(crate) use roofline::matmul_ceiling;
+pub use roofline::matmul_ceiling;

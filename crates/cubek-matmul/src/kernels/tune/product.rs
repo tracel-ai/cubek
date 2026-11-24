@@ -4,7 +4,8 @@ use cubecl::tile::launch::Decline;
 /// The kind of a product, which a candidate listed for the other kind declines before compiling
 /// anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Product {
+pub enum Product {
+    /// Every input is a float.
     Float,
     /// A packed input, on either side.
     Packed,
@@ -12,7 +13,7 @@ pub(crate) enum Product {
 
 impl Product {
     /// The kind of a product whose inputs are `kinds`.
-    pub(crate) fn of(kinds: impl IntoIterator<Item = OperandKind>) -> Self {
+    pub fn of(kinds: impl IntoIterator<Item = OperandKind>) -> Self {
         let packed = |kind| matches!(kind, OperandKind::Quantized(_));
         match kinds.into_iter().any(packed) {
             true => Self::Packed,
@@ -24,23 +25,28 @@ impl Product {
 /// The kind of product a candidate is listed for: one kind, or either where the same setting
 /// serves both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ListedFor {
+pub enum ListedFor {
+    /// Only float products.
     Float,
+    /// Only products with a packed input.
     Packed,
+    /// Both kinds.
     Either,
 }
 
 /// A setting and the kind of product it is listed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Listing<S> {
+pub struct Listing<S> {
+    /// The listed setting.
     pub settings: S,
+    /// The kind of product it is listed for.
     pub kind: ListedFor,
 }
 
 impl<S: PartialEq> Listing<S> {
     /// The settings of a float product's list and of a packed product's, each with the kind it is
     /// listed for. A setting in both lists is listed for either, so no candidate name repeats.
-    pub(crate) fn merged(float: Vec<S>, packed: Vec<S>) -> Vec<Self> {
+    pub fn merged(float: Vec<S>, packed: Vec<S>) -> Vec<Self> {
         let (shared, only_packed): (Vec<_>, Vec<_>) = packed
             .into_iter()
             .partition(|settings| float.contains(settings));
@@ -61,7 +67,7 @@ impl<S: PartialEq> Listing<S> {
     /// The settings of a float product's list, each listed for either kind since a float setting
     /// declines a stack it cannot read, then those of a packed product's the float list lacks,
     /// listed for a packed one.
-    pub(crate) fn float_then_packed(float: Vec<S>, packed: Vec<S>) -> Vec<Self> {
+    pub fn float_then_packed(float: Vec<S>, packed: Vec<S>) -> Vec<Self> {
         let extras: Vec<_> = packed
             .into_iter()
             .filter(|settings| !float.contains(settings))
@@ -78,7 +84,7 @@ impl<S: PartialEq> Listing<S> {
     }
 
     /// The listings of `list` whose kind admits a product of kind `product`.
-    pub(crate) fn admitted(list: &[Self], product: Product) -> impl Iterator<Item = &Self> {
+    pub fn admitted(list: &[Self], product: Product) -> impl Iterator<Item = &Self> {
         list.iter()
             .filter(move |listing| listing.kind.admits(product).is_ok())
     }
@@ -101,7 +107,7 @@ impl ListedFor {
     ///
     /// [`FLOAT_SETTING_PACKED_INPUT`] or [`PACKED_SETTING_FLOAT_INPUTS`], for the kind it is not
     /// listed for.
-    pub(crate) fn admits(self, actual: Product) -> Result<(), Decline> {
+    pub fn admits(self, actual: Product) -> Result<(), Decline> {
         match (self, actual) {
             (Self::Either, _) | (Self::Float, Product::Float) | (Self::Packed, Product::Packed) => {
                 Ok(())
