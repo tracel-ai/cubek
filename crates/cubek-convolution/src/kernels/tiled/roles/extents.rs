@@ -1,3 +1,5 @@
+use crate::kernels::tiled::CO;
+use cubecl::tile::Dimension;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 
 /// One dim of one operand's view, where a problem reads an extent from.
@@ -46,12 +48,20 @@ pub struct ConvExtents {
     pub batch: ViewDim,
     /// The group dim of the gathered input, where the channels are split by group.
     pub groups: Option<ViewDim>,
-    /// The channels of the gathered input, whichever of the input and output channels they are.
-    pub lhs_channels: ViewDim,
     /// The spatial extents of the gathered input.
     pub gathered: ViewRun,
     pub channels_in: ViewDim,
     pub channels_out: ViewDim,
     pub kernel: ViewRun,
     pub out: ViewRun,
+}
+
+impl ConvExtents {
+    /// The channels of the gathered input, whichever of the input and output channels `inner` names.
+    pub fn lhs_channels(&self, inner: Dimension) -> ViewDim {
+        match inner == CO {
+            true => self.channels_out,
+            false => self.channels_in,
+        }
+    }
 }

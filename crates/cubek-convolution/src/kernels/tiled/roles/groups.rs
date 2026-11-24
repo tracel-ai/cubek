@@ -28,6 +28,11 @@ impl ConvGrouping {
             Self::Grouped(_) => &[G],
         }
     }
+
+    /// How many dimensions this grouping adds: none, or the group.
+    pub fn dimension_count(self) -> usize {
+        self.dimensions().len()
+    }
 }
 
 /// Where a tensor's channel axis is, the one a split by group cuts in two.

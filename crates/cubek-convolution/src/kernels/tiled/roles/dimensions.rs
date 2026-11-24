@@ -89,20 +89,19 @@ impl SpatialDimensions {
         }
     }
 
-    /// The dims the split by group adds to a view: none, or the group.
-    pub(super) fn split_dims(&self) -> usize {
-        self.grouping.dimensions().len()
-    }
-
     /// The channels dim of `operand`'s view, after the batch or filters, the groups and the
     /// spatial dims.
     pub(super) fn channels(&self, operand: MatmulOperand) -> ViewDim {
-        ViewDim::at(operand, self.spatial_dims.0 + 1 + self.split_dims())
+        ViewDim::at(
+            operand,
+            self.spatial_dims.0 + 1 + self.grouping.dimension_count(),
+        )
     }
 
     /// The group dim of the gathered input, the lhs, which is split but never reordered.
     pub(super) fn groups(&self) -> Option<ViewDim> {
-        (self.split_dims() > 0).then(|| ViewDim::at(MatmulOperand::Lhs, self.spatial_dims.0 + 1))
+        (self.grouping.dimension_count() > 0)
+            .then(|| ViewDim::at(MatmulOperand::Lhs, self.spatial_dims.0 + 1))
     }
 
     /// The spatial dims of `operand`'s view, from `first`.

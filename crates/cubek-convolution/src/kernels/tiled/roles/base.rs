@@ -9,6 +9,7 @@ use crate::kernels::tiled::{B, CI, CO, ConvDecline, ConvDimension, SpatialDimCou
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
+use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::matmul::{MatmulDimensions, MatmulLayout, MatmulOperand, MatmulOperands};
 
 /// Which dimension of the space plays which part in an operation.
@@ -41,11 +42,6 @@ pub struct ConvRoles {
     pub extents: ConvExtents,
     /// What the window's extents are declined with where they do not yield the output's.
     pub extent_mismatch: ConvDecline,
-}
-
-/// The dimensions of `parts` one after the other; the slices let arrays and `Vec`s mix in one list.
-fn joined(parts: &[&[Dimension]]) -> Vec<Dimension> {
-    parts.concat()
 }
 
 impl ConvRoles {
@@ -83,7 +79,7 @@ impl ConvRoles {
     /// The dimensions a forward's bias is bound by: one value for each output channel of each
     /// group.
     pub fn bias_dimensions(&self) -> Vec<Dimension> {
-        joined(&[self.grouping.dimensions(), &[CO]])
+        [self.grouping.dimensions(), &[CO]].concat()
     }
 
     /// The spatial `[out, tap]` dimension pairs, one per spatial dim of the gathered input.
@@ -125,7 +121,7 @@ impl ConvRoles {
     /// across and the outer ones.
     pub fn plane_dimensions(&self) -> Vec<Dimension> {
         let free = &self.free;
-        joined(&[&[free.m, free.n, free.across], &free.outer[..]])
+        [&[free.m, free.n, free.across], &free.outer[..]].concat()
     }
 
     /// `rhs` with its dims listed in the order of [`Self::rhs`].
@@ -160,24 +156,61 @@ impl ConvRoles {
     ) -> Result<TensorBinding, Decline> {
         axes::split_channels(self.channels.axis(operand), tensor, self.grouping)
     }
+
+    /// `shapes`, the operation's operands in their own layouts and split by group where the roles
+    /// are grouped, as each is viewed through the roles ([`Self::rhs_view`],
+    /// [`Self::out_view`]).
+    pub fn views(&self, shapes: &MatmulOperands<Vec<usize>>) -> MatmulOperands<Vec<usize>> {
+        let view =
+            |order: ViewOrder, shape: &[usize]| order.view(self.spatial_dims, self.grouping, shape);
+        MatmulOperands {
+            lhs: shapes.lhs.clone(),
+            rhs: view(self.rhs_order, &shapes.rhs),
+            out: view(self.out_order, &shapes.out),
+        }
+    }
+
+    /// The alignments of dense buffers of `shapes`, which are already split by group where the
+    /// roles are grouped, as the rhs and the output are viewed through the roles
+    /// ([`Self::rhs_view`], [`Self::out_view`]).
+    pub fn dense_alignments(
+        &self,
+        shapes: &MatmulOperands<Vec<usize>>,
+    ) -> MatmulOperands<ElemAlignment> {
+        let dense = |shape: &[usize], order: ViewOrder| {
+            let mut strides = vec![1; shape.len()];
+            for dim in (0..shape.len() - 1).rev() {
+                strides[dim] = strides[dim + 1] * shape[dim + 1];
+            }
+            ElemAlignment::new(
+                &order.view(self.spatial_dims, self.grouping, shape),
+                &order.view(self.spatial_dims, self.grouping, &strides),
+            )
+        };
+        MatmulOperands {
+            lhs: dense(&shapes.lhs, ViewOrder::Stored),
+            rhs: dense(&shapes.rhs, self.rhs_order),
+            out: dense(&shapes.out, self.out_order),
+        }
+    }
 }
 
 impl ConvRoles {
     fn forward(spatial: &SpatialDimensions, channels: ConvChannelOperands) -> Self {
         use MatmulOperand::{Lhs, Out, Rhs};
         let groups = spatial.grouping.dimensions();
-        let split = spatial.split_dims();
-        let free = joined(&[groups, &[B], &spatial.outs, &[CO]]);
-        let contracted = joined(&[&spatial.taps, &[CI]]);
+        let split = spatial.grouping.dimension_count();
+        let free = [groups, &[B], &spatial.outs, &[CO]].concat();
+        let contracted = [&spatial.taps[..], &[CI]].concat();
         Self {
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
             channels,
-            space: joined(&[&free, &contracted]),
+            space: [&free[..], &contracted].concat(),
             free: ConvFreeDimensions::split(&free),
             contracted: ConvContractedDimensions::split(&contracted),
-            lhs: joined(&[groups, &[B], &spatial.outs, &spatial.taps, &[CI]]),
-            rhs: joined(&[groups, &[CO], &spatial.taps, &[CI]]),
+            lhs: [groups, &[B], &spatial.outs, &spatial.taps, &[CI]].concat(),
+            rhs: [groups, &[CO], &spatial.taps, &[CI]].concat(),
             rhs_order: ViewOrder::Stored,
             out_order: ViewOrder::GroupsFirst,
             inner: MatmulOperands {
@@ -189,7 +222,6 @@ impl ConvRoles {
             extents: ConvExtents {
                 batch: ViewDim::at(Lhs, 0),
                 groups: spatial.groups(),
-                lhs_channels: spatial.channels(Lhs),
                 gathered: spatial.run(Lhs, 1),
                 channels_in: spatial.channels(Lhs),
                 channels_out: ViewDim::at(Rhs, split),
@@ -203,18 +235,18 @@ impl ConvRoles {
     fn backward_weight(spatial: &SpatialDimensions, channels: ConvChannelOperands) -> Self {
         use MatmulOperand::{Lhs, Out, Rhs};
         let groups = spatial.grouping.dimensions();
-        let split = spatial.split_dims();
-        let free = joined(&[groups, &spatial.taps, &[CI, CO]]);
-        let contracted = joined(&[&[B], &spatial.outs]);
+        let split = spatial.grouping.dimension_count();
+        let free = [groups, &spatial.taps, &[CI, CO]].concat();
+        let contracted = [&[B][..], &spatial.outs].concat();
         Self {
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
             channels,
-            space: joined(&[&contracted, &free]),
+            space: [&contracted[..], &free].concat(),
             free: ConvFreeDimensions::split(&free),
             contracted: ConvContractedDimensions::split(&contracted),
-            lhs: joined(&[groups, &spatial.taps, &[B], &spatial.outs, &[CI]]),
-            rhs: joined(&[groups, &[B], &spatial.outs, &[CO]]),
+            lhs: [groups, &spatial.taps, &[B], &spatial.outs, &[CI]].concat(),
+            rhs: [groups, &[B], &spatial.outs, &[CO]].concat(),
             rhs_order: ViewOrder::GroupsFirst,
             out_order: ViewOrder::ChannelsOutLast,
             inner: MatmulOperands {
@@ -226,7 +258,6 @@ impl ConvRoles {
             extents: ConvExtents {
                 batch: ViewDim::at(Lhs, 0),
                 groups: spatial.groups(),
-                lhs_channels: spatial.channels(Lhs),
                 gathered: spatial.run(Lhs, 1),
                 channels_in: spatial.channels(Lhs),
                 channels_out: spatial.channels(Out),
@@ -240,18 +271,18 @@ impl ConvRoles {
     fn backward_data(spatial: &SpatialDimensions, channels: ConvChannelOperands) -> Self {
         use MatmulOperand::{Lhs, Out, Rhs};
         let groups = spatial.grouping.dimensions();
-        let split = spatial.split_dims();
-        let free = joined(&[groups, &[B], &spatial.outs, &[CI]]);
-        let contracted = joined(&[&spatial.taps, &[CO]]);
+        let split = spatial.grouping.dimension_count();
+        let free = [groups, &[B], &spatial.outs, &[CI]].concat();
+        let contracted = [&spatial.taps[..], &[CO]].concat();
         Self {
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
             channels,
-            space: joined(&[&free, &contracted]),
+            space: [&free[..], &contracted].concat(),
             free: ConvFreeDimensions::split(&free),
             contracted: ConvContractedDimensions::split(&contracted),
-            lhs: joined(&[groups, &[B], &spatial.outs, &spatial.taps, &[CO]]),
-            rhs: joined(&[groups, &spatial.taps, &[CO, CI]]),
+            lhs: [groups, &[B], &spatial.outs, &spatial.taps, &[CO]].concat(),
+            rhs: [groups, &spatial.taps, &[CO, CI]].concat(),
             rhs_order: ViewOrder::ChannelsOutAfterTaps,
             out_order: ViewOrder::GroupsFirst,
             inner: MatmulOperands {
@@ -263,7 +294,6 @@ impl ConvRoles {
             extents: ConvExtents {
                 batch: ViewDim::at(Lhs, 0),
                 groups: spatial.groups(),
-                lhs_channels: spatial.channels(Lhs),
                 gathered: spatial.run(Lhs, 1),
                 channels_in: spatial.channels(Out),
                 channels_out: spatial.channels(Lhs),

@@ -5,6 +5,14 @@ use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, Strides};
 
+/// Refuses a tiled `tensor`: a rewrite of its axes by shape and strides alone reads a plain layout.
+fn refuse_tiled(tensor: &TensorBinding) -> Result<(), Decline> {
+    match tensor.tiling.is_tiled() {
+        true => Err(ConvDecline::PermutedTiled.into()),
+        false => Ok(()),
+    }
+}
+
 /// `tensor` with its channel axis cut into `[groups, channels / groups]` where `grouping` is
 /// grouped, by shape and strides alone. An axis the groups do not divide is the caller's to
 /// have refused.
@@ -20,9 +28,7 @@ pub(in crate::kernels::tiled) fn split_channels(
     let ConvGrouping::Grouped(groups) = grouping else {
         return Ok(tensor);
     };
-    if tensor.tiling.is_tiled() {
-        return Err(ConvDecline::PermutedTiled.into());
-    }
+    refuse_tiled(&tensor)?;
     let axis = match axis {
         ChannelAxis::First => 0,
         ChannelAxis::Last => tensor.shape.len() - 1,
@@ -52,9 +58,7 @@ pub(in crate::kernels::tiled) fn permute(
     if buffer_dims.iter().copied().eq(0..tensor.shape.len()) {
         return Ok(tensor);
     }
-    if tensor.tiling.is_tiled() {
-        return Err(ConvDecline::PermutedTiled.into());
-    }
+    refuse_tiled(&tensor)?;
     tensor.shape = Shape::from(order.view(spatial_dims, grouping, &tensor.shape));
     tensor.strides = Strides::new(&order.view(spatial_dims, grouping, &tensor.strides));
     Ok(tensor)

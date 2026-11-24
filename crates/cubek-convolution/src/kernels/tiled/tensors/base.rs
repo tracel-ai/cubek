@@ -254,7 +254,11 @@ impl ConvTensors {
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
         let extents = &roles.extents;
         let channels = |dimension| {
-            (dimension == roles.inner.lhs).then_some(extents.lhs_channels.read_shape(&input.shape))
+            (dimension == roles.inner.lhs).then_some(
+                extents
+                    .lhs_channels(roles.inner.lhs)
+                    .read_shape(&input.shape),
+            )
         };
         let checks = [
             (CO, ConvDecline::OutChannels, channels(CO)),
