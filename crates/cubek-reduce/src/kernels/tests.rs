@@ -26,8 +26,8 @@ const F32: ElemType = ElemType::Float(FloatKind::F32);
 const I32: ElemType = ElemType::Int(IntKind::I32);
 
 /// Small whole numbers, so every sum is exact, with ties and zeros; for a product, `±1`, `2` and
-/// `0.5` on a cycle of seven, prime to every extent here so no row repeats one value, with as many
-/// `2` as `0.5` so that a long row's product stays exact and finite. A NaN, an infinity or a row
+/// `0.5` on a cycle of seven, prime to the step between a row's values here so no row repeats one
+/// value, with as many `2` as `0.5` so that a long row's product stays exact and finite. A NaN, an infinity or a row
 /// of ties is a behavior of its own, which the microkernels' Component Tests check.
 fn values(len: usize, product: bool) -> Vec<f32> {
     (0..len)
@@ -435,7 +435,8 @@ fn an_unbound_call_keys_as_its_bound_call() {
         1,
         ReduceOperation::Sum,
         elements,
-    );
+    )
+    .with_workspace(reduction.workspace(&client));
     let unbound = unbound_tensors::<UnitDirectReduceRoutine, _>(&client, &input, out, &reduction)
         .expect("the unit routine serves every problem");
     assert_eq!(ReduceKey::from(&unbound), ReduceKey::from(&bound));

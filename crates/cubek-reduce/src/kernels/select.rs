@@ -70,9 +70,9 @@ fn unit_keeps_up(hw: &Hardware, problem: &ReduceRoutineProblem, width: usize) ->
 }
 
 /// The setting of the hypercube's launch where a box of rows a cube leaves the device idle and
-/// splitting the rows along the reduced dim gives more cubes: the first of its settings, the
-/// longest parts first, whose cubes fill the device, or the one with the most cubes where none
-/// does. A top-k takes the longest parts only: the last cube merges a row's top-k lists one after
+/// splitting the rows along the reduced dim gives more cubes: the first of its settings whose cubes
+/// fill the device, or the one with the most cubes where none does. A top-k takes the settings
+/// whose units read the most lines only: the last cube merges a row's top-k lists one after
 /// another, `k` inserts a part, so shorter parts cost more in the merge than their extra cubes
 /// save. `None` where the device does not say how wide it is, the boxes already fill it, or every
 /// row is one part.
@@ -81,14 +81,14 @@ fn hypercube_filling_the_device(
     problem: &ReduceRoutineProblem,
 ) -> Option<HypercubeLastArrivalReduceSettings> {
     let mut most_cubes = None;
-    let longest_only = matches!(
+    let most_lines_only = matches!(
         problem.operation.carrier(),
         ReduceCarrier::TopK { .. } | ReduceCarrier::TopValues { .. }
     );
     let settings = HypercubeLastArrivalReduceRoutine::settings(hw)
         .into_iter()
         .filter(|settings| {
-            !longest_only
+            !most_lines_only
                 || settings.unit_lines == HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
         });
     for settings in settings {

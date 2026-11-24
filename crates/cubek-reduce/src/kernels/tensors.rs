@@ -8,7 +8,7 @@ use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Decline, Unbound};
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::tile::{Dimension, Geometry, Launcher, Space};
+use cubecl::tile::{Dimension, Geometry, Launcher};
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
 
@@ -55,8 +55,8 @@ impl<In> ReduceTensors<In> {
         &self.client
     }
 
-    /// These tensors with `workspace`, the scratch the routines that split a row across cubes take
-    /// ([`ReduceWorkspace::bytes_for`]): without one, those routines decline.
+    /// These tensors with `workspace`, the last-arrival hypercube's scratch
+    /// ([`ReduceWorkspace::bytes_for`]): without one, it declines.
     pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
         Self {
             problem: ReduceRoutineProblem {
@@ -75,7 +75,7 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// # Panics
     ///
-    /// Where `out`'s shape is not that.
+    /// Where `input` has no axis, `axis` is not one of its axes, or `out`'s shape is not that.
     pub fn new(
         client: &Client,
         input: TensorBinding,
@@ -163,18 +163,12 @@ impl ReduceTensors<Geometry> {
 }
 
 impl ReduceTensors<TensorBinding> {
-    /// Both operands bound as `blueprint` states them, on `grid`, over `space`, the problem's own
-    /// extents.
+    /// Both operands bound as `blueprint` states them, on `grid`.
     ///
     /// # Panics
     ///
     /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
-    pub(crate) fn bind<M>(
-        &self,
-        blueprint: &ReduceBlueprint<M>,
-        grid: &Grid,
-        space: Space,
-    ) -> ReduceBinding {
+    pub(crate) fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
         ReduceBinding {
             workspace: self.workspace.clone(),
             ..ReduceBinding::bound(
@@ -184,7 +178,6 @@ impl ReduceTensors<TensorBinding> {
                 self.indices.as_ref(),
                 blueprint,
                 grid,
-                space,
             )
         }
     }
@@ -202,8 +195,7 @@ impl ReduceTensors<Geometry> {
         }
     }
 
-    /// The input's spec and geometry as `blueprint` states them, on `grid`, over `space`, the
-    /// problem's own extents, for the caller to bind, and the output bound.
+    /// The input's spec and geometry as `blueprint` states them, on `grid`, for the caller to bind, and the output bound.
     ///
     /// # Panics
     ///
@@ -212,7 +204,6 @@ impl ReduceTensors<Geometry> {
         &self,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
-        space: Space,
     ) -> ReduceBinding<Unbound, Bound> {
         ReduceBinding {
             workspace: self.workspace.clone(),
@@ -223,7 +214,6 @@ impl ReduceTensors<Geometry> {
                 &self.out,
                 blueprint,
                 grid,
-                space,
             )
         }
     }
@@ -260,7 +250,7 @@ impl<In, Out> ReduceBinding<In, Out> {
 
 impl ReduceBinding {
     /// `input` and `out`, and `indices` beside them where there are, bound as `blueprint`
-    /// states them for `problem`, on `grid` over `space`.
+    /// states them for `problem`, on `grid`.
     fn bound<M>(
         client: &Client,
         problem: &ReduceRoutineProblem,
@@ -268,9 +258,8 @@ impl ReduceBinding {
         indices: Option<&TensorBinding>,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
-        space: Space,
     ) -> Self {
-        let launcher = launcher_of(client, problem, blueprint, grid, space);
+        let launcher = launcher_of(client, problem, blueprint, grid);
         let (input, dimensions) = problem.labelled(input.clone(), REDUCED);
         let input = launcher
             .arg(input, problem.elements.input)
@@ -299,7 +288,7 @@ impl ReduceBinding {
 
 impl ReduceBinding<Unbound, Bound> {
     /// The spec and geometry of `input`, which the caller binds, as `blueprint` states them for
-    /// `problem`, on `grid` over `space`, and `out` bound.
+    /// `problem`, on `grid`, and `out` bound.
     fn unbound<M>(
         client: &Client,
         problem: &ReduceRoutineProblem,
@@ -307,9 +296,8 @@ impl ReduceBinding<Unbound, Bound> {
         out: &TensorBinding,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
-        space: Space,
     ) -> Self {
-        let launcher = launcher_of(client, problem, blueprint, grid, space);
+        let launcher = launcher_of(client, problem, blueprint, grid);
         let (input, dimensions) = problem.labelled_geometry(input, REDUCED);
         let input = launcher
             .unbound(&input)
@@ -329,17 +317,20 @@ impl ReduceBinding<Unbound, Bound> {
     }
 }
 
-/// The launcher `grid` builds for `problem` placed by `blueprint`, over `space`, the problem's own
-/// extents: the Blueprint's partitioning states the extents of the problem its Tune Key stands
-/// for, which the kernel leaves to the launch.
+/// The launcher `grid` builds for `problem` placed by `blueprint`, over the extents its partitioning
+/// states, which the kernel leaves to the launch.
 fn launcher_of<M>(
     client: &Client,
     problem: &ReduceRoutineProblem,
     blueprint: &ReduceBlueprint<M>,
     grid: &Grid,
-    space: Space,
 ) -> Launcher {
-    grid.launcher(client, || (problem.kernel(&blueprint.partitioning), space))
+    grid.launcher(client, || {
+        (
+            problem.kernel(&blueprint.partitioning),
+            blueprint.partitioning.space().clone(),
+        )
+    })
 }
 
 /// `buffer`, an output of `problem` or the indices beside it, bound in `element` at the output's

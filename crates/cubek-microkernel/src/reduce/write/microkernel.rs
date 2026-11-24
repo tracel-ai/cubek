@@ -1,5 +1,6 @@
 use super::base::{UnitCarrierWriteMicrokernel, UnitWalkWriteMicrokernel};
 use crate::reduce::{REDUCED, ReduceAccumulator, ReduceOperation, ReduceWrites};
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -103,9 +104,26 @@ fn finished<Acc: Numeric, N: Size>(
     #[comptime] operation: ReduceOperation,
 ) -> Vector<Acc, N> {
     match operation.divides_by_count() {
-        true => Vector::cast_from(Vector::<f32, N>::cast_from(line) / Vector::new(values as f32)),
+        true => divided::<Acc, N>(line, values),
         false => line,
     }
+}
+
+/// `line` divided by `values`, in its own element where that holds every count and every total
+/// `line` can hold, in `f32` for a narrower one.
+#[cube]
+fn divided<Acc: Numeric, N: Size>(line: Vector<Acc, N>, values: usize) -> Vector<Acc, N> {
+    let element = elem_type_of::<Acc>();
+    match comptime!(divides_in_f32(element)) {
+        true => Vector::cast_from(Vector::<f32, N>::cast_from(line) / Vector::new(values as f32)),
+        false => line / Vector::new(Acc::cast_from(values)),
+    }
+}
+
+/// Whether a total in `accumulator` is divided in `f32`: one of at most 16 bits, which a count
+/// overflows, and `f32` itself.
+fn divides_in_f32(accumulator: ElemType) -> bool {
+    accumulator.size() < size_of::<f32>() || accumulator == ElemType::Float(FloatKind::F32)
 }
 
 /// `line` written as `tile`'s line `slot` in `Out`: its first lane alone, as one cell, where it
@@ -129,5 +147,29 @@ fn write_slot<Out: Numeric, E: Numeric, N: Size>(
             let mut lines = tile.flat_mut::<Out, N>();
             lines.write(slot, Vector::cast_from(line));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::IntKind;
+
+    /// A total in `i32` holds what no `f32` does, so it is divided as it is.
+    #[test]
+    fn an_i32_total_is_divided_in_its_own_element() {
+        assert!(!divides_in_f32(ElemType::Int(IntKind::I32)));
+    }
+
+    /// So is a total in `f64`.
+    #[test]
+    fn an_f64_total_is_divided_in_its_own_element() {
+        assert!(!divides_in_f32(ElemType::Float(FloatKind::F64)));
+    }
+
+    /// A count overflows a half, so a total in one is divided in `f32`.
+    #[test]
+    fn a_half_total_is_divided_in_f32() {
+        assert!(divides_in_f32(ElemType::Float(FloatKind::F16)));
     }
 }

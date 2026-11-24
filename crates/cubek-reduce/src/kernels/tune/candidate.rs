@@ -39,8 +39,9 @@ impl ReduceCandidate {
     }
 
     /// The candidate, a routine at its setting, that the autotune found fastest for the
-    /// reductions `key` describes on `client`'s `device`, or `None` where no round in this process
-    /// has settled the key, or the floor named apart won it: what a fused reduce runs, so it
+    /// reductions `key` describes on `client`'s `device`, or `None` where no reduction in this
+    /// process has settled the key, by a round or from the winner one left on disk, or the floor
+    /// named apart won it: what a fused reduce runs, so it
     /// inherits the kernel the unfused round chose.
     pub fn fastest(client: &Client, device: &Device, key: &ReduceKey) -> Option<Self> {
         fastest_tuned(client, device, key)

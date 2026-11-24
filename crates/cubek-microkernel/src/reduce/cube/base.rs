@@ -122,7 +122,8 @@ impl CubeStagedReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its item writes the indices beside the values and `indices` is none.
+    /// Where its item writes the indices beside the values and `indices` is none, or writes
+    /// indices its carrier does not keep.
     pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         cube: &Region,
@@ -184,14 +185,16 @@ impl CubeStagedReduceMicrokernelSettings {
 
 impl CubeStagedReduceMicrokernel {
     /// Bytes of shared memory it allocates with its lines `width` lanes wide: one slot of the
-    /// carrier a plane and a column of rows, which its planes meet through.
+    /// carrier a plane and a column of rows, which its planes meet through, and one line in place
+    /// of the indices of a carrier that keeps none.
     pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
-        let slot = self
-            .item
-            .operation
-            .carrier()
-            .bytes(width, self.item.accumulator.size());
-        self.planes * self.lines_across * slot
+        let carrier = self.item.operation.carrier();
+        let slot = carrier.bytes(width, self.item.accumulator.size());
+        let absent_indices = match carrier.carries_indices() {
+            true => 0,
+            false => width * size_of::<u32>(),
+        };
+        self.planes * self.lines_across * slot + absent_indices
     }
 }
 

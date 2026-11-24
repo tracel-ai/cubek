@@ -5,7 +5,6 @@ use crate::kernels::{
     ReduceTensors, launch_zeroed_atomic, launch_zeroed_atomic_unbound, tune::*,
 };
 use core::marker::PhantomData;
-use cubecl::CubeDim;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound};
@@ -118,9 +117,7 @@ where
 {
     type Strategy = String;
     type Key = ReduceKey;
-    /// The blueprint and the cube: two settings preparing one blueprint can still launch
-    /// different cubes.
-    type Blueprint = (ReduceBlueprint<M>, CubeDim);
+    type Blueprint = ReduceBlueprint<M>;
 
     fn strategy(&self) -> &String {
         &self.name
@@ -138,7 +135,6 @@ where
     }
 
     fn blueprint(&self, key: &ReduceKey) -> Option<Self::Blueprint> {
-        self.prepared(key)
-            .map(|(blueprint, grid)| (blueprint, grid.launch.cube_dim))
+        self.prepared(key).map(|(blueprint, _)| blueprint)
     }
 }
