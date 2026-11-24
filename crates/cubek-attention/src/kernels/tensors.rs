@@ -21,7 +21,7 @@ use cubecl::tile::{
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S, ValueLines,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
@@ -882,13 +882,23 @@ impl AttentionTensors {
                         key_scale(),
                     ),
                 };
-                let value = read_cache(
-                    value,
-                    &[B, KV, S, DV],
-                    widths.value,
-                    AttentionOperand::Value,
-                    scales.value.as_ref().map(|scale| per_tensor(scale, DV)),
-                );
+                let value_scale = || scales.value.as_ref().map(|scale| per_tensor(scale, DV));
+                let value = match blueprint.microkernel.value_lines() {
+                    ValueLines::ValueDim => read_cache(
+                        value,
+                        &[B, KV, S, DV],
+                        widths.value,
+                        AttentionOperand::Value,
+                        value_scale(),
+                    ),
+                    ValueLines::Keys => read_cache(
+                        &value.transposed(),
+                        &[B, KV, DV, S],
+                        widths.value,
+                        AttentionOperand::Value,
+                        value_scale(),
+                    ),
+                };
                 AttentionCacheBinding::Tiles { key, value }
             }
             AttentionCache::Packed(cache) => AttentionCacheBinding::Packed(cache.bind(&launcher)),

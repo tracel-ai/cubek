@@ -199,7 +199,11 @@ mod fragment {
                 .shared_memory(&hw, &item, &blueprint.shared_memory)
         };
         let microkernel = prepared(StageLayout::Strided).microkernel;
-        let stage = item.stage(microkernel.seq_kv(), microkernel.key_order());
+        let stage = item.stage(
+            microkernel.seq_kv(),
+            microkernel.key_order(),
+            microkernel.value_lines(),
+        );
         let whole_rows: usize = stage
             .iter()
             .chain([&microkernel.staged_query(&item)])
@@ -241,10 +245,11 @@ mod fragment {
         );
     }
 
-    /// A device whose manual `mma` is `16 × 16`, 16 or 32 deep, in `f16` and in `e4m3`, and lays its
-    /// accumulator as its `A`, and whose cubes hold 64 KiB of shared memory, as RDNA4's do.
+    /// A device whose manual `mma` and fragment API are `16 × 16`, 16 or 32 deep, in `f16` and in
+    /// `e4m3`, whose manual accumulator is laid as its `A`, and whose cubes hold 64 KiB of shared
+    /// memory, as RDNA4's do.
     fn offering_square_mma() -> Hardware {
-        let squares = [F16, E4M3].into_iter().flat_map(|element| {
+        let squares = [F16, E4M3].map(|element| {
             [16, 32].map(|k| MmaConfig {
                 a_type: element,
                 b_type: element,
@@ -254,7 +259,9 @@ mod fragment {
                 k,
             })
         });
-        let mut hw = devices::offering_mma(offering(devices::h100(), 16), squares);
+        let squares = squares.as_flattened();
+        let hw = devices::offering_cmma(devices::h100(), squares.to_vec());
+        let mut hw = devices::offering_mma(hw, squares.to_vec());
         devices::topology(&mut hw).max_shared_memory_size = 64 * 1024;
         hw
     }

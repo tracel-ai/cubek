@@ -1,3 +1,4 @@
+use crate::attention::ValueLines;
 use crate::matmul::MatmulWorkItem;
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use core::num::NonZeroUsize;
@@ -22,6 +23,10 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     pub score: ScoreHolder,
     /// Where the plane's query stays across the keys' walk.
     pub query: QueryHolder,
+    /// The dimension the stage's values lie contiguous along: the value dim, as their buffer holds
+    /// them, which a stage fills whole lines of, or the keys, their contraction, which a fragment
+    /// loads whole runs of. A stage several planes share is filled once and loaded by each.
+    pub value_lines: ValueLines,
 }
 
 /// Where a plane's query stays across its walk over the keys.
@@ -65,19 +70,45 @@ impl ScoreHolder {
         grid: PlaneFragmentMicrokernelSettings,
         tile: [usize; 3],
     ) -> Option<PlaneFragmentMicrokernel> {
-        let lhs = FragmentSource::Values(item.elements.lhs);
-        let step = ProductStep {
-            shape: tile,
-            holder: ComputeScope::Plane,
-            lhs,
-            rhs: FragmentSource::Values(item.elements.rhs),
-            sum: item.sum,
-        };
+        let step = Self::sum_step(item, tile);
         match self {
             ScoreHolder::Window => PlaneFragmentMicrokernel::draining(hw, item, grid, step),
             ScoreHolder::Fragments => {
-                PlaneFragmentMicrokernel::keeping(hw, item, grid, ProductStep { rhs: lhs, ..step })
+                let kept = ProductStep {
+                    rhs: step.lhs,
+                    ..step
+                };
+                PlaneFragmentMicrokernel::keeping(hw, item, grid, kept)
             }
+        }
+    }
+
+    /// [`sum_plane`](Self::sum_plane) for a plane holding the sum's lhs in registers across its
+    /// products ([`QueryHolder::Registers`]), which only a sum held in registers contracts.
+    pub(crate) fn held_lhs_sum_plane(
+        self,
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        grid: PlaneFragmentMicrokernelSettings,
+        tile: [usize; 3],
+    ) -> Option<PlaneFragmentMicrokernel> {
+        let step = Self::sum_step(item, tile);
+        match self {
+            ScoreHolder::Window => None,
+            ScoreHolder::Fragments => {
+                PlaneFragmentMicrokernel::keeping_held_lhs(hw, item, grid, step)
+            }
+        }
+    }
+
+    /// The step of `item`'s sum over the plane's `tile`, its operands read as values.
+    fn sum_step(item: &MatmulWorkItem, tile: [usize; 3]) -> ProductStep {
+        ProductStep {
+            shape: tile,
+            holder: ComputeScope::Plane,
+            lhs: FragmentSource::Values(item.elements.lhs),
+            rhs: FragmentSource::Values(item.elements.rhs),
+            sum: item.sum,
         }
     }
 
@@ -145,6 +176,7 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         scratch: Scratch::OneTile,
         score: ScoreHolder::Fragments,
         query: QueryHolder::Stage,
+        value_lines: ValueLines::ValueDim,
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -174,6 +206,14 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         Self { query, ..self }
     }
 
+    /// These settings holding the values along `value_lines`.
+    pub const fn along(self, value_lines: ValueLines) -> Self {
+        Self {
+            value_lines,
+            ..self
+        }
+    }
+
     /// These settings keeping the score in `score`.
     pub const fn held_in(self, score: ScoreHolder) -> Self {
         Self { score, ..self }
@@ -194,6 +234,10 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
         match self.query {
             QueryHolder::Stage => Ok(()),
             QueryHolder::Registers => write!(f, " query=registers"),
+        }?;
+        match self.value_lines {
+            ValueLines::ValueDim => Ok(()),
+            ValueLines::Keys => write!(f, " values=along_keys"),
         }
     }
 }

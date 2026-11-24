@@ -1,4 +1,4 @@
-use crate::attention::{AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S};
+use crate::attention::{AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S, ValueLines};
 use crate::matmul::{
     MatmulDestination, MatmulDimensions, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulWorkItem,
@@ -105,15 +105,15 @@ impl AttentionWorkItem {
     }
 
     /// The elements a kernel that may read its operands at another element than they are stored
-    /// in defines, in the order it names them: the sum, the output's, the one the query and the
-    /// keys are read in, and the one the values are read in. Where a read element differs from
+    /// in defines, in the order it names them: the sum, the output's, the one the keys are read in,
+    /// and the one the values are read in. Where a read element differs from
     /// the one its operands are stored in, they are bound as their `u32` words, a value each,
     /// which the kernel's stages decode at the read element; their arguments say so.
     pub fn served_kernel_elements(&self) -> [ElemType; 4] {
         [
             self.sum,
             self.elements.out,
-            self.elements.query,
+            self.elements.key,
             self.elements.value,
         ]
     }
@@ -231,13 +231,19 @@ impl AttentionWorkItem {
     }
 
     /// One stage of `keys` keys and their values, each over its own dimensions and bound innermost
-    /// along the dimension its lines run along, the keys in `key_order`.
-    pub fn stage(&self, keys: usize, key_order: BindingOrder) -> [StagedOperand; 2] {
+    /// along the dimension its lines run along, the keys in `key_order` and the values along
+    /// `value_lines`.
+    pub fn stage(
+        &self,
+        keys: usize,
+        key_order: BindingOrder,
+        value_lines: ValueLines,
+    ) -> [StagedOperand; 2] {
         let operand = |operand: AttentionOperand, row: Dimension, extent: usize| {
             StagedOperand::new(
                 self.elements.get(operand),
                 Space::new(&[(S, keys), (row, extent)]),
-                operand.innermost(key_order),
+                operand.innermost(key_order, value_lines),
             )
         };
         [

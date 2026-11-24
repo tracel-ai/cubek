@@ -268,11 +268,16 @@ impl StageScore {
             ),
             ScoreHolder::Fragments => {
                 let define!(Score) = microkernel.read.score;
-                StageScore::new_Fragments(Tile::stage_accumulator_in::<EA, Score>(
-                    walk,
-                    comptime!(vec![G, Q, S]),
-                    query,
-                ))
+                StageScore::new_Fragments(match microkernel.query_holder() {
+                    QueryHolder::Stage => {
+                        Tile::stage_accumulator::<EA>(walk, comptime!(vec![G, Q, S]), query)
+                    }
+                    QueryHolder::Registers => Tile::held_factor_accumulator::<EA, Score>(
+                        walk,
+                        comptime!(vec![G, Q, S]),
+                        query,
+                    ),
+                })
             }
         }
     }

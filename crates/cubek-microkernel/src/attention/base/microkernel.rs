@@ -1,4 +1,4 @@
-use crate::attention::{AttentionOperand, AttentionOperands, AttentionWorkItem};
+use crate::attention::{AttentionOperand, AttentionOperands, AttentionWorkItem, ValueLines};
 use cubecl::tile::Space;
 use cubecl::tile::launch::Delivery;
 use cubek_std::layout::BindingOrder;
@@ -15,6 +15,11 @@ pub trait AttentionMicrokernel:
     /// [`Stated`](BindingOrder::Stated), `[d, s]` along the keys, a stride over the same
     /// buffer.
     fn key_order(&self) -> BindingOrder;
+
+    /// The dimension the values' lines run along, which the launch binds them by.
+    fn value_lines(&self) -> ValueLines {
+        ValueLines::ValueDim
+    }
 
     /// `item` as its fragments read it: its operands at the element they reach the instruction
     /// in. As they are stored, unless its instruction reads them in another element.

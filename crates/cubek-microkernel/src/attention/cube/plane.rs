@@ -2,7 +2,7 @@ use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings, QueryHolder,
 };
-use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, ValueLines};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Decline, Delivery, Vectorization};
 use cubecl::tile::{Levels, Space, StageStorage};
@@ -302,6 +302,14 @@ impl CubeAttentionPlane {
     }
 
     /// `item` as its steps read it ([`AttentionMicrokernel::served`]).
+    /// The dimension its planes' values' lines run along.
+    pub fn value_lines(&self) -> ValueLines {
+        match self {
+            Self::Fragment(plane) => plane.value_lines(),
+            Self::Shuffle(_) => ValueLines::ValueDim,
+        }
+    }
+
     pub fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         match self {
             Self::Fragment(plane) => plane.served(item),

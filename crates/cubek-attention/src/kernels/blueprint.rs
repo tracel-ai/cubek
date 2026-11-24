@@ -5,7 +5,7 @@ use crate::kernels::AttentionRoutineProblem;
 use cubecl::tile::launch::{MaskedExtent, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::attention::AttentionMicrokernel;
-use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, S};
+use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, S, ValueLines};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 
@@ -43,10 +43,14 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
         shared_memory: SM,
     ) -> Self {
         let key_order = microkernel.key_order();
+        let value_lines = microkernel.value_lines();
         for operand in AttentionOperand::ALL {
             let alignment = match (operand, key_order) {
-                // The keys bound along `S` are a stride over their buffer.
+                // Either side bound along `S` is a stride over its buffer.
                 (AttentionOperand::Key, BindingOrder::Stated) => ElemAlignment::ONE,
+                (AttentionOperand::Value, _) if value_lines == ValueLines::Keys => {
+                    ElemAlignment::ONE
+                }
                 _ => problem.elem_alignments.get(operand),
             };
             vectorization.require(VectorRequirement::Aligned { operand, alignment });
@@ -57,7 +61,7 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
                     problem.elements.get(operand).size(),
                 ),
             });
-            let innermost = operand.innermost(key_order);
+            let innermost = operand.innermost(key_order, value_lines);
             if innermost == S {
                 // The keys are read up to the attended length, known only at run time.
                 vectorization.require(VectorRequirement::Masked {

@@ -3,7 +3,7 @@ use crate::attention::cube::{
 };
 use crate::attention::{
     AttentionCacheKind, AttentionMicrokernel, AttentionOperand, AttentionOperands,
-    AttentionStagingCount, AttentionWorkItem, G, Q, S,
+    AttentionStagingCount, AttentionWorkItem, G, Q, S, ValueLines,
 };
 use crate::matmul::cube::CubeStagedDelivery;
 use crate::split_keys_merge::SlotShape;
@@ -200,7 +200,7 @@ impl CubeAttentionMicrokernel {
                     false => 0,
                 };
                 let stage: usize = item
-                    .stage(self.seq_kv(), self.key_order())
+                    .stage(self.seq_kv(), self.key_order(), self.value_lines())
                     .iter()
                     .map(|operand| operand.bytes(hw, storage))
                     .sum();
@@ -293,9 +293,11 @@ impl Microkernel for CubeAttentionMicrokernel {
                 .over_pages(item);
                 let ring = cube.ring.resolve(
                     hw,
-                    &requested
-                        .served(item)
-                        .stage(requested.seq_kv(), requested.key_order()),
+                    &requested.served(item).stage(
+                        requested.seq_kv(),
+                        requested.key_order(),
+                        requested.value_lines(),
+                    ),
                     requested.layout().planes() * requested.units,
                 );
                 let delivery = requested.resolve_delivery(hw, &ring);
@@ -336,6 +338,11 @@ impl AttentionMicrokernel for CubeAttentionMicrokernel {
     /// Its planes' microkernel's.
     fn key_order(&self) -> BindingOrder {
         self.plane.key_order()
+    }
+
+    /// Its planes' microkernel's.
+    fn value_lines(&self) -> ValueLines {
+        self.plane.value_lines()
     }
 
     /// Its planes' microkernel's.

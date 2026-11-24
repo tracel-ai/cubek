@@ -19,15 +19,26 @@ impl AttentionOperand {
     /// The four operands, in the order this kind names them.
     pub const ALL: [Self; 4] = [Self::Query, Self::Key, Self::Value, Self::Out];
 
-    /// The dimension this operand is bound innermost along, the keys in `key_order`: the one its
-    /// lines run along.
-    pub fn innermost(self, key_order: BindingOrder) -> Dimension {
+    /// The dimension this operand is bound innermost along, the keys in `key_order` and the values
+    /// along `value_lines`: the one its lines run along.
+    pub fn innermost(self, key_order: BindingOrder, value_lines: ValueLines) -> Dimension {
         match (self, key_order) {
             (Self::Query, _) | (Self::Key, BindingOrder::InBufferOrder) => D,
             (Self::Key, BindingOrder::Stated) => S,
+            (Self::Value, _) if value_lines == ValueLines::Keys => S,
             (Self::Value, _) | (Self::Out, _) => DV,
         }
     }
+}
+
+/// Which dimension the values' lines run along where they are bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ValueLines {
+    /// The value dim, as their buffer lies.
+    ValueDim,
+    /// The keys, a stride over the same buffer: what a fragment of values reads in runs, its
+    /// contraction being the keys.
+    Keys,
 }
 
 /// One value per operand.

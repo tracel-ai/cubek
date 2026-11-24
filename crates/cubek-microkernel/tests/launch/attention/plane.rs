@@ -53,9 +53,11 @@ impl PlaneFragmentAttentionLaunch {
         let plane_width = hw.plane_dim()?;
         let ring = StageRing::SINGLE.resolve(
             hw,
-            &microkernel
-                .served(&item)
-                .stage(microkernel.seq_kv(), microkernel.key_order()),
+            &microkernel.served(&item).stage(
+                microkernel.seq_kv(),
+                microkernel.key_order(),
+                microkernel.value_lines(),
+            ),
             plane_width as usize,
         );
         Ok(Self {

@@ -2,6 +2,7 @@
 
 use core::num::NonZeroUsize;
 use cubek_attention::kernels::{CubeStagedAttentionRoutine, CubeStagedAttentionRoutineSettings};
+use cubek_microkernel::attention::ValueLines;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
 };
@@ -56,25 +57,28 @@ fn a_swizzled_stage_matches_the_host() {
 
 /// Planes holding their query in registers, which read it from global memory once, past the last
 /// query a box cuts: one plane along the queries and several, over one and several key fragments a
-/// step, with the next stage in a second slot and waiting in registers. A device that keeps no
-/// score in fragments, or whose shared memory does not hold the stages, declines.
+/// step, with the next stage in a second slot and waiting in registers, the values staged along
+/// the value dim and along the keys. A device that keeps no score in fragments, or whose shared
+/// memory does not hold the stages, declines.
 #[test]
 fn a_query_held_in_registers_matches_the_host() {
     let forward = Forward::new(CubeStagedAttentionRoutine);
+    let through_registers = StageRing::SINGLE_THROUGH_REGISTERS;
     let held = [
-        (1, 1, 1, StageRing::SINGLE),
-        (2, 2, 1, StageRing::DOUBLE),
-        (6, 4, 1, StageRing::SINGLE_THROUGH_REGISTERS),
-        (6, 4, 1, StageRing::DOUBLE),
-        (2, 4, 2, StageRing::SINGLE),
+        (1, 1, 1, StageRing::SINGLE, ValueLines::ValueDim),
+        (2, 2, 1, StageRing::DOUBLE, ValueLines::ValueDim),
+        (6, 4, 1, through_registers, ValueLines::Keys),
+        (6, 4, 1, StageRing::DOUBLE, ValueLines::Keys),
+        (2, 4, 2, StageRing::SINGLE, ValueLines::Keys),
     ]
-    .map(|(heads, planes, keys, ring)| {
+    .map(|(heads, planes, keys, ring, values)| {
         let lead = CubeStagedAttentionRoutineSettings::DEFAULT;
         CubeStagedAttentionRoutineSettings {
             microkernel: CubeAttentionMicrokernelSettings {
                 plane: CubeAttentionPlaneSettings::Fragment(
                     PlaneFragmentAttentionMicrokernelSettings::fragments(1, keys)
-                        .querying(QueryHolder::Registers),
+                        .querying(QueryHolder::Registers)
+                        .along(values),
                 ),
                 heads: NonZeroUsize::new(heads).unwrap(),
                 planes_along_queries: NonZeroUsize::new(planes).unwrap(),

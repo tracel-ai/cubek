@@ -1,7 +1,7 @@
 use crate::attention::cube::{CubeAttentionMicrokernel, CubePlaneReads};
 use crate::attention::hypercube::HypercubeAttentionMicrokernelSettings;
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionWorkItem, G, Q,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionWorkItem, G, Q, ValueLines,
 };
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
@@ -152,6 +152,11 @@ impl AttentionMicrokernel for HypercubeAttentionMicrokernel {
     /// Its cube's.
     fn key_order(&self) -> BindingOrder {
         self.cube.key_order()
+    }
+
+    /// Its cube's.
+    fn value_lines(&self) -> ValueLines {
+        self.cube.value_lines()
     }
 
     /// Its cube's.

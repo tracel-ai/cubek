@@ -614,6 +614,26 @@ impl PlaneFragmentMicrokernel {
         Self::holding(item, settings, step, pick, kept)
     }
 
+    /// [`keeping`](Self::keeping), its lhs held in registers across the products
+    /// ([`Instruction::for_held_factor_accumulator`]).
+    pub fn keeping_held_lhs(
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        settings: PlaneFragmentMicrokernelSettings,
+        step: ProductStep,
+    ) -> Option<Self> {
+        let pick = Instruction::for_held_factor_accumulator(
+            &hw.properties,
+            &hw.target,
+            step.lhs,
+            step.rhs,
+            step.sum,
+            step.shape,
+        )?;
+        let kept = StepCost { bounced_cell: None };
+        Self::holding(item, settings, step, pick, kept)
+    }
+
     /// A plane holding `step`'s tile on the tile's `pick` for it, spending `cost`.
     fn holding(
         item: &MatmulWorkItem,

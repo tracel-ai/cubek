@@ -3,7 +3,7 @@ use crate::attention::plane::{
 };
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionRead, AttentionWorkItem, B,
-    D, DV, G, KV, Q, S,
+    D, DV, G, KV, Q, S, ValueLines,
 };
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
@@ -73,21 +73,13 @@ impl PlaneFragmentAttentionMicrokernel {
         self.settings.query
     }
 
-    /// Whether a plane keeping its score in `holder` keeps `item`'s query, read in `read`, where
-    /// `settings` ask: registers hold only the `A` of a score in fragments, loaded from the values
-    /// as they are stored, so not from a wide query bound as its words.
-    fn holds_query(
-        settings: &PlaneFragmentAttentionMicrokernelSettings,
-        holder: ScoreHolder,
-        item: &AttentionWorkItem,
-        read: AttentionRead,
-    ) -> bool {
+    /// Whether a plane keeps `item`'s query, read in `read`, in `holder`: registers load it from its
+    /// values as they are stored, so not from a wide query bound as its words.
+    fn holds_query(holder: QueryHolder, item: &AttentionWorkItem, read: AttentionRead) -> bool {
         let stored = item.elements.query;
-        match settings.query {
+        match holder {
             QueryHolder::Stage => true,
-            QueryHolder::Registers => {
-                holder == ScoreHolder::Fragments && (stored == read.score || stored.size() < 4)
-            }
+            QueryHolder::Registers => stored == read.score || stored.size() < 4,
         }
     }
 
@@ -174,6 +166,9 @@ impl PlaneFragmentAttentionMicrokernel {
         // element, as an `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load
         // the values it decodes, and the kernel opens its sums on them as decoded. Both sides
         // decoded are decoded to one element alike.
+        if !Self::holds_query(settings.query, item, read) {
+            return Vec::new();
+        }
         let [keys, values] = item.stage_sources(read);
         if keys == FragmentSource::Decoded
             && values == FragmentSource::Decoded
@@ -185,7 +180,6 @@ impl PlaneFragmentAttentionMicrokernel {
             FragmentSource::Decoded => read.value,
             _ => read.score,
         };
-        let stored = *item;
         let item = &item.read_as(read);
         let (score_item, value_item) = (Self::score_item(item), Self::value_item(item));
         let grid = PlaneFragmentMicrokernelSettings {
@@ -205,9 +199,13 @@ impl PlaneFragmentAttentionMicrokernel {
         };
         holders
             .iter()
-            .filter(|&&holder| Self::holds_query(&settings, holder, &stored, read))
             .filter_map(|&holder| {
-                let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
+                let score = match settings.query {
+                    QueryHolder::Stage => holder.sum_plane(hw, &score_item, grid, score_tile),
+                    QueryHolder::Registers => {
+                        holder.held_lhs_sum_plane(hw, &score_item, grid, score_tile)
+                    }
+                }?;
                 let value = holder.rescaled_reader_plane(
                     hw,
                     &score,
@@ -346,6 +344,11 @@ impl AttentionMicrokernel for PlaneFragmentAttentionMicrokernel {
     /// The score's: a fragment loads a block of keys col-major where it lies.
     fn key_order(&self) -> BindingOrder {
         self.score.orders().rhs
+    }
+
+    /// Its settings'.
+    fn value_lines(&self) -> ValueLines {
+        self.settings.value_lines
     }
 
     /// Its operands in the element its instruction reads them in, a query held in registers as it

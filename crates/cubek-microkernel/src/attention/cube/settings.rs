@@ -1,3 +1,4 @@
+use crate::attention::ValueLines;
 use crate::attention::cube::CubeAttentionPlaneSettings;
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
@@ -349,7 +350,8 @@ impl CubeAttentionMicrokernelSettings {
 
     /// A cube sharing each stage with every head of the group, four planes along each head's
     /// queries, every plane holding its query in registers, so the cube's shared memory holds
-    /// stages of keys and values alone: the next stage's loads wait in the registers of the cube's
+    /// stages of keys and values alone, the values along the keys, so a fragment loads its runs of
+    /// them whole: the next stage's loads wait in the registers of the cube's
     /// many units, a line or a few each, while the planes contract this one, or in a second slot,
     /// which is faster over e4m3 caches. A device whose manual `mma` is `16 × 16` holds a
     /// query of a head dim of 256 in 64 registers a unit beside the 128 of its output, so it lists
@@ -370,6 +372,7 @@ impl CubeAttentionMicrokernelSettings {
                 plane: CubeAttentionPlaneSettings::Fragment(
                     PlaneFragmentAttentionMicrokernelSettings {
                         seq_kv: NonZeroUsize::MIN,
+                        value_lines: ValueLines::Keys,
                         ..plane.querying(QueryHolder::Registers)
                     },
                 ),
