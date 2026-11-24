@@ -1,7 +1,6 @@
 //! How a cube's planes meet: each stages its partial in shared memory, and the first combines them.
 
-use crate::reduce::ReduceAccumulator;
-use crate::reduce::cube::CubeStagedReduceMicrokernel;
+use crate::reduce::{ReduceAccumulator, ReduceWorkItem};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The partials of the cube's planes, each already met across its own lanes, met in shared
@@ -16,11 +15,12 @@ pub(crate) fn across_planes<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>
     column: usize,
     stages: bool,
     #[comptime] columns: usize,
-    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] planes: usize,
+    #[comptime] item: ReduceWorkItem,
 ) -> C {
-    let operation = microkernel.item().operation;
+    let operation = item.operation;
     // A partial is its carrier's lines, a slot each, the indices beside where it keeps any.
-    let lines = microkernel.planes() * columns * operation.written_per_row();
+    let lines = planes * columns * operation.written_per_row();
     let index_lines = comptime!(match operation.carrier().carries_indices() {
         true => lines,
         false => 1,
@@ -33,13 +33,14 @@ pub(crate) fn across_planes<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>
             &mut indices,
             PLANE_POS as usize * columns + column,
             acc,
-            microkernel,
+            item,
         );
     }
 
     sync_cube();
 
-    let total = merged_by_first_plane::<Acc, N, C>(&values, &indices, column, columns, microkernel);
+    let total =
+        merged_by_first_plane::<Acc, N, C>(&values, &indices, column, columns, planes, item);
 
     sync_cube();
     total
@@ -52,9 +53,9 @@ fn stage_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     indices: &mut Shared<[Vector<u32, N>]>,
     partial: usize,
     acc: C,
-    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] item: ReduceWorkItem,
 ) {
-    let operation = microkernel.item().operation;
+    let operation = item.operation;
     let slots = operation.written_per_row();
     let with_indices = operation.carrier().carries_indices();
     #[unroll]
@@ -74,11 +75,12 @@ fn merged_by_first_plane<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     indices: &Shared<[Vector<u32, N>]>,
     column: usize,
     #[comptime] columns: usize,
-    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] planes: usize,
+    #[comptime] item: ReduceWorkItem,
 ) -> C {
-    let mut total = C::identity(microkernel.item().operation.monoid());
+    let mut total = C::identity(item.operation.monoid());
     if PLANE_POS == 0 {
-        total = merged_partials::<Acc, N, C>(values, indices, column, columns, microkernel);
+        total = merged_partials::<Acc, N, C>(values, indices, column, columns, planes, item);
     }
     total
 }
@@ -92,16 +94,16 @@ fn merged_partials<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     indices: &Shared<[Vector<u32, N>]>,
     column: usize,
     #[comptime] columns: usize,
-    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] planes: usize,
+    #[comptime] item: ReduceWorkItem,
 ) -> C {
-    let operation = microkernel.item().operation;
+    let operation = item.operation;
     let monoid = operation.monoid();
     let one_slot = operation.written_per_row() == 1;
     let mut total = C::identity(monoid);
     #[unroll(one_slot)]
-    for plane in 0..microkernel.planes() {
-        let partial =
-            staged_partial::<Acc, N, C>(values, indices, plane * columns + column, microkernel);
+    for plane in 0..planes {
+        let partial = staged_partial::<Acc, N, C>(values, indices, plane * columns + column, item);
         total = C::combine(total, partial, monoid);
     }
     total
@@ -113,9 +115,9 @@ fn staged_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
     values: &Shared<[Vector<Acc, N>]>,
     indices: &Shared<[Vector<u32, N>]>,
     partial: usize,
-    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] item: ReduceWorkItem,
 ) -> C {
-    let operation = microkernel.item().operation;
+    let operation = item.operation;
     let slots = operation.written_per_row();
     let with_indices = operation.carrier().carries_indices();
     let mut staged = C::identity(operation.monoid());

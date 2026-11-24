@@ -8,10 +8,10 @@ use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Partitioning, TileTensorLaunch};
-use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::plane::{
     PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
 };
+use cubek_microkernel::reduce::{ReduceCarrierFamily, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -111,7 +111,7 @@ impl Routine for PlaneShuffleReduceRoutine {
 impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine {
     const NAME: &'static str = "plane-shuffle-reduce";
 
-    fn dispatch<I: TileOperand>(
+    fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -125,11 +125,12 @@ impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine
         unsafe {
             match binding.indices.zip(problem.indices) {
                 Some((indices, index)) => {
-                    plane_shuffle_reduce_with_indices_kernel::launch_unchecked::<I>(
+                    plane_shuffle_reduce_with_indices_kernel::launch_unchecked::<F, I>(
                         client,
                         grid.launch.cube_count,
                         grid.launch.cube_dim,
                         blueprint.width,
+                        problem.operation.written_per_row(),
                         binding.input,
                         binding.out,
                         indices.arg(),
@@ -143,11 +144,12 @@ impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine
                         ],
                     )
                 }
-                None => plane_shuffle_reduce_kernel::launch_unchecked::<I>(
+                None => plane_shuffle_reduce_kernel::launch_unchecked::<F, I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
+                    problem.operation.written_per_row(),
                     binding.input,
                     binding.out,
                     binding.launcher.partitioning_arg(),

@@ -1,6 +1,7 @@
 use super::microkernel::plane_shuffle_reduce_microkernel;
 use crate::reduce::{
-    REDUCED, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across, units_across,
+    REDUCED, ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across,
+    units_across,
 };
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Dimension, Levels, Region, Tile};
@@ -97,14 +98,21 @@ impl PlaneShuffleReduceMicrokernel {
     ///
     /// Where `indices` is there and its item does not write them beside the values, or the other
     /// way around; or where it writes indices its carrier does not keep.
-    pub fn reduce<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    pub fn reduce<
+        In: Numeric,
+        Acc: Numeric,
+        Out: Numeric,
+        Idx: Numeric,
+        N: Size,
+        C: ReduceAccumulator<Acc, N> + Clone,
+    >(
         &self,
         plane: &Region,
         input: &Tile,
         out: &Tile,
         indices: &ComptimeOption<Tile>,
     ) {
-        plane_shuffle_reduce_microkernel::<In, Acc, Out, Idx, N>(
+        plane_shuffle_reduce_microkernel::<In, Acc, Out, Idx, N, C>(
             plane,
             input,
             out,

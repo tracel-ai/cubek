@@ -4,6 +4,7 @@ use cubecl::tile::launch::TileOperand;
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Partitioning, Region, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::reduce::ReduceCarrierFamily;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 
 /// The extents a hypercube launch is handed at run time, which its kernel does not compile.
@@ -69,6 +70,8 @@ pub(crate) fn hypercube_last_arrival_reduce_kernel<
     Acc: Numeric,
     Out: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -90,19 +93,21 @@ pub(crate) fn hypercube_last_arrival_reduce_kernel<
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &rows,
-            &mut rows_out,
-            &ComptimeOption::new_None(),
-            &mut slots,
-            &ComptimeOption::new_None(),
-            arrivals,
-            place.counter,
-            place.part,
-            extents.parts as usize,
-            place.first_line,
-            extents.values as usize,
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &rows,
+                &mut rows_out,
+                &ComptimeOption::new_None(),
+                &mut slots,
+                &ComptimeOption::new_None(),
+                arrivals,
+                place.counter,
+                place.part,
+                extents.parts as usize,
+                place.first_line,
+                extents.values as usize,
+            );
     }
 }
 
@@ -124,6 +129,8 @@ pub(crate) fn hypercube_last_arrival_reduce_indexed_kernel<
     Acc: Numeric,
     Out: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -147,19 +154,21 @@ pub(crate) fn hypercube_last_arrival_reduce_indexed_kernel<
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &rows,
-            &mut rows_out,
-            &ComptimeOption::new_None(),
-            &mut slots,
-            &ComptimeOption::new_Some(pi.at(&cube)),
-            arrivals,
-            place.counter,
-            place.part,
-            extents.parts as usize,
-            place.first_line,
-            extents.values as usize,
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &rows,
+                &mut rows_out,
+                &ComptimeOption::new_None(),
+                &mut slots,
+                &ComptimeOption::new_Some(pi.at(&cube)),
+                arrivals,
+                place.counter,
+                place.part,
+                extents.parts as usize,
+                place.first_line,
+                extents.values as usize,
+            );
     }
 }
 
@@ -182,6 +191,8 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
     Out: Numeric,
     Idx: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -207,18 +218,20 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        microkernel.runtime().reduce::<In, Acc, Out, Idx, N>(
-            &rows,
-            &mut rows_out,
-            &ComptimeOption::new_Some(i.at(&cube)),
-            &mut slots,
-            &ComptimeOption::new_Some(pi.at(&cube)),
-            arrivals,
-            place.counter,
-            place.part,
-            extents.parts as usize,
-            place.first_line,
-            extents.values as usize,
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Idx, N, F::Carrier<Acc, N, K>>(
+                &rows,
+                &mut rows_out,
+                &ComptimeOption::new_Some(i.at(&cube)),
+                &mut slots,
+                &ComptimeOption::new_Some(pi.at(&cube)),
+                arrivals,
+                place.counter,
+                place.part,
+                extents.parts as usize,
+                place.first_line,
+                extents.values as usize,
+            );
     }
 }

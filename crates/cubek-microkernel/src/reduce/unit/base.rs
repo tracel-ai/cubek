@@ -1,5 +1,5 @@
 use super::microkernel::unit_direct_reduce_microkernel;
-use crate::reduce::{ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
+use crate::reduce::{ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -49,13 +49,20 @@ impl UnitDirectReduceMicrokernel {
     ///
     /// Where `indices` is there and its item does not write them beside the values, or the other
     /// way around; or where it writes indices its carrier does not keep.
-    pub fn reduce<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    pub fn reduce<
+        In: Numeric,
+        Acc: Numeric,
+        Out: Numeric,
+        Idx: Numeric,
+        N: Size,
+        C: ReduceAccumulator<Acc, N>,
+    >(
         &self,
         input: &Tile,
         out: &mut Tile,
         indices: &ComptimeOption<Tile>,
     ) {
-        unit_direct_reduce_microkernel::<In, Acc, Out, Idx, N>(
+        unit_direct_reduce_microkernel::<In, Acc, Out, Idx, N, C>(
             input,
             out,
             indices,

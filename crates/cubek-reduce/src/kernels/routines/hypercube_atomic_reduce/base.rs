@@ -15,7 +15,7 @@ use cubecl::tile::{Geometry, Partitioning, TileTensorLaunch};
 use cubek_microkernel::reduce::cube::{
     CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
 };
-use cubek_microkernel::reduce::{ReduceOperand, ReduceOperation};
+use cubek_microkernel::reduce::{ReduceCarrierFamily, ReduceOperand, ReduceOperation};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
@@ -132,7 +132,7 @@ impl ReduceLauncher<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutin
 
     /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
     /// the output as the atomic argument the kernel adds into, which a plain output tensor is not.
-    fn dispatch<I: TileOperand>(
+    fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         _problem: &ReduceRoutineProblem,
         _client: &Client,
         _binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,

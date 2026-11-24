@@ -28,11 +28,13 @@ pub(crate) fn hypercube_atomic_reduce_kernel<
     let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     for cube in &partitioning {
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &cube,
-            &x,
-            &o,
-            &ComptimeOption::new_None(),
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, Vector<Acc, N>>(
+                &cube,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
     }
 }

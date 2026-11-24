@@ -1,8 +1,15 @@
 //! The values themselves, pointwise on the line: a sum, a product, a max, a mean.
 
-use crate::reduce::ReduceAccumulator;
+use crate::reduce::{ReduceAccumulator, ReduceCarrierFamily};
 use cubecl::tile::Monoid;
 use cubecl::{self as cubecl, cube, prelude::*};
+
+/// [`ReduceCarrier::Values`](crate::reduce::ReduceCarrier::Values): its carrier is [`Vector`].
+pub struct ValuesReduceCarrierFamily;
+
+impl ReduceCarrierFamily for ValuesReduceCarrierFamily {
+    type Carrier<Acc: Numeric, N: Size, K: Size> = Vector<Acc, N>;
+}
 
 #[cube]
 impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {

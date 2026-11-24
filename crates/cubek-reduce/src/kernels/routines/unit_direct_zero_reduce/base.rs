@@ -7,6 +7,7 @@ use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound, Vectorization};
 use cubecl::tile::{Geometry, Launcher, Partitioning, TileTensorLaunch};
+use cubek_microkernel::reduce::ReduceCarrierFamily;
 use cubek_microkernel::zero::ZeroOperand;
 use cubek_microkernel::zero::unit::{UnitDirectZeroMicrokernel, UnitDirectZeroMicrokernelSettings};
 use cubek_std::Hardware;
@@ -94,7 +95,7 @@ impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
     const NAME: &'static str = "unit-direct-zero-reduce";
 
     /// The output zeroed; the input is never read.
-    fn dispatch<I: TileOperand>(
+    fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,

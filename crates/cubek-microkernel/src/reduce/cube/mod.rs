@@ -1,9 +1,14 @@
 mod base;
+mod columns;
+mod line;
 mod microkernel;
 mod partial;
 mod planes;
+mod strided;
 
 pub use base::*;
-pub(crate) use microkernel::cube_staged_reduce_part;
+pub use columns::*;
+pub use line::*;
 pub use partial::*;
 pub(crate) use planes::across_planes;
+pub use strided::*;

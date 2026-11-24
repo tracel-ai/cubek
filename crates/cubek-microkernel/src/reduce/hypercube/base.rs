@@ -1,6 +1,6 @@
 use super::microkernel::hypercube_last_arrival_reduce_microkernel;
 use crate::reduce::cube::{CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings};
-use crate::reduce::{ReduceOperand, ReduceWorkItem};
+use crate::reduce::{ReduceAccumulator, ReduceOperand, ReduceWorkItem};
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -56,7 +56,14 @@ impl HypercubeLastArrivalReduceMicrokernel {
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"
     )]
-    pub fn reduce<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    pub fn reduce<
+        In: Numeric,
+        Acc: Numeric,
+        Out: Numeric,
+        Idx: Numeric,
+        N: Size,
+        C: ReduceAccumulator<Acc, N>,
+    >(
         &self,
         input: &Tile,
         out: &mut Tile,
@@ -70,7 +77,7 @@ impl HypercubeLastArrivalReduceMicrokernel {
         first_line: usize,
         values: usize,
     ) {
-        hypercube_last_arrival_reduce_microkernel::<In, Acc, Out, Idx, N>(
+        hypercube_last_arrival_reduce_microkernel::<In, Acc, Out, Idx, N, C>(
             input,
             out,
             indices,

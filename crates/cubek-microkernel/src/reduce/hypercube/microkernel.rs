@@ -1,8 +1,8 @@
 use super::base::HypercubeLastArrivalReduceMicrokernel;
 use crate::reduce::cube::{CubePartialReduceMicrokernel, cube_partial_reduce_microkernel};
 use crate::reduce::read::{UnitPartialsReduceMicrokernel, unit_partials_reduce_microkernel};
-use crate::reduce::{REDUCED, ReduceAccumulator, ReduceCarrier};
-use cubecl::tile::{Indexed, Tile, TopK, TopValues};
+use crate::reduce::{REDUCED, ReduceAccumulator};
+use cubecl::tile::Tile;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One cube's part of a row its `parts` cubes split: the cube reduces `input`, its window of the
@@ -21,96 +21,6 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// the last cube reads the others'.
 #[cube]
 pub(crate) fn hypercube_last_arrival_reduce_microkernel<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    Idx: Numeric,
-    N: Size,
->(
-    input: &Tile,
-    out: &mut Tile,
-    indices: &ComptimeOption<Tile>,
-    partials: &mut Tile,
-    partial_indices: &ComptimeOption<Tile>,
-    arrivals: &[Atomic<u32>],
-    counter: usize,
-    part: usize,
-    parts: usize,
-    first_line: usize,
-    values: usize,
-    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
-) {
-    match microkernel.part().item().operation.carrier() {
-        ReduceCarrier::Values => {
-            hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, Vector<Acc, N>>(
-                input,
-                out,
-                indices,
-                partials,
-                partial_indices,
-                arrivals,
-                counter,
-                part,
-                parts,
-                first_line,
-                values,
-                microkernel,
-            )
-        }
-        ReduceCarrier::Indexed => {
-            hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, Indexed<Acc, N>>(
-                input,
-                out,
-                indices,
-                partials,
-                partial_indices,
-                arrivals,
-                counter,
-                part,
-                parts,
-                first_line,
-                values,
-                microkernel,
-            )
-        }
-        ReduceCarrier::TopK { k } => hypercube_last_arrival_reduce_top_k::<In, Acc, Out, Idx, N>(
-            input,
-            out,
-            indices,
-            partials,
-            partial_indices,
-            arrivals,
-            counter,
-            part,
-            parts,
-            first_line,
-            values,
-            microkernel,
-            k,
-        ),
-        ReduceCarrier::TopValues { k } => {
-            hypercube_last_arrival_reduce_top_values::<In, Acc, Out, Idx, N>(
-                input,
-                out,
-                indices,
-                partials,
-                partial_indices,
-                arrivals,
-                counter,
-                part,
-                parts,
-                first_line,
-                values,
-                microkernel,
-                k,
-            )
-        }
-    }
-}
-
-/// [`hypercube_last_arrival_reduce_microkernel`] into the carrier `C`.
-#[cube]
-fn hypercube_last_arrival_reduce<
     In: Numeric,
     Acc: Numeric,
     Out: Numeric,
@@ -192,86 +102,4 @@ fn reset_count_where(arrivals: &[Atomic<u32>], counter: usize, merges: bool) {
     if merges {
         arrivals[counter].store(0u32);
     }
-}
-
-/// [`hypercube_last_arrival_reduce`] into a top-k of `k` slots, `K` bound in the function that uses
-/// it.
-#[cube]
-fn hypercube_last_arrival_reduce_top_k<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    Idx: Numeric,
-    N: Size,
->(
-    input: &Tile,
-    out: &mut Tile,
-    indices: &ComptimeOption<Tile>,
-    partials: &mut Tile,
-    partial_indices: &ComptimeOption<Tile>,
-    arrivals: &[Atomic<u32>],
-    counter: usize,
-    part: usize,
-    parts: usize,
-    first_line: usize,
-    values: usize,
-    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
-    #[comptime] k: usize,
-) {
-    let size!(K) = k;
-    hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, TopK<Acc, N, K>>(
-        input,
-        out,
-        indices,
-        partials,
-        partial_indices,
-        arrivals,
-        counter,
-        part,
-        parts,
-        first_line,
-        values,
-        microkernel,
-    )
-}
-
-/// [`hypercube_last_arrival_reduce`] into a top-k of `k` values without their indices, `K` bound in
-/// the function that uses it.
-#[cube]
-fn hypercube_last_arrival_reduce_top_values<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    Idx: Numeric,
-    N: Size,
->(
-    input: &Tile,
-    out: &mut Tile,
-    indices: &ComptimeOption<Tile>,
-    partials: &mut Tile,
-    partial_indices: &ComptimeOption<Tile>,
-    arrivals: &[Atomic<u32>],
-    counter: usize,
-    part: usize,
-    parts: usize,
-    first_line: usize,
-    values: usize,
-    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
-    #[comptime] k: usize,
-) {
-    let size!(K) = k;
-    hypercube_last_arrival_reduce::<In, Acc, Out, Idx, N, TopValues<Acc, N, K>>(
-        input,
-        out,
-        indices,
-        partials,
-        partial_indices,
-        arrivals,
-        counter,
-        part,
-        parts,
-        first_line,
-        values,
-        microkernel,
-    )
 }

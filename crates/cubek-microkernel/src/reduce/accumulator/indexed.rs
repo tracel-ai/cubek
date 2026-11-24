@@ -1,8 +1,15 @@
 //! A value with the index it was read at: the argmax and the argmin.
 
-use crate::reduce::{OneIndexed, ReduceAccumulator, lane_indices};
+use crate::reduce::{OneIndexed, ReduceAccumulator, ReduceCarrierFamily, lane_indices};
 use cubecl::tile::{Carrier, Indexed, Monoid};
 use cubecl::{self as cubecl, cube, prelude::*};
+
+/// [`ReduceCarrier::Indexed`](crate::reduce::ReduceCarrier::Indexed): its carrier is [`Indexed`].
+pub struct IndexedReduceCarrierFamily;
+
+impl ReduceCarrierFamily for IndexedReduceCarrierFamily {
+    type Carrier<Acc: Numeric, N: Size, K: Size> = Indexed<Acc, N>;
+}
 
 #[cube]
 impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {

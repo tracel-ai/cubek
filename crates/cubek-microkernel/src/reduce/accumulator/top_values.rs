@@ -1,8 +1,15 @@
 //! The `K` best values without their indices: a top-k that writes only its values.
 
-use crate::reduce::ReduceAccumulator;
+use crate::reduce::{ReduceAccumulator, ReduceCarrierFamily};
 use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
+
+/// [`ReduceCarrier::TopValues`](crate::reduce::ReduceCarrier::TopValues): its carrier is [`TopValues`].
+pub struct TopValuesReduceCarrierFamily;
+
+impl ReduceCarrierFamily for TopValuesReduceCarrierFamily {
+    type Carrier<Acc: Numeric, N: Size, K: Size> = TopValues<Acc, N, K>;
+}
 
 #[cube]
 impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopValues<Acc, N, K> {

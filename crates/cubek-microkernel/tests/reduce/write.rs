@@ -59,3 +59,23 @@ mod partial_across_one_value_four_wide {
         max: ReduceOperation::Max,
     ]);
 }
+
+/// Rows of one value, four rows a line: the line written as wide as it is.
+mod lines_across_one_value_four_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(TestedMicrokernel::UnitLinesWrite, Across, 1, 4, Plain, [
+        sum: ReduceOperation::Sum,
+        mean: ReduceOperation::Mean,
+        max: ReduceOperation::Max,
+    ]);
+}
+
+/// Rows of one value, a value a line: the line written as one cell.
+mod lines_along_one_value_one_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(TestedMicrokernel::UnitLinesWrite, Along, 1, 1, Plain, [
+        sum: ReduceOperation::Sum,
+    ]);
+}

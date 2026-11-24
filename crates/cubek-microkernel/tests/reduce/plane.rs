@@ -47,3 +47,29 @@ mod edges_across {
     use super::*;
     edge_rows!(MICROKERNEL, Across, 300, 4);
 }
+
+/// The plane's read one line of rows wide, 300 values long along the reduced dimension, four values
+/// a line.
+mod line_along_300_long_four_wide {
+    use super::*;
+    every_operation!(TestedMicrokernel::PlaneLine, Along, 300, 4);
+}
+
+/// The plane's read one line of rows wide, 37 values long across the reduced dimension, each lane
+/// its own row.
+mod line_across_37_long_four_wide {
+    use super::*;
+    every_operation!(TestedMicrokernel::PlaneLine, Across, 37, 4);
+}
+
+/// The plane's read two lines of rows wide, 300 values long across the reduced dimension, each lane
+/// its own row.
+mod columns_across_300_long_four_wide {
+    use super::*;
+    every_operation!(
+        TestedMicrokernel::PlaneColumns { columns: 2 },
+        Across,
+        300,
+        4
+    );
+}

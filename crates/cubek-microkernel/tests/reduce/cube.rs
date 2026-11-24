@@ -70,3 +70,55 @@ mod partial_across_300_long_four_wide {
         min: ReduceOperation::Min,
     ]);
 }
+
+/// The cube's read one line of rows wide, 300 values long along the reduced dimension, four values a
+/// line.
+mod line_along_300_long_four_wide {
+    use super::*;
+    every_operation!(TestedMicrokernel::CubeLine { planes: 4 }, Along, 300, 4);
+}
+
+/// The cube's read one line of rows wide, 37 values long across the reduced dimension, each lane its
+/// own row.
+mod line_across_37_long_four_wide {
+    use super::*;
+    every_operation!(TestedMicrokernel::CubeLine { planes: 4 }, Across, 37, 4);
+}
+
+/// The cube's read two lines of rows wide, 300 values long across the reduced dimension, each lane
+/// its own row.
+mod columns_across_300_long_four_wide {
+    use super::*;
+    every_operation!(
+        TestedMicrokernel::CubeColumns {
+            planes: 4,
+            columns: 2
+        },
+        Across,
+        300,
+        4
+    );
+}
+
+/// The cube's read into a carrier, rows 300 values long along the reduced dimension, a value a line.
+/// A mean is left out, since only the write divides.
+mod strided_along_300_long_one_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(TestedMicrokernel::CubeStrided { planes: 4 }, Along, 300, 1, Plain, [
+        sum: ReduceOperation::Sum,
+        prod: ReduceOperation::Prod,
+        max: ReduceOperation::Max,
+        min: ReduceOperation::Min,
+    ]);
+}
+
+/// The same across the reduced dimension, each lane its own row.
+mod strided_across_300_long_four_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(TestedMicrokernel::CubeStrided { planes: 4 }, Across, 300, 4, Plain, [
+        sum: ReduceOperation::Sum,
+        max: ReduceOperation::Max,
+    ]);
+}

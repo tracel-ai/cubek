@@ -7,10 +7,10 @@ use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::{Partitioning, TileTensorLaunch};
-use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::unit::{
     UnitDirectReduceMicrokernel, UnitDirectReduceMicrokernelSettings,
 };
+use cubek_microkernel::reduce::{ReduceCarrierFamily, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
@@ -95,7 +95,7 @@ impl Routine for UnitDirectReduceRoutine {
 impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
     const NAME: &'static str = "unit-direct-reduce";
 
-    fn dispatch<I: TileOperand>(
+    fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -109,11 +109,12 @@ impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
         unsafe {
             match binding.indices.zip(problem.indices) {
                 Some((indices, index)) => {
-                    unit_direct_reduce_with_indices_kernel::launch_unchecked::<I>(
+                    unit_direct_reduce_with_indices_kernel::launch_unchecked::<F, I>(
                         client,
                         grid.launch.cube_count,
                         grid.launch.cube_dim,
                         blueprint.width,
+                        problem.operation.written_per_row(),
                         binding.input,
                         binding.out,
                         indices.arg(),
@@ -127,11 +128,12 @@ impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
                         ],
                     )
                 }
-                None => unit_direct_reduce_kernel::launch_unchecked::<I>(
+                None => unit_direct_reduce_kernel::launch_unchecked::<F, I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
+                    problem.operation.written_per_row(),
                     binding.input,
                     binding.out,
                     binding.launcher.partitioning_arg(),

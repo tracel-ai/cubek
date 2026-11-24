@@ -14,9 +14,9 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::{Partitioning, TileTensorLaunch};
-use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
+use cubek_microkernel::reduce::{ReduceCarrierFamily, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
@@ -203,7 +203,7 @@ impl Routine for HypercubeLastArrivalReduceRoutine {
 impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArrivalReduceRoutine {
     const NAME: &'static str = "hypercube-last-arrival-reduce";
 
-    fn dispatch<I: TileOperand>(
+    fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -259,11 +259,12 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
         unsafe {
             match written {
                 Some((partial_indices, Some((indices, index)))) => {
-                    hypercube_last_arrival_reduce_with_indices_kernel::launch_unchecked::<I>(
+                    hypercube_last_arrival_reduce_with_indices_kernel::launch_unchecked::<F, I>(
                         client,
                         grid.launch.cube_count,
                         grid.launch.cube_dim,
                         blueprint.width,
+                        problem.operation.written_per_row(),
                         binding.input,
                         binding.out,
                         indices.arg(),
@@ -282,11 +283,12 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                     )
                 }
                 Some((partial_indices, None)) => {
-                    hypercube_last_arrival_reduce_indexed_kernel::launch_unchecked::<I>(
+                    hypercube_last_arrival_reduce_indexed_kernel::launch_unchecked::<F, I>(
                         client,
                         grid.launch.cube_count,
                         grid.launch.cube_dim,
                         blueprint.width,
+                        problem.operation.written_per_row(),
                         binding.input,
                         binding.out,
                         partials.arg(),
@@ -298,11 +300,12 @@ impl ReduceLauncher<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArri
                         [elements.input, elements.accumulator, elements.out],
                     )
                 }
-                None => hypercube_last_arrival_reduce_kernel::launch_unchecked::<I>(
+                None => hypercube_last_arrival_reduce_kernel::launch_unchecked::<F, I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
+                    problem.operation.written_per_row(),
                     binding.input,
                     binding.out,
                     partials.arg(),

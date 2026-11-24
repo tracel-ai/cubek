@@ -15,20 +15,27 @@ use cubecl::tile::{
 };
 use cubecl::{self as cubecl, cube};
 use cubek_microkernel::reduce::cube::{
-    CubePartialReduceMicrokernel, CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
+    CubeColumnsReduceMicrokernel, CubeLineReduceMicrokernel, CubePartialReduceMicrokernel,
+    CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings, CubeStridedReduceMicrokernel,
 };
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 use cubek_microkernel::reduce::plane::{
-    PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
+    PlaneColumnsReduceMicrokernel, PlaneLineReduceMicrokernel, PlaneShuffleReduceMicrokernel,
+    PlaneShuffleReduceMicrokernelSettings,
 };
 use cubek_microkernel::reduce::read::{
     UnitPartialsReduceMicrokernel, UnitStridedReduceMicrokernel, UnitWalkReduceMicrokernel,
 };
 use cubek_microkernel::reduce::unit::UnitDirectReduceMicrokernel;
 use cubek_microkernel::reduce::write::{
-    UnitCarrierWriteMicrokernel, UnitPartialStoreMicrokernel, UnitWalkWriteMicrokernel,
+    UnitCarrierWriteMicrokernel, UnitLinesWriteMicrokernel, UnitPartialStoreMicrokernel,
+    UnitWalkWriteMicrokernel,
 };
-use cubek_microkernel::reduce::{BATCH, REDUCED, ReduceWorkItem, SLOTS, TOP_K_LANE_SLOTS};
+use cubek_microkernel::reduce::{
+    BATCH, IndexedReduceCarrierFamily, REDUCED, ReduceCarrier, ReduceCarrierFamily, ReduceWorkItem,
+    SLOTS, TOP_K_LANE_SLOTS, TopKReduceCarrierFamily, TopValuesReduceCarrierFamily,
+    ValuesReduceCarrierFamily,
+};
 
 /// The lane slots the microkernels' settings list.
 const LANE_SLOTS: usize = TOP_K_LANE_SLOTS[0];
@@ -75,14 +82,28 @@ pub enum TestedMicrokernel {
     UnitDirect,
     /// The plane microkernel: the whole plane.
     PlaneShuffle,
+    /// The plane's read one line of rows wide, alone.
+    PlaneLine,
+    /// The plane's read `columns` lines of rows wide, alone.
+    PlaneColumns { columns: usize },
     /// The cube microkernel: a cube of `planes` planes.
     CubeStaged { planes: usize },
+    /// The cube's read one line of rows wide, alone: a cube of `planes` planes.
+    CubeLine { planes: usize },
+    /// The cube's read `columns` lines of rows wide, alone: a cube of `planes` planes.
+    CubeColumns { planes: usize, columns: usize },
+    /// The cube's read into a carrier, alone: a cube of `planes` planes reduces its row and its
+    /// first unit's carrier's line is written as it is.
+    CubeStrided { planes: usize },
     /// The hypercube microkernel: `parts` cubes of `planes` planes, each reducing its part of the
     /// row, the last to finish merging the parts.
     HypercubeLastArrival { planes: usize, parts: usize },
     /// The write every reduce microkernel ends on, alone: each unit takes its one line of the
     /// input as its carrier of values and writes it.
     UnitCarrierWrite,
+    /// The write of a carrier whose lanes are met, alone: each unit takes its one line of the input
+    /// as its carrier of values and writes it as wide as it is.
+    UnitLinesWrite,
     /// The strided read the plane and cube microkernels share, alone: each unit reads every
     /// `stride`-th line of its own row from the first, and its carrier is written as it is.
     UnitStridedReduce { stride: usize },
@@ -156,10 +177,13 @@ impl ReduceLaunch {
         let plane_width = match microkernel {
             TestedMicrokernel::UnitDirect
             | TestedMicrokernel::UnitCarrierWrite
+            | TestedMicrokernel::UnitLinesWrite
             | TestedMicrokernel::UnitStridedReduce { .. }
             | TestedMicrokernel::UnitPartialStore
             | TestedMicrokernel::UnitPartialsReduce => hw.plane_dim().unwrap_or(1),
             TestedMicrokernel::PlaneShuffle
+            | TestedMicrokernel::PlaneLine
+            | TestedMicrokernel::PlaneColumns { .. }
             | TestedMicrokernel::UnitWalkReduce { .. }
             | TestedMicrokernel::UnitWalkWrite { .. } => PlaneShuffleReduceMicrokernel::best(
                 hw,
@@ -170,6 +194,9 @@ impl ReduceLaunch {
             )?
             .lanes() as u32,
             TestedMicrokernel::CubeStaged { planes }
+            | TestedMicrokernel::CubeLine { planes }
+            | TestedMicrokernel::CubeColumns { planes, .. }
+            | TestedMicrokernel::CubeStrided { planes }
             | TestedMicrokernel::CubePartial { planes } => CubeStagedReduceMicrokernel::best(
                 hw,
                 &item,
@@ -207,16 +234,39 @@ impl ReduceLaunch {
     ///
     /// Why the tile DSL cannot bind the launch.
     pub fn launch(&self, client: &Client, input: TensorArg, out: TensorArg) -> Result<(), Decline> {
+        match self.item.operation.carrier() {
+            ReduceCarrier::Values => {
+                self.launch_into::<ValuesReduceCarrierFamily>(client, input, out)
+            }
+            ReduceCarrier::Indexed => {
+                self.launch_into::<IndexedReduceCarrierFamily>(client, input, out)
+            }
+            ReduceCarrier::TopK { .. } => {
+                self.launch_into::<TopKReduceCarrierFamily>(client, input, out)
+            }
+            ReduceCarrier::TopValues { .. } => {
+                self.launch_into::<TopValuesReduceCarrierFamily>(client, input, out)
+            }
+        }
+    }
+
+    /// The launch into `F`'s carrier.
+    fn launch_into<F: ReduceCarrierFamily>(
+        &self,
+        client: &Client,
+        input: TensorArg,
+        out: TensorArg,
+    ) -> Result<(), Decline> {
         match self.microkernel {
             TestedMicrokernel::HypercubeLastArrival { planes, parts } => {
-                self.launch_split(client, input, out, planes, parts)
+                self.launch_split::<F>(client, input, out, planes, parts)
             }
-            _ => self.launch_whole(client, input, out),
+            _ => self.launch_whole::<F>(client, input, out),
         }
     }
 
     /// Every row reduced by one owner.
-    fn launch_whole(
+    fn launch_whole<F: ReduceCarrierFamily>(
         &self,
         client: &Client,
         input: TensorArg,
@@ -239,6 +289,7 @@ impl ReduceLaunch {
         let (partitioning, cube_dim) = match self.microkernel {
             TestedMicrokernel::UnitDirect
             | TestedMicrokernel::UnitCarrierWrite
+            | TestedMicrokernel::UnitLinesWrite
             | TestedMicrokernel::UnitStridedReduce { .. }
             | TestedMicrokernel::UnitPartialStore
             | TestedMicrokernel::UnitPartialsReduce => {
@@ -270,14 +321,25 @@ impl ReduceLaunch {
                 let cube_dim = partitioning.cube_dim(self.plane_width);
                 (partitioning, cube_dim)
             }
-            TestedMicrokernel::UnitWalkReduce { columns }
-            | TestedMicrokernel::UnitWalkWrite { columns } => {
-                let mut step = owner.to_vec();
-                step.push((REDUCED, 1));
+            TestedMicrokernel::PlaneLine => {
                 let partitioning = Partitioning::new(
                     space.clone(),
-                    Levels::leaf(&step)
-                        .units(&[(BATCH, columns), (REDUCED, lanes / columns)])
+                    Levels::leaf(&owner)
+                        .launch_planes(
+                            &[BATCH],
+                            PlaneOrder::new(&[(BATCH, 1)], CubeOrder::RowMajor),
+                        )
+                        .build(),
+                );
+                let cube_dim = partitioning.cube_dim(self.plane_width);
+                (partitioning, cube_dim)
+            }
+            TestedMicrokernel::PlaneColumns { columns }
+            | TestedMicrokernel::UnitWalkReduce { columns }
+            | TestedMicrokernel::UnitWalkWrite { columns } => {
+                let partitioning = Partitioning::new(
+                    space.clone(),
+                    columns_of(&owner, columns, lanes / columns)
                         .walk_every(&[REDUCED])
                         .launch_planes(
                             &[BATCH],
@@ -288,7 +350,23 @@ impl ReduceLaunch {
                 let cube_dim = partitioning.cube_dim(self.plane_width);
                 (partitioning, cube_dim)
             }
-            TestedMicrokernel::CubePartial { planes } => (
+            TestedMicrokernel::CubeLine { planes } => (
+                Partitioning::new(space.clone(), Levels::leaf(&owner).cubes(&[BATCH]).build()),
+                CubeDim::new_2d(self.plane_width, planes as u32),
+            ),
+            TestedMicrokernel::CubeColumns { planes, columns } => (
+                Partitioning::new(
+                    space.clone(),
+                    columns_of(&owner, columns, lanes / columns)
+                        .planes(&[(REDUCED, planes)])
+                        .walk_every(&[REDUCED])
+                        .cubes(&[BATCH])
+                        .build(),
+                ),
+                CubeDim::new_2d(self.plane_width, planes as u32),
+            ),
+            TestedMicrokernel::CubeStrided { planes }
+            | TestedMicrokernel::CubePartial { planes } => (
                 Partitioning::new(space.clone(), leaf.cubes(&[BATCH]).build()),
                 CubeDim::new_2d(self.plane_width, planes as u32),
             ),
@@ -321,11 +399,12 @@ impl ReduceLaunch {
         // the kernel indexes no buffer but through its tiles.
         unsafe {
             match self.microkernel {
-                TestedMicrokernel::UnitDirect => unit_reduce_kernel::launch_unchecked(
+                TestedMicrokernel::UnitDirect => unit_reduce_kernel::launch_unchecked::<F>(
                     client,
                     launcher.cube_count(),
                     launcher.cube_dim(),
                     self.width,
+                    cells,
                     input,
                     out,
                     launcher.partitioning_arg(),
@@ -425,28 +504,111 @@ impl ReduceLaunch {
                         [self.item.input, self.item.accumulator],
                     )
                 }
-                TestedMicrokernel::PlaneShuffle => plane_reduce_kernel::launch_unchecked(
+                TestedMicrokernel::PlaneLine => plane_line_reduce_kernel::launch_unchecked::<F>(
                     client,
                     launcher.cube_count(),
                     launcher.cube_dim(),
                     self.width,
+                    cells,
+                    input,
+                    out,
+                    launcher.partitioning_arg(),
+                    PlaneLineReduceMicrokernel::new(self.item, lanes),
+                    elements,
+                ),
+                TestedMicrokernel::PlaneColumns { columns } => {
+                    plane_columns_reduce_kernel::launch_unchecked::<F>(
+                        client,
+                        launcher.cube_count(),
+                        launcher.cube_dim(),
+                        self.width,
+                        cells,
+                        input,
+                        out,
+                        launcher.partitioning_arg(),
+                        PlaneColumnsReduceMicrokernel::new(self.item, lanes, columns),
+                        elements,
+                    )
+                }
+                TestedMicrokernel::CubeLine { planes } => {
+                    cube_line_reduce_kernel::launch_unchecked::<F>(
+                        client,
+                        launcher.cube_count(),
+                        launcher.cube_dim(),
+                        self.width,
+                        cells,
+                        input,
+                        out,
+                        launcher.partitioning_arg(),
+                        CubeLineReduceMicrokernel::new(self.item, lanes, planes),
+                        elements,
+                    )
+                }
+                TestedMicrokernel::CubeColumns { planes, columns } => {
+                    cube_columns_reduce_kernel::launch_unchecked::<F>(
+                        client,
+                        launcher.cube_count(),
+                        launcher.cube_dim(),
+                        self.width,
+                        cells,
+                        input,
+                        out,
+                        launcher.partitioning_arg(),
+                        CubeColumnsReduceMicrokernel::new(self.item, lanes, planes, columns),
+                        elements,
+                    )
+                }
+                TestedMicrokernel::CubeStrided { planes } => {
+                    cube_strided_reduce_kernel::launch_unchecked(
+                        client,
+                        launcher.cube_count(),
+                        launcher.cube_dim(),
+                        self.width,
+                        input,
+                        out,
+                        launcher.partitioning_arg(),
+                        CubeStridedReduceMicrokernel::new(self.item, lanes, planes),
+                        elements,
+                    )
+                }
+                TestedMicrokernel::UnitLinesWrite => unit_lines_write_kernel::launch_unchecked(
+                    client,
+                    launcher.cube_count(),
+                    launcher.cube_dim(),
+                    self.width,
+                    input,
+                    out,
+                    launcher.partitioning_arg(),
+                    self.reduced,
+                    UnitLinesWriteMicrokernel::new(self.item),
+                    [self.item.accumulator, self.out],
+                ),
+                TestedMicrokernel::PlaneShuffle => plane_reduce_kernel::launch_unchecked::<F>(
+                    client,
+                    launcher.cube_count(),
+                    launcher.cube_dim(),
+                    self.width,
+                    cells,
                     input,
                     out,
                     launcher.partitioning_arg(),
                     plane,
                     elements,
                 ),
-                TestedMicrokernel::CubeStaged { planes } => cube_reduce_kernel::launch_unchecked(
-                    client,
-                    launcher.cube_count(),
-                    launcher.cube_dim(),
-                    self.width,
-                    input,
-                    out,
-                    launcher.partitioning_arg(),
-                    self.cube(&hw, planes),
-                    elements,
-                ),
+                TestedMicrokernel::CubeStaged { planes } => {
+                    cube_reduce_kernel::launch_unchecked::<F>(
+                        client,
+                        launcher.cube_count(),
+                        launcher.cube_dim(),
+                        self.width,
+                        cells,
+                        input,
+                        out,
+                        launcher.partitioning_arg(),
+                        self.cube(&hw, planes),
+                        elements,
+                    )
+                }
                 TestedMicrokernel::HypercubeLastArrival { .. } => {
                     unreachable!("a hypercube splits its rows apart")
                 }
@@ -473,7 +635,7 @@ impl ReduceLaunch {
     /// Every row split into `parts` equal parts, a cube of `planes` planes a part: the input laid
     /// `input[o, p, r]` along the reduced dimension, `input[p, r, o]` across it. The partials and
     /// the cubes' counters are the launch's own.
-    fn launch_split(
+    fn launch_split<F: ReduceCarrierFamily>(
         &self,
         client: &Client,
         input: TensorArg,
@@ -553,11 +715,12 @@ impl ReduceLaunch {
         // one a row, each owner's at its first row.
         match self.item.operation.carrier().carries_indices() {
             true => unsafe {
-                hypercube_indexed_reduce_kernel::launch_unchecked(
+                hypercube_indexed_reduce_kernel::launch_unchecked::<F>(
                     client,
                     launcher.cube_count(),
                     launcher.cube_dim(),
                     self.width,
+                    cells,
                     bound(input, self.item.input, self.width, &input_dimensions, edge),
                     bound(out, self.out, owned, &out_dimensions, Boundary::Zero),
                     bound(
@@ -586,11 +749,12 @@ impl ReduceLaunch {
                 )
             },
             false => unsafe {
-                hypercube_reduce_kernel::launch_unchecked(
+                hypercube_reduce_kernel::launch_unchecked::<F>(
                     client,
                     launcher.cube_count(),
                     launcher.cube_dim(),
                     self.width,
+                    cells,
                     bound(input, self.item.input, self.width, &input_dimensions, edge),
                     bound(out, self.out, owned, &out_dimensions, Boundary::Zero),
                     bound(
@@ -620,7 +784,14 @@ impl ReduceLaunch {
 /// - `input`: the rows, laid along or across the reduced dimension.
 /// - `out`: one tensor of a cell a row (`k` for a top-k).
 #[cube(launch_unchecked)]
-fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
+fn unit_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
     input: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
     partitioning: Partitioning,
@@ -634,11 +805,13 @@ fn unit_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         let mut row_out = o.at(&unit);
         let row = x.at(&unit);
 
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &row,
-            &mut row_out,
-            &ComptimeOption::new_None(),
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &row,
+                &mut row_out,
+                &ComptimeOption::new_None(),
+            );
     }
 }
 
@@ -875,13 +1048,225 @@ fn cube_partial_reduce_kernel<In: Numeric, Acc: Numeric, N: Size>(
     }
 }
 
+/// Every plane's row, reduced by the plane one line of rows wide.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, laid along or across the reduced dimension.
+/// - `out`: one tensor of a cell a row (`k` for a top-k).
+#[cube(launch_unchecked)]
+fn plane_line_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
+    input: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] microkernel: PlaneLineReduceMicrokernel,
+    #[define(In, Acc, Out)] _elements: [ElemType; 3],
+) {
+    let x = input.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+
+    for plane in &partitioning {
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &plane,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
+    }
+}
+
+/// Every plane's rows, reduced by the plane several lines of rows wide.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, laid along or across the reduced dimension.
+/// - `out`: one tensor of a cell a row (`k` for a top-k).
+#[cube(launch_unchecked)]
+fn plane_columns_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
+    input: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] microkernel: PlaneColumnsReduceMicrokernel,
+    #[define(In, Acc, Out)] _elements: [ElemType; 3],
+) {
+    let x = input.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+
+    for plane in &partitioning {
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &plane,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
+    }
+}
+
+/// Every cube's row, reduced by the cube one line of rows wide.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, laid along or across the reduced dimension.
+/// - `out`: one tensor of a cell a row (`k` for a top-k).
+#[cube(launch_unchecked)]
+fn cube_line_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
+    input: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] microkernel: CubeLineReduceMicrokernel,
+    #[define(In, Acc, Out)] _elements: [ElemType; 3],
+) {
+    let x = input.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+
+    for cube in &partitioning {
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &cube,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
+    }
+}
+
+/// Every cube's rows, reduced by the cube several lines of rows wide.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, laid along or across the reduced dimension.
+/// - `out`: one tensor of a cell a row (`k` for a top-k).
+#[cube(launch_unchecked)]
+fn cube_columns_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
+    input: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] microkernel: CubeColumnsReduceMicrokernel,
+    #[define(In, Acc, Out)] _elements: [ElemType; 3],
+) {
+    let x = input.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+
+    for cube in &partitioning {
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &cube,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
+    }
+}
+
+/// Every cube's row, read by the cube's strided microkernel into a carrier of values alone, its
+/// first unit's line written to `out` as it is.
+///
+/// Its operands' leaves:
+/// - `input`: the rows, one value a line along the reduced dimension, or a row a lane across it.
+/// - `out`: one tensor of a cell a row.
+#[cube(launch_unchecked)]
+fn cube_strided_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
+    input: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] microkernel: CubeStridedReduceMicrokernel,
+    #[define(In, Acc, Out)] _elements: [ElemType; 3],
+) {
+    let x = input.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+
+    for cube in &partitioning {
+        let mut row_out = o.at(&cube);
+        let row = x.at(&cube);
+        let count = row.flat::<In, N>().shape();
+
+        let carrier = microkernel
+            .runtime()
+            .reduce::<In, Acc, N, Vector<Acc, N>>(&row, 0, count);
+        let mut lines = row_out.flat_mut::<Out, N>();
+        if UNIT_POS == 0 {
+            lines.write(0, Vector::cast_from(carrier));
+        }
+    }
+}
+
+/// Every unit's one line of `input`, taken as its carrier of values alone and written to `out` by
+/// the lines' write microkernel, as wide as it is, a mean dividing by `values`.
+///
+/// Its operands' leaves:
+/// - `input`: one line a unit.
+/// - `out`: one line a unit.
+#[cube(launch_unchecked)]
+fn unit_lines_write_kernel<Acc: Numeric, Out: Numeric, N: Size>(
+    input: &TileTensor<'_>,
+    out: &mut TileTensor<'_>,
+    partitioning: Partitioning,
+    #[comptime] values: usize,
+    #[comptime] microkernel: UnitLinesWriteMicrokernel,
+    #[define(Acc, Out)] _elements: [ElemType; 2],
+) {
+    let x = input.tile(&partitioning);
+    let o = out.tile_mut(&partitioning);
+
+    for unit in &partitioning {
+        let mut row_out = o.at(&unit);
+        let row = x.at(&unit);
+
+        microkernel
+            .runtime()
+            .write::<Out, Out, Acc, N, N, Vector<Acc, N>>(
+                row.flat::<Acc, N>().read(0),
+                &mut row_out,
+                &ComptimeOption::new_None(),
+                values,
+            );
+    }
+}
+
 /// Every plane's row, reduced by the plane.
 ///
 /// Its operands' leaves:
 /// - `input`: the rows, laid along or across the reduced dimension.
 /// - `out`: one tensor of a cell a row (`k` for a top-k).
 #[cube(launch_unchecked)]
-fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
+fn plane_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
     input: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
     partitioning: Partitioning,
@@ -892,12 +1277,14 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let o = out.tile_mut(&partitioning);
 
     for plane in &partitioning {
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &plane,
-            &x,
-            &o,
-            &ComptimeOption::new_None(),
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &plane,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
     }
 }
 
@@ -907,7 +1294,14 @@ fn plane_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 /// - `input`: the rows, laid along or across the reduced dimension.
 /// - `out`: one tensor of a cell a row (`k` for a top-k).
 #[cube(launch_unchecked)]
-fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
+fn cube_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
     input: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
     partitioning: Partitioning,
@@ -918,12 +1312,14 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
     let o = out.tile_mut(&partitioning);
 
     for cube in &partitioning {
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &cube,
-            &x,
-            &o,
-            &ComptimeOption::new_None(),
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &cube,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
     }
 }
 
@@ -936,7 +1332,14 @@ fn cube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 /// - `partials`: every part's carrier of every row, in the accumulator's element.
 /// - `arrivals`: one `u32` counter a row, at zero.
 #[cube(launch_unchecked)]
-fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
+fn hypercube_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
     input: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
     partials: &mut TileTensor<'_>,
@@ -961,19 +1364,21 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
         let part = cube.origin(PARTS);
         let first_line = part * part_lines;
 
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &row,
-            &mut row_out,
-            &ComptimeOption::new_None(),
-            &mut slots,
-            &ComptimeOption::new_None(),
-            arrivals,
-            counter,
-            part,
-            parts,
-            first_line,
-            values,
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &row,
+                &mut row_out,
+                &ComptimeOption::new_None(),
+                &mut slots,
+                &ComptimeOption::new_None(),
+                arrivals,
+                counter,
+                part,
+                parts,
+                first_line,
+                values,
+            );
     }
 }
 
@@ -987,7 +1392,14 @@ fn hypercube_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
 /// - `partial_indices`: the index of every value `partials` keeps, in `u32`.
 /// - `arrivals`: one `u32` counter a row, at zero.
 #[cube(launch_unchecked)]
-fn hypercube_indexed_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
+fn hypercube_indexed_reduce_kernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
+>(
     input: &TileTensor<'_>,
     out: &mut TileTensor<'_>,
     partials: &mut TileTensor<'_>,
@@ -1014,20 +1426,30 @@ fn hypercube_indexed_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: S
         let part = cube.origin(PARTS);
         let first_line = part * part_lines;
 
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &row,
-            &mut row_out,
-            &ComptimeOption::new_None(),
-            &mut slots,
-            &ComptimeOption::new_Some(pi.at(&cube)),
-            arrivals,
-            counter,
-            part,
-            parts,
-            first_line,
-            values,
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &row,
+                &mut row_out,
+                &ComptimeOption::new_None(),
+                &mut slots,
+                &ComptimeOption::new_Some(pi.at(&cube)),
+                arrivals,
+                counter,
+                part,
+                parts,
+                first_line,
+                values,
+            );
     }
+}
+
+/// Boxes of rows `owner` side by side, `columns` of them, `per_column` units of a plane in each taking
+/// the reduced dimension in turns.
+fn columns_of(owner: &[(Dimension, usize)], columns: usize, per_column: usize) -> Levels {
+    let mut step = owner.to_vec();
+    step.push((REDUCED, 1));
+    Levels::leaf(&step).units(&[(BATCH, columns), (REDUCED, per_column)])
 }
 
 /// `arg` launched in `element`, `width` wide over `dimensions`, reading `boundary` past its edge.

@@ -1,8 +1,15 @@
 //! The `K` best values with their indices: the top-k.
 
-use crate::reduce::{ReduceAccumulator, lane_indices};
+use crate::reduce::{ReduceAccumulator, ReduceCarrierFamily, lane_indices};
 use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
+
+/// [`ReduceCarrier::TopK`](crate::reduce::ReduceCarrier::TopK): its carrier is [`TopK`].
+pub struct TopKReduceCarrierFamily;
+
+impl ReduceCarrierFamily for TopKReduceCarrierFamily {
+    type Carrier<Acc: Numeric, N: Size, K: Size> = TopK<Acc, N, K>;
+}
 
 #[cube]
 impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, K> {

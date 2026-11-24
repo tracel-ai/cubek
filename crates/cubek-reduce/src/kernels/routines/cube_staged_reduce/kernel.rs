@@ -2,6 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::reduce::ReduceCarrierFamily;
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernel;
 
 /// Every cube of the launch, reducing its rows into the carrier its operation accumulates into.
@@ -16,6 +17,8 @@ pub(crate) fn cube_staged_reduce_kernel<
     Acc: Numeric,
     Out: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -27,12 +30,14 @@ pub(crate) fn cube_staged_reduce_kernel<
     let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     for cube in &partitioning {
-        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
-            &cube,
-            &x,
-            &o,
-            &ComptimeOption::new_None(),
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &cube,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
     }
 }
 
@@ -51,6 +56,8 @@ pub(crate) fn cube_staged_reduce_with_indices_kernel<
     Out: Numeric,
     Idx: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -67,6 +74,6 @@ pub(crate) fn cube_staged_reduce_with_indices_kernel<
     for cube in &partitioning {
         microkernel
             .runtime()
-            .reduce::<In, Acc, Out, Idx, N>(&cube, &x, &o, &indices);
+            .reduce::<In, Acc, Out, Idx, N, F::Carrier<Acc, N, K>>(&cube, &x, &o, &indices);
     }
 }
