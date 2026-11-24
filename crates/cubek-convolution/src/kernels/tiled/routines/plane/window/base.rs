@@ -383,6 +383,7 @@ impl ConvRoutine<UnitRegistersMicrokernel> for PlaneWindowConvRoutine {
                 launcher.partitioning_arg(),
                 blueprint.microkernel.software_matmul().split_edge(),
                 bounded,
+                problem.roles().bias_dimensions(),
                 extents,
                 problem.kernel_elements(),
             );

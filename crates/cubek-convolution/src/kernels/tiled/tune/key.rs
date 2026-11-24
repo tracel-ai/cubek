@@ -23,6 +23,7 @@ pub struct CubeStagedConvTuneKey {
     pub out: ElemType,
     pub sum: ElemType,
     pub batch: usize,
+    pub groups: usize,
     pub channels_in: usize,
     pub channels_out: usize,
     pub spatial: Vec<SpatialDim>,
@@ -116,6 +117,7 @@ impl CubeStagedConvTuneKey {
             out: problem.elements.out,
             sum: problem.sum,
             batch: Self::batch(problem, hw),
+            groups: problem.groups,
             channels_in: problem.channels_in,
             channels_out: problem.channels_out,
             spatial: problem.spatial.clone(),
@@ -138,6 +140,7 @@ impl From<&CubeStagedConvTuneKey> for ConvProblem {
         Self {
             operation: key.operation,
             batch: key.batch,
+            groups: key.groups,
             channels_in: key.channels_in,
             channels_out: key.channels_out,
             spatial: key.spatial.clone(),

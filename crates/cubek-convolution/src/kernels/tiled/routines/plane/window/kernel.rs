@@ -25,13 +25,14 @@ pub fn plane_window_conv_kernel<EA: Numeric, EL: Numeric, EO: Float>(
     partitioning: Partitioning,
     #[comptime] block: SoftwareMatmul,
     #[comptime] bounded: Vec<Dimension>,
+    #[comptime] bias_dimensions: Vec<Dimension>,
     extents: Sequence<usize>,
     #[define(EA, EL, EO)] _elements: [ElemType; 3],
 ) {
     let input = input.tile(&partitioning);
     let rhs = rhs.tile(&partitioning);
     let out = out.tile_mut(&partitioning);
-    let bias = bias.map(|bias| BiasTile::new::<EO>(bias, &partitioning));
+    let bias = bias.map(|bias| BiasTile::new::<EO>(bias, &partitioning, bias_dimensions));
 
     for plane in &partitioning {
         let mut inside = true;

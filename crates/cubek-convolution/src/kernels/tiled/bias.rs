@@ -1,6 +1,6 @@
 use super::CO;
 use cubecl::tile::procedural::{MemoryValues, Procedural};
-use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// The values of a [`ConvBias::PerChannel`](super::ConvBias) read by output channel, where a
@@ -12,9 +12,13 @@ pub struct BiasTile {
 
 #[cube]
 impl BiasTile {
-    pub fn new<EO: Float>(bias: &TileTensor<'_>, partitioning: &Partitioning) -> Self {
+    pub fn new<EO: Float>(
+        bias: &TileTensor<'_>,
+        partitioning: &Partitioning,
+        #[comptime] dimensions: Vec<Dimension>,
+    ) -> Self {
         let values = bias.tile(partitioning).values();
-        let space = comptime!(partitioning.space().subspace(&[CO]));
+        let space = comptime!(partitioning.space().subspace(&dimensions));
         BiasTile {
             values: Procedural::new::<EO, MemoryValues>(space, values).tile_in::<EO>(partitioning),
         }

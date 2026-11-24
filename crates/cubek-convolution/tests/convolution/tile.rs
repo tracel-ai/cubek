@@ -230,6 +230,17 @@ mod cube {
     }
 
     cube! {
+        forward_groups, Forward;
+        groups_2_of_32: conv(2, (64, 64), [9, 9], [3, 3], SAME).groups(2);
+        groups_32_of_4: conv(2, (128, 128), [9, 9], [3, 3], SAME).groups(32);
+        groups_overhanging: conv(2, (96, 48), [9, 9], [3, 3], SAME).groups(3);
+        groups_1d: conv(2, (64, 64), [37], [3], SAME_1D).groups(4);
+        groups_3d: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], SAME_3D).groups(4);
+        groups_stride_2: conv(2, (64, 32), [12, 15], [3, 3], STRIDE_2).groups(2);
+        groups_channels_first: conv(2, (64, 64), [9, 9], [3, 3], SAME).groups(2).stored(Storage::ChannelsFirst);
+    }
+
+    cube! {
         forward_bias, Forward;
         whole_channels: conv(2, (64, 64), [9, 9], [3, 3], SAME).with_bias();
         overhanging_filters: conv(2, (64, 10), [20, 20], [3, 3], SAME).with_bias();
@@ -237,6 +248,13 @@ mod cube {
         kernel_1x1: conv(2, (64, 32), [9, 9], [1, 1], window([1, 1], [0, 0], [1, 1])).with_bias();
         conv_1d_stride_2: conv(2, (64, 32), [37], [3], window([2], [1], [1])).with_bias();
         conv_3d_asymmetric: conv(2, (32, 32), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D).with_bias();
+    }
+
+    cube! {
+        forward_bias_groups, Forward;
+        groups_2_of_32: conv(2, (64, 64), [9, 9], [3, 3], SAME).groups(2).with_bias();
+        groups_1d: conv(2, (64, 64), [37], [3], SAME_1D).groups(4).with_bias();
+        groups_8_of_8: conv(2, (64, 64), [9, 9], [3, 3], SAME).groups(8).with_bias();
     }
 
     cases! {
@@ -266,6 +284,15 @@ mod cube {
     }
 
     cube! {
+        weight_grad_groups, BackwardWeight;
+        groups_2_of_32: conv(2, (64, 64), [4, 12], [3, 3], SAME).groups(2);
+        groups_32_of_4: conv(2, (128, 128), [4, 12], [3, 3], SAME).groups(32);
+        groups_1d: conv(2, (64, 64), [37], [3], SAME_1D).groups(4);
+        groups_3d: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], SAME_3D).groups(4);
+        groups_overhanging: conv(2, (96, 48), [4, 12], [3, 3], SAME).groups(3);
+    }
+
+    cube! {
         data_grad, BackwardData;
         whole_channels: conv(2, (64, 64), [6, 12], [3, 3], SAME);
         no_padding: conv(2, (32, 32), [7, 12], [3, 3], VALID);
@@ -281,6 +308,15 @@ mod cube {
         conv_1d_overhanging: conv(2, (64, 32), [37], [3], SAME_1D);
         conv_3d_padded: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], SAME_3D);
         conv_3d_asymmetric: conv(2, (32, 32), [7, 9, 7], [3, 3, 3], ASYMMETRIC_STRIDE_1_3D);
+    }
+
+    cube! {
+        data_grad_groups, BackwardData;
+        groups_2_of_32: conv(2, (64, 64), [6, 12], [3, 3], SAME).groups(2);
+        groups_32_of_4: conv(2, (128, 128), [6, 12], [3, 3], SAME).groups(32);
+        groups_overhanging: conv(2, (96, 48), [6, 12], [3, 3], SAME).groups(3);
+        groups_1d: conv(2, (64, 64), [37], [3], SAME_1D).groups(4);
+        groups_3d: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], SAME_3D).groups(4);
     }
 
     // A few channels make a step of taps, which the fragment API declines by name and a device
@@ -407,6 +443,11 @@ mod plane_window {
     }
 
     window! {
+        forward_groups, Forward;
+        groups_32_of_4: conv32(2, (128, 128), [9, 9], [3, 3], SAME).groups(32);
+    }
+
+    window! {
         forward_bias, Forward;
         same_3x3: conv32(2, (64, 32), [9, 9], [3, 3], SAME).with_bias();
         overhanging_filters: conv32(2, (64, 10), [9, 9], [3, 3], SAME).with_bias();
@@ -414,6 +455,17 @@ mod plane_window {
         kernel_1x1: conv32(2, (64, 32), [9, 9], [1, 1], window([1, 1], [0, 0], [1, 1])).with_bias();
         conv_1d_stride_2: conv32(2, (64, 32), [57], [3], window([2], [1], [1])).with_bias();
         conv_3d_asymmetric: conv32(2, (16, 12), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D).with_bias();
+    }
+
+    window! {
+        forward_bias_groups, Forward;
+        groups_2_of_32: conv32(2, (64, 64), [9, 9], [3, 3], SAME).groups(2).with_bias();
+        groups_4: conv32(2, (64, 64), [9, 9], [3, 3], SAME).groups(4).with_bias();
+    }
+
+    window! {
+        weight_grad_groups, BackwardWeight;
+        groups_32_of_4: conv32(2, (128, 128), [4, 12], [3, 3], SAME).groups(32);
     }
 
     window! {
@@ -429,6 +481,11 @@ mod plane_window {
         conv_1d_overhanging: conv32(2, (64, 32), [57], [3], SAME_1D);
         conv_3d_stride_2: conv32(2, (16, 12), [5, 6, 7], [3, 3, 3], STRIDE_2_3D);
         conv_3d_asymmetric: conv32(2, (16, 12), [7, 9, 7], [3, 3, 3], ASYMMETRIC_3D);
+    }
+
+    window! {
+        data_grad_groups, BackwardData;
+        groups_2_of_32: conv32(2, (64, 64), [6, 12], [3, 3], SAME).groups(2);
     }
 
     window! {

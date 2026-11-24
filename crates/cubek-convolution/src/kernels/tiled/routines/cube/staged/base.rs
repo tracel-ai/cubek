@@ -137,6 +137,7 @@ impl ConvRoutine<CubeStagedMicrokernel> for CubeStagedConvRoutine {
                 launcher.partitioning_arg(),
                 walk,
                 blueprint.partitioning.storage(),
+                problem.roles().bias_dimensions(),
                 problem.kernel_elements(),
             );
         }

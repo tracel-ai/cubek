@@ -1,7 +1,7 @@
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{
-    B, CI, CO, ConvBias, ConvBinding, ConvDecline, ConvProblem, ConvRoles, SpatialDim,
-    SpatialDimCount, TileConvBlueprint,
+    B, CO, ChannelAxis, ConvBias, ConvBinding, ConvChannelOperands, ConvDecline, ConvGrouping,
+    ConvProblem, ConvRoles, SpatialDim, SpatialDimCount, TileConvBlueprint,
 };
 use crate::launch::{SpatialExtent, SpatialWindow, TapCount};
 use cubecl::client::Client;
@@ -10,16 +10,18 @@ use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Decline};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_matmul::definition::MatmulElems;
-use cubek_microkernel::matmul::MatmulOperands;
+use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::InputBinding;
 use cubek_std::routine::Grid;
 
 /// The tensors of one convolution on one client, held by the role they play in the contraction:
 /// the gathered input, the rhs (the weight, or the output gradient) and the output (the
-/// activation, or the weight gradient), and a forward's bias.
+/// activation, or the weight gradient), and a forward's bias. A grouped convolution's tensors have
+/// their channels split by group.
 #[derive(Clone)]
 pub struct ConvTensors {
     operation: ConvolutionOperation,
+    grouping: ConvGrouping,
     client: Client,
     input: TensorBinding,
     rhs: TensorBinding,
@@ -121,6 +123,7 @@ impl ConvTensors {
         };
         let stated = ConvProblem::from_views(
             self.operation,
+            self.grouping,
             &self.window,
             MatmulOperands {
                 lhs: shape(&self.input),
@@ -198,7 +201,7 @@ impl ConvTensors {
             .map(|bias| {
                 launcher
                     .arg(bias, problem.elements.out)
-                    .dimensions(&[CO])
+                    .dimensions(&roles.bias_dimensions())
                     .vectorize(1)
                     .build()
             })
@@ -235,14 +238,24 @@ impl ConvTensors {
         {
             return Err(ConvDecline::RankMismatch.into());
         }
-        let roles = ConvRoles::of(operation, SpatialDimCount(window.len()))?;
+        let spatial_dims = SpatialDimCount(window.len());
+        let channels = ConvChannelOperands::of(operation)?;
+        let shapes = MatmulOperands {
+            lhs: &input.shape[..],
+            rhs: &rhs.shape[..],
+            out: &out.shape[..],
+        };
+        let grouping = ConvGrouping::of(channels.groups(&shapes)?);
+        let roles = ConvRoles::of(operation, spatial_dims, grouping)?;
+        let input = roles.split(MatmulOperand::Lhs, input)?;
+        let rhs = roles.split(MatmulOperand::Rhs, rhs)?;
+        let out = roles.split(MatmulOperand::Out, out)?;
         let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
         let extents = &roles.extents;
         let channels = |dimension| {
             (dimension == roles.inner.lhs).then_some(extents.lhs_channels.read_shape(&input.shape))
         };
         let checks = [
-            (CI, ConvDecline::Groups, channels(CI)),
             (CO, ConvDecline::OutChannels, channels(CO)),
             (
                 B,
@@ -258,6 +271,7 @@ impl ConvTensors {
         }
         let tensors = Self {
             operation,
+            grouping,
             client: client.clone(),
             input,
             rhs,
@@ -278,12 +292,14 @@ impl ConvTensors {
         let InputBinding::Normal(bias, element) = bias else {
             return Err(ConvDecline::Quantized.into());
         };
-        if bias.shape.len() != 1 || bias.shape[0] != self.problem().channels_out {
+        let problem = self.problem();
+        if bias.shape.len() != 1 || bias.shape[0] != problem.groups * problem.channels_out {
             return Err(ConvDecline::BiasShape.into());
         }
         if element != self.dtypes.acc_global {
             return Err(ConvDecline::BiasElement.into());
         }
+        let bias = ChannelAxis::First.split(bias, ConvGrouping::of(problem.groups))?;
         Ok(Self {
             bias: Some(bias),
             ..self
@@ -307,7 +323,7 @@ impl ConvTensors {
         if problem.spatial.iter().any(steps_zero) {
             return Err(ConvDecline::WindowStepZero.into());
         }
-        let roles = ConvRoles::of(self.operation, SpatialDimCount(self.window.len()))?;
+        let roles = problem.roles();
         let states_output = |spatial_dim: &SpatialDim| {
             let (input, output) = roles.gather.window_ends(spatial_dim);
             spatial_dim

@@ -3,13 +3,13 @@
 
 use super::ConvTensors;
 use crate::components::ConvolutionOperation;
-use crate::kernels::tiled::ConvDecline;
+use crate::kernels::tiled::{ChannelAxis, ConvDecline, ConvGrouping};
 use crate::launch::SpatialWindow;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
-use cubecl::zspace::Shape;
+use cubecl::zspace::{Shape, Tiling};
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
 use cubek_std::InputBinding;
 
@@ -109,7 +109,10 @@ macro_rules! refusals {
 
 refusals! {
     forward_quantized_input: Forward, true, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], SAME => ConvDecline::Quantized;
-    forward_weight_of_other_channels: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 16], [1, 6, 6, 32]], SAME => ConvDecline::Groups;
+    forward_weight_of_channels_no_group_count_states: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 24], [1, 6, 6, 32]], SAME => ConvDecline::Groups;
+    forward_filters_no_group_count_splits: Forward, false, [[1, 6, 6, 64], [30, 3, 3, 16], [1, 6, 6, 30]], SAME => ConvDecline::Groups;
+    forward_output_channels_no_group_count_splits: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 16], [1, 6, 6, 30]], SAME => ConvDecline::OutChannels;
+    forward_depthwise: Forward, false, [[1, 6, 6, 16], [16, 3, 3, 1], [1, 6, 6, 16]], SAME => ConvDecline::Depthwise;
     forward_output_of_other_channels: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDecline::OutChannels;
     forward_output_of_another_batch: Forward, false, [[2, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], SAME => ConvDecline::Batch;
     forward_output_of_another_extent: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 5, 6, 32]], SAME => ConvDecline::ForwardExtent;
@@ -119,7 +122,9 @@ refusals! {
     forward_dilation_of_zero: Forward, false, [[1, 6, 6, 64], [32, 3, 3, 64], [1, 6, 6, 32]], [window(1, 1, 1), window(1, 1, 0)] => ConvDecline::WindowStepZero;
 
     weight_grad_quantized_input: BackwardWeight, true, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::Quantized;
-    weight_grad_of_other_channels: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 16]], SAME => ConvDecline::Groups;
+    weight_grad_of_channels_no_group_count_states: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 24]], SAME => ConvDecline::Groups;
+    weight_grad_filters_no_group_count_splits: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 30], [30, 3, 3, 16]], SAME => ConvDecline::Groups;
+    weight_grad_depthwise: BackwardWeight, false, [[1, 6, 6, 16], [1, 6, 6, 16], [16, 3, 3, 1]], SAME => ConvDecline::Depthwise;
     weight_grad_of_other_filters: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [16, 3, 3, 64]], SAME => ConvDecline::OutChannels;
     weight_grad_out_grad_of_another_batch: BackwardWeight, false, [[2, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::Batch;
     weight_grad_out_grad_of_another_extent: BackwardWeight, false, [[1, 6, 6, 64], [1, 5, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::WeightGradExtent;
@@ -130,6 +135,9 @@ refusals! {
     data_grad_strided: BackwardData, false, [[1, 3, 3, 32], [32, 3, 3, 64], [1, 6, 6, 64]], STRIDE_2 => ConvDecline::DataBackwardStrided;
     data_grad_quantized_out_grad: BackwardData, true, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::Quantized;
     data_grad_of_other_channels: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDecline::Groups;
+    data_grad_of_channels_no_group_count_states: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 24], [1, 6, 6, 64]], SAME => ConvDecline::Groups;
+    data_grad_filters_no_group_count_splits: BackwardData, false, [[1, 6, 6, 30], [30, 3, 3, 16], [1, 6, 6, 64]], SAME => ConvDecline::Groups;
+    data_grad_depthwise: BackwardData, false, [[1, 6, 6, 16], [16, 3, 3, 1], [1, 6, 6, 16]], SAME => ConvDecline::Depthwise;
     data_grad_of_other_filters: BackwardData, false, [[1, 6, 6, 32], [16, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::OutChannels;
     data_grad_out_grad_of_another_batch: BackwardData, false, [[2, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::Batch;
     data_grad_out_grad_of_another_extent: BackwardData, false, [[1, 5, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::DataGradExtent;
@@ -162,4 +170,55 @@ fn tensors_of_another_rank_than_the_window_are_refused() {
     )
     .expect_err("the tensors were accepted");
     assert_eq!(declined, ConvDecline::RankMismatch.into());
+}
+
+/// A tiled tensor cannot have its channels split by group, which the tiling labels the dims of.
+#[test]
+fn a_tiled_tensor_of_a_grouped_convolution_is_refused() {
+    let client = cubecl::test_device().client();
+    let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
+        lhs: F16,
+        rhs: F16,
+        out: F16,
+    });
+    let dense = |shape: [usize; 4]| -> TensorBinding {
+        TensorHandle::empty(&client, shape.to_vec(), F16).binding()
+    };
+    let tiled = dense([1, 6, 6, 64])
+        .with_tiling(Tiling::new(&[2]).expect("a tiling of one dim"))
+        .expect("a tiling that fits the rank");
+    let declined = ConvTensors::forward(
+        &client,
+        InputBinding::new(tiled, F16),
+        InputBinding::new(dense([32, 3, 3, 16]), F16),
+        None,
+        dense([1, 6, 6, 32]),
+        &SAME,
+        dtypes,
+    )
+    .expect_err("the tensors were accepted");
+    assert_eq!(declined, ConvDecline::PermutedTiled.into());
+}
+
+#[test]
+fn the_channel_axis_splits_by_shape_and_strides() {
+    let client = cubecl::test_device().client();
+    let dense = |shape: [usize; 4]| -> TensorBinding {
+        TensorHandle::empty(&client, shape.to_vec(), F16).binding()
+    };
+    let grouping = ConvGrouping::of(4);
+
+    let activation = dense([1, 6, 6, 64]);
+    let [n, h, w, c] = [0, 1, 2, 3].map(|dim| activation.strides[dim]);
+    let split = ChannelAxis::Last
+        .split(activation, grouping)
+        .expect("untiled");
+    assert_eq!(split.shape.to_vec(), [1, 6, 6, 4, 16]);
+    assert_eq!(split.strides.to_vec(), [n, h, w, c * 16, c]);
+
+    let weight = dense([32, 3, 3, 16]);
+    let [f, kh, kw, c] = [0, 1, 2, 3].map(|dim| weight.strides[dim]);
+    let split = ChannelAxis::First.split(weight, grouping).expect("untiled");
+    assert_eq!(split.shape.to_vec(), [4, 8, 3, 3, 16]);
+    assert_eq!(split.strides.to_vec(), [f * 8, f, kh, kw, c]);
 }

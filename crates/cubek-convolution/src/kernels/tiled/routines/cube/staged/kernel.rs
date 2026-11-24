@@ -1,5 +1,5 @@
 use crate::kernels::tiled::BiasTile;
-use cubecl::tile::{Partitioning, StageStorage, Tile, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, StageStorage, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::cube::{CubeStagedDrain, CubeStagedWalk, cube_staged_microkernel};
 
@@ -18,12 +18,13 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric, EO: Float>(
     partitioning: Partitioning,
     #[comptime] walk: CubeStagedWalk,
     #[comptime] storage: StageStorage,
+    #[comptime] bias_dimensions: Vec<Dimension>,
     #[define(EA, EL, EO)] _elements: [ElemType; 3],
 ) {
     let input = input.tile(&partitioning);
     let rhs = rhs.tile(&partitioning);
     let out = out.tile_mut(&partitioning);
-    let bias = bias.map(|bias| BiasTile::new::<EO>(bias, &partitioning));
+    let bias = bias.map(|bias| BiasTile::new::<EO>(bias, &partitioning, bias_dimensions));
 
     // No barrier between boxes: each box's first stage refill synchronizes the cube.
     for cube in &partitioning {

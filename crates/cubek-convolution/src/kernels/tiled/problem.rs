@@ -1,4 +1,4 @@
-use super::{ConvGather, ConvRoles};
+use super::{ConvGather, ConvGrouping, ConvRoles};
 use crate::components::ConvolutionOperation;
 use crate::definition::{ConvCost, ConvCostDim};
 use crate::launch::SpatialWindow;
@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 pub const B: Dimension = Dimension(0);
 pub const CO: Dimension = Dimension(1);
 pub const CI: Dimension = Dimension(2);
+/// The group a channel belongs to, a dimension only a grouped convolution has.
+pub const G: Dimension = Dimension(3);
 
 /// How many spatial dims a convolution has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,7 @@ pub(crate) enum ConvDimension {
     Batch,
     ChannelsOut,
     ChannelsIn,
+    Groups,
     /// The output dimension of a spatial dim.
     Out(usize),
     /// The tap dimension of a spatial dim, which the window slides along with its output dimension.
@@ -35,7 +38,7 @@ pub(crate) enum ConvDimension {
 
 impl ConvDimension {
     /// The label of the first spatial dimension, which follows the three channel and batch labels.
-    const FIRST_SPATIAL: u8 = CI.0 + 1;
+    const FIRST_SPATIAL: u8 = G.0 + 1;
     /// A spatial dim takes two labels: its out dimension, then its tap dimension.
     const PER_SPATIAL_DIM: u8 = 2;
     /// The most spatial dims whose labels, the last tap dimension included, fit in a label.
@@ -48,6 +51,7 @@ impl ConvDimension {
             Self::Batch => B,
             Self::ChannelsOut => CO,
             Self::ChannelsIn => CI,
+            Self::Groups => G,
             Self::Out(dim) => Dimension(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8),
             Self::Tap(dim) => {
                 Dimension(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8 + 1)
@@ -61,6 +65,7 @@ impl ConvDimension {
             B => Self::Batch,
             CO => Self::ChannelsOut,
             CI => Self::ChannelsIn,
+            G => Self::Groups,
             Dimension(label) if label >= Self::FIRST_SPATIAL => Self::of_spatial(label),
             _ => panic!("{dimension:?} is not a dimension of a convolution"),
         }
@@ -116,13 +121,17 @@ pub enum ConvBias {
     PerChannel,
 }
 
-/// A convolution with no groups and at most one bias value a channel, as the host describes it.
-/// Operands are read as a matmul's: the input is the lhs.
+/// A convolution of `groups` blocks of channels, each a convolution of its own, and at most one bias
+/// value a channel, as the host describes it. Operands are read as a matmul's: the input is the lhs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConvProblem {
     pub operation: ConvolutionOperation,
     pub batch: usize,
+    /// The blocks of channels, one for an ungrouped convolution.
+    pub groups: usize,
+    /// The input channels of one group.
     pub channels_in: usize,
+    /// The output channels of one group.
     pub channels_out: usize,
     /// The extents and the window of each spatial dim.
     pub spatial: Vec<SpatialDim>,
@@ -139,10 +148,11 @@ pub struct ConvProblem {
 }
 
 impl ConvProblem {
-    /// The problem of `operation` over operands whose shapes, as the roles view them
+    /// The problem of `operation` over operands whose shapes, as the roles of `grouping` view them
     /// ([`ConvRoles::views`]), are `views`.
     pub fn from_views(
         operation: ConvolutionOperation,
+        grouping: ConvGrouping,
         window: &[SpatialWindow],
         views: MatmulOperands<Vec<usize>>,
         elements: MatmulOperands<ElemType>,
@@ -150,7 +160,7 @@ impl ConvProblem {
         alignments: MatmulOperands<ElemAlignment>,
         start_bytes: MatmulOperands<u64>,
     ) -> Self {
-        let extents = ConvRoles::of(operation, SpatialDimCount(window.len()))
+        let extents = ConvRoles::of(operation, SpatialDimCount(window.len()), grouping)
             .expect("a problem is stated by tensors that were checked")
             .extents;
         let (kernel, out) = (extents.kernel.read(&views), extents.out.read(&views));
@@ -158,6 +168,7 @@ impl ConvProblem {
         Self {
             operation,
             batch: extents.batch.read(&views),
+            groups: extents.groups.map_or(1, |groups| groups.read(&views)),
             channels_in: extents.channels_in.read(&views),
             channels_out: extents.channels_out.read(&views),
             spatial: (0..window.len())
@@ -183,8 +194,13 @@ impl ConvProblem {
     /// On a transposed forward, which [`ConvTensors`](super::ConvTensors) refuses before any
     /// problem is stated.
     pub fn roles(&self) -> ConvRoles {
-        ConvRoles::of(self.operation, SpatialDimCount(self.spatial.len()))
-            .expect("a problem is stated by tensors that were checked")
+        let grouping = ConvGrouping::of(self.groups);
+        ConvRoles::of(
+            self.operation,
+            SpatialDimCount(self.spatial.len()),
+            grouping,
+        )
+        .expect("a problem is stated by tensors that were checked")
     }
 
     /// What every microkernel of this problem is handed, each operand's layout as its buffer
@@ -226,6 +242,7 @@ impl ConvProblem {
             ConvDimension::Batch => self.batch,
             ConvDimension::ChannelsOut => self.channels_out,
             ConvDimension::ChannelsIn => self.channels_in,
+            ConvDimension::Groups => self.groups,
             ConvDimension::Out(dim) => self.spatial[dim].out,
             ConvDimension::Tap(dim) => self.spatial[dim].kernel,
         }
@@ -256,18 +273,25 @@ impl ConvProblem {
                 .any(|spatial_dim| spatial_dim.window.padding > 0)
     }
 
-    /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: a channels last buffer
-    /// whose spatial dims are each addressed by an output dimension and a tap dimension. The data
-    /// backward reads the gradient the other way round, at stride 1.
+    /// The input as the tiled contraction reads it, over [`ConvRoles::lhs`]: a channels last buffer,
+    /// its channels split by group where the convolution is grouped, whose spatial dims are each
+    /// addressed by an output dimension and a tap dimension. The data backward reads the gradient
+    /// the other way round, at stride 1.
     pub fn input_projection(&self) -> Projection {
         let roles = self.roles();
         let spatial = roles
             .spatial()
             .zip(&self.spatial)
             .map(|([out, tap], spatial_dim)| roles.gather.map(&spatial_dim.window, out, tap));
+        let groups = roles
+            .grouping
+            .dimensions()
+            .iter()
+            .map(|&dimension| PhysicalAxisMap::of(dimension));
         let maps: Vec<_> = [PhysicalAxisMap::of(B)]
             .into_iter()
             .chain(spatial)
+            .chain(groups)
             .chain([PhysicalAxisMap::of(roles.inner.lhs)])
             .collect();
         Projection::new(&roles.lhs, &maps)
@@ -287,6 +311,7 @@ impl EstimatedProblem for ConvProblem {
         let gather = self.roles().gather;
         ConvCost {
             batch: self.batch,
+            groups: self.groups,
             channels_in: self.channels_in,
             channels_out: self.channels_out,
             spatial: self
@@ -303,7 +328,7 @@ impl EstimatedProblem for ConvProblem {
                 .collect(),
             bias_elems: match self.bias {
                 ConvBias::Absent => 0,
-                ConvBias::PerChannel => self.channels_out,
+                ConvBias::PerChannel => self.groups * self.channels_out,
             },
             elems: MatmulGlobalElems {
                 lhs: self.elements.lhs,
@@ -331,6 +356,7 @@ mod tests {
                 ConvDimension::Batch,
                 ConvDimension::ChannelsOut,
                 ConvDimension::ChannelsIn,
+                ConvDimension::Groups,
             ]
             .into_iter()
             .chain(spatial);
@@ -341,7 +367,7 @@ mod tests {
             }
             labels.sort_unstable();
             labels.dedup();
-            assert_eq!(labels.len(), 3 + 2 * count);
+            assert_eq!(labels.len(), 4 + 2 * count);
         }
     }
 
