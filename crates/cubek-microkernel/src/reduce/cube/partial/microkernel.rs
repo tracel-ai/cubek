@@ -1,6 +1,6 @@
 use super::base::CubePartialReduceMicrokernel;
 use crate::reduce::ReduceAccumulator;
-use crate::reduce::cube::{CubeStridedReduceMicrokernel, cube_strided_reduce_microkernel};
+use crate::reduce::cube::cube_strided_reduce_microkernel;
 use crate::reduce::write::{UnitPartialStoreMicrokernel, unit_partial_store_microkernel};
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, cube, prelude::*};
@@ -25,16 +25,7 @@ pub(crate) fn cube_partial_reduce_microkernel<
 ) {
     let cube = microkernel.cube();
     let count = input.flat::<In, N>().shape();
-    let total = cube_strided_reduce_microkernel::<In, Acc, N, C>(
-        input,
-        first_line,
-        count,
-        comptime!(CubeStridedReduceMicrokernel::new(
-            cube.item(),
-            cube.lanes(),
-            cube.planes()
-        )),
-    );
+    let total = cube_strided_reduce_microkernel::<In, Acc, N, C>(input, first_line, count, cube);
 
     if UNIT_POS == 0 {
         unit_partial_store_microkernel::<Acc, N, C>(

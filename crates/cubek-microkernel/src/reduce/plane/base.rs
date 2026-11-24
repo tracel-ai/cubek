@@ -1,7 +1,6 @@
 use super::microkernel::plane_shuffle_reduce_microkernel;
 use crate::reduce::{
-    REDUCED, ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across,
-    units_across,
+    ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across, plane_levels,
 };
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Dimension, Levels, Region, Tile};
@@ -24,7 +23,6 @@ pub struct PlaneShuffleReduceMicrokernel {
     /// Units of the plane, as wide as the device commits to.
     #[cube(comptime)]
     lanes: usize,
-    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     #[cube(comptime)]
     lane_slots: usize,
     /// Lines of rows its units lie across side by side ([`across_rows`](Self::across_rows)).
@@ -46,6 +44,10 @@ impl PlaneShuffleReduceMicrokernel {
     /// This microkernel with its units across as many lines of rows, `width` wide, as one memory
     /// transaction of `hw` holds, where its lines run across the reduced dimension and `rows`
     /// rows there are; one line of rows where its lines run along it.
+    ///
+    /// # Panics
+    ///
+    /// Where `width` is zero.
     pub fn across_rows(self, hw: &Hardware, width: usize, rows: usize) -> Self {
         Self {
             lines_across: lines_across(hw, &self.item, width, rows.div_ceil(width), self.lanes),
@@ -62,10 +64,7 @@ impl PlaneShuffleReduceMicrokernel {
     /// the plane's units laid across them and in turns along the reduced dimension, every step
     /// of which the plane walks.
     pub fn levels(&self, owner: &[(Dimension, usize)]) -> Levels {
-        match self.lines_across {
-            1 => Levels::leaf(owner),
-            columns => units_across(owner, columns, self.lanes / columns).walk_every(&[REDUCED]),
-        }
+        plane_levels(owner, self.lines_across, self.lanes)
     }
 
     pub fn item(&self) -> ReduceWorkItem {
@@ -76,11 +75,11 @@ impl PlaneShuffleReduceMicrokernel {
         self.lanes
     }
 
-    /// As the unit microkernel's [`widest_line`](crate::reduce::unit::UnitDirectReduceMicrokernel::widest_line), at this one's lane slots.
+    /// As [`UnitDirectReduceMicrokernel::widest_line`](crate::reduce::unit::UnitDirectReduceMicrokernel::widest_line).
     ///
     /// # Panics
     ///
-    /// As the unit microkernel's.
+    /// As it does.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
@@ -131,7 +130,6 @@ impl PlaneShuffleReduceMicrokernel {
 /// device's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleReduceMicrokernelSettings {
-    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     pub lane_slots: usize,
 }
 
@@ -182,7 +180,7 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
         vectorization.require(self.item.requirement());
     }
 
-    /// Each lane holds its carrier and one line: a lower bound, the registers it keeps live.
+    /// Each lane holds its carrier and one line, at least.
     fn estimate(
         &self,
         _item: &ReduceWorkItem,
@@ -199,6 +197,48 @@ mod tests {
     use super::*;
     use crate::reduce::ReduceOperation;
     use cubek_std::devices;
+
+    /// Whether the plane microkernel runs on `hw`, at its first setting.
+    fn runs_on(hw: &Hardware) -> bool {
+        let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
+        let settings = PlaneShuffleReduceMicrokernel::settings(hw)[0];
+        PlaneShuffleReduceMicrokernel::best(hw, &item, &settings).is_ok()
+    }
+
+    #[test]
+    fn it_declines_without_planes() {
+        assert!(!runs_on(&devices::wgpu_no_subgroups()));
+    }
+
+    /// A device whose plane width is a range commits to none of it.
+    #[test]
+    fn it_declines_on_a_range_of_plane_widths() {
+        assert!(!runs_on(&devices::rdna_range()));
+    }
+
+    #[test]
+    fn it_runs_on_a_committed_plane_width() {
+        assert!(runs_on(&devices::h100()));
+    }
+
+    /// Where its lines run across the rows, its units lie across a transaction of them.
+    #[test]
+    fn lines_across_the_rows_lie_a_transaction_across() {
+        const LANES: usize = 32;
+        const LANE_SLOTS: usize = 32;
+        const WIDTH: usize = 4;
+        const ROWS: usize = 64;
+        let hw = devices::m2_pro();
+        let item = ReduceWorkItem {
+            lines_along: crate::reduce::BATCH,
+            ..ReduceWorkItem::along_f32(ReduceOperation::Sum)
+        };
+        let plane = PlaneShuffleReduceMicrokernel::new(item, LANES, LANE_SLOTS);
+        assert_eq!(
+            plane.across_rows(&hw, WIDTH, ROWS).lines_across(),
+            hw.transaction_bytes() / (WIDTH * size_of::<f32>())
+        );
+    }
 
     /// A candidate's lanes are the plane width the device commits to.
     #[test]
@@ -245,5 +285,38 @@ mod tests {
             LANE_SLOTS,
         );
         assert_eq!(sum.widest_line(), None);
+    }
+
+    fn sum() -> PlaneShuffleReduceMicrokernel {
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let lanes = 32;
+        PlaneShuffleReduceMicrokernel::new(item, lanes, TOP_K_LANE_SLOTS[0])
+    }
+
+    #[test]
+    fn along_the_row_the_output_is_written_a_cell_at_a_time() {
+        let mut vectorization = Vectorization::new();
+        sum().vectorize(&(), &mut vectorization);
+        assert_eq!(vectorization.width(ReduceOperand::Out, |_| 8), 1);
+    }
+
+    #[test]
+    fn its_estimate_is_its_items_work() {
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let planes = CubePlanes {
+            count: 4,
+            width: 32,
+        };
+        let mut estimate = crate::reduce::empty_estimate();
+        sum().estimate(&item, &(), planes, &mut estimate);
+        assert_eq!(estimate.work, Some(item.unit_work()));
+    }
+
+    #[test]
+    fn it_displays_what_it_compiles() {
+        assert_eq!(
+            sum().to_string(),
+            "Sum Dimension(1) lanes=32 lines_across=1"
+        );
     }
 }

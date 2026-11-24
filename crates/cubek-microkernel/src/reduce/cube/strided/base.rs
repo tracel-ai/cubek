@@ -13,10 +13,8 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 pub struct CubeStridedReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
-    /// Units of a plane, as wide as the device commits to.
     #[cube(comptime)]
     lanes: usize,
-    /// Planes of the cube.
     #[cube(comptime)]
     planes: usize,
 }

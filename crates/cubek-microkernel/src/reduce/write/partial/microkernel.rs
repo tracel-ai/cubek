@@ -1,10 +1,9 @@
 use super::base::UnitPartialStoreMicrokernel;
-use crate::reduce::{ReduceAccumulator, assert_partial_indices};
+use crate::reduce::{ReduceAccumulator, takes_partial_indices};
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// `acc` stored by one unit as partial `part` of `partials` and `partial_indices`, its slots' lines
-/// side by side.
+/// A partial is its slots' lines side by side.
 #[cube]
 pub(crate) fn unit_partial_store_microkernel<
     Acc: Numeric,
@@ -20,10 +19,10 @@ pub(crate) fn unit_partial_store_microkernel<
     let item = microkernel.item();
     let slots = item.operation.written_per_row();
     let handed = partial_indices.is_some();
-    comptime!(assert_partial_indices(
-        "UnitPartialStoreMicrokernel",
-        item.operation.carrier(),
-        handed
+    comptime!(assert!(
+        takes_partial_indices(item.operation.carrier(), handed),
+        "UnitPartialStoreMicrokernel: {:?} takes its partials' indices exactly where it keeps any",
+        item.operation.carrier()
     ));
 
     #[unroll]

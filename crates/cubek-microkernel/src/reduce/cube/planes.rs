@@ -3,6 +3,17 @@
 use crate::reduce::{ReduceAccumulator, ReduceWorkItem};
 use cubecl::{self as cubecl, cube, prelude::*};
 
+/// Bytes of shared memory [`across_planes`] allocates for `partials` partials of `item`'s carrier, its
+/// lines `width` lanes wide: the carriers, and one line in place of the indices of one that keeps none.
+pub(crate) fn staged_bytes(item: ReduceWorkItem, partials: usize, width: usize) -> usize {
+    let carrier = item.operation.carrier();
+    let absent_indices = match carrier.carries_indices() {
+        true => 0,
+        false => width * size_of::<u32>(),
+    };
+    partials * carrier.bytes(width, item.accumulator.size()) + absent_indices
+}
+
 /// The partials of the cube's planes, each already met across its own lanes, met in shared
 /// memory, one total for each of the `columns` lines of rows its units lie across: the unit of
 /// each plane and column where `stages` is set stages its partial, `acc`, in that column's slot of
@@ -130,4 +141,28 @@ fn staged_partial<Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
         C::set_line(&mut staged, slot, values[partial * slots + slot], index);
     }
     staged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reduce::ReduceOperation;
+
+    const PARTIALS: usize = 4;
+    const WIDTH: usize = 4;
+
+    /// A line of f32 values a partial, and a line in place of the indices.
+    #[test]
+    fn values_alone_stage_a_line_each_and_one_more() {
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let line = WIDTH * size_of::<f32>();
+        assert_eq!(staged_bytes(item, PARTIALS, WIDTH), PARTIALS * line + line);
+    }
+
+    #[test]
+    fn indexed_values_stage_two_lines_each() {
+        let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
+        let line = WIDTH * size_of::<f32>();
+        assert_eq!(staged_bytes(item, PARTIALS, WIDTH), 2 * PARTIALS * line);
+    }
 }

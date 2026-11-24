@@ -3,8 +3,8 @@
 
 use crate::launch::reduce::TestedMicrokernel;
 
-/// The strided read: a unit reads every third line of its row from the first. A mean is left out,
-/// since only the write divides.
+/// The strided read: a unit reads every third line of its row from the first. It divides nothing, so
+/// no mean.
 const MICROKERNEL: TestedMicrokernel = TestedMicrokernel::UnitStridedReduce { stride: 3 };
 
 /// The walked read: a plane's units lie across two lines of rows, so each column's first unit reads

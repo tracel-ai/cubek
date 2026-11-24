@@ -48,13 +48,13 @@ pub(crate) fn hypercube_last_arrival_reduce_microkernel<
         partial_indices,
         part,
         first_line,
-        comptime!(CubePartialReduceMicrokernel::new(cube)),
+        comptime!(CubePartialReduceMicrokernel::new(cube.strided())),
     );
 
     // The partial lands at device scope before the cube counts itself in.
     sync_storage();
     let last = counts_in_last(arrivals, counter, parts);
-    sync_storage_where(last);
+    sync_storage_where_last(last);
 
     let load = input.vector_tile();
     let row_lanes = comptime!(load.extent_along(REDUCED));
@@ -89,7 +89,7 @@ fn counts_in_last(arrivals: &[Atomic<u32>], counter: usize, parts: usize) -> boo
 /// What every other cube of the row stored acquired before it is read, by the cube whose units all
 /// hold `last`.
 #[cube]
-fn sync_storage_where(last: bool) {
+fn sync_storage_where_last(last: bool) {
     if last {
         sync_storage();
     }

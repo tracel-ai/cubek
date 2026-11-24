@@ -8,8 +8,7 @@ use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
-/// A window of an output zeroed by one unit alone. Every device runs it: it asks nothing of the
-/// plane.
+/// A window of an output zeroed by one unit alone.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitDirectZeroMicrokernel {}
 
@@ -67,12 +66,37 @@ impl Microkernel for UnitDirectZeroMicrokernel {
 mod tests {
     use super::*;
     use cubek_std::devices;
+    use cubek_std::microkernel::CubeFootprint;
 
-    /// It runs on a device lacking every feature.
     #[test]
     fn it_runs_on_a_device_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());
         let settings = UnitDirectZeroMicrokernel::settings(&hw)[0];
         assert!(UnitDirectZeroMicrokernel::best(&hw, &(), &settings).is_ok());
+    }
+
+    #[test]
+    fn it_asks_nothing_of_its_outputs_width() {
+        const WIDEST: usize = 8;
+        let mut vectorization = Vectorization::new();
+        UnitDirectZeroMicrokernel {}.vectorize(&(), &mut vectorization);
+        assert_eq!(vectorization.width(ZeroOperand::Out, |_| WIDEST), WIDEST);
+    }
+
+    #[test]
+    fn it_holds_one_line() {
+        let planes = CubePlanes { count: 1, width: 1 };
+        let mut estimate = KernelEstimate {
+            cubes: None,
+            cube: CubeFootprint {
+                units: 1,
+                shared_memory: 0,
+            },
+            demand: None,
+            staging: None,
+            work: None,
+        };
+        UnitDirectZeroMicrokernel {}.estimate(&(), &(), planes, &mut estimate);
+        assert_eq!(estimate.work.map(|work| work.registers), Some(1));
     }
 }

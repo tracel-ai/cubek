@@ -2,7 +2,9 @@
 //! of rows side by side, so that one load of the plane reads whole memory transactions.
 
 use crate::reduce::{BATCH, REDUCED, ReduceWorkItem};
+use cubecl::tile::kind::Masked;
 use cubecl::tile::{Dimension, Levels};
+use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::Hardware;
 
 /// Lines of rows a plane of `lanes` units lies across side by side, its lines `width` wide, where
@@ -34,14 +36,67 @@ pub(crate) fn lines_across(
 /// side by side, `per_column` units in each column taking the reduced dimension in turns, one
 /// line of a row each: the leaf is one position of the reduced dimension of `owner`. The reduced
 /// dimension is the units' innermost, so a column's units hold the low bits of the lane.
-pub(crate) fn units_across(
-    owner: &[(Dimension, usize)],
-    columns: usize,
-    per_column: usize,
-) -> Levels {
+fn units_across(owner: &[(Dimension, usize)], columns: usize, per_column: usize) -> Levels {
     let mut leaf = owner.to_vec();
     leaf.push((REDUCED, 1));
     Levels::leaf(&leaf).units(&[(BATCH, columns), (REDUCED, per_column)])
+}
+
+/// Whether `lanes` units lie across `columns` lines of rows, a run of lane bits a column.
+pub(crate) const fn spreads_across(lanes: usize, columns: usize) -> bool {
+    columns.is_power_of_two() && columns <= lanes
+}
+
+/// The levels of a plane of `lanes` units that lie across `lines` boxes of rows `owner` side by side:
+/// the one box, read flat, or a column of units a box ([`plane_columns`]).
+pub(crate) fn plane_levels(owner: &[(Dimension, usize)], lines: usize, lanes: usize) -> Levels {
+    match lines {
+        1 => Levels::leaf(owner),
+        columns => plane_columns(owner, columns, lanes),
+    }
+}
+
+/// The levels of a plane of `lanes` units that lie across `columns` boxes of rows `owner`, every step
+/// along the reduced dimension the plane's to walk.
+pub(crate) fn plane_columns(owner: &[(Dimension, usize)], columns: usize, lanes: usize) -> Levels {
+    units_across(owner, columns, lanes / columns).walk_every(&[REDUCED])
+}
+
+/// The levels of a cube of `planes` planes of `lanes` units that lie across `lines` boxes of rows
+/// `owner` side by side: the one box, read flat by all of its units, or a column of each plane's units
+/// a box ([`cube_columns`]).
+pub(crate) fn cube_levels(
+    owner: &[(Dimension, usize)],
+    lines: usize,
+    lanes: usize,
+    planes: usize,
+) -> Levels {
+    match lines {
+        1 => Levels::leaf(owner),
+        columns => cube_columns(owner, columns, lanes, planes),
+    }
+}
+
+/// [`plane_columns`] of each of `planes` planes of `lanes` units, the planes after one another along
+/// the reduced dimension.
+pub(crate) fn cube_columns(
+    owner: &[(Dimension, usize)],
+    columns: usize,
+    lanes: usize,
+    planes: usize,
+) -> Levels {
+    units_across(owner, columns, lanes / columns)
+        .planes(&[(REDUCED, planes)])
+        .walk_every(&[REDUCED])
+}
+
+/// The values a row holds where `lines` of a window lie across `columns` lines of rows.
+#[cube]
+pub(crate) fn values_of_columns<T: CubePrimitive>(
+    lines: &Masked<'_, T, usize>,
+    #[comptime] columns: usize,
+) -> usize {
+    lines.shape() / columns
 }
 
 #[cfg(test)]
@@ -56,6 +111,16 @@ mod tests {
     const WIDTH: usize = 4;
     const LANES: usize = 32;
 
+    #[test]
+    fn a_column_a_lane_spreads_across() {
+        assert!(spreads_across(LANES, LANES));
+    }
+
+    #[test]
+    fn more_columns_than_lanes_do_not() {
+        assert!(!spreads_across(LANES, 2 * LANES));
+    }
+
     /// A sum of f32 values, its lines along `lines_along`.
     fn item(lines_along: Dimension) -> ReduceWorkItem {
         let f32 = ElemType::Float(FloatKind::F32);
@@ -68,7 +133,6 @@ mod tests {
         }
     }
 
-    /// Lines along the reduced dimension lie one across.
     #[test]
     fn lines_along_the_row_lie_one_across() {
         let hw = devices::m2_pro();
@@ -86,7 +150,6 @@ mod tests {
         );
     }
 
-    /// No more of them than there are lines of rows.
     #[test]
     fn no_more_lines_than_there_are() {
         let hw = devices::m2_pro();
@@ -101,7 +164,6 @@ mod tests {
         assert_eq!(lines, 2);
     }
 
-    /// A column's units take the reduced dimension in turns, a line a unit.
     #[test]
     fn a_columns_units_take_the_reduced_dimension_in_turns() {
         const COLUMNS: usize = 2;
@@ -114,5 +176,33 @@ mod tests {
             [plane.extent(BATCH), plane.extent(REDUCED)],
             [COLUMNS * WIDTH, PER_COLUMN]
         );
+    }
+
+    /// One line wide, the plane's box of rows is the leaf: no level cuts it to units.
+    #[test]
+    fn one_line_across_is_the_owners_box() {
+        let levels = plane_levels(&[(BATCH, WIDTH)], 1, LANES).build();
+        assert_eq!(levels, Levels::leaf(&[(BATCH, WIDTH)]).build());
+    }
+
+    /// A cube's planes take the reduced dimension after one another.
+    #[test]
+    fn a_cubes_planes_follow_one_another_along_the_reduced_dimension() {
+        const COLUMNS: usize = 2;
+        const PLANES: usize = 4;
+        let positions = LANES / COLUMNS * PLANES;
+        let space = Space::new(&[(BATCH, COLUMNS * WIDTH), (REDUCED, positions)]);
+        let levels = cube_columns(&[(BATCH, WIDTH)], COLUMNS, LANES, PLANES).cubes(&[BATCH]);
+        let partitioning = Partitioning::new(space, levels.build());
+        let cube = partitioning.box_of(ComputeScope::Cube);
+        assert_eq!(cube.extent(REDUCED), positions);
+    }
+
+    /// One line wide, a cube's box of rows is the leaf too.
+    #[test]
+    fn one_line_across_a_cube_is_the_owners_box() {
+        const PLANES: usize = 4;
+        let levels = cube_levels(&[(BATCH, WIDTH)], 1, LANES, PLANES).build();
+        assert_eq!(levels, Levels::leaf(&[(BATCH, WIDTH)]).build());
     }
 }

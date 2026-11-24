@@ -6,8 +6,7 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 /// One unit's share of a row its plane or its cube reads together: the lines from its first on,
 /// every `stride`-th, accumulated into its carrier, each as its line of the row.
 ///
-/// It is part of the plane and cube microkernels, which meet the units' carriers after it, and has
-/// no launch of its own.
+/// It is part of the plane and cube microkernels, which meet the units' carriers after it.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitStridedReduceMicrokernel {
     #[cube(comptime)]

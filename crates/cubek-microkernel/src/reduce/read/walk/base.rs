@@ -7,8 +7,8 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 /// a region's walk gives it, `per_step` positions of the reduced dimension a step, accumulated
 /// into its carrier, each as its position along the reduced dimension.
 ///
-/// It is part of the plane and cube microkernels, which meet the units' carriers after it, and has
-/// no launch of its own.
+/// [`UnitStridedReduceMicrokernel`](crate::reduce::read::UnitStridedReduceMicrokernel) is its twin
+/// where the units read one line of rows.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitWalkReduceMicrokernel {
     #[cube(comptime)]

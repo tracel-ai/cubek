@@ -356,14 +356,12 @@ mod tests {
     writes!(a_top_k_writes_values: ReduceOperation::TopK { k: 2 } => ReduceWrites::Values);
     writes!(an_any_writes_values: ReduceOperation::Any => ReduceWrites::Values);
 
-    /// A top-k writes `k` cells a row.
     #[test]
     fn a_top_k_writes_k_cells() {
         const K: usize = 7;
         assert_eq!(ReduceOperation::TopK { k: K }.written_per_row(), K);
     }
 
-    /// An arg top-k writes `k` cells a row.
     #[test]
     fn an_arg_top_k_writes_k_cells() {
         const K: usize = 7;
@@ -404,7 +402,6 @@ mod tests {
     const WIDTH: usize = 2;
     const F32_BYTES: usize = 4;
 
-    /// A values carrier holds a line of values.
     #[test]
     fn a_values_carrier_holds_a_line() {
         assert_eq!(
@@ -442,13 +439,11 @@ mod tests {
         );
     }
 
-    /// A mean divides by the count.
     #[test]
     fn a_mean_divides_by_the_count() {
         assert!(ReduceOperation::Mean.divides_by_count());
     }
 
-    /// A sum does not divide by the count.
     #[test]
     fn a_sum_does_not_divide_by_the_count() {
         assert!(!ReduceOperation::Sum.divides_by_count());
@@ -475,7 +470,6 @@ mod tests {
         );
     }
 
-    /// A top-k whose list is longer than its lane slots reads one value a line.
     #[test]
     fn a_top_k_longer_than_its_lane_slots_reads_one_value_a_line() {
         const LANE_SLOTS: usize = 32;
@@ -492,6 +486,60 @@ mod tests {
     fn a_top_k_keeping_nothing_panics() {
         const LANE_SLOTS: usize = 32;
         ReduceOperation::TopK { k: 0 }.widest_line_at_lane_slots(LANE_SLOTS);
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_sum_adds_the_row() {
+        assert_eq!(
+            ReduceOperation::Sum.reference_cells(&[1.0, 2.0, 4.0]),
+            vec![7.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_product_multiplies_the_row() {
+        assert_eq!(
+            ReduceOperation::Prod.reference_cells(&[2.0, 3.0, 4.0]),
+            vec![24.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_mean_divides_the_sum_by_the_rows_length() {
+        assert_eq!(
+            ReduceOperation::Mean.reference_cells(&[1.0, 2.0, 6.0]),
+            vec![3.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_min_is_the_smallest_value() {
+        assert_eq!(
+            ReduceOperation::Min.reference_cells(&[2.0, -1.0, 3.0]),
+            vec![-1.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_max_abs_is_the_largest_magnitude() {
+        assert_eq!(
+            ReduceOperation::MaxAbs.reference_cells(&[2.0, -5.0, 3.0]),
+            vec![5.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn an_arg_min_tie_is_its_lower_index() {
+        assert_eq!(
+            ReduceOperation::ArgMin.reference_cells(&[3.0, 1.0, 1.0]),
+            vec![1.0]
+        );
     }
 
     /// A row with a value that is not zero holds any.
@@ -552,7 +600,6 @@ mod tests {
         );
     }
 
-    /// A top-k keeps its `k` largest values, largest first.
     #[test]
     #[cfg(feature = "cpu-reference")]
     fn a_top_k_keeps_the_largest_first() {

@@ -8,7 +8,6 @@ use crate::launch::reduce::TestedMicrokernel;
 mod along_two_short_parts {
     use super::*;
 
-    /// The microkernel under test.
     const MICROKERNEL: TestedMicrokernel = TestedMicrokernel::HypercubeLastArrival {
         planes: 4,
         parts: 2,
@@ -22,7 +21,6 @@ mod along_two_short_parts {
 mod along_eight_long_parts {
     use super::*;
 
-    /// The microkernel under test.
     const MICROKERNEL: TestedMicrokernel = TestedMicrokernel::HypercubeLastArrival {
         planes: 4,
         parts: 8,
@@ -41,7 +39,6 @@ mod along_eight_long_parts {
 mod across_three_parts {
     use super::*;
 
-    /// The microkernel under test.
     const MICROKERNEL: TestedMicrokernel = TestedMicrokernel::HypercubeLastArrival {
         planes: 4,
         parts: 3,

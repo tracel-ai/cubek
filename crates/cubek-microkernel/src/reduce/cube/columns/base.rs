@@ -1,6 +1,6 @@
 use super::microkernel::cube_columns_reduce_microkernel;
-use crate::reduce::{ReduceAccumulator, ReduceWorkItem};
-use cubecl::tile::{Region, Tile};
+use crate::reduce::{ReduceAccumulator, ReduceWorkItem, cube_columns, spreads_across};
+use cubecl::tile::{Dimension, Levels, Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 
 /// Rows reduced by one cube, read several lines of rows wide: a column of each plane's units a line,
@@ -13,13 +13,10 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 pub struct CubeColumnsReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
-    /// Units of a plane, as wide as the device commits to.
     #[cube(comptime)]
     lanes: usize,
-    /// Planes of the cube.
     #[cube(comptime)]
     planes: usize,
-    /// Lines of rows its units lie across side by side, a power of two.
     #[cube(comptime)]
     columns: usize,
 }
@@ -27,13 +24,28 @@ pub struct CubeColumnsReduceMicrokernel {
 impl CubeColumnsReduceMicrokernel {
     /// A cube of `planes` planes of `lanes` units reducing `item`, each plane across `columns` lines of
     /// rows.
+    ///
+    /// # Panics
+    ///
+    /// As [`PlaneColumnsReduceMicrokernel::new`](crate::reduce::plane::PlaneColumnsReduceMicrokernel::new).
     pub fn new(item: ReduceWorkItem, lanes: usize, planes: usize, columns: usize) -> Self {
+        assert!(
+            spreads_across(lanes, columns),
+            "CubeColumnsReduceMicrokernel: {columns} columns of {lanes} lanes"
+        );
         Self {
             item,
             lanes,
             planes,
             columns,
         }
+    }
+
+    /// The levels below its cube from `owner`, as
+    /// [`PlaneColumnsReduceMicrokernel::levels`](crate::reduce::plane::PlaneColumnsReduceMicrokernel::levels)
+    /// of each plane.
+    pub fn levels(&self, owner: &[(Dimension, usize)]) -> Levels {
+        cube_columns(owner, self.columns, self.lanes, self.planes)
     }
 
     pub fn item(&self) -> ReduceWorkItem {
@@ -55,8 +67,8 @@ impl CubeColumnsReduceMicrokernel {
 
 #[cube]
 impl CubeColumnsReduceMicrokernel {
-    /// `cube`'s rows of `input` reduced into `out` and `indices` at the same region
-    /// (`cube_columns_reduce_microkernel`).
+    /// As [`CubeStagedReduceMicrokernel::reduce`](crate::reduce::cube::CubeStagedReduceMicrokernel::reduce),
+    /// several lines of rows wide (`cube_columns_reduce_microkernel`).
     ///
     /// # Panics
     ///
@@ -87,5 +99,25 @@ impl CubeColumnsReduceMicrokernel {
                 columns: self.columns
             }),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reduce::ReduceOperation;
+
+    const LANES: usize = 32;
+    const PLANES: usize = 4;
+
+    #[test]
+    #[should_panic(expected = "64 columns of 32 lanes")]
+    fn more_columns_than_lanes_panic() {
+        CubeColumnsReduceMicrokernel::new(
+            ReduceWorkItem::along_f32(ReduceOperation::Sum),
+            LANES,
+            PLANES,
+            2 * LANES,
+        );
     }
 }

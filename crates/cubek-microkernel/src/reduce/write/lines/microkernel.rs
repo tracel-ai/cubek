@@ -25,11 +25,11 @@ pub(crate) fn unit_lines_write_microkernel<
     let writes = microkernel.item().writes();
     let handed = indices.is_some();
     comptime!(assert!(
-        writes == ReduceWrites::Values || operation.carrier().carries_indices(),
+        microkernel.item().has_indices_to_write(),
         "UnitLinesWriteMicrokernel: {operation:?} keeps no index to write"
     ));
     comptime!(assert!(
-        handed == (writes == ReduceWrites::Both),
+        microkernel.item().takes_indices(handed),
         "UnitLinesWriteMicrokernel: an output of indices is handed over exactly where they are \
          written beside the values"
     ));
@@ -66,7 +66,7 @@ fn as_written<Out: Numeric, E: Numeric, N: Size, W: Size>(line: Vector<E, N>) ->
 }
 
 /// `line` as the row writes it: divided by its `values` for a mean, as it is otherwise.
-#[cube]
+#[cube(harness)]
 fn finished<Acc: Numeric, N: Size>(
     line: Vector<Acc, N>,
     values: usize,
@@ -80,7 +80,7 @@ fn finished<Acc: Numeric, N: Size>(
 
 /// `line` divided by `values`, in its own element where that holds every count and every total
 /// `line` can hold, in `f32` for a narrower one.
-#[cube]
+#[cube(harness)]
 fn divided<Acc: Numeric, N: Size>(line: Vector<Acc, N>, values: usize) -> Vector<Acc, N> {
     let element = elem_type_of::<Acc>();
     match comptime!(divides_in_f32(element)) {
@@ -115,6 +115,28 @@ mod tests {
         let written =
             as_written::harness::<TestRuntime, i32, f32, Const<4>, Const<1>>(&[5.0, 2.0, 3.0, 4.0]);
         assert_eq!(written, [5]);
+    }
+
+    #[test]
+    fn a_mean_is_divided_by_its_values() {
+        let written =
+            finished::harness::<TestRuntime, f32, Const<2>>(&[6.0, 9.0], 3, ReduceOperation::Mean);
+        assert_eq!(written, [2.0, 3.0]);
+    }
+
+    #[test]
+    fn a_sum_is_written_as_it_is() {
+        let written =
+            finished::harness::<TestRuntime, f32, Const<2>>(&[6.0, 9.0], 3, ReduceOperation::Sum);
+        assert_eq!(written, [6.0, 9.0]);
+    }
+
+    /// Past the integers an `f32` holds one by one.
+    #[test]
+    fn an_i32_total_keeps_its_digits() {
+        const VALUE: i32 = (1 << 24) + 1;
+        let quotient = divided::harness::<TestRuntime, i32, Const<1>>(&[5 * VALUE], 5);
+        assert_eq!(quotient, [VALUE]);
     }
 
     /// A total in `i32` holds what no `f32` does, so it is divided as it is.

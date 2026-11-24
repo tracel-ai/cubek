@@ -1,28 +1,28 @@
 use super::microkernel::cube_partial_reduce_microkernel;
 use crate::reduce::ReduceAccumulator;
-use crate::reduce::cube::CubeStagedReduceMicrokernel;
+use crate::reduce::cube::CubeStridedReduceMicrokernel;
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 
 /// A part of a row reduced by one cube into one of the row's partials: the cube reduces its window
-/// as [`CubeStagedReduceMicrokernel`] does one line of rows wide, and its first unit stores the
-/// carrier ([`UnitPartialStoreMicrokernel`](crate::reduce::write::UnitPartialStoreMicrokernel)).
+/// as [`CubeStridedReduceMicrokernel`] does, and its first unit stores the carrier
+/// ([`UnitPartialStoreMicrokernel`](crate::reduce::write::UnitPartialStoreMicrokernel)).
 ///
 /// It is part of the hypercube microkernel, whose cubes split a row, and has no launch of its own.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubePartialReduceMicrokernel {
     /// The microkernel the cube reduces its part with.
     #[cube(comptime)]
-    cube: CubeStagedReduceMicrokernel,
+    cube: CubeStridedReduceMicrokernel,
 }
 
 impl CubePartialReduceMicrokernel {
     /// A cube reducing its part with `cube`.
-    pub fn new(cube: CubeStagedReduceMicrokernel) -> Self {
+    pub fn new(cube: CubeStridedReduceMicrokernel) -> Self {
         Self { cube }
     }
 
-    pub fn cube(&self) -> CubeStagedReduceMicrokernel {
+    pub fn cube(&self) -> CubeStridedReduceMicrokernel {
         self.cube
     }
 }

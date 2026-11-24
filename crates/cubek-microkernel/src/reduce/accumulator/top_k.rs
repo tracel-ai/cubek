@@ -64,3 +64,77 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
         TopK::<Acc, N, K>::new(kept_values, kept_indices)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::TestRuntime;
+
+    /// Slot `slot`'s value of the list `first`, then `second` a line later, are inserted into, each
+    /// lane its own row.
+    #[cube(harness)]
+    fn value_kept<N: Size>(
+        first: Vector<f32, N>,
+        second: Vector<f32, N>,
+        #[comptime] slot: usize,
+    ) -> Vector<f32, N> {
+        let a_row_a_lane = comptime!(1usize);
+        let mut acc = TopK::<f32, N, Const<2>>::identity(Monoid::Max);
+        TopK::<f32, N, Const<2>>::accumulate(&mut acc, first, 0, a_row_a_lane, Monoid::Max);
+        TopK::<f32, N, Const<2>>::accumulate(&mut acc, second, 1, a_row_a_lane, Monoid::Max);
+        TopK::<f32, N, Const<2>>::value_line(&acc, slot)
+    }
+
+    /// Slot `slot`'s value once slot 0 is set to `first` and slot 1 to `second`, the lanes one row.
+    #[cube(harness)]
+    fn value_of_one_row<N: Size>(
+        first: Vector<f32, N>,
+        second: Vector<f32, N>,
+        #[comptime] slot: usize,
+    ) -> Vector<f32, N> {
+        let index = Vector::new(0u32);
+        let mut acc = TopK::<f32, N, Const<2>>::identity(Monoid::Max);
+        TopK::<f32, N, Const<2>>::set_line(&mut acc, 0, first, index);
+        TopK::<f32, N, Const<2>>::set_line(&mut acc, 1, second, index);
+        let row = TopK::<f32, N, Const<2>>::one_row(acc, Monoid::Max);
+        TopK::<f32, N, Const<2>>::value_line(&row, slot)
+    }
+
+    #[test]
+    fn the_best_line_is_kept_first() {
+        let value = value_kept::harness::<TestRuntime, Const<2>>(&[1.0, 5.0], &[4.0, 2.0], 0);
+        assert_eq!(value, [4.0, 5.0]);
+    }
+
+    #[test]
+    fn the_next_best_is_kept_second() {
+        let value = value_kept::harness::<TestRuntime, Const<2>>(&[1.0, 5.0], &[4.0, 2.0], 1);
+        assert_eq!(value, [1.0, 2.0]);
+    }
+
+    #[test]
+    fn one_row_ranks_every_lanes_list_in_every_lane() {
+        let value = value_of_one_row::harness::<TestRuntime, Const<2>>(&[9.0, 7.0], &[3.0, 1.0], 1);
+        assert_eq!(value, [7.0, 7.0]);
+    }
+
+    /// Slot `slot`'s index of the list `first`, then `second` a line later, are inserted into.
+    #[cube(harness)]
+    fn index_kept<N: Size>(
+        first: Vector<f32, N>,
+        second: Vector<f32, N>,
+        #[comptime] slot: usize,
+    ) -> Vector<u32, N> {
+        let a_row_a_lane = comptime!(1usize);
+        let mut acc = TopK::<f32, N, Const<2>>::identity(Monoid::Max);
+        TopK::<f32, N, Const<2>>::accumulate(&mut acc, first, 0, a_row_a_lane, Monoid::Max);
+        TopK::<f32, N, Const<2>>::accumulate(&mut acc, second, 1, a_row_a_lane, Monoid::Max);
+        TopK::<f32, N, Const<2>>::index_line(&acc, slot)
+    }
+
+    #[test]
+    fn each_values_index_is_kept_beside_it() {
+        let index = index_kept::harness::<TestRuntime, Const<2>>(&[1.0, 5.0], &[4.0, 2.0], 0);
+        assert_eq!(index, [1, 0]);
+    }
+}

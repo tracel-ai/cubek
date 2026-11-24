@@ -6,11 +6,8 @@ use cubecl::tile::Tile;
 use cubecl::tile::space::UnitShare;
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// The first `count` lines of `input`, the line at `l` read as line `first_line + l` of its row,
-/// accumulated by the cube into `C`: each unit takes every `units`-th line, consecutive units
-/// reading consecutive lines, each plane's lanes meet in the plane's instructions and the planes in
-/// shared memory ([`across_planes`](crate::reduce::cube::across_planes())). The cube's first unit is
-/// left with the total.
+/// Consecutive units read consecutive lines, each plane's lanes meet in the plane's instructions and
+/// the planes in shared memory ([`across_planes`](crate::reduce::cube::across_planes())).
 #[cube]
 pub(crate) fn cube_strided_reduce_microkernel<
     In: Numeric,

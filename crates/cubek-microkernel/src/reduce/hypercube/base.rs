@@ -9,6 +9,9 @@ use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
 
+/// Bytes of the slot of shared memory a cube's first unit hands it its arrival through.
+const ARRIVAL_SLOT_BYTES: usize = size_of::<u32>();
+
 /// A row split across cubes, each reducing its part with the cube's microkernel, then storing its
 /// partial apart: the last of the row's cubes to finish merges the partials and writes the row.
 ///
@@ -98,7 +101,7 @@ impl HypercubeLastArrivalReduceMicrokernel {
     /// Bytes of shared memory each cube allocates with its lines `width` lanes wide: its part's,
     /// and the slot its first unit hands the cube its arrival through.
     pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
-        self.part.shared_memory_bytes_at_width(width) + size_of::<u32>()
+        self.part.shared_memory_bytes_at_width(width) + ARRIVAL_SLOT_BYTES
     }
 }
 
@@ -177,7 +180,6 @@ mod tests {
         );
     }
 
-    /// A hypercube's widest line is its part's.
     #[test]
     fn its_widest_line_is_its_parts() {
         const LANES: usize = 32;
@@ -197,5 +199,24 @@ mod tests {
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
         let settings = HypercubeLastArrivalReduceMicrokernel::settings(&hw)[0];
         assert!(HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings).is_err());
+    }
+
+    /// The merged carrier and one partial, a line each, beside two registers.
+    #[test]
+    fn its_estimate_counts_the_merged_carrier_and_a_partial() {
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let part = CubeStagedReduceMicrokernel::new(item, 32, 4, 32);
+        let planes = CubePlanes {
+            count: 4,
+            width: 32,
+        };
+        let mut estimate = crate::reduce::empty_estimate();
+        HypercubeLastArrivalReduceMicrokernel::new(part).estimate(
+            &item,
+            &(),
+            planes,
+            &mut estimate,
+        );
+        assert_eq!(estimate.work.map(|work| work.registers), Some(4));
     }
 }

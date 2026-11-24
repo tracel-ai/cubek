@@ -12,7 +12,6 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 pub struct PlaneLineReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
-    /// Units of the plane, as wide as the device commits to.
     #[cube(comptime)]
     lanes: usize,
 }
@@ -34,8 +33,8 @@ impl PlaneLineReduceMicrokernel {
 
 #[cube]
 impl PlaneLineReduceMicrokernel {
-    /// `plane`'s rows of `input` reduced into `out` and `indices` at the same region
-    /// (`plane_line_reduce_microkernel`).
+    /// As [`PlaneShuffleReduceMicrokernel::reduce`](crate::reduce::plane::PlaneShuffleReduceMicrokernel::reduce),
+    /// one line of rows wide (`plane_line_reduce_microkernel`).
     ///
     /// # Panics
     ///

@@ -14,7 +14,6 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 pub struct UnitDirectReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
-    /// As [`UnitDirectReduceMicrokernelSettings::lane_slots`](crate::reduce::unit::UnitDirectReduceMicrokernelSettings::lane_slots).
     #[cube(comptime)]
     lane_slots: usize,
 }
@@ -123,7 +122,7 @@ impl Microkernel for UnitDirectReduceMicrokernel {
         vectorization.require(self.item.requirement());
     }
 
-    /// It holds its carrier and one line: a lower bound, the registers it keeps live.
+    /// A lower bound: the registers it keeps live.
     fn estimate(
         &self,
         _item: &ReduceWorkItem,
@@ -141,7 +140,6 @@ mod tests {
     use crate::reduce::{ReduceOperation, TOP_K_LANE_SLOTS};
     use cubek_std::devices;
 
-    /// A sum leaves the line unbounded.
     #[test]
     fn a_sum_bounds_no_line() {
         const LANE_SLOTS: usize = 32;
@@ -152,7 +150,6 @@ mod tests {
         assert_eq!(sum.widest_line(), None);
     }
 
-    /// A top-k bounds the line to its lane slots spread over `k`.
     #[test]
     fn a_top_k_bounds_the_line_to_its_slots_over_k() {
         const LANE_SLOTS: usize = 32;
@@ -174,12 +171,40 @@ mod tests {
         );
     }
 
-    /// It has a candidate on a device lacking every feature.
     #[test]
     fn it_runs_on_a_device_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());
         let settings = UnitDirectReduceMicrokernel::settings(&hw)[0];
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
         assert!(UnitDirectReduceMicrokernel::best(&hw, &item, &settings).is_ok());
+    }
+
+    fn sum() -> UnitDirectReduceMicrokernel {
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        UnitDirectReduceMicrokernel::new(item, TOP_K_LANE_SLOTS[0])
+    }
+
+    #[test]
+    fn along_the_row_the_output_is_written_a_cell_at_a_time() {
+        let mut vectorization = Vectorization::new();
+        sum().vectorize(&(), &mut vectorization);
+        assert_eq!(vectorization.width(ReduceOperand::Out, |_| 8), 1);
+    }
+
+    #[test]
+    fn its_estimate_is_its_items_work() {
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let planes = CubePlanes {
+            count: 4,
+            width: 32,
+        };
+        let mut estimate = crate::reduce::empty_estimate();
+        sum().estimate(&item, &(), planes, &mut estimate);
+        assert_eq!(estimate.work, Some(item.unit_work()));
+    }
+
+    #[test]
+    fn it_displays_what_it_compiles() {
+        assert_eq!(sum().to_string(), "Sum Dimension(1)");
     }
 }

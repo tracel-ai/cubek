@@ -50,7 +50,7 @@ mod walk_across_300_long_four_wide {
     ]);
 }
 
-/// Rows of one value, four rows a line: the line stored as it is.
+/// A partial of four rows a line, stored as it is.
 mod partial_across_one_value_four_wide {
     use super::*;
     use cubek_microkernel::reduce::ReduceOperation;
@@ -60,7 +60,7 @@ mod partial_across_one_value_four_wide {
     ]);
 }
 
-/// Rows of one value, four rows a line: the line written as wide as it is.
+/// Four rows a line, written as wide as it is.
 mod lines_across_one_value_four_wide {
     use super::*;
     use cubek_microkernel::reduce::ReduceOperation;
@@ -71,11 +71,41 @@ mod lines_across_one_value_four_wide {
     ]);
 }
 
-/// Rows of one value, a value a line: the line written as one cell.
+/// A value a line, written as one cell.
 mod lines_along_one_value_one_wide {
     use super::*;
     use cubek_microkernel::reduce::ReduceOperation;
     reduce_tests!(TestedMicrokernel::UnitLinesWrite, Along, 1, 1, Plain, [
         sum: ReduceOperation::Sum,
+    ]);
+}
+
+/// Rows of one value, a value a line: a partial of one cell, three rows of it.
+mod partial_along_one_value_one_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(PARTIAL, Along, 1, 1, Plain, [
+        sum: ReduceOperation::Sum,
+    ]);
+}
+
+/// The write of a region's carrier: four values a line, met into the row's cell.
+mod region_along_one_line_four_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(TestedMicrokernel::UnitRegionWrite, Along, 4, 4, Plain, [
+        sum: ReduceOperation::Sum,
+        mean: ReduceOperation::Mean,
+        max: ReduceOperation::Max,
+    ]);
+}
+
+/// The write of a region's carrier, a row a lane.
+mod region_across_one_value_four_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(TestedMicrokernel::UnitRegionWrite, Across, 1, 4, Plain, [
+        sum: ReduceOperation::Sum,
+        mean: ReduceOperation::Mean,
     ]);
 }

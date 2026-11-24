@@ -4,9 +4,7 @@ use crate::reduce::{REDUCED, ReduceAccumulator};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// `total`, a column of rows' carrier, written to `out` and `indices` by the column's unit at the
-/// start of the reduced dimension in `region`'s walk, at that unit's cell, one write a column, a
-/// row a lane, `values` the values each row held.
+/// One write a column, a row a lane.
 #[cube]
 pub(crate) fn unit_walk_write_microkernel<
     Out: Numeric,

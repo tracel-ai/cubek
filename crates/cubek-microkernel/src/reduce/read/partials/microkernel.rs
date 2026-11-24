@@ -1,12 +1,10 @@
 use super::base::UnitPartialsReduceMicrokernel;
 use crate::reduce::write::{UnitCarrierWriteMicrokernel, unit_carrier_write_microkernel};
-use crate::reduce::{ReduceAccumulator, assert_partial_indices};
+use crate::reduce::{ReduceAccumulator, takes_partial_indices};
 use cubecl::tile::Tile;
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// The first `parts` partials of `partials` and `partial_indices`, each its carrier's lines side by
-/// side, combined in order by one unit and written to `out` and `indices`, `values` the values each
-/// of the rows holds.
+/// The carriers combine in the order their partials lie.
 #[cube]
 pub(crate) fn unit_partials_reduce_microkernel<
     Out: Numeric,
@@ -27,10 +25,10 @@ pub(crate) fn unit_partials_reduce_microkernel<
     let monoid = item.operation.monoid();
     let slots = item.operation.written_per_row();
     let handed = partial_indices.is_some();
-    comptime!(assert_partial_indices(
-        "UnitPartialsReduceMicrokernel",
-        item.operation.carrier(),
-        handed
+    comptime!(assert!(
+        takes_partial_indices(item.operation.carrier(), handed),
+        "UnitPartialsReduceMicrokernel: {:?} takes its partials' indices exactly where it keeps any",
+        item.operation.carrier()
     ));
 
     let value_lines = partials.flat::<Acc, N>();

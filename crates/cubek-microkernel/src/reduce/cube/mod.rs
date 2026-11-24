@@ -10,5 +10,5 @@ pub use base::*;
 pub use columns::*;
 pub use line::*;
 pub use partial::*;
-pub(crate) use planes::across_planes;
+pub(crate) use planes::{across_planes, staged_bytes};
 pub use strided::*;

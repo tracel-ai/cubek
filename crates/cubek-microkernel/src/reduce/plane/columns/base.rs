@@ -1,6 +1,6 @@
 use super::microkernel::plane_columns_reduce_microkernel;
-use crate::reduce::{ReduceAccumulator, ReduceWorkItem};
-use cubecl::tile::{Region, Tile};
+use crate::reduce::{ReduceAccumulator, ReduceWorkItem, plane_columns, spreads_across};
+use cubecl::tile::{Dimension, Levels, Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 
 /// Rows reduced by one plane, read several lines of rows wide: a column of units a line, each
@@ -12,22 +12,33 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 pub struct PlaneColumnsReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
-    /// Units of the plane, as wide as the device commits to.
     #[cube(comptime)]
     lanes: usize,
-    /// Lines of rows its units lie across side by side, a power of two.
     #[cube(comptime)]
     columns: usize,
 }
 
 impl PlaneColumnsReduceMicrokernel {
     /// A plane of `lanes` units reducing `item`, its units across `columns` lines of rows.
+    ///
+    /// # Panics
+    ///
+    /// Where `columns` is not a power of two at most `lanes`.
     pub fn new(item: ReduceWorkItem, lanes: usize, columns: usize) -> Self {
+        assert!(
+            spreads_across(lanes, columns),
+            "PlaneColumnsReduceMicrokernel: {columns} columns of {lanes} lanes"
+        );
         Self {
             item,
             lanes,
             columns,
         }
+    }
+
+    /// The levels below its plane from `owner`, the box of rows one line wide a row's window holds.
+    pub fn levels(&self, owner: &[(Dimension, usize)]) -> Levels {
+        plane_columns(owner, self.columns, self.lanes)
     }
 
     pub fn item(&self) -> ReduceWorkItem {
@@ -45,8 +56,8 @@ impl PlaneColumnsReduceMicrokernel {
 
 #[cube]
 impl PlaneColumnsReduceMicrokernel {
-    /// `plane`'s rows of `input` reduced into `out` and `indices` at the same region
-    /// (`plane_columns_reduce_microkernel`).
+    /// As [`PlaneShuffleReduceMicrokernel::reduce`](crate::reduce::plane::PlaneShuffleReduceMicrokernel::reduce),
+    /// its `columns` lines of rows wide (`plane_columns_reduce_microkernel`).
     ///
     /// # Panics
     ///
@@ -76,5 +87,23 @@ impl PlaneColumnsReduceMicrokernel {
                 columns: self.columns
             }),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reduce::ReduceOperation;
+
+    const LANES: usize = 32;
+
+    #[test]
+    #[should_panic(expected = "3 columns of 32 lanes")]
+    fn columns_that_are_no_power_of_two_panic() {
+        PlaneColumnsReduceMicrokernel::new(
+            ReduceWorkItem::along_f32(ReduceOperation::Sum),
+            LANES,
+            3,
+        );
     }
 }

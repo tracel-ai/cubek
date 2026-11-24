@@ -11,16 +11,14 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 pub struct CubeLineReduceMicrokernel {
     #[cube(comptime)]
     item: ReduceWorkItem,
-    /// Units of a plane, as wide as the device commits to.
     #[cube(comptime)]
     lanes: usize,
-    /// Planes of the cube.
     #[cube(comptime)]
     planes: usize,
 }
 
 impl CubeLineReduceMicrokernel {
-    /// A cube of `planes` planes of `lanes` units reducing `item`.
+    /// The cube's `planes` planes of `lanes` units, reducing `item` a line at a time.
     pub fn new(item: ReduceWorkItem, lanes: usize, planes: usize) -> Self {
         Self {
             item,
@@ -44,8 +42,8 @@ impl CubeLineReduceMicrokernel {
 
 #[cube]
 impl CubeLineReduceMicrokernel {
-    /// `cube`'s rows of `input` reduced into `out` and `indices` at the same region
-    /// (`cube_line_reduce_microkernel`).
+    /// As [`CubeStagedReduceMicrokernel::reduce`](crate::reduce::cube::CubeStagedReduceMicrokernel::reduce),
+    /// one line of rows wide (`cube_line_reduce_microkernel`).
     ///
     /// # Panics
     ///

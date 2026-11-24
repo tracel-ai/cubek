@@ -1,12 +1,10 @@
 use super::base::UnitWalkReduceMicrokernel;
-use crate::reduce::{REDUCED, ReduceAccumulator, accumulate_read};
+use crate::reduce::read::accumulate_line;
+use crate::reduce::{REDUCED, ReduceAccumulator};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, cube, prelude::*};
 
-/// The cells of `input` `region`'s walk gives this unit, `per_step` positions of the reduced
-/// dimension a step, `values` long, accumulated from the identity, each as its position along the
-/// reduced dimension: one unit's share of rows its plane or its cube reads with its units across
-/// them. Every step but the last reads without a check, as
+/// Every step but the last reads without a check, as
 /// [`unit_strided_reduce_microkernel`](crate::reduce::read::unit_strided_reduce_microkernel)'s do.
 #[cube]
 pub(crate) fn unit_walk_reduce_microkernel<
@@ -22,15 +20,22 @@ pub(crate) fn unit_walk_reduce_microkernel<
 ) -> C {
     let item = microkernel.item();
     let walk = region.walk();
+    let load = input.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
     let full_steps = values / microkernel.per_step();
     let mut acc = C::identity(item.operation.monoid());
+    let first_cell = 0usize;
     for step in 0..full_steps {
         for unit in walk.region(step).leaves() {
             let cell = input.at(&unit);
-            let load = cell.vector_tile();
-            let row_lanes = comptime!(load.extent_along(REDUCED));
-            let line = cell.flat::<In, N>().read(0);
-            accumulate_read::<In, Acc, N, C>(&mut acc, line, unit.origin(REDUCED), row_lanes, item);
+            accumulate_line::<In, Acc, N, C>(
+                &mut acc,
+                &cell.flat::<In, N>(),
+                first_cell,
+                unit.origin(REDUCED),
+                row_lanes,
+                item,
+            );
         }
     }
 
@@ -38,13 +43,12 @@ pub(crate) fn unit_walk_reduce_microkernel<
     for step in full_steps..values.div_ceil(microkernel.per_step()) {
         for unit in walk.region(step).leaves() {
             let cell = input.at(&unit);
-            let load = cell.vector_tile();
-            let row_lanes = comptime!(load.extent_along(REDUCED));
             let position = unit.origin(REDUCED);
             if position < values {
-                accumulate_read::<In, Acc, N, C>(
+                accumulate_line::<In, Acc, N, C>(
                     &mut acc,
-                    cell.flat::<In, N>().read(0),
+                    &cell.flat::<In, N>(),
+                    first_cell,
                     position,
                     row_lanes,
                     item,

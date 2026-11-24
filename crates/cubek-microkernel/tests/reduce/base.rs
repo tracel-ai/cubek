@@ -4,7 +4,7 @@
 //! dimension into its parts, `input[BATCH, PARTS, REDUCED]` or `input[PARTS, REDUCED, BATCH]`, a
 //! cube a part.
 
-use crate::launch::reduce::{LineDirection, ReduceLaunch, TestedMicrokernel};
+use crate::launch::reduce::{LineDirection, ReduceLauncher, TestedMicrokernel};
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Decline;
@@ -18,7 +18,7 @@ const I32: ElemType = ElemType::Int(IntKind::I32);
 
 /// The reduce microkernel `hw` runs each case names.
 pub(crate) struct ReduceMicrokernelScopeUnderTest {
-    pub hw: Hardware,
+    hw: Hardware,
 }
 
 /// One operation over rows `len` values long holding `rows`, read `width` values a line, laid
@@ -63,14 +63,8 @@ impl Rows {
     fn row(self, operation: ReduceOperation, len: usize, r: usize) -> Vec<f32> {
         match self {
             Rows::Plain => plain_row(operation, len, r),
-            Rows::Ties => with_values(
-                plain_row(operation, len, r),
-                &[(1, TIE), (len - 1, TIE), (2, -TIE), (len - 2, -TIE)],
-            ),
-            Rows::Nan => with_values(
-                plain_row(operation, len, r),
-                &[(len / 2, f32::NAN), (len - 1, f32::NAN)],
-            ),
+            Rows::Ties => with_values(plain_row(operation, len, r), &ties_of_len(len)),
+            Rows::Nan => with_values(plain_row(operation, len, r), &nans_of_len(len)),
             Rows::NegativeInfinity => vec![f32::NEG_INFINITY; len],
             Rows::Zeros => vec![0.0; len],
         }
@@ -80,7 +74,7 @@ impl Rows {
 /// Row `r` of [`Rows::Plain`], `len` values long, as `operation` reads it.
 fn plain_row(operation: ReduceOperation, len: usize, r: usize) -> Vec<f32> {
     match operation {
-        ReduceOperation::Prod => (r..r + len).map(product_value).collect(),
+        ReduceOperation::Prod => (r..r + len).map(product_value_of_index).collect(),
         _ => (r..r + len)
             .map(|i| ((i * 7) % 11) as f32 - 5.0 + r as f32)
             .collect(),
@@ -88,13 +82,23 @@ fn plain_row(operation: ReduceOperation, len: usize, r: usize) -> Vec<f32> {
 }
 
 /// Value `i` of the cycle a product's rows hold.
-fn product_value(i: usize) -> f32 {
+fn product_value_of_index(i: usize) -> f32 {
     match i % 9 {
         0 => 2.0,
         4 => 0.5,
         3 | 5 => -1.0,
         _ => 1.0,
     }
+}
+
+/// The positions and values of the ties of a row of `len` values.
+fn ties_of_len(len: usize) -> [(usize, f32); 4] {
+    [(1, TIE), (len - 1, TIE), (2, -TIE), (len - 2, -TIE)]
+}
+
+/// The positions and values of the NaN of a row of `len` values.
+fn nans_of_len(len: usize) -> [(usize, f32); 2] {
+    [len / 2, len - 1].map(|position| (position, f32::NAN))
 }
 
 /// `row` with each `(position, value)` of `at` written in.
@@ -113,7 +117,7 @@ pub(crate) fn reduces_like_the_cpu(case: ReduceCase) {
 }
 
 impl ReduceCase {
-    /// The element the output is written in: the values', or an index's.
+    /// The output's element.
     fn out(&self) -> ElemType {
         match self.operation.writes() {
             ReduceWrites::Values | ReduceWrites::Both => F32,
@@ -124,11 +128,11 @@ impl ReduceCase {
 
 /// A reduction on the host: its rows and what each writes.
 struct HostReduce {
-    case: ReduceCase,
+    pub case: ReduceCase,
     /// How far apart the values its microkernel reads of a row lie.
-    stride: usize,
+    pub stride: usize,
     /// Each row's values, read in order and by row (Arrival and Position Usage).
-    rows: Vec<Vec<f32>>,
+    pub rows: Vec<Vec<f32>>,
 }
 
 impl HostReduce {
@@ -151,25 +155,39 @@ impl HostReduce {
 
     /// The input's shape and its values in that order.
     fn input(&self) -> (Shape, Vec<f32>) {
-        let (rows, len) = (self.rows.len(), self.case.len);
-        match (self.case.lines, self.case.microkernel) {
-            (LineDirection::Along, TestedMicrokernel::HypercubeLastArrival { parts, .. }) => {
-                (shape![rows, parts, len / parts], self.rows.concat())
-            }
-            (LineDirection::Along, _) => (shape![rows, len], self.rows.concat()),
-            (LineDirection::Across, microkernel) => {
-                let shape = match microkernel {
-                    TestedMicrokernel::HypercubeLastArrival { parts, .. } => {
-                        shape![parts, len / parts, rows]
-                    }
-                    _ => shape![len, rows],
-                };
-                let values = (0..len)
-                    .flat_map(|r| self.rows.iter().map(move |row| row[r]))
-                    .collect();
-                (shape, values)
-            }
+        match self.case.lines {
+            LineDirection::Along => (self.input_along(), self.rows.concat()),
+            LineDirection::Across => (self.input_across(), self.values_across()),
         }
+    }
+
+    /// The input's shape, its rows along the reduced dimension.
+    fn input_along(&self) -> Shape {
+        let (rows, len) = (self.rows.len(), self.case.len);
+        match self.case.microkernel {
+            TestedMicrokernel::HypercubeLastArrival { parts, .. } => {
+                shape![rows, parts, len / parts]
+            }
+            _ => shape![rows, len],
+        }
+    }
+
+    /// The input's shape, its rows across the reduced dimension.
+    fn input_across(&self) -> Shape {
+        let (rows, len) = (self.rows.len(), self.case.len);
+        match self.case.microkernel {
+            TestedMicrokernel::HypercubeLastArrival { parts, .. } => {
+                shape![parts, len / parts, rows]
+            }
+            _ => shape![len, rows],
+        }
+    }
+
+    /// The rows' values, a row a column.
+    fn values_across(&self) -> Vec<f32> {
+        (0..self.case.len)
+            .flat_map(|r| self.rows.iter().map(move |row| row[r]))
+            .collect()
     }
 
     /// The output's shape: a row's cells along its row, or down its column.
@@ -183,7 +201,7 @@ impl HostReduce {
 
     /// The values of `row` its microkernel reads.
     fn values_read(&self, row: &[f32]) -> Vec<f32> {
-        row[..self.case.microkernel.values_of(row.len())]
+        row[..self.case.microkernel.values_of_len(row.len())]
             .iter()
             .step_by(self.stride)
             .copied()
@@ -219,7 +237,7 @@ impl ScopeUnderTest for ReduceMicrokernelScopeUnderTest {
             lines_along: case.lines.dimension(),
             with_indices: false,
         };
-        let launch = ReduceLaunch::new(
+        let launch = ReduceLauncher::new(
             &self.hw,
             item,
             case.microkernel,
