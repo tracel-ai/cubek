@@ -2,7 +2,7 @@ use super::block::{BlockDepth, BlockForm};
 use super::kernel::plane_window_conv_kernel;
 use super::settings::{PlaneWindowConvSettings, UnitBlock};
 use crate::kernels::tiled::{
-    ConvBinding, ConvPartitioning, ConvProblem, ConvRoles, ConvRoutine, ConvStaging,
+    ConvBinding, ConvPartitioning, ConvPhasing, ConvProblem, ConvRoles, ConvRoutine, ConvStaging,
     TileConvBlueprint,
 };
 use core::num::NonZeroUsize;
@@ -198,9 +198,12 @@ impl PlaneWindowConvRoutine {
                 elements: problem.extent(dimensions.k),
             }
         });
-        let out_beside_rhs = [roles.inner.rhs, roles.inner.out]
-            .into_iter()
-            .all(|dimension| runs_along(dimension) == Some(MatmulDim::N));
+        // A phased input gradient is stored through a shifted gathered map, whose vector lines the
+        // launch cannot prove in bounds, so it is written one element at a time.
+        let out_beside_rhs = roles.phasing == ConvPhasing::Whole
+            && [roles.inner.rhs, roles.inner.out]
+                .into_iter()
+                .all(|dimension| runs_along(dimension) == Some(MatmulDim::N));
         let out_requirements = match out_beside_rhs {
             true => vec![
                 VectorRequirement::Access {
