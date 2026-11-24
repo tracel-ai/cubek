@@ -40,10 +40,15 @@ is an axis of the attention's space.
 |---|---|---|---|---|
 | `Dense` | float | either | none | read |
 | `Dense` | float | either | a list | read as pages of one block each, at `Attended` visibility (else `INDEXED_VISIBILITY_UNREAD`), a block within one page (else `KEY_BLOCK_SPLITS_A_PAGE`) |
-| `Dense` | packed | none | none | read |
+| `Dense` | packed | either | none | read by the staged cube (round-only keys) and the hypercube shuffles |
 | `Packed` | float | either | none | read by the cube routines; the unit and hypercube routines decline (`PACKED_QUERIES_UNREAD`) |
+| `Packed` | packed | either | none | read by the staged cube, round-only keys only (`STAGED_FIXUP_UNREAD`) |
 | any | packed | any | a list | declined: `INDEXED_KEYS_UNREAD` |
-| any | packed | pages | none | declined: `PAGED_PACKED_UNREAD` |
+
+A packed cache in pages is read where it lies: its words, its norms and the keys' residual lengths
+are each a pool `[pages, kv, page_size, ·]` placed by the one table. The norms are paged by the
+table first, then the words are stated under them and paged too, and every read decodes through
+the table.
 
 Packed queries are one launch for every sequence. Each sequence's run of the queries and of the
 output is placed by its entry of `ends` (the tile DSL's `Indexing::Run` along the queries, keyed by

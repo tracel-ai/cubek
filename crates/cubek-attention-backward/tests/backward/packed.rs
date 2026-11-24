@@ -16,7 +16,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostAttention, HostData, HostDataType, PackedVectors, TestInput};
 
 /// Bits per coordinate of the codes, keys and values alike.
 const BITS: u32 = 4;
@@ -48,9 +48,9 @@ const PROMPT_WIDE: Case = Case {
 };
 
 /// One side of a packed cache: `rows` vectors of `width` codes, each a `BITS`-wide index into
-/// `codebook`, scaled by its row's norm.
+/// `codebook`, packed low first into `u32` words, and scaled by its row's norm.
 struct PackedSide {
-    codes: Vec<u32>,
+    words: Vec<u32>,
     norms: Vec<f32>,
     codebook: Vec<f32>,
     width: usize,
@@ -59,9 +59,20 @@ struct PackedSide {
 impl PackedSide {
     fn new(rows: usize, width: usize, salt: usize) -> Self {
         let entries = 1usize << BITS;
+        let per_word = 32 / BITS as usize;
+        let codes: Vec<u32> = (0..rows * width)
+            .map(|i| ((i * 7 + i / width * 3 + salt * 13) % entries) as u32)
+            .collect();
         Self {
-            codes: (0..rows * width)
-                .map(|i| ((i * 7 + i / width * 3 + salt * 13) % entries) as u32)
+            words: codes
+                .chunks(per_word)
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .enumerate()
+                        .map(|(at, &code)| code << (at as u32 * BITS))
+                        .sum()
+                })
                 .collect(),
             norms: (0..rows)
                 .map(|row| 0.5 + ((row + salt) % 5) as f32 * 0.25)
@@ -73,26 +84,22 @@ impl PackedSide {
         }
     }
 
-    /// Coordinate `d` of vector `row`, decoded.
-    fn decoded(&self, row: usize, d: usize) -> f64 {
-        (self.codebook[self.codes[row * self.width + d] as usize] * self.norms[row]) as f64
+    /// The side's vectors as the host decodes them.
+    fn vectors(&self) -> PackedVectors<'_> {
+        PackedVectors {
+            words: &self.words,
+            norms: &self.norms,
+            codebook: &self.codebook,
+            bits: BITS,
+            coords: self.width,
+        }
     }
 
-    /// The side on the device as `[b, kv, s, ·]` buffers: the codes packed low first into `u32`
-    /// words, the norms and the codebook in `f32`.
+    /// The side on the device as `[b, kv, s, ·]` buffers: the words, the norms and the codebook in
+    /// `f32`.
     fn operand(&self, client: &Client, case: &Case) -> PackedAttentionOperand {
         let per_word = 32 / BITS as usize;
-        let words: Vec<u32> = self
-            .codes
-            .chunks(per_word)
-            .map(|fields| {
-                fields
-                    .iter()
-                    .enumerate()
-                    .map(|(at, &code)| code << (at as u32 * BITS))
-                    .sum()
-            })
-            .collect();
+        let words = &self.words;
         let rows = [case.batch, case.kv_heads, case.seq_kv];
         let on_device = |shape: Vec<usize>, bytes: &[u8], element: ElemType| {
             PlainTensor::of_handle(TensorHandle::new_contiguous(
@@ -104,7 +111,7 @@ impl PackedSide {
         PackedAttentionOperand {
             words: on_device(
                 [&rows[..], &[self.width / per_word]].concat(),
-                u32::as_bytes(&words),
+                u32::as_bytes(words),
                 u32::elem_type_native(),
             ),
             norms: on_device(
@@ -151,35 +158,27 @@ fn check_packed(case: Case) {
             .custom((0..cells).map(wobble).collect())
             .generate_with_f32_host_data();
 
-    let mut out = vec![0f64; batch * heads * seq_q * val_dim];
+    let (decoded_keys, decoded_values) = (keys.vectors(), values.vectors());
+    let host = HostAttention {
+        scale: case.scale(),
+    };
+    let mut out = Vec::with_capacity(batch * heads * seq_q * val_dim);
     for b in 0..batch {
         for h in 0..heads {
             let kv = h / group;
+            let key_row = |j: usize| (b * kv_heads + kv) * seq_kv + j;
             for i in 0..seq_q {
-                let row = (b * heads + h) * seq_q + i;
-                let key_row = |j: usize| (b * kv_heads + kv) * seq_kv + j;
-                let scores: Vec<Option<f64>> = (0..seq_kv)
-                    .map(|j| {
-                        case.sees(b, h, i, j).then(|| {
-                            (0..head_dim)
-                                .map(|d| {
-                                    q.get_f32(&[b, h, i, d]) as f64 * keys.decoded(key_row(j), d)
-                                })
-                                .sum::<f64>()
-                                * case.scale()
-                        })
-                    })
+                let query: Vec<f64> = (0..head_dim)
+                    .map(|d| q.get_f32(&[b, h, i, d]) as f64)
                     .collect();
-                let max = scores.iter().flatten().copied().reduce(f64::max).unwrap();
-                let total: f64 = scores.iter().flatten().map(|s| (s - max).exp()).sum();
-                for c in 0..val_dim {
-                    out[row * val_dim + c] = (0..seq_kv)
-                        .map(|j| {
-                            scores[j].map_or(0., |s| (s - max).exp() / total)
-                                * values.decoded(key_row(j), c)
-                        })
-                        .sum();
-                }
+                let seen: Vec<usize> = (0..seq_kv).filter(|&j| case.sees(b, h, i, j)).collect();
+                out.extend(host.attend(
+                    &query,
+                    &seen,
+                    |j, d| decoded_keys.decoded(key_row(j), d),
+                    |j, c| decoded_values.decoded(key_row(j), c),
+                    val_dim,
+                ));
             }
         }
     }
