@@ -4,7 +4,7 @@
 use crate::kernels::plan::MatmulCall;
 use crate::kernels::tune::key::MatmulTuneKey;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::throughput::{MemoryAccess, compute_throughput_key};
+use cubecl::throughput::{CmmaDims, MemoryAccess, ThroughputKey};
 use cubecl::tune::Work;
 use cubek_std::autotune::{Ceiling, Roofline};
 use cubek_std::{Hardware, Instructions};
@@ -60,9 +60,13 @@ pub(crate) fn matmul_ceiling(hw: &Hardware, elem: ElemType) -> Ceiling {
         .copied()
         .for_triple(elem, elem, accumulate)
         .largest()
-        .map(|i| (i.m, i.n, i.k));
+        .map(|i| CmmaDims {
+            m: i.m as usize,
+            n: i.n as usize,
+            k: i.k as usize,
+        });
     Ceiling::Either {
-        compute: compute_throughput_key(instruction, elem, accumulate),
+        compute: ThroughputKey::compute(instruction, elem, accumulate),
         memory: MemoryAccess::Read,
     }
 }

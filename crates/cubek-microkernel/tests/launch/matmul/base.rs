@@ -126,24 +126,28 @@ impl OneCube {
     /// The box `levels` give one instance of `scope`, the launch's outermost, `steps` of its
     /// leaf's `K` deep.
     pub fn new(levels: Vec<Level>, scope: ComputeScope, steps: usize) -> Self {
-        let unbounded = Space::new(&[
-            (M, Self::UNBOUNDED),
-            (N, Self::UNBOUNDED),
-            (K, Self::UNBOUNDED),
-        ]);
-        let probe = Partitioning::new(unbounded, levels.clone());
-        let instance = probe.box_of(scope);
-        let shape = [
-            instance.extent(M),
-            instance.extent(N),
-            probe.leaf().extent(K) * steps,
-        ];
+        let probe = Self::probe(&levels, Self::UNBOUNDED);
+        let depth = probe.leaf().extent(K) * steps;
+        Self::deep(levels, scope, depth)
+    }
+
+    /// The box `levels` give one instance of `scope`, `depth` deep along `K`, for a leaf that
+    /// leaves `K` whole.
+    pub fn deep(levels: Vec<Level>, scope: ComputeScope, depth: usize) -> Self {
+        let instance = Self::probe(&levels, depth).box_of(scope);
+        let shape = [instance.extent(M), instance.extent(N), depth];
         let [m, n, k] = shape;
         let partitioning = Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), levels);
         Self {
             shape,
             partitioning,
         }
+    }
+
+    /// `levels` over a space of `k` along `K` and extents along `M` and `N` no one cube reaches.
+    fn probe(levels: &[Level], k: usize) -> Partitioning {
+        let unbounded = Space::new(&[(M, Self::UNBOUNDED), (N, Self::UNBOUNDED), (K, k)]);
+        Partitioning::new(unbounded, levels.to_vec())
     }
 
     /// The box as a matmul microkernel reads it: every dimension plain, no batch, no overhang.

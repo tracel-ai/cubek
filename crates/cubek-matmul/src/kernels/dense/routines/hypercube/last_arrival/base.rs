@@ -256,7 +256,9 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let storage = resolved.storage;
         let cube = CubeResources {
             plane_width: resolved.plane_width,
-            shared_memory: resolved.shared_memory + ARRIVAL_SLOT_BYTES,
+            // A cube walks the boxes its run touches in turn, its stages live across them, so the
+            // windows its fragments bounce through into its slot open beside the stages.
+            shared_memory: resolved.shared_memory_beside_windows + ARRIVAL_SLOT_BYTES,
         };
         let microkernel = HypercubeStagedMicrokernel {
             cube: resolved.microkernel,

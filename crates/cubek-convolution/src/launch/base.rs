@@ -12,6 +12,7 @@ use cubek_matmul::{
     },
     routine::BlueprintStrategy,
 };
+use cubek_std::Hardware;
 
 use crate::{components::ConvolutionOperation, definition::ConvBlueprint};
 
@@ -25,7 +26,10 @@ fn blueprint_operation(blueprint: &ConvBlueprint) -> ConvolutionOperation {
 
 use crate::{
     components::ConvSetupError,
-    kernels::{backward_data, backward_weight, forward},
+    kernels::{
+        backward_data, backward_weight, forward,
+        tiled::{ConvRoutineKind, ConvTensors},
+    },
     launch::{
         ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy, strategy::AcceleratedTileKind,
         unit,
@@ -45,6 +49,41 @@ pub(crate) fn tile_kind_to_dispatch(kind: AcceleratedTileKind) -> TileMatmulKind
         AcceleratedTileKind::Cmma => TileMatmulKind::Cmma,
         AcceleratedTileKind::Mma => TileMatmulKind::Mma,
     }
+}
+
+/// `inputs` launched by the tiled `routine`.
+#[allow(
+    clippy::result_large_err,
+    reason = "the launch error carries the refusal; boxing it would change every launch fn's signature"
+)]
+fn launch_tile<const N_SPATIAL: usize>(
+    routine: &ConvRoutineKind,
+    client: &Client,
+    inputs: ConvolutionInputs,
+    args: ConvolutionArgs<N_SPATIAL>,
+    dtypes: MatmulElems,
+) -> Result<(), ConvSetupError> {
+    let window = &args.windows();
+    let tensors = match inputs {
+        ConvolutionInputs::Forward {
+            input,
+            weight,
+            bias,
+            out,
+        } => ConvTensors::forward(client, input, weight, bias, out, window, dtypes)?,
+        ConvolutionInputs::BackwardWeight {
+            input,
+            out_grad,
+            weight_grad,
+        } => ConvTensors::backward_weight(client, input, out_grad, weight_grad, window, dtypes)?,
+        ConvolutionInputs::BackwardData {
+            out_grad,
+            weights,
+            in_grad,
+        } => ConvTensors::backward_data(client, out_grad, weights, in_grad, window, dtypes)?,
+    };
+    let hw = Hardware::from_client(client);
+    Ok(routine.launch_on(&hw, tensors)?)
 }
 
 /// The single public convolution entry point.
@@ -83,6 +122,7 @@ pub fn launch_ref<const N_SPATIAL: usize>(
         Strategy::Unit(strategy) => {
             return unit::launch(*strategy, client, inputs, args, dtypes);
         }
+        Strategy::Tile(routine) => return launch_tile(routine, client, inputs, args, dtypes),
     };
 
     // Backward-data does not currently support the TMA reading strategy.

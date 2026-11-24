@@ -94,7 +94,7 @@ impl CubeStagedMicrokernel {
 
     /// The microkernel `settings` ask for, its planes running `plane`, a stage spanning `depth`
     /// along the contraction, each operand read as `reads` says.
-    fn new(
+    pub fn new(
         settings: &CubeStagedMicrokernelSettings,
         plane: PlaneFragmentMicrokernel,
         depth: CubeStagedDepth,
@@ -389,6 +389,13 @@ impl CubeStagedMicrokernel {
         self.tiling().filled_by(self.fill.filling_planes)
     }
 
+    /// Whether a masked output makes the planes bounce their fragments through scratch: the
+    /// instruction bounces its cells and the planes store their fragments into the output
+    /// itself. The one place the rule lives; a launch that must bounce masks its output.
+    pub fn bounces_masked_output(&self) -> bool {
+        self.plane.cost.bounced_cell.is_some() && self.store == CubeStagedStore::Fragments
+    }
+
     /// This microkernel as `hw` runs it for `item`, handed the box `cube_space` (of its
     /// [`tiling`](Self::tiling) placed over the problem): its ring and scratch decided, how its
     /// stages hold their cells, the width of its planes and the shared memory a cube holds. The
@@ -422,9 +429,43 @@ impl CubeStagedMicrokernel {
         packings: MatmulOperands<Option<Packing>>,
         cube_space: &MatmulCubeSpace,
     ) -> Result<CubeStagedResolved, Decline> {
-        let stage = &self.stage(cube_space);
+        let placed = CubeStagedBox {
+            stage: self.stage(cube_space),
+            contracting_planes: self.contracting_planes(),
+            masks_output: cube_space.overhangs_output,
+            storage: None,
+        };
+        self.resolve_in(hw, item, packings, &placed)
+    }
+
+    /// The storage a stage lands in when the units copy it, with the layout they copy it in.
+    fn copied_stage_storage(
+        &self,
+        delivery: CubeStagedDelivery,
+        stage: &MatmulStage,
+    ) -> (StageStorage, StageLayout) {
+        let storage = self
+            .plane
+            .stage_storage(self.stage_layout, delivery.fills(), stage);
+        (storage, self.stage_layout)
+    }
+
+    /// [`resolve`](Self::resolve) for a routine that places the box and lays the stages out
+    /// itself ([`CubeStagedBox`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve`](Self::resolve).
+    pub fn resolve_in(
+        self,
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        packings: MatmulOperands<Option<Packing>>,
+        placed: &CubeStagedBox,
+    ) -> Result<CubeStagedResolved, Decline> {
+        let stage = &placed.stage;
         let plane_width = self.plane.instruction.units(hw)?;
-        let units = self.contracting_planes() * plane_width as usize;
+        let units = placed.contracting_planes * plane_width as usize;
         let operands = stage.operands(
             item.elements,
             self.plane.orders,
@@ -436,7 +477,7 @@ impl CubeStagedMicrokernel {
         let merges = self.drain() == CubeStagedDrain::Merged;
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
-        let cut_short = cube_space.overhangs_output && self.store == CubeStagedStore::Fragments;
+        let cut_short = placed.masks_output && self.bounces_masked_output();
         let window = match self.plane.cost.bounced_cell {
             Some(_) => self.scratch.at_least_bouncing(true),
             None => Scratch::None,
@@ -460,18 +501,17 @@ impl CubeStagedMicrokernel {
         }
         // A box lands a stage as one run of whole rows, as the instruction reads it; the units
         // copy it in the layout the setting names, its rows arranged as the instruction reads
-        // them. Under a box the setting names nothing, so it resolves to the default's, and a
-        // table sees one launch rather than timing its twins.
-        let (storage, stage_layout) = match fill.delivery {
-            CubeStagedDelivery::Tma => (
+        // them. Under a box, or a storage the routine lays out, the setting names nothing, so it
+        // resolves to the default's, and a table sees one launch rather than timing its twins.
+        let (storage, stage_layout) = match (&placed.storage, fill.delivery) {
+            (Some(storage), _) => (storage.clone(), CubeStagedMicrokernelSettings::SWIZZLED),
+            (None, CubeStagedDelivery::Tma) => (
                 self.plane.landed_stage_storage(stage),
                 CubeStagedMicrokernelSettings::SWIZZLED,
             ),
-            CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => (
-                self.plane
-                    .stage_storage(self.stage_layout, fill.delivery.fills(), stage),
-                self.stage_layout,
-            ),
+            (None, delivery @ (CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy)) => {
+                self.copied_stage_storage(delivery, stage)
+            }
         };
         let microkernel = Self {
             scratch,
@@ -479,12 +519,25 @@ impl CubeStagedMicrokernel {
             stage_layout,
             ..self
         };
-        let shared_memory = microkernel.shared_memory(hw, item, stage, &storage, window);
+        let memory = |windows: CubeStagedWindows| {
+            microkernel.shared_memory_of(
+                placed.contracting_planes,
+                hw,
+                item,
+                stage,
+                &storage,
+                window,
+                windows,
+            )
+        };
+        let shared_memory = memory(CubeStagedWindows::InStages);
+        let shared_memory_beside_windows = memory(CubeStagedWindows::BesideStages);
         Ok(CubeStagedResolved {
             microkernel,
             storage,
             plane_width,
             shared_memory,
+            shared_memory_beside_windows,
         })
     }
 
@@ -504,6 +557,28 @@ impl CubeStagedMicrokernel {
         storage: &StageStorage,
         window: Scratch,
     ) -> usize {
+        self.shared_memory_of(
+            self.contracting_planes(),
+            hw,
+            item,
+            stage,
+            storage,
+            window,
+            CubeStagedWindows::InStages,
+        )
+    }
+
+    /// [`shared_memory`](Self::shared_memory) of a cube holding `planes` contracting planes.
+    fn shared_memory_of(
+        &self,
+        planes: usize,
+        hw: &Hardware,
+        item: &MatmulWorkItem,
+        stage: &MatmulStage,
+        storage: &StageStorage,
+        window: Scratch,
+        windows_open: CubeStagedWindows,
+    ) -> usize {
         let accumulator = match self.drain() {
             CubeStagedDrain::EachPlane => 0,
             CubeStagedDrain::Merged => {
@@ -513,7 +588,7 @@ impl CubeStagedMicrokernel {
                     * item.sum.size()
             }
         };
-        let windows = self.contracting_planes() * self.plane.scratch_bytes(item, window);
+        let windows = planes * self.plane.scratch_bytes(item, window);
         let scales = self.scale_bytes(item, stage);
         let stored = self
             .store
@@ -522,11 +597,16 @@ impl CubeStagedMicrokernel {
             .ring
             .bytes(stage.bytes(hw, item.elements, storage, self.plane.orders) + scales);
         // The windows open once the walk has freed its stages, and take their bytes
-        // (`CubeStagedWalk::drain_sum`); so does the box planes set aside to fill drain into.
+        // (`CubeStagedWalk::drain_sum`), or open beside them where the stages stay live; so does
+        // the box planes set aside to fill drain into.
+        let staged = match windows_open {
+            CubeStagedWindows::InStages => stages.max(windows),
+            CubeStagedWindows::BesideStages => stages + windows,
+        };
         if self.fill.filling_planes > 0 {
-            stages.max(windows).max(stored) + accumulator
+            staged.max(stored) + accumulator
         } else {
-            stages.max(windows) + accumulator + stored
+            staged + accumulator + stored
         }
     }
 
@@ -559,6 +639,24 @@ impl CubeStagedMicrokernel {
     }
 }
 
+/// The box a routine places a cube microkernel in where it states the stage itself rather than
+/// by the microkernel's own tiling.
+#[derive(Debug, Clone)]
+pub struct CubeStagedBox {
+    /// The box one step of the walk through the contraction stages.
+    pub stage: MatmulStage,
+    /// Planes a cube holds that contract.
+    pub contracting_planes: usize,
+    /// Whether the output's writes are masked, as they are where the boxes overhang it
+    /// ([`MatmulCubeSpace::overhangs_output`]). A masked write is one a fragment's store
+    /// cannot make, so a fragment bounces through scratch
+    /// ([`CubeStagedMicrokernel::bounces_masked_output`]).
+    pub masks_output: bool,
+    /// How the stages hold their cells, where the routine lays them out and the microkernel's
+    /// layout does not.
+    pub storage: Option<StageStorage>,
+}
+
 /// A cube microkernel resolved against its box ([`CubeStagedMicrokernel::resolve`]), and what
 /// resolving decided: how its stages hold their cells, the width of its planes, and the bytes of
 /// shared memory one cube holds.
@@ -568,6 +666,19 @@ pub struct CubeStagedResolved {
     pub storage: StageStorage,
     pub plane_width: u32,
     pub shared_memory: usize,
+    /// Bytes of shared memory one cube holds where the windows its planes' fragments bounce
+    /// through open beside its stages rather than in their bytes: what a cube holds that walks
+    /// several boxes in turn, its stages live across them.
+    pub shared_memory_beside_windows: usize,
+}
+
+/// Where the windows a cube's fragments bounce through as its sum drains open.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CubeStagedWindows {
+    /// In the stages' bytes, once the walk has freed them.
+    InStages,
+    /// Beside the stages, which stay live.
+    BesideStages,
 }
 
 impl Microkernel for CubeStagedMicrokernel {

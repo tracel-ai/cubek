@@ -16,7 +16,7 @@ use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
 use cubecl::throughput::{
-    self, MemoryAccess, MemoryCurve, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
+    AchievedThroughput, MemoryAccess, MemoryCurve, ResourceBound, ThroughputKey, ThroughputMode,
 };
 
 use crate::{HostData, Progress};
@@ -94,7 +94,7 @@ fn curve_ceiling(access: MemoryAccess, bytes: usize) -> f64 {
         .entry(access)
         .or_insert_with(|| measure_memory_curve(&client(), access));
 
-    curve.ceiling_at(bytes as u64).unwrap_or(0.0)
+    curve.ceiling_at_bytes(bytes as u64).unwrap_or(0.0)
 }
 
 /// Looks up `key`'s peak rate in [`PEAKS`], measuring and caching it on a
@@ -189,7 +189,7 @@ pub enum ResourceKind {
 /// The resource that bound a run's duration, the slowest of the declared
 /// resources even running flat out at its own peak, alongside how fast the
 /// run actually achieved it. Mirrors the selection rule in
-/// [`throughput::binding_achieved`].
+/// [`AchievedThroughput::binding`].
 #[derive(Debug, Clone, Copy)]
 pub struct Binding {
     pub resource: ResourceKind,
@@ -374,18 +374,18 @@ fn score_bounds(
     resources: &[(ResourceKind, ResourceBound)],
 ) -> (Option<f64>, Option<Binding>) {
     let bounds: Vec<ResourceBound> = resources.iter().map(|(_, bound)| *bound).collect();
-    let scores = score_resources(Duration::from_secs_f64(median_secs), &bounds);
+    let scores = AchievedThroughput::score(Duration::from_secs_f64(median_secs), &bounds);
 
     let tflops = resources
         .iter()
         .position(|(kind, _)| *kind == ResourceKind::Compute)
         .map(|idx| scores[idx].achieved_per_s / 1e12);
 
-    let binding = throughput::binding_achieved(&scores).map(|best| {
+    let binding = AchievedThroughput::binding(&scores).map(|best| {
         let idx = scores
             .iter()
             .position(|candidate| candidate == best)
-            .expect("binding_achieved returns an element of scores");
+            .expect("AchievedThroughput::binding should return an element of scores");
         let (resource, bound) = resources[idx];
         Binding {
             resource,
