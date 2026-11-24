@@ -2,6 +2,7 @@ use super::dimensions::{ConvContractedDimensions, ConvFreeDimensions, SpatialDim
 use super::extents::{ConvExtents, ViewDim};
 use super::gather::ConvGather;
 use super::groups::{ConvChannelOperands, ConvGrouping};
+use super::phases::ConvPhasing;
 use super::views::ViewOrder;
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::tensors::axes;
@@ -19,6 +20,9 @@ pub struct ConvRoles {
     pub spatial_dims: SpatialDimCount,
     /// Whether the channels are split by group: the group is then the first free dimension.
     pub grouping: ConvGrouping,
+    /// Whether the strided dims are split into phases: each phase is then a free dimension, after
+    /// the group, that the rhs and the output are bound over and the gathered input is not.
+    pub phasing: ConvPhasing,
     /// Where the group count is read from.
     pub channels: ConvChannelOperands,
     pub free: ConvFreeDimensions,
@@ -29,7 +33,8 @@ pub struct ConvRoles {
     /// The dimensions the gathered input is read over, the contracted run just before the free one:
     /// a matrix instruction takes its operands' dimensions in that order.
     pub lhs: Vec<Dimension>,
-    /// The dimensions the rhs is bound by, in the order the instruction reads them.
+    /// The dimensions the rhs is bound by, in the order the instruction reads them. A phase
+    /// dimension is not an axis of its buffer: a tap axis is addressed by a phase and a tap.
     pub rhs: Vec<Dimension>,
     /// The order the rhs's view lists the dims of its buffer in, as split by group.
     pub rhs_order: ViewOrder,
@@ -46,7 +51,7 @@ pub struct ConvRoles {
 
 impl ConvRoles {
     /// The roles `operation` gives the dimensions of the space of a convolution over `spatial_dims`
-    /// spatial dims, with the channels as `grouping` says.
+    /// spatial dims, with the channels as `grouping` says and the strided dims as `phasing` says.
     ///
     /// # Errors
     ///
@@ -57,6 +62,7 @@ impl ConvRoles {
         operation: ConvolutionOperation,
         spatial_dims: SpatialDimCount,
         grouping: ConvGrouping,
+        phasing: ConvPhasing,
     ) -> Result<Self, Decline> {
         if spatial_dims.0 == 0 {
             return Err(ConvDecline::NoSpatialDim.into());
@@ -65,7 +71,7 @@ impl ConvRoles {
             return Err(ConvDecline::TooManySpatialDims.into());
         }
         let channels = ConvChannelOperands::of(operation)?;
-        let spatial = SpatialDimensions::new(spatial_dims, grouping);
+        let spatial = SpatialDimensions::new(spatial_dims, grouping, phasing);
         let build = match operation {
             ConvolutionOperation::Forward => Self::forward,
             ConvolutionOperation::BackwardWeight => Self::backward_weight,
@@ -80,6 +86,16 @@ impl ConvRoles {
     /// group.
     pub fn bias_dimensions(&self) -> Vec<Dimension> {
         [self.grouping.dimensions(), &[CO]].concat()
+    }
+
+    /// The dimensions of the rhs buffer's own axes: [`Self::rhs`] without the phases.
+    pub fn rhs_axes(&self) -> Vec<Dimension> {
+        self.without_phases(&self.rhs)
+    }
+
+    /// The dimensions of the output buffer's own axes: [`Self::free`] without the phases.
+    pub fn out_axes(&self) -> Vec<Dimension> {
+        self.without_phases(&self.free.in_order())
     }
 
     /// The spatial `[out, tap]` dimension pairs, one per spatial dim of the gathered input.
@@ -196,6 +212,14 @@ impl ConvRoles {
 }
 
 impl ConvRoles {
+    /// `dimensions` without the phase dimensions.
+    fn without_phases(&self, dimensions: &[Dimension]) -> Vec<Dimension> {
+        let phases = self.phasing.dimensions();
+        (dimensions.iter().copied())
+            .filter(|dimension| !phases.contains(dimension))
+            .collect()
+    }
+
     fn forward(spatial: &SpatialDimensions, channels: ConvChannelOperands) -> Self {
         use MatmulOperand::{Lhs, Out, Rhs};
         let groups = spatial.grouping.dimensions();
@@ -205,6 +229,7 @@ impl ConvRoles {
         Self {
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
+            phasing: ConvPhasing::Whole,
             channels,
             space: [&free[..], &contracted].concat(),
             free: ConvFreeDimensions::split(&free),
@@ -241,6 +266,7 @@ impl ConvRoles {
         Self {
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
+            phasing: ConvPhasing::Whole,
             channels,
             space: [&contracted[..], &free].concat(),
             free: ConvFreeDimensions::split(&free),
@@ -272,17 +298,18 @@ impl ConvRoles {
         use MatmulOperand::{Lhs, Out, Rhs};
         let groups = spatial.grouping.dimensions();
         let split = spatial.grouping.dimension_count();
-        let free = [groups, &[B], &spatial.outs, &[CI]].concat();
+        let free = [groups, &spatial.phases, &[B], &spatial.outs, &[CI]].concat();
         let contracted = [&spatial.taps[..], &[CO]].concat();
         Self {
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
+            phasing: spatial.phasing.clone(),
             channels,
             space: [&free[..], &contracted].concat(),
             free: ConvFreeDimensions::split(&free),
             contracted: ConvContractedDimensions::split(&contracted),
             lhs: [groups, &[B], &spatial.outs, &spatial.taps, &[CO]].concat(),
-            rhs: [groups, &spatial.taps, &[CO, CI]].concat(),
+            rhs: [groups, &spatial.phases, &spatial.taps, &[CO, CI]].concat(),
             rhs_order: ViewOrder::ChannelsOutAfterTaps,
             out_order: ViewOrder::GroupsFirst,
             inner: MatmulOperands {
@@ -322,7 +349,8 @@ mod tests {
             ConvRoles::of(
                 ConvolutionOperation::ForwardTransposed,
                 SpatialDimCount(2),
-                ConvGrouping::Whole
+                ConvGrouping::Whole,
+                ConvPhasing::Whole
             ),
             Err(ConvDecline::Transposed.into())
         );
@@ -331,7 +359,12 @@ mod tests {
     #[test]
     fn no_spatial_dim_is_refused_by_name() {
         assert_eq!(
-            ConvRoles::of(Forward, SpatialDimCount(0), ConvGrouping::Whole),
+            ConvRoles::of(
+                Forward,
+                SpatialDimCount(0),
+                ConvGrouping::Whole,
+                ConvPhasing::Whole
+            ),
             Err(ConvDecline::NoSpatialDim.into())
         );
     }
@@ -339,9 +372,22 @@ mod tests {
     #[test]
     fn spatial_dims_past_the_label_range_are_refused_by_name() {
         let max = ConvDimension::MAX_SPATIAL_DIMS;
-        assert!(ConvRoles::of(Forward, SpatialDimCount(max), ConvGrouping::Whole).is_ok());
+        assert!(
+            ConvRoles::of(
+                Forward,
+                SpatialDimCount(max),
+                ConvGrouping::Whole,
+                ConvPhasing::Whole
+            )
+            .is_ok()
+        );
         assert_eq!(
-            ConvRoles::of(Forward, SpatialDimCount(max + 1), ConvGrouping::Whole),
+            ConvRoles::of(
+                Forward,
+                SpatialDimCount(max + 1),
+                ConvGrouping::Whole,
+                ConvPhasing::Whole
+            ),
             Err(ConvDecline::TooManySpatialDims.into())
         );
     }
@@ -354,8 +400,13 @@ mod tests {
             .try_into()
             .expect("two spatial dims");
         let roles = |operation| {
-            ConvRoles::of(operation, SpatialDimCount(2), ConvGrouping::Whole)
-                .expect("a served operation")
+            ConvRoles::of(
+                operation,
+                SpatialDimCount(2),
+                ConvGrouping::Whole,
+                ConvPhasing::Whole,
+            )
+            .expect("a served operation")
         };
         let whole = ConvGrouping::Whole;
 
@@ -445,7 +496,8 @@ mod tests {
             .try_into()
             .expect("two spatial dims");
         let roles = |operation| {
-            ConvRoles::of(operation, SpatialDimCount(2), grouped).expect("a served operation")
+            ConvRoles::of(operation, SpatialDimCount(2), grouped, ConvPhasing::Whole)
+                .expect("a served operation")
         };
         let dims = SpatialDimCount(2);
 
@@ -486,8 +538,9 @@ mod tests {
             for count in [1, 3] {
                 for grouping in [ConvGrouping::Whole, ConvGrouping::Grouped(2)] {
                     let spatial_dims = SpatialDimCount(count);
-                    let roles = ConvRoles::of(operation, spatial_dims, grouping)
-                        .expect("a served operation");
+                    let roles =
+                        ConvRoles::of(operation, spatial_dims, grouping, ConvPhasing::Whole)
+                            .expect("a served operation");
                     let groups = grouping.dimensions().len();
                     let space: HashSet<Dimension> = roles.space.iter().copied().collect();
                     assert_eq!(space.len(), roles.space.len(), "{operation:?} {count}");
@@ -507,5 +560,43 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A strided data backward adds a phase dimension to the free and rhs dimensions of each
+    /// strided dim, after the group, and to nothing else.
+    #[test]
+    fn a_strided_data_backward_adds_a_free_phase_dimension_for_each_strided_dim() {
+        let [[oh, rh], [ow, rw]] = ConvDimension::spatial(SpatialDimCount(2))
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("two spatial dims");
+        let (ph, pw) = (
+            ConvDimension::Phase(0).dimension(),
+            ConvDimension::Phase(1).dimension(),
+        );
+        let roles = |grouping, strides: Vec<usize>| {
+            let phasing = ConvPhasing::Strided(strides);
+            ConvRoles::of(BackwardData, SpatialDimCount(2), grouping, phasing)
+                .expect("a served operation")
+        };
+
+        let both = roles(ConvGrouping::Whole, vec![2, 2]);
+        assert_eq!(both.free.in_order(), [ph, pw, B, oh, ow, CI]);
+        assert_eq!(both.free.outer, [ph, pw, B]);
+        assert_eq!(both.out_axes(), [B, oh, ow, CI]);
+        assert_eq!(both.rhs, [ph, pw, rh, rw, CO, CI]);
+        assert_eq!(both.rhs_axes(), [rh, rw, CO, CI]);
+        assert_eq!(both.lhs, [B, oh, ow, rh, rw, CO]);
+        assert_eq!(both.space, [ph, pw, B, oh, ow, CI, rh, rw, CO]);
+        assert_eq!(both.dynamic(), Some(B));
+
+        let one = roles(ConvGrouping::Whole, vec![1, 3]);
+        assert_eq!(one.free.in_order(), [pw, B, oh, ow, CI]);
+        assert_eq!(one.rhs, [pw, rh, rw, CO, CI]);
+
+        let grouped = roles(ConvGrouping::Grouped(2), vec![2, 2]);
+        assert_eq!(grouped.free.in_order(), [G, ph, pw, B, oh, ow, CI]);
+        assert_eq!(grouped.rhs, [G, ph, pw, rh, rw, CO, CI]);
+        assert_eq!(grouped.out_axes(), [G, B, oh, ow, CI]);
     }
 }

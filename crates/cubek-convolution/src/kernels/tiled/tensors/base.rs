@@ -2,7 +2,7 @@ use super::axes;
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{
     B, CO, ChannelAxis, ConvBias, ConvBinding, ConvChannelOperands, ConvDecline, ConvGrouping,
-    ConvProblem, ConvRoles, SpatialDim, SpatialDimCount, TileConvBlueprint,
+    ConvPhasing, ConvProblem, ConvRoles, SpatialDim, SpatialDimCount, TileConvBlueprint,
 };
 use crate::launch::{SpatialExtent, SpatialWindow, TapCount};
 use cubecl::client::Client;
@@ -86,7 +86,7 @@ impl ConvTensors {
     ///
     /// # Errors
     ///
-    /// [`ConvDecline::DataBackwardStrided`], or another [`ConvDecline`] reason.
+    /// [`ConvDecline::DataBackwardStridedDilated`], or another [`ConvDecline`] reason.
     pub fn backward_data(
         client: &Client,
         out_grad: InputBinding,
@@ -95,8 +95,8 @@ impl ConvTensors {
         window: &[SpatialWindow],
         dtypes: MatmulElems,
     ) -> Result<Self, Decline> {
-        if window.iter().any(|window| window.stride > 1) {
-            return Err(ConvDecline::DataBackwardStrided.into());
+        if (window.iter()).any(|window| window.stride > 1 && window.dilation > 1) {
+            return Err(ConvDecline::DataBackwardStridedDilated.into());
         }
         let operation = ConvolutionOperation::BackwardData;
         let operands = [out_grad, weights];
@@ -180,16 +180,27 @@ impl ConvTensors {
             true => input,
             false => input.boundary(BoundaryPolicy::Every(Boundary::Zero)),
         };
-        let rhs = launcher
-            .arg(self.rhs, problem.elements.rhs)
-            .dimensions(&roles.rhs)
-            .vectorize(widths.rhs);
-        let mut out = launcher
-            .arg(self.out, problem.elements.out)
-            .dimensions(&roles.free.in_order())
-            .vectorize(widths.out)
-            .build()?;
-        let masked: Vec<_> = (roles.free.in_order().into_iter())
+        let phased = roles.phasing != ConvPhasing::Whole;
+        let rhs = launcher.arg(self.rhs, problem.elements.rhs);
+        let rhs = match phased {
+            true => rhs.gathered(problem.weight_projection()),
+            false => rhs.dimensions(&roles.rhs),
+        }
+        .vectorize(widths.rhs);
+        // A tap past the weight's end reads zero, which only a checked axis does.
+        let rhs = match problem.tap_strides().is_empty() {
+            true => rhs,
+            false => rhs.boundary(BoundaryPolicy::Every(Boundary::Zero)),
+        };
+        let free = roles.free.in_order();
+        let out = launcher.arg(self.out, problem.elements.out);
+        let mut out = match phased {
+            true => out.gathered(problem.output_projection()),
+            false => out.dimensions(&free),
+        }
+        .vectorize(widths.out)
+        .build()?;
+        let masked: Vec<_> = (roles.out_axes().into_iter())
             .map(|dimension| (dimension == roles.dimensions().m).then_some(Boundary::Zero))
             .collect();
         out.spec = match blueprint.masks_out && !out.spec.is_checked() {
@@ -210,7 +221,7 @@ impl ConvTensors {
         Ok(ConvBinding {
             launcher,
             input: input.arg(),
-            rhs: rhs.arg(),
+            rhs: rhs.arg().runtime_map(problem.tap_strides(), Vec::new()),
             out: out.arg(),
             bias: bias.map(|bias| bias.arg()),
         })
@@ -247,7 +258,8 @@ impl ConvTensors {
             out: &out.shape[..],
         };
         let grouping = ConvGrouping::of(channels.groups(&shapes)?);
-        let roles = ConvRoles::of(operation, spatial_dims, grouping)?;
+        let phasing = ConvPhasing::of(operation, window.iter().copied());
+        let roles = ConvRoles::of(operation, spatial_dims, grouping, phasing)?;
         let input = roles.split(MatmulOperand::Lhs, input)?;
         let rhs = roles.split(MatmulOperand::Rhs, rhs)?;
         let out = roles.split(MatmulOperand::Out, out)?;

@@ -22,9 +22,9 @@ pub enum ConvDecline {
     RankMismatch,
     /// An operand that is quantized, whose scales the binding would drop.
     Quantized,
-    /// The gradient of the input at a stride above 1, which reads the output gradient only at
-    /// every stride-th position.
-    DataBackwardStrided,
+    /// The gradient of the input at a stride above 1 along a dim with a dilation above 1: the
+    /// phases of the stride would leave input cells that no phase writes.
+    DataBackwardStridedDilated,
     /// An output of other channels than the weight's filters, or that do not split into the groups.
     OutChannels,
     /// Operands of different batches.
@@ -83,8 +83,8 @@ impl ConvDecline {
             Self::Quantized => {
                 "the tiled convolution reads float operands, a quantized one would lose its scales"
             }
-            Self::DataBackwardStrided => {
-                "the tiled data backward convolution has a stride of 1, the gradient read at every stride-th position is not stated"
+            Self::DataBackwardStridedDilated => {
+                "the tiled data backward convolution has a dilation of 1 along a strided dimension, whose phases would leave input cells unwritten"
             }
             Self::OutChannels => "the tiled convolution's output channels are its weight's filters",
             Self::Batch => "the tiled convolution's operands share one batch",

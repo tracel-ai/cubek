@@ -72,8 +72,8 @@ pub(super) fn agree_on(
     extent: Option<usize>,
     [rhs, out]: [&TensorBinding; 2],
 ) -> bool {
-    let free = roles.free.in_order();
-    let named = [(&roles.rhs[..], rhs), (&free[..], out)];
+    let (rhs_axes, out_axes) = (roles.rhs_axes(), roles.out_axes());
+    let named = [(&rhs_axes[..], rhs), (&out_axes[..], out)];
     let mut extents = extent
         .into_iter()
         .chain(named.iter().filter_map(|(dimensions, tensor)| {

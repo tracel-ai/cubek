@@ -1,5 +1,6 @@
 use super::extents::{ViewDim, ViewRun};
 use super::groups::ConvGrouping;
+use super::phases::ConvPhasing;
 use crate::kernels::tiled::{ConvDimension, SpatialDimCount};
 use cubecl::tile::Dimension;
 use cubek_microkernel::matmul::MatmulOperand;
@@ -72,18 +73,27 @@ impl ConvContractedDimensions {
 pub(super) struct SpatialDimensions {
     pub(super) spatial_dims: SpatialDimCount,
     pub(super) grouping: ConvGrouping,
+    pub(super) phasing: ConvPhasing,
     pub(super) outs: Vec<Dimension>,
     pub(super) taps: Vec<Dimension>,
+    /// The phase dimensions of the strided dims, which no operand's buffer has an axis for.
+    pub(super) phases: Vec<Dimension>,
 }
 
 impl SpatialDimensions {
-    pub(super) fn new(spatial_dims: SpatialDimCount, grouping: ConvGrouping) -> Self {
+    pub(super) fn new(
+        spatial_dims: SpatialDimCount,
+        grouping: ConvGrouping,
+        phasing: ConvPhasing,
+    ) -> Self {
         let (outs, taps) = ConvDimension::spatial(spatial_dims)
             .map(|[out, tap]| (out, tap))
             .unzip();
         Self {
             spatial_dims,
             grouping,
+            phases: phasing.dimensions(),
+            phasing,
             outs,
             taps,
         }

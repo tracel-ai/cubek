@@ -8,7 +8,9 @@ use cubek_test_utils::CatalogEntry;
 use crate::{
     ConvolutionArgs, SpatialExtent, TapCount,
     components::ConvolutionOperation,
-    kernels::tiled::{ConvBias, ConvGrouping, ConvProblem, ConvRoles, SpatialDimCount},
+    kernels::tiled::{
+        ConvBias, ConvGrouping, ConvPhasing, ConvProblem, ConvRoles, SpatialDimCount,
+    },
 };
 
 /// The element a problem's operands are stored in and its sums run in.
@@ -72,8 +74,14 @@ impl Conv2dProblem {
 /// starts, summing in `f32`.
 impl From<&Conv2dProblem> for ConvProblem {
     fn from(problem: &Conv2dProblem) -> Self {
-        let roles = ConvRoles::of(problem.operation, SpatialDimCount(2), ConvGrouping::Whole)
-            .expect("the host states no transposed forward");
+        let windows = problem.args.windows();
+        let roles = ConvRoles::of(
+            problem.operation,
+            SpatialDimCount(2),
+            ConvGrouping::Whole,
+            ConvPhasing::of(problem.operation, windows),
+        )
+        .expect("the host states no transposed forward");
         let [lhs, rhs, out] = problem.shapes().map(|shape| shape.to_vec());
         let shapes = MatmulOperands { lhs, rhs, out };
         let bias = match problem.operation {
@@ -83,7 +91,7 @@ impl From<&Conv2dProblem> for ConvProblem {
         let stated = Self::from_views(
             problem.operation,
             ConvGrouping::Whole,
-            &problem.args.windows(),
+            &windows,
             roles.views(&shapes),
             MatmulOperands::all(problem.element.elem_type()),
             ElemType::Float(FloatKind::F32),

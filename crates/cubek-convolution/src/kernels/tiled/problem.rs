@@ -1,9 +1,9 @@
-use super::{ConvGather, ConvGrouping, ConvRoles};
+use super::{ConvGather, ConvGrouping, ConvPhasing, ConvRoles};
 use crate::components::ConvolutionOperation;
 use crate::definition::{ConvCost, ConvCostDim};
 use crate::launch::SpatialWindow;
 use cubecl::ir::ElemType;
-use cubecl::tile::layout::{ElemAlignment, PhysicalAxisMap};
+use cubecl::tile::layout::{ElemAlignment, PhysicalAxisMap, Scale};
 use cubecl::tile::{Dimension, Projection, Space};
 use cubecl::tune::Work;
 use cubek_matmul::definition::MatmulGlobalElems;
@@ -34,13 +34,16 @@ pub(crate) enum ConvDimension {
     Out(usize),
     /// The tap dimension of a spatial dim, which the window slides along with its output dimension.
     Tap(usize),
+    /// The phase of a strided spatial dim in a data backward: which of the stride's residues of the
+    /// tap and of the input position a cell belongs to.
+    Phase(usize),
 }
 
 impl ConvDimension {
     /// The label of the first spatial dimension, which follows the three channel and batch labels.
     const FIRST_SPATIAL: u8 = G.0 + 1;
-    /// A spatial dim takes two labels: its out dimension, then its tap dimension.
-    const PER_SPATIAL_DIM: u8 = 2;
+    /// A spatial dim takes three labels: its out, tap and phase dimensions.
+    const PER_SPATIAL_DIM: u8 = 3;
     /// The most spatial dims whose labels, the last tap dimension included, fit in a label.
     pub const MAX_SPATIAL_DIMS: usize =
         ((u8::MAX - Self::FIRST_SPATIAL) / Self::PER_SPATIAL_DIM) as usize;
@@ -55,6 +58,9 @@ impl ConvDimension {
             Self::Out(dim) => Dimension(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8),
             Self::Tap(dim) => {
                 Dimension(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8 + 1)
+            }
+            Self::Phase(dim) => {
+                Dimension(Self::FIRST_SPATIAL + Self::PER_SPATIAL_DIM * dim as u8 + 2)
             }
         }
     }
@@ -82,10 +88,10 @@ impl ConvDimension {
     fn of_spatial(label: u8) -> Self {
         let offset = label - Self::FIRST_SPATIAL;
         let dim = usize::from(offset / Self::PER_SPATIAL_DIM);
-        if offset.is_multiple_of(Self::PER_SPATIAL_DIM) {
-            Self::Out(dim)
-        } else {
-            Self::Tap(dim)
+        match offset % Self::PER_SPATIAL_DIM {
+            0 => Self::Out(dim),
+            1 => Self::Tap(dim),
+            _ => Self::Phase(dim),
         }
     }
 }
@@ -109,6 +115,65 @@ impl SpatialDim {
         let last = self.out.saturating_sub(1) * self.window.stride
             + self.kernel.saturating_sub(1) * self.window.dilation;
         self.window.padding == 0 && last < self.gathered
+    }
+
+    /// The cells before the input gradient's start that the phases reach, never zero where the
+    /// extent overruns a whole number of strides, so the output map keeps its edge checks.
+    pub fn phase_lead(&self) -> usize {
+        match (self.window.padding, self.out % self.window.stride) {
+            (0, 0) => 0,
+            (0, _) => self.window.stride,
+            (padding, _) => padding,
+        }
+    }
+
+    /// The cells of one phase of the input gradient along this dim: the positions
+    /// `stride * cell + phase - lead`.
+    pub fn phased_out(&self) -> usize {
+        (self.out + self.phase_lead()).div_ceil(self.window.stride)
+    }
+
+    /// The taps of one phase of the weight along this dim: the taps `stride * tap + phase`.
+    pub fn phased_taps(&self) -> usize {
+        self.kernel.div_ceil(self.window.stride)
+    }
+
+    /// Whether some phase has a tap past the weight's end, which must read as zero.
+    pub fn has_ragged_taps(&self) -> bool {
+        !self.kernel.is_multiple_of(self.window.stride)
+    }
+
+    /// The output gradient's axis over `out` and `tap` that a phase reads: `out - tap` less the
+    /// stride's worth of rows the lead takes beyond the padding. Negative before the gradient's
+    /// start, and past its end where the phase has more cells than the gradient has rows.
+    pub fn phased_gradient_map(&self, out: Dimension, tap: Dimension) -> PhysicalAxisMap {
+        let behind = (self.phase_lead() - self.window.padding) / self.window.stride;
+        PhysicalAxisMap::scaled(&[(out, Scale::Static(1)), (tap, Scale::Static(-1))])
+            .shifted(-(behind as isize))
+    }
+
+    /// The input gradient's axis over `out` and `phase`: `stride * out + phase - lead`.
+    pub fn phased_out_map(&self, out: Dimension, phase: Dimension) -> PhysicalAxisMap {
+        PhysicalAxisMap::disjoint(&[(out, self.window.stride), (phase, 1)])
+            .shifted(-(self.phase_lead() as isize))
+    }
+
+    /// The weight's tap axis over `tap` and `phase`: `stride * tap + phase`. Where some phase has a
+    /// tap past the end the stride is a launch value ([`ConvProblem::tap_strides`]), so the map is
+    /// not a radix chain that the tile would take as in bounds.
+    pub fn phased_tap_map(&self, tap: Dimension, phase: Dimension) -> PhysicalAxisMap {
+        match self.has_ragged_taps() {
+            true => PhysicalAxisMap::scaled(&[
+                (
+                    tap,
+                    Scale::Dynamic {
+                        max: self.window.stride,
+                    },
+                ),
+                (phase, Scale::Static(1)),
+            ]),
+            false => PhysicalAxisMap::disjoint(&[(tap, self.window.stride), (phase, 1)]),
+        }
     }
 }
 
@@ -160,7 +225,8 @@ impl ConvProblem {
         alignments: MatmulOperands<ElemAlignment>,
         start_bytes: MatmulOperands<u64>,
     ) -> Self {
-        let extents = ConvRoles::of(operation, SpatialDimCount(window.len()), grouping)
+        let phasing = ConvPhasing::of(operation, window.iter().copied());
+        let extents = ConvRoles::of(operation, SpatialDimCount(window.len()), grouping, phasing)
             .expect("a problem is stated by tensors that were checked")
             .extents;
         let (kernel, out) = (extents.kernel.read(&views), extents.out.read(&views));
@@ -199,8 +265,17 @@ impl ConvProblem {
             self.operation,
             SpatialDimCount(self.spatial.len()),
             grouping,
+            self.phasing(),
         )
         .expect("a problem is stated by tensors that were checked")
+    }
+
+    /// Whether the strided dims of this problem are split into phases.
+    pub fn phasing(&self) -> ConvPhasing {
+        ConvPhasing::of(
+            self.operation,
+            self.spatial.iter().map(|spatial_dim| spatial_dim.window),
+        )
     }
 
     /// What every microkernel of this problem is handed, each operand's layout as its buffer
@@ -238,13 +313,17 @@ impl ConvProblem {
 
     /// What `dimension` measures in this problem.
     pub fn extent(&self, dimension: Dimension) -> usize {
+        let phasing = self.phasing();
         match ConvDimension::of(dimension) {
             ConvDimension::Batch => self.batch,
             ConvDimension::ChannelsOut => self.channels_out,
             ConvDimension::ChannelsIn => self.channels_in,
             ConvDimension::Groups => self.groups,
+            ConvDimension::Out(dim) if phasing.is_phased(dim) => self.spatial[dim].phased_out(),
             ConvDimension::Out(dim) => self.spatial[dim].out,
+            ConvDimension::Tap(dim) if phasing.is_phased(dim) => self.spatial[dim].phased_taps(),
             ConvDimension::Tap(dim) => self.spatial[dim].kernel,
+            ConvDimension::Phase(dim) => self.spatial[dim].window.stride,
         }
     }
 
@@ -279,10 +358,12 @@ impl ConvProblem {
     /// the other way round, at stride 1.
     pub fn input_projection(&self) -> Projection {
         let roles = self.roles();
-        let spatial = roles
-            .spatial()
-            .zip(&self.spatial)
-            .map(|([out, tap], spatial_dim)| roles.gather.map(&spatial_dim.window, out, tap));
+        let spatial = roles.spatial().zip(&self.spatial).enumerate().map(
+            |(dim, ([out, tap], spatial_dim))| match roles.phasing.is_phased(dim) {
+                true => spatial_dim.phased_gradient_map(out, tap),
+                false => roles.gather.map(&spatial_dim.window, out, tap),
+            },
+        );
         let groups = roles
             .grouping
             .dimensions()
@@ -297,10 +378,61 @@ impl ConvProblem {
         Projection::new(&roles.lhs, &maps)
     }
 
+    /// The weight of a phased data backward over [`ConvRoles::rhs`], whose tap axes are each
+    /// addressed by a tap dimension and a phase dimension where the dim is strided.
+    pub fn weight_projection(&self) -> Projection {
+        let roles = self.roles();
+        let taps = self.spatial.iter().enumerate().map(|(dim, spatial_dim)| {
+            let tap = ConvDimension::Tap(dim).dimension();
+            match roles.phasing.phase(dim) {
+                Some(phase) => spatial_dim.phased_tap_map(tap, phase),
+                None => PhysicalAxisMap::of(tap),
+            }
+        });
+        let maps: Vec<_> = (roles.grouping.dimensions().iter())
+            .map(|&dimension| PhysicalAxisMap::of(dimension))
+            .chain(taps)
+            .chain([PhysicalAxisMap::of(CO), PhysicalAxisMap::of(CI)])
+            .collect();
+        Projection::new(&roles.rhs, &maps)
+    }
+
+    /// The input gradient of a phased data backward over [`ConvRoles::free`], whose spatial axes
+    /// are each addressed by an out dimension and a phase dimension where the dim is strided.
+    pub fn output_projection(&self) -> Projection {
+        let roles = self.roles();
+        let spatial = self.spatial.iter().enumerate().map(|(dim, spatial_dim)| {
+            let out = ConvDimension::Out(dim).dimension();
+            match roles.phasing.phase(dim) {
+                Some(phase) => spatial_dim.phased_out_map(out, phase),
+                None => PhysicalAxisMap::of(out),
+            }
+        });
+        let maps: Vec<_> = (roles.grouping.dimensions().iter())
+            .map(|&dimension| PhysicalAxisMap::of(dimension))
+            .chain([PhysicalAxisMap::of(B)])
+            .chain(spatial)
+            .chain([PhysicalAxisMap::of(CI)])
+            .collect();
+        Projection::new(&roles.free.in_order(), &maps)
+    }
+
+    /// The value of each tap map's launch coefficient ([`SpatialDim::phased_tap_map`]), the stride
+    /// of each dim with a ragged phase, in the order of the weight's axes.
+    pub fn tap_strides(&self) -> Vec<u32> {
+        let phasing = self.phasing();
+        (self.spatial.iter().enumerate())
+            .filter(|&(dim, spatial_dim)| phasing.is_phased(dim) && spatial_dim.has_ragged_taps())
+            .map(|(_, spatial_dim)| spatial_dim.window.stride as u32)
+            .collect()
+    }
+
     /// Whether every position the window reads lies in the input, so no read needs a check of its
-    /// own.
+    /// own. Never for a phased problem, whose gradient read is not the forward window.
     pub fn reads_inside(&self) -> bool {
-        self.roles().gather == ConvGather::Window
+        let roles = self.roles();
+        roles.gather == ConvGather::Window
+            && roles.phasing == ConvPhasing::Whole
             && self.spatial.iter().all(SpatialDim::reads_inside)
     }
 }
@@ -344,14 +476,20 @@ impl EstimatedProblem for ConvProblem {
 mod tests {
     use super::*;
     use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem};
-    use crate::launch::ConvolutionArgs;
+    use crate::launch::{ConvolutionArgs, SpatialExtent, TapCount};
     use ConvolutionOperation::{BackwardData, BackwardWeight, Forward};
+    use cubecl::tile::layout::Offset;
 
     #[test]
     fn every_dimension_reads_back_as_the_measure_that_made_it() {
         for count in 1..=3 {
-            let spatial =
-                (0..count).flat_map(|dim| [ConvDimension::Out(dim), ConvDimension::Tap(dim)]);
+            let spatial = (0..count).flat_map(|dim| {
+                [
+                    ConvDimension::Out(dim),
+                    ConvDimension::Tap(dim),
+                    ConvDimension::Phase(dim),
+                ]
+            });
             let measures = [
                 ConvDimension::Batch,
                 ConvDimension::ChannelsOut,
@@ -367,7 +505,7 @@ mod tests {
             }
             labels.sort_unstable();
             labels.dedup();
-            assert_eq!(labels.len(), 4 + 2 * count);
+            assert_eq!(labels.len(), 4 + 3 * count);
         }
     }
 
@@ -401,5 +539,98 @@ mod tests {
             assert_eq!(channels, (2, 3, 5), "{operation:?}");
             assert_eq!(spatial, expected, "{operation:?}");
         }
+    }
+
+    fn strided(kernel: usize, stride: usize, padding: usize, out: usize) -> SpatialDim {
+        let window = SpatialWindow {
+            stride,
+            padding,
+            dilation: 1,
+        };
+        let gathered = window.output(SpatialExtent(out), TapCount(kernel));
+        SpatialDim {
+            gathered,
+            kernel,
+            out,
+            window,
+        }
+    }
+
+    /// The dims the phase tests sweep: every window whose forward output has at least one cell.
+    fn swept_dims() -> impl Iterator<Item = SpatialDim> {
+        (1..=7_usize).flat_map(|kernel| {
+            (2..=4_usize).flat_map(move |stride| {
+                (0..kernel).flat_map(move |padding| {
+                    (1..=17_usize)
+                        .filter(move |out| out + 2 * padding >= kernel)
+                        .map(move |out| strided(kernel, stride, padding, out))
+                })
+            })
+        })
+    }
+
+    /// The input gradient cells that `phase` of `dim` writes, as `(cell, position)`.
+    fn written_cells(dim: &SpatialDim, phase: usize) -> impl Iterator<Item = (usize, usize)> {
+        let (stride, lead, out) = (dim.window.stride, dim.phase_lead(), dim.out);
+        (0..dim.phased_out())
+            .map(move |cell| (cell, (stride * cell + phase).wrapping_sub(lead)))
+            .filter(move |&(_, position)| position < out)
+    }
+
+    /// The phases cover every input gradient cell once.
+    #[test]
+    fn phases_partition_the_input_gradient() {
+        for dim in swept_dims() {
+            let mut written = vec![0; dim.out];
+            for phase in 0..dim.window.stride {
+                for (_, position) in written_cells(&dim, phase) {
+                    written[position] += 1;
+                }
+            }
+            assert!(written.iter().all(|&count| count == 1), "{dim:?}");
+        }
+    }
+
+    /// A phase's cell and tap read the gradient row that the forward window paired with that cell
+    /// and weight tap, or nothing where the forward window has no such pair.
+    #[test]
+    fn each_tap_pairs_the_forward_row() {
+        for dim in swept_dims() {
+            let (stride, padding) = (dim.window.stride as isize, dim.window.padding as isize);
+            let rows = dim.gathered as isize;
+            let behind = ((dim.phase_lead() - dim.window.padding) / dim.window.stride) as isize;
+            for phase in 0..dim.window.stride {
+                for (cell, position) in written_cells(&dim, phase) {
+                    for tap in 0..dim.phased_taps() {
+                        let weight = dim.window.stride * tap + phase;
+                        let row = cell as isize - tap as isize - behind;
+                        let reads = weight < dim.kernel && (0..rows).contains(&row);
+                        let paired = position as isize + padding - weight as isize;
+                        let pair = (paired.rem_euclid(stride) == 0)
+                            .then_some(paired.div_euclid(stride))
+                            .filter(|o| weight < dim.kernel && (0..rows).contains(o));
+                        assert_eq!(reads.then_some(row), pair, "{dim:?} x{position} k{weight}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A map that is a radix chain over its extents reads as in bounds, so a dim whose cells run
+    /// past the buffer's end must not have one.
+    #[test]
+    fn a_phased_dim_that_overruns_its_axis_has_a_map_that_is_not_a_radix_chain() {
+        let chain = |dim: SpatialDim| dim.phased_out() * dim.window.stride == dim.out;
+        let exact = strided(4, 2, 0, 8);
+        assert_eq!(exact.phase_lead(), 0);
+        assert!(chain(exact) && !exact.has_ragged_taps());
+        let (out, phase) = (ConvDimension::Out(0), ConvDimension::Phase(0));
+        let map = |dim: SpatialDim| dim.phased_out_map(out.dimension(), phase.dimension());
+        assert_eq!(map(exact).offset(), Offset::Static(0));
+        assert_ne!(map(strided(3, 2, 0, 7)).offset(), Offset::Static(0));
+        let ragged = strided(3, 2, 0, 7);
+        assert_eq!(ragged.phase_lead(), 2);
+        assert!(ragged.has_ragged_taps());
+        assert_eq!(strided(3, 2, 1, 7).phase_lead(), 1);
     }
 }

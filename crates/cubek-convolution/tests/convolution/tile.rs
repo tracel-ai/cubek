@@ -294,6 +294,7 @@ mod cube {
 
     cube! {
         data_grad, BackwardData;
+        stride_2_3x3_odd: conv(2, (64, 32), [13, 11], [3, 3], STRIDE_2);
         whole_channels: conv(2, (64, 64), [6, 12], [3, 3], SAME);
         no_padding: conv(2, (32, 32), [7, 12], [3, 3], VALID);
         dilation_2: conv(2, (64, 32), [8, 17], [3, 3], DILATION_2);
@@ -308,6 +309,17 @@ mod cube {
         conv_1d_overhanging: conv(2, (64, 32), [37], [3], SAME_1D);
         conv_3d_padded: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], SAME_3D);
         conv_3d_asymmetric: conv(2, (32, 32), [7, 9, 7], [3, 3, 3], ASYMMETRIC_STRIDE_1_3D);
+        stride_2_3x3_even: conv(2, (64, 32), [12, 16], [3, 3], STRIDE_2);
+        stride_3_above_kernel: conv(2, (64, 32), [11, 10], [2, 2], window([3, 3], [0, 0], [1, 1]));
+        stride_2_beside_dilation_2: conv(2, (64, 32), [12, 17], [3, 3], window([2, 1], [1, 2], [1, 2]));
+        stride_2_5x5: conv(2, (64, 32), [11, 13], [5, 5], window([2, 2], [2, 2], [1, 1]));
+        stride_2_1x1: conv(2, (64, 32), [9, 12], [1, 1], window([2, 2], [0, 0], [1, 1]));
+        stride_2_no_padding_odd: conv(2, (64, 32), [7, 9], [3, 3], window([2, 2], [0, 0], [1, 1]));
+        stride_unequal: conv(2, (64, 32), [12, 15], [3, 3], window([1, 2], [1, 1], [1, 1]));
+        stride_2_offset: conv(2, (64, 32), [13, 11], [3, 3], STRIDE_2).stored(Storage::Offset);
+        stride_2_padded_out_grad: conv(2, (64, 30), [13, 11], [3, 3], STRIDE_2).out_grad_stored(Storage::Padded);
+        conv_1d_stride_2_odd: conv(2, (64, 32), [37], [3], window([2], [1], [1]));
+        conv_3d_stride_2: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], STRIDE_2_3D);
     }
 
     cube! {
@@ -317,6 +329,7 @@ mod cube {
         groups_overhanging: conv(2, (96, 48), [6, 12], [3, 3], SAME).groups(3);
         groups_1d: conv(2, (64, 64), [37], [3], SAME_1D).groups(4);
         groups_3d: conv(2, (32, 32), [5, 6, 7], [3, 3, 3], SAME_3D).groups(4);
+        groups_stride_2: conv(2, (64, 64), [13, 11], [3, 3], STRIDE_2).groups(2);
     }
 
     // A few channels make a step of taps, which the fragment API declines by name and a device
@@ -349,6 +362,7 @@ mod cube {
         planes_across_data_grad, BackwardData;
         two: pinned(settings::F1X2_P1X2_T16.across(2)), Instruction, conv(2, (32, 32), [6, 12], [3, 3], SAME);
         four: pinned(settings::F1X2_P1X2_T16.across(4)), Instruction, conv(2, (32, 32), [6, 12], [3, 3], SAME);
+        stride_2: pinned(settings::F1X2_P1X2_T16.across(2)), Instruction, conv(2, (32, 32), [13, 11], [3, 3], STRIDE_2);
     }
 
     // Whole steps read at width one, and the 56 row setting over a map it overhangs.
@@ -490,6 +504,7 @@ mod plane_window {
 
     window! {
         data_grad, BackwardData;
+        stride_2_3x3_odd: conv32(2, (64, 32), [13, 11], [3, 3], STRIDE_2);
         same_3x3: conv32(2, (64, 32), [6, 12], [3, 3], SAME);
         no_padding: conv32(2, (32, 32), [7, 12], [3, 3], VALID);
         dilation_2: conv32(2, (64, 32), [8, 17], [3, 3], DILATION_2);

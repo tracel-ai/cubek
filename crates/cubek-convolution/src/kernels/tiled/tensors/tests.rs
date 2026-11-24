@@ -3,7 +3,7 @@
 
 use super::ConvTensors;
 use crate::components::ConvolutionOperation;
-use crate::kernels::tiled::{ChannelAxis, ConvDecline, ConvGrouping};
+use crate::kernels::tiled::{ChannelAxis, ConvDecline, ConvGrouping, SpatialDim};
 use crate::launch::SpatialWindow;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::TensorBinding;
@@ -132,7 +132,7 @@ refusals! {
     weight_grad_over_an_empty_batch: BackwardWeight, false, [[0, 6, 6, 64], [0, 6, 6, 32], [32, 3, 3, 64]], SAME => ConvDecline::ContractionEmpty;
     weight_grad_stride_of_zero: BackwardWeight, false, [[1, 6, 6, 64], [1, 6, 6, 32], [32, 3, 3, 64]], [window(1, 1, 1), window(0, 1, 1)] => ConvDecline::WindowStepZero;
 
-    data_grad_strided: BackwardData, false, [[1, 3, 3, 32], [32, 3, 3, 64], [1, 6, 6, 64]], STRIDE_2 => ConvDecline::DataBackwardStrided;
+    data_grad_strided_dilated: BackwardData, false, [[1, 3, 3, 32], [32, 3, 3, 64], [1, 6, 6, 64]], [window(2, 1, 2), window(1, 1, 1)] => ConvDecline::DataBackwardStridedDilated;
     data_grad_quantized_out_grad: BackwardData, true, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::Quantized;
     data_grad_of_other_channels: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 16]], SAME => ConvDecline::Groups;
     data_grad_of_channels_no_group_count_states: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 24], [1, 6, 6, 64]], SAME => ConvDecline::Groups;
@@ -144,6 +144,37 @@ refusals! {
     data_grad_weights_of_no_taps: BackwardData, false, [[1, 6, 6, 32], [32, 0, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::KernelEmpty;
     data_grad_of_no_filters: BackwardData, false, [[1, 6, 6, 0], [0, 3, 3, 64], [1, 6, 6, 64]], SAME => ConvDecline::ContractionEmpty;
     data_grad_dilation_of_zero: BackwardData, false, [[1, 6, 6, 32], [32, 3, 3, 64], [1, 6, 6, 64]], [window(1, 1, 0), window(1, 1, 1)] => ConvDecline::WindowStepZero;
+}
+
+/// A strided data backward without a dilation states one convolution, in the output gradient's own
+/// extents.
+#[test]
+fn a_strided_data_backward_is_served() {
+    let client = cubecl::test_device().client();
+    let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
+        lhs: F16,
+        rhs: F16,
+        out: F16,
+    });
+    let dense = |shape: [usize; 4]| -> TensorBinding {
+        TensorHandle::empty(&client, shape.to_vec(), F16).binding()
+    };
+    let tensors = ConvTensors::backward_data(
+        &client,
+        InputBinding::new(dense([1, 3, 3, 32]), F16),
+        InputBinding::new(dense([32, 3, 3, 64]), F16),
+        dense([1, 6, 6, 64]),
+        &STRIDE_2,
+        dtypes,
+    )
+    .expect("a strided data backward is served");
+    let problem = tensors.problem();
+    let extents = |dim| {
+        let spatial_dim: &SpatialDim = &problem.spatial[dim];
+        (spatial_dim.phased_out(), spatial_dim.phased_taps())
+    };
+    assert_eq!(extents(0), (4, 2));
+    assert_eq!(extents(1), (4, 2));
 }
 
 /// Tensors of one more dim than the window gives are refused by name; `Refused` states rank 4
