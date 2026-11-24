@@ -20,12 +20,11 @@ pub enum MatmulAutotune {
     /// settings worth trying on them, reading them as stored.
     FewRows,
     /// Everything past the few-rows bound: the staged routines, and on packed inputs the packed
-    /// staged routine reading them as stored, on a device's block-scaled instruction or decoding
-    /// them, and the float routines on them decoded first.
+    /// staged routine reading them as stored and the float routines on them decoded first.
     ManyRows,
     /// Two packed inputs multiplied on a GPU's block-scaled tensor cores, at each of
     /// [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores)'s
-    /// settings: what that pin runs, and nothing else.
+    /// settings: what that pin runs, and nothing else. A launch every one declines panics.
     BlockScaled,
 }
 

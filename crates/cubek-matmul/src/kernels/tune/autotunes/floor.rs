@@ -10,7 +10,7 @@ use cubek_std::Hardware;
 use cubek_std::autotune::{CandidateIdentity, TuneCandidate};
 use cubek_std::plan::Step;
 
-/// Both autotunes' floor: the unit routine at its default, every packed input decoded first
+/// The few-rows and many-rows autotunes' floor: the unit routine at its default, every packed input decoded first
 /// ([`Decoded`]). It asks nothing of the device, so it serves what no other candidate binds: an
 /// input laid out no body can describe, or two packed inputs whose scales group `k` apart, which
 /// every routine reading packed inputs as stored declines. A float input passes through as it is.

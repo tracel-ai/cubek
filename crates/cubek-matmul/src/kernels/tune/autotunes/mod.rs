@@ -5,8 +5,9 @@
 //! which autotune a product races on: a routine that does not stage and one that does are different
 //! kernel bodies, so one autotune would be a list whose rows mostly decline. Float and packed
 //! products race the same two autotunes, each candidate listed for one kind and declining the other
-//! before compiling anything. Under each autotune sits a floor that serves any product: the unit
-//! routine on every packed input decoded first, which asks nothing of the device.
+//! before compiling anything. Under the few-rows and many-rows autotunes sits a floor that serves
+//! any product: the unit routine on every packed input decoded first, which asks nothing of the
+//! device.
 //!
 //! An autotune's groups run in the order its caller gives them, a **cutoff** rather than a
 //! tie-break: the tuner measures the highest group whose candidates launch, and stops there. Inside
@@ -29,15 +30,10 @@
 //!
 //! # The block-scaled settings
 //!
-//! Two packed inputs a device's block-scaled instruction reads race, past the few-rows bound, the
-//! settings multiplying them as they are stored beside the rest of the many-rows autotune, the
-//! packed inputs decoded first among it. Both inputs already arrive in a format the instruction
-//! reads, so taking it rounds nothing, and whether the instruction wins is the device's to show. A
-//! decode's rows stay on the few-rows autotune, bound by the weight's bytes either way.
-//!
-//! A third autotune, [`MatmulAutotune::BlockScaled`], holds those settings alone, for a pin:
-//! naming [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores) reaches
-//! it at any rows. Its candidates all give the same numbers.
+//! Two packed inputs arrive in the format a device's block-scaled instruction reads or they do not,
+//! so reading them as stored rounds nothing, and whether that wins is the device's to show: past the
+//! few-rows bound those settings race in the many-rows autotune. A decode's rows are bound by the
+//! weight's bytes either way. [`MatmulAutotune::BlockScaled`] holds them alone, for a pin.
 //!
 //! The line is [`FLOAT_FEW_ROWS`] for a float product and [`QUANTIZED_FEW_ROWS`] for a packed
 //! one, each a **rule** rather than a measurement: a staged kernel can be competitive on

@@ -4,8 +4,8 @@ use super::{Declined, Plan, PlanTree};
 /// first time a key is met and remembered after.
 ///
 /// The table itself, its tuner and its candidates, is the family's: this plan names it and runs
-/// it. A table serves whatever reaches it, its floor being a candidate that serves any problem,
-/// so it never declines.
+/// it. A table never declines: its floor is a candidate that serves any problem, and one without a
+/// floor panics where every candidate declines.
 pub struct Fastest<I, O> {
     table: &'static str,
     launch: Box<dyn Fn(&I) -> O + Send + Sync>,

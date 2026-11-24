@@ -16,8 +16,7 @@ use cubek_std::Hardware;
 /// activation decoded first
 /// ([`launch_activation_decoded`](MatmulPackedCandidate::launch_activation_decoded)), and the
 /// last-arrival routine reading it as stored, several cubes sharing each box along `K`; and against
-/// two packed inputs the block-scaled settings ([`block_scaled::listed`]), the device's block-scaled
-/// instruction reading both as they lie.
+/// two packed inputs the block-scaled settings ([`block_scaled::listed`]).
 ///
 /// The unit routine prepares everywhere, though a round orders the candidates by priority and its
 /// small block often tiles a key the others mask. The last-arrival routine sizes its grid by the

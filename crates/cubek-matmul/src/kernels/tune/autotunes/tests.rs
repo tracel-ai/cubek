@@ -1,5 +1,9 @@
-use super::MatmulAutotuneGroups;
+use super::{MatmulAutotune, MatmulAutotuneGroups};
 use super::{block_scaled, few_rows, many_rows};
+use crate::kernels::plan::{MatmulCall, MatmulCallInput};
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use cubecl::CubeTuneId;
+use cubecl::ir::{ElemType, FloatKind};
 use cubek_std::{Hardware, devices};
 
 /// Every autotune on every device holds the candidates `autotunes.txt` records: as many, under the
@@ -59,31 +63,37 @@ fn devices_listed() -> [(&'static str, Hardware); 4] {
     ]
 }
 
-/// **A race runs on the call's buffers.** The few-rows autotune hands its candidates the call's own
-/// lhs and rhs, and a destination the call allocated once at the product's shape, which the winner
-/// then writes too.
-#[test]
-fn a_race_runs_on_the_calls_buffers() {
-    use crate::kernels::plan::{MatmulCall, MatmulCallInput};
-    use crate::kernels::tensor::{PlainTensor, StoredTensor};
-    use cubecl::CubeTuneId;
-    use cubecl::ir::{ElemType, FloatKind};
-
+/// A float product `3 × 5 × 4` on the test device.
+fn float_call() -> MatmulCall {
     const F32: ElemType = ElemType::Float(FloatKind::F32);
     let client = cubek_test_utils::client();
     let input = |shape: [usize; 2]| {
         MatmulCallInput::plain(PlainTensor::zeros(&client, &shape, [shape[1], 1], F32))
     };
-    let call = MatmulCall {
+    MatmulCall {
         hw: Hardware::from_client(&client),
-        client: client.clone(),
         tune_id: CubeTuneId::new(&client, &cubecl::test_device()),
         lhs: input([3, 5]),
         rhs: input([5, 4]),
         out: F32,
         destination: None,
+        client,
     }
-    .with_destination();
+}
+
+/// The pin decodes nothing on the side: a product none of its candidates reads is a panic.
+#[test]
+#[should_panic(expected = "Can't execute the autotune plan")]
+fn a_block_scaled_pin_every_candidate_declines_panics() {
+    MatmulAutotune::BlockScaled.launch(&float_call(), MatmulAutotuneGroups::default());
+}
+
+/// **A race runs on the call's buffers.** The few-rows autotune hands its candidates the call's own
+/// lhs and rhs, and a destination the call allocated once at the product's shape, which the winner
+/// then writes too.
+#[test]
+fn a_race_runs_on_the_calls_buffers() {
+    let call = float_call().with_destination();
     let destination = call.destination.clone().expect("a destination allocated");
     assert_eq!(destination.shape().as_slice(), [3, 4]);
 
