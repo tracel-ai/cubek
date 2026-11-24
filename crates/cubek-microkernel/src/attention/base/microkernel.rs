@@ -1,7 +1,6 @@
-use crate::attention::{AttentionOperand, AttentionOperands, AttentionWorkItem, ValueLines};
+use crate::attention::{AttentionOperand, AttentionOperands, AttentionWorkItem, CacheOrder};
 use cubecl::tile::Space;
 use cubecl::tile::launch::Delivery;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::Microkernel;
 
 /// A microkernel of this kind, as its routines and their blueprint read it beside what every
@@ -10,16 +9,8 @@ pub trait AttentionMicrokernel:
     Microkernel<WorkItem = AttentionWorkItem, Operand = AttentionOperand, CubeSpace = Space>
     + core::fmt::Display
 {
-    /// The order its score reads its rhs, the keys, in, which the launch binds them in:
-    /// [`InBufferOrder`](BindingOrder::InBufferOrder), `[s, d]` as they lie, or
-    /// [`Stated`](BindingOrder::Stated), `[d, s]` along the keys, a stride over the same
-    /// buffer.
-    fn key_order(&self) -> BindingOrder;
-
-    /// The dimension the values' lines run along, which the launch binds them by.
-    fn value_lines(&self) -> ValueLines {
-        ValueLines::ValueDim
-    }
+    /// The lines it reads each side of the cache in, which the launch binds them by.
+    fn cache_order(&self) -> CacheOrder;
 
     /// `item` as its fragments read it: its operands at the element they reach the instruction
     /// in. As they are stored, unless its instruction reads them in another element.

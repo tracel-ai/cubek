@@ -3,7 +3,7 @@ use crate::attention::plane::{
 };
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionRead, AttentionWorkItem, B,
-    D, DV, G, KV, Q, S, ValueLines,
+    CacheOrder, D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
@@ -11,7 +11,6 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Space, StageStorage};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork,
 };
@@ -246,8 +245,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
          whose k divides the head dim and whose n divides the value dim and the stage's keys, on a \
          device that commits to one plane width";
 
-    /// A star off the default: each other tile shape, the whole grid bounced at once, and
-    /// the score read through the windows.
+    /// A star off the default: each other tile shape, the whole grid bounced at once, the score
+    /// read through the windows, and the query held in registers.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         vec![
             Self::Settings::DEFAULT,
@@ -256,6 +255,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             Self::Settings::fragments(2, 4),
             Self::Settings::WHOLE_GRID,
             Self::Settings::THROUGH_WINDOWS,
+            Self::Settings::HELD_QUERY,
         ]
     }
 
@@ -341,14 +341,12 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
 }
 
 impl AttentionMicrokernel for PlaneFragmentAttentionMicrokernel {
-    /// The score's: a fragment loads a block of keys col-major where it lies.
-    fn key_order(&self) -> BindingOrder {
-        self.score.orders().rhs
-    }
-
-    /// Its settings'.
-    fn value_lines(&self) -> ValueLines {
-        self.settings.value_lines
+    /// The keys in the lines its score's instruction reads them in, the values in its settings'.
+    fn cache_order(&self) -> CacheOrder {
+        CacheOrder {
+            key: self.score.orders().rhs.into(),
+            value: self.settings.value_lines,
+        }
     }
 
     /// Its operands in the element its instruction reads them in, a query held in registers as it

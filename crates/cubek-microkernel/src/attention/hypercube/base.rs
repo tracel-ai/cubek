@@ -1,7 +1,7 @@
 use crate::attention::cube::{CubeAttentionMicrokernel, CubePlaneReads};
 use crate::attention::hypercube::HypercubeAttentionMicrokernelSettings;
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionWorkItem, G, Q, ValueLines,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionWorkItem, CacheOrder, G, Q,
 };
 use crate::split_keys_merge::SlotShape;
 use crate::split_keys_merge::hypercube::HypercubeMergeShape;
@@ -9,7 +9,6 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Space, StageStorage};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
 
 /// A box of queries of one head several cubes own together: every cube walks its own run of the
@@ -150,13 +149,8 @@ impl core::fmt::Display for HypercubeAttentionMicrokernel {
 
 impl AttentionMicrokernel for HypercubeAttentionMicrokernel {
     /// Its cube's.
-    fn key_order(&self) -> BindingOrder {
-        self.cube.key_order()
-    }
-
-    /// Its cube's.
-    fn value_lines(&self) -> ValueLines {
-        self.cube.value_lines()
+    fn cache_order(&self) -> CacheOrder {
+        self.cube.cache_order()
     }
 
     /// Its cube's.

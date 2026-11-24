@@ -5,9 +5,8 @@ use crate::kernels::AttentionRoutineProblem;
 use cubecl::tile::launch::{MaskedExtent, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::attention::AttentionMicrokernel;
-use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, S, ValueLines};
+use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, CacheLines, S};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its work
 /// items, the width each operand binds at, and how the routine lays out shared memory.
@@ -42,16 +41,12 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
         mut vectorization: Vectorization<AttentionOperand>,
         shared_memory: SM,
     ) -> Self {
-        let key_order = microkernel.key_order();
-        let value_lines = microkernel.value_lines();
+        let order = microkernel.cache_order();
         for operand in AttentionOperand::ALL {
-            let alignment = match (operand, key_order) {
-                // Either side bound along `S` is a stride over its buffer.
-                (AttentionOperand::Key, BindingOrder::Stated) => ElemAlignment::ONE,
-                (AttentionOperand::Value, _) if value_lines == ValueLines::Keys => {
-                    ElemAlignment::ONE
-                }
-                _ => problem.elem_alignments.get(operand),
+            let alignment = match operand.lines(order) {
+                // Bound along `S`, a side is a stride over its buffer.
+                CacheLines::AlongKeys => ElemAlignment::ONE,
+                CacheLines::AsStored => problem.elem_alignments.get(operand),
             };
             vectorization.require(VectorRequirement::Aligned { operand, alignment });
             vectorization.require(VectorRequirement::Aligned {
@@ -61,7 +56,7 @@ impl<M: AttentionMicrokernel, SM> AttentionBlueprint<M, SM> {
                     problem.elements.get(operand).size(),
                 ),
             });
-            let innermost = operand.innermost(key_order, value_lines);
+            let innermost = operand.innermost(order);
             if innermost == S {
                 // The keys are read up to the attended length, known only at run time.
                 vectorization.require(VectorRequirement::Masked {

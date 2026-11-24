@@ -93,8 +93,7 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
             QueryHolder::Registers => {
                 let held = score.held_query(query, microkernel);
                 for plane in walk.planes() {
-                    let mut fragments = held.at(&plane);
-                    fragments.copy_cast_from(&query.at(&plane));
+                    held.at(&plane).copy_cast_from(&query.at(&plane));
                 }
                 held
             }
@@ -498,6 +497,26 @@ impl StageScore {
     }
 }
 
+/// `query` as the planes below `walk` take it before any key, which it spans none of: staged once
+/// for them as `storage`, or left where it lies for each to hold its part of in registers
+/// ([`QueryHolder`]). What is staged lands by the owner's next barrier.
+#[cube]
+pub(crate) fn query_for_planes(
+    query: &Tile,
+    walk: &Walk,
+    #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
+    #[comptime] storage: StageStorage,
+) -> Tile {
+    match microkernel.query_holder() {
+        QueryHolder::Stage => {
+            let mut staged = query.stage_for(walk, storage, microkernel.decoded_query());
+            staged.copy_from(query);
+            staged
+        }
+        QueryHolder::Registers => query.clone(),
+    }
+}
+
 /// One plane's rows: the plane stages its query once and its keys and values a stage at a time,
 /// without the scales the softmax and the sum take out of them ([`StagedCache`]), holding as many
 /// stages as `ring` says, runs the plane fragment microkernel on every stage of its first `steps`
@@ -522,18 +541,10 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
 ) {
     let walk = rows.walk().range(0, steps);
     let decoded = microkernel.decoded_stage();
-    // The query spans no key: staged once, before the walk, as the plane's own copy, or held in
-    // its registers.
-    let staged = match microkernel.query_holder() {
-        QueryHolder::Stage => {
-            let mut staged =
-                query.stage_for(&walk, StageStorage::Strided, microkernel.decoded_query());
-            staged.copy_from(query);
-            sync_plane();
-            staged
-        }
-        QueryHolder::Registers => query.clone(),
-    };
+    let staged = query_for_planes(query, &walk, microkernel, StageStorage::Strided);
+    if microkernel.query_holder() == QueryHolder::Stage {
+        sync_plane();
+    }
 
     let score = StageScore::open::<EA, EV>(&walk, &staged, microkernel);
     let query = match microkernel.query_holder() {

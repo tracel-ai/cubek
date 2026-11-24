@@ -1,4 +1,4 @@
-use crate::attention::ValueLines;
+use crate::attention::CacheLines;
 use crate::attention::cube::CubeAttentionPlaneSettings;
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
@@ -89,11 +89,7 @@ impl CubeAttentionMicrokernelSettings {
     /// ([`laid_as_named`](Self::laid_as_named)).
     pub fn listed(self, hw: &Hardware) -> Vec<Self> {
         let listed = match self.plane {
-            CubeAttentionPlaneSettings::Fragment(plane) => {
-                let mut listed = Self::fragments_listed(self, plane);
-                listed.extend(Self::held_query_listed(self, plane, hw));
-                listed
-            }
+            CubeAttentionPlaneSettings::Fragment(plane) => Self::fragments_listed(self, plane),
             CubeAttentionPlaneSettings::Shuffle(plane) => Self::shuffles_listed(self, plane),
         };
         listed
@@ -125,7 +121,8 @@ impl CubeAttentionMicrokernelSettings {
     /// and rings a long causal prompt runs fastest on; then the one-by-two box of the four-plane
     /// split on two and three slots the copy engine fills; then the lead's box on four planes in
     /// padded rows, two heads by two planes along their queries and one head by four, which a
-    /// device of 64 KiB of shared memory holds at a head dim of 256. The wide steps hold one head because a
+    /// device of 64 KiB of shared memory holds at a head dim of 256; then eight heads by four planes
+    /// holding their query in registers. The wide steps hold one head because a
     /// step's stages and the heads' windows share one budget; one that still does not fit the
     /// device's shared memory declines there.
     fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
@@ -330,6 +327,27 @@ impl CubeAttentionMicrokernelSettings {
             layout: StageLayout::PaddedRows,
             ..lead
         });
+        // A cube sharing each stage with every head of the group, four planes along each head's
+        // queries. Every plane holds its query in registers, so the cube's shared memory holds keys
+        // and values alone, the values along the keys for a fragment to load whole runs of, and the
+        // next stage's loads wait in the registers of the cube's many units. On an R9700 (2048
+        // queries last first, 24/4 heads, head dim 256), against two heads by two planes of the
+        // boxes above: 2.92 against 5.87 ms over 2048 keys and then 4096 in `bf16`, and 1.75 over
+        // an `e4m3` cache.
+        let held_query = Self {
+            heads: count(8),
+            planes_along_queries: count(4),
+            ring: StageRing::SINGLE_THROUGH_REGISTERS,
+            layout: StageLayout::PaddedRows,
+            ..with(
+                PlaneFragmentAttentionMicrokernelSettings {
+                    seq_kv: NonZeroUsize::MIN,
+                    ..plane
+                }
+                .querying(QueryHolder::Registers)
+                .along(CacheLines::AlongKeys),
+            )
+        };
         [lead, fragments(2, 2), fragments(2, 4)]
             .into_iter()
             .chain(wide)
@@ -345,40 +363,8 @@ impl CubeAttentionMicrokernelSettings {
             .chain(eight_warps)
             .chain(pipelined)
             .chain(four_small_planes)
+            .chain([held_query])
             .collect()
-    }
-
-    /// A cube sharing each stage with every head of the group, four planes along each head's
-    /// queries. Every plane holds its query in registers, so the cube's shared memory holds keys
-    /// and values alone, the values along the keys for a fragment to load whole runs of. The next
-    /// stage's loads wait in the registers of the cube's many units while the planes contract this
-    /// one. A device whose manual `mma` is `16 × 16` holds a query of a head dim of 256 in 64
-    /// registers a unit beside the 128 of its output, so it lists this; on another a fragment of
-    /// rows is narrower, and the planes that fit a cube's shared memory are fewer.
-    fn held_query_listed(
-        lead: Self,
-        plane: PlaneFragmentAttentionMicrokernelSettings,
-        hw: &Hardware,
-    ) -> Option<Self> {
-        manual_mma(hw)
-            .any(|config| config.n == 16 && config.m == 16)
-            .then(|| {
-                let count = |count: usize| NonZeroUsize::new(count).unwrap();
-                Self {
-                    plane: CubeAttentionPlaneSettings::Fragment(
-                        PlaneFragmentAttentionMicrokernelSettings {
-                            seq_kv: NonZeroUsize::MIN,
-                            value_lines: ValueLines::Keys,
-                            ..plane.querying(QueryHolder::Registers)
-                        },
-                    ),
-                    heads: count(8),
-                    planes_along_queries: count(4),
-                    ring: StageRing::SINGLE_THROUGH_REGISTERS,
-                    layout: StageLayout::PaddedRows,
-                    ..lead
-                }
-            })
     }
 
     /// A star off `lead`: two and eight planes along a head's keys, eight rows a plane,

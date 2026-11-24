@@ -199,11 +199,7 @@ mod fragment {
                 .shared_memory(&hw, &item, &blueprint.shared_memory)
         };
         let microkernel = prepared(StageLayout::Strided).microkernel;
-        let stage = item.stage(
-            microkernel.seq_kv(),
-            microkernel.key_order(),
-            microkernel.value_lines(),
-        );
+        let stage = item.stage(microkernel.seq_kv(), microkernel.cache_order());
         let whole_rows: usize = stage
             .iter()
             .chain([&microkernel.staged_query(&item)])

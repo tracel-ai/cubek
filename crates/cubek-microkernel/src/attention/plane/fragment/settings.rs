@@ -1,4 +1,4 @@
-use crate::attention::ValueLines;
+use crate::attention::CacheLines;
 use crate::matmul::MatmulWorkItem;
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use core::num::NonZeroUsize;
@@ -23,10 +23,10 @@ pub struct PlaneFragmentAttentionMicrokernelSettings {
     pub score: ScoreHolder,
     /// Where the plane's query stays across the keys' walk.
     pub query: QueryHolder,
-    /// The dimension the stage's values lie contiguous along: the value dim, as their buffer holds
-    /// them, which a stage fills whole lines of, or the keys, their contraction, which a fragment
-    /// loads whole runs of. A stage several planes share is filled once and loaded by each.
-    pub value_lines: ValueLines,
+    /// The dimension the stage's values lie contiguous along: as they are stored, which a stage
+    /// fills whole lines of, or along the keys, their contraction, which a fragment loads whole runs
+    /// of. A stage several planes share is filled once and loaded by each.
+    pub value_lines: CacheLines,
 }
 
 /// Where a plane's query stays across its walk over the keys.
@@ -38,7 +38,8 @@ pub enum QueryHolder {
     /// The plane's registers: its fragments loaded once from global memory. The stage's bytes hold
     /// keys instead, so more planes share each stage of them, and no step reads the query from
     /// shared memory. It is the `A` of the score's manual `mma`, so it asks for a score kept in
-    /// fragments ([`ScoreHolder::Fragments`]) and a query read at the element it is stored in.
+    /// fragments ([`ScoreHolder::Fragments`]); its values are cast to the score's element as they
+    /// load, and 32-bit ones read at another element, bound as their words, are refused.
     Registers,
 }
 
@@ -176,7 +177,7 @@ impl PlaneFragmentAttentionMicrokernelSettings {
         scratch: Scratch::OneTile,
         score: ScoreHolder::Fragments,
         query: QueryHolder::Stage,
-        value_lines: ValueLines::ValueDim,
+        value_lines: CacheLines::AsStored,
     };
 
     /// The default with every fragment of the grid bounced at once.
@@ -187,6 +188,9 @@ impl PlaneFragmentAttentionMicrokernelSettings {
 
     /// The default reading the score through its windows.
     pub const THROUGH_WINDOWS: Self = Self::DEFAULT.held_in(ScoreHolder::Window);
+
+    /// The default holding its query in registers.
+    pub const HELD_QUERY: Self = Self::DEFAULT.querying(QueryHolder::Registers);
 
     /// The default with `rows` units of rows and `keys` of keys.
     ///
@@ -207,7 +211,7 @@ impl PlaneFragmentAttentionMicrokernelSettings {
     }
 
     /// These settings holding the values along `value_lines`.
-    pub const fn along(self, value_lines: ValueLines) -> Self {
+    pub const fn along(self, value_lines: CacheLines) -> Self {
         Self {
             value_lines,
             ..self
@@ -236,8 +240,8 @@ impl core::fmt::Display for PlaneFragmentAttentionMicrokernelSettings {
             QueryHolder::Registers => write!(f, " query=registers"),
         }?;
         match self.value_lines {
-            ValueLines::ValueDim => Ok(()),
-            ValueLines::Keys => write!(f, " values=along_keys"),
+            CacheLines::AsStored => Ok(()),
+            CacheLines::AlongKeys => write!(f, " values=along_keys"),
         }
     }
 }

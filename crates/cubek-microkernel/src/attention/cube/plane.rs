@@ -2,12 +2,11 @@ use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
     PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings, QueryHolder,
 };
-use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, ValueLines};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, CacheOrder};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Decline, Delivery, Vectorization};
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout};
 
 /// The plane microkernel a cube runs on each of its planes.
@@ -248,18 +247,9 @@ impl CubeAttentionPlane {
         }
     }
 
-    /// The element a stage of its query holds where the stage's fill decodes it, as it does an
-    /// operand bound as its words: `f32` where `None`, the element the tile DSL decodes a packed
-    /// operand at unless the kernel names another.
-    pub fn decoded_query(&self) -> Option<ElemType> {
-        match self {
-            Self::Fragment(plane) => plane.decoded_query(),
-            Self::Shuffle(_) => None,
-        }
-    }
-
-    /// The element a stage of its keys and values holds where the stage's fill decodes them, as
-    /// [`decoded_query`](Self::decoded_query) the query's.
+    /// The element a stage of its keys and values holds where the stage's fill decodes them, as it
+    /// does an operand bound as its words: `f32` where `None`, the element the tile DSL decodes a
+    /// packed operand at unless the kernel names another.
     pub fn decoded_stage(&self) -> Option<ElemType> {
         match self {
             Self::Fragment(plane) => plane.decoded_stage(),
@@ -293,19 +283,11 @@ impl CubeAttentionPlane {
         }
     }
 
-    /// The order its score reads the keys in ([`AttentionMicrokernel::key_order`]).
-    pub fn key_order(&self) -> BindingOrder {
+    /// The lines its planes read the cache in ([`AttentionMicrokernel::cache_order`]).
+    pub fn cache_order(&self) -> CacheOrder {
         match self {
-            Self::Fragment(plane) => plane.key_order(),
-            Self::Shuffle(plane) => plane.key_order(),
-        }
-    }
-
-    /// The dimension its planes' values' lines run along.
-    pub fn value_lines(&self) -> ValueLines {
-        match self {
-            Self::Fragment(plane) => plane.value_lines(),
-            Self::Shuffle(_) => ValueLines::ValueDim,
+            Self::Fragment(plane) => plane.cache_order(),
+            Self::Shuffle(plane) => plane.cache_order(),
         }
     }
 

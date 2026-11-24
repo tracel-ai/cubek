@@ -3,7 +3,7 @@ use crate::attention::cube::{
 };
 use crate::attention::{
     AttentionCacheKind, AttentionMicrokernel, AttentionOperand, AttentionOperands,
-    AttentionStagingCount, AttentionWorkItem, G, Q, S, ValueLines,
+    AttentionStagingCount, AttentionWorkItem, CacheOrder, G, Q, S,
 };
 use crate::matmul::cube::CubeStagedDelivery;
 use crate::split_keys_merge::SlotShape;
@@ -11,7 +11,6 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Dimension, Levels, Space, StageStorage};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageRing, StagedOperand};
 
 /// A box of queries of some heads of the group a cube owns: its planes each take the rows of one
@@ -200,7 +199,7 @@ impl CubeAttentionMicrokernel {
                     false => 0,
                 };
                 let stage: usize = item
-                    .stage(self.seq_kv(), self.key_order(), self.value_lines())
+                    .stage(self.seq_kv(), self.cache_order())
                     .iter()
                     .map(|operand| operand.bytes(hw, storage))
                     .sum();
@@ -293,11 +292,9 @@ impl Microkernel for CubeAttentionMicrokernel {
                 .over_pages(item);
                 let ring = cube.ring.resolve(
                     hw,
-                    &requested.served(item).stage(
-                        requested.seq_kv(),
-                        requested.key_order(),
-                        requested.value_lines(),
-                    ),
+                    &requested
+                        .served(item)
+                        .stage(requested.seq_kv(), requested.cache_order()),
                     requested.layout().planes() * requested.units,
                 );
                 let delivery = requested.resolve_delivery(hw, &ring);
@@ -336,13 +333,8 @@ impl Microkernel for CubeAttentionMicrokernel {
 
 impl AttentionMicrokernel for CubeAttentionMicrokernel {
     /// Its planes' microkernel's.
-    fn key_order(&self) -> BindingOrder {
-        self.plane.key_order()
-    }
-
-    /// Its planes' microkernel's.
-    fn value_lines(&self) -> ValueLines {
-        self.plane.value_lines()
+    fn cache_order(&self) -> CacheOrder {
+        self.plane.cache_order()
     }
 
     /// Its planes' microkernel's.

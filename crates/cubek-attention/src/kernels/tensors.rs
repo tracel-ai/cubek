@@ -21,9 +21,8 @@ use cubecl::tile::{
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S, ValueLines,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, B, CacheLines, D, DV, G, KV, Q, S,
 };
-use cubek_std::layout::BindingOrder;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
@@ -864,41 +863,38 @@ impl AttentionTensors {
                             None => arg,
                         }
                     };
+                let order = blueprint.microkernel.cache_order();
+                // A side over the dimensions its buffer steps, or with its keys innermost.
+                let read_side = |tensor: &PlainTensor,
+                                 stored: &'static [Dimension],
+                                 along_keys: &'static [Dimension],
+                                 width: usize,
+                                 operand: AttentionOperand,
+                                 scale: Option<TileTensorLaunch>| {
+                    match operand.lines(order) {
+                        CacheLines::AsStored => read_cache(tensor, stored, width, operand, scale),
+                        CacheLines::AlongKeys => {
+                            read_cache(&tensor.transposed(), along_keys, width, operand, scale)
+                        }
+                    }
+                };
                 let scales = &self.kv.scales;
-                let key_scale = || scales.key.as_ref().map(|scale| per_tensor(scale, D));
-                let key = match blueprint.microkernel.key_order() {
-                    BindingOrder::InBufferOrder => read_cache(
-                        key,
-                        &[B, KV, S, D],
-                        widths.key,
-                        AttentionOperand::Key,
-                        key_scale(),
-                    ),
-                    BindingOrder::Stated => read_cache(
-                        &key.transposed(),
-                        &[B, KV, D, S],
-                        widths.key,
-                        AttentionOperand::Key,
-                        key_scale(),
-                    ),
-                };
-                let value_scale = || scales.value.as_ref().map(|scale| per_tensor(scale, DV));
-                let value = match blueprint.microkernel.value_lines() {
-                    ValueLines::ValueDim => read_cache(
-                        value,
-                        &[B, KV, S, DV],
-                        widths.value,
-                        AttentionOperand::Value,
-                        value_scale(),
-                    ),
-                    ValueLines::Keys => read_cache(
-                        &value.transposed(),
-                        &[B, KV, DV, S],
-                        widths.value,
-                        AttentionOperand::Value,
-                        value_scale(),
-                    ),
-                };
+                let key = read_side(
+                    key,
+                    &[B, KV, S, D],
+                    &[B, KV, D, S],
+                    widths.key,
+                    AttentionOperand::Key,
+                    scales.key.as_ref().map(|scale| per_tensor(scale, D)),
+                );
+                let value = read_side(
+                    value,
+                    &[B, KV, S, DV],
+                    &[B, KV, DV, S],
+                    widths.value,
+                    AttentionOperand::Value,
+                    scales.value.as_ref().map(|scale| per_tensor(scale, DV)),
+                );
                 AttentionCacheBinding::Tiles { key, value }
             }
             AttentionCache::Packed(cache) => AttentionCacheBinding::Packed(cache.bind(&launcher)),
