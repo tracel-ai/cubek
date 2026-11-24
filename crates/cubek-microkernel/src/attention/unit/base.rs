@@ -1,11 +1,12 @@
-use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, D, DV, G, Q, S};
+use crate::attention::{
+    AttentionMicrokernel, AttentionOperand, AttentionWorkItem, CacheOrder, D, DV, G, Q, S,
+};
 use crate::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use crate::matmul::{MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Levels, Space};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
@@ -215,8 +216,12 @@ impl Microkernel for UnitAttentionMicrokernel {
 }
 
 impl AttentionMicrokernel for UnitAttentionMicrokernel {
-    /// The score's: a register block reads the keys in their buffer's order, along `D`.
-    fn key_order(&self) -> BindingOrder {
-        self.score.orders().rhs
+    /// The keys in the lines its score's register blocks read them in, the values as they are
+    /// stored.
+    fn cache_order(&self) -> CacheOrder {
+        CacheOrder {
+            key: self.score.orders().rhs.into(),
+            ..CacheOrder::AS_STORED
+        }
     }
 }

@@ -1,14 +1,16 @@
-use crate::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, ScoreHolder};
+use crate::attention::plane::{
+    PlaneFragmentAttentionMicrokernelSettings, QueryHolder, ScoreHolder,
+};
 use crate::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionRead, AttentionWorkItem, B, D, DV, G, KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionRead, AttentionWorkItem, B,
+    CacheLines, CacheOrder, D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Space, StageStorage};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork,
 };
@@ -49,12 +51,46 @@ pub const ROW_STATE_HELD_BY_UNIT: Decline = Decline::Unserved {
 /// The bytes a row of a stage block spans at least, where the dim holds them: a cache line.
 pub const BLOCK_ROW_BYTES: usize = 128;
 
+/// The octaves of headroom a plane's softmax keeps at a 16-bit element or wider: `f16` reaches
+/// `2^15`, one octave past a probability's largest.
+const HALF_HEADROOM_OCTAVES: u32 = 14;
+
+/// The octaves of headroom a plane's softmax keeps at `e4m3`, whose largest value is 448, `2^8.8`.
+const E4M3_HEADROOM_OCTAVES: u32 = 8;
+
 impl PlaneFragmentAttentionMicrokernel {
     /// Where the plane keeps the score: its settings', which the tile picked its instructions for.
     /// Kept in fragments, the score is the value's `A`, read in runs of its cells; windows
     /// decouple the two products.
     pub fn score_holder(&self) -> ScoreHolder {
         self.settings.score
+    }
+
+    /// Where the plane keeps its query across the walk: its settings', which
+    /// [`holds_query`](Self::holds_query) says the plane can.
+    pub fn query_holder(&self) -> QueryHolder {
+        self.settings.query
+    }
+
+    /// Whether a plane keeps `item`'s query, read in `read`, in `holder`: registers load it from its
+    /// values as they are stored, so not from a wide query bound as its words.
+    fn holds_query(holder: QueryHolder, item: &AttentionWorkItem, read: AttentionRead) -> bool {
+        let stored = item.elements.query;
+        match holder {
+            QueryHolder::Stage => true,
+            QueryHolder::Registers => stored == read.score || stored.size() < 4,
+        }
+    }
+
+    /// Whether a stage of `item`'s values, read in `read`, lies in `lines`. Along the keys it is
+    /// filled by a stride over the buffer, a value at a time: values bound as their words to be
+    /// decoded have none, where a word holds several.
+    fn lays_values(lines: CacheLines, item: &AttentionWorkItem, read: AttentionRead) -> bool {
+        let stored = item.elements.value;
+        match lines {
+            CacheLines::AsStored => true,
+            CacheLines::AlongKeys => stored == read.value || stored.size() >= 4,
+        }
     }
 
     /// The edge a fragment of the output spans along the value dim, which a drain writes at once.
@@ -76,10 +112,36 @@ impl PlaneFragmentAttentionMicrokernel {
         .build()
     }
 
+    /// Octaves a row's scores may rise above its softmax's max before the max follows them
+    /// ([`OnlineSoftmax::with_headroom`](cubecl::tile::ops::softmax::OnlineSoftmax::with_headroom)):
+    /// the whole octaves below the largest value of the values' element, which the probabilities
+    /// are cast to, are its to spend. An element not named here has none.
+    pub fn softmax_headroom(&self) -> u32 {
+        match self.read.value {
+            ElemType::Float(
+                FloatKind::F16 | FloatKind::BF16 | FloatKind::TF32 | FloatKind::F32,
+            ) => HALF_HEADROOM_OCTAVES,
+            ElemType::Float(FloatKind::E4M3) => E4M3_HEADROOM_OCTAVES,
+            _ => 0,
+        }
+    }
+
     /// 32-bit registers one unit keeps the softmax's running max and sum in, beside its share of
     /// both multiplications' fragments: at most every row's, which a window's state keeps.
     fn softmax_registers(&self, item: &AttentionWorkItem) -> u32 {
         (2 * self.seq_q() * item.sum.size()).div_ceil(4) as u32
+    }
+
+    /// 32-bit registers one unit keeps its part of the query in: a row of its head dim a lane's
+    /// fragment holds, none where the query is staged.
+    fn query_registers(&self, item: &AttentionWorkItem, units: usize) -> u32 {
+        match self.query_holder() {
+            QueryHolder::Stage => 0,
+            QueryHolder::Registers => {
+                let bytes = self.seq_q() * item.head_dim * self.read.score.size();
+                bytes.div_ceil(units * 4) as u32
+            }
+        }
     }
 
     /// The score as the shared microkernel is handed it: summed into the plane's window.
@@ -114,6 +176,11 @@ impl PlaneFragmentAttentionMicrokernel {
         // element, as an `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load
         // the values it decodes, and the kernel opens its sums on them as decoded. Both sides
         // decoded are decoded to one element alike.
+        if !Self::holds_query(settings.query, item, read)
+            || !Self::lays_values(settings.value_lines, item, read)
+        {
+            return Vec::new();
+        }
         let [keys, values] = item.stage_sources(read);
         if keys == FragmentSource::Decoded
             && values == FragmentSource::Decoded
@@ -145,7 +212,12 @@ impl PlaneFragmentAttentionMicrokernel {
         holders
             .iter()
             .filter_map(|&holder| {
-                let score = holder.sum_plane(hw, &score_item, grid, score_tile)?;
+                let score = match settings.query {
+                    QueryHolder::Stage => holder.sum_plane(hw, &score_item, grid, score_tile),
+                    QueryHolder::Registers => {
+                        holder.held_lhs_sum_plane(hw, &score_item, grid, score_tile)
+                    }
+                }?;
                 let value = holder.rescaled_reader_plane(
                     hw,
                     &score,
@@ -186,8 +258,8 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
          whose k divides the head dim and whose n divides the value dim and the stage's keys, on a \
          device that commits to one plane width";
 
-    /// A star off the default: each other tile shape, the whole grid bounced at once, and
-    /// the score read through the windows.
+    /// A star off the default: each other tile shape, the whole grid bounced at once, the score
+    /// read through the windows, and the query held in registers.
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
         vec![
             Self::Settings::DEFAULT,
@@ -196,6 +268,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             Self::Settings::fragments(2, 4),
             Self::Settings::WHOLE_GRID,
             Self::Settings::THROUGH_WINDOWS,
+            Self::Settings::HELD_QUERY,
         ]
     }
 
@@ -271,7 +344,7 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             .estimate(&Self::value_item(item), &(), planes, estimate);
         let softmax = UnitWork {
             instruction: ArithmeticInstruction::Matrix,
-            registers: self.softmax_registers(item),
+            registers: self.softmax_registers(item) + self.query_registers(item, planes.width),
         };
 
         estimate.work = score
@@ -281,14 +354,28 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
 }
 
 impl AttentionMicrokernel for PlaneFragmentAttentionMicrokernel {
-    /// The score's: a fragment loads a block of keys col-major where it lies.
-    fn key_order(&self) -> BindingOrder {
-        self.score.orders().rhs
+    /// The keys in the lines its score's instruction reads them in, the values in its settings'.
+    fn cache_order(&self) -> CacheOrder {
+        CacheOrder {
+            key: self.score.orders().rhs.into(),
+            value: self.settings.value_lines,
+        }
     }
 
-    /// Its operands in the element its instruction reads them in.
+    /// Its operands in the element its instruction reads them in, a query held in registers as it
+    /// is stored: its planes cast it as they load it, where a staged one is converted ahead.
     fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
-        item.read_as(self.read)
+        let read = item.read_as(self.read);
+        match self.query_holder() {
+            QueryHolder::Stage => read,
+            QueryHolder::Registers => AttentionWorkItem {
+                elements: AttentionOperands {
+                    query: item.elements.query,
+                    ..read.elements
+                },
+                ..read
+            },
+        }
     }
 }
 

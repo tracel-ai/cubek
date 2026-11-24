@@ -2,7 +2,7 @@ use super::base::CubeAttentionMicrokernel;
 use super::plane::CubeAttentionPlane;
 use crate::attention::plane::{
     PlaneFragmentAttention, PlaneFragmentAttentionExpand, PlaneShuffleAttention,
-    PlaneShuffleAttentionExpand, StepReads, StepReadsExpand,
+    PlaneShuffleAttentionExpand, StepReads, StepReadsExpand, query_for_planes,
 };
 use crate::attention::{B, DV, G, KV, Q, S, StepBias, VisibleKeys};
 use crate::split_keys_merge::plane::{
@@ -490,26 +490,21 @@ impl CubeAttentionMicrokernel {
         #[comptime] microkernel: Self,
         #[comptime] storage: StageStorage,
     ) -> PlaneFragmentAttention<EA, EV> {
-        // The query spans no key: staged once for every plane, before the walk, laid out as the
-        // stages of keys and values are.
-        let mut staged_query = query.stage_for(
-            &walk,
-            comptime!(microkernel.query_storage(&query.space())),
-            microkernel.plane.decoded_query(),
-        );
-
-        staged_query.copy_from(query);
-
         let mut planes = match microkernel.plane {
-            CubeAttentionPlane::Fragment(plane) => PlaneFragmentAttention::<EA, EV>::open(
-                &walk,
-                &staged_query,
-                out,
-                key,
-                value,
-                plane,
-                microkernel.planes(),
-            ),
+            CubeAttentionPlane::Fragment(plane) => {
+                // Staged once for every plane, laid out as the stages of keys and values are.
+                let storage = comptime!(microkernel.query_storage(&query.space()));
+                let query = query_for_planes(query, &walk, plane, storage);
+                PlaneFragmentAttention::<EA, EV>::open(
+                    &walk,
+                    &query,
+                    out,
+                    key,
+                    value,
+                    plane,
+                    microkernel.planes(),
+                )
+            }
             CubeAttentionPlane::Shuffle(_) => {
                 unreachable!("a cube whose planes read their keys where they lie stages nothing")
             }
