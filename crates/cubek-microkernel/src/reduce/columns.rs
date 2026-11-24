@@ -97,17 +97,17 @@ mod tests {
     use cubecl::tile::{Partitioning, Space};
     use cubek_std::devices;
 
-    const WIDTH: usize = 4;
-    const LANES: usize = 32;
+    const LINE_LANE_COUNT: usize = 4;
+    const LANE_COUNT: usize = 32;
 
     #[test]
     fn a_column_a_lane_spreads_across() {
-        assert!(spreads_across(LANES, LANES));
+        assert!(spreads_across(LANE_COUNT, LANE_COUNT));
     }
 
     #[test]
     fn more_columns_than_lanes_do_not() {
-        assert!(!spreads_across(LANES, 2 * LANES));
+        assert!(!spreads_across(LANE_COUNT, 2 * LANE_COUNT));
     }
 
     /// A sum of f32 values, its lines along `lines_along`.
@@ -125,16 +125,19 @@ mod tests {
     #[test]
     fn lines_along_the_row_lie_one_across() {
         let hw = devices::m2_pro();
-        assert_eq!(lines_across(&hw, &item(REDUCED), WIDTH, LANES, LANES), 1);
+        assert_eq!(
+            lines_across(&hw, &item(REDUCED), LINE_LANE_COUNT, LANE_COUNT, LANE_COUNT),
+            1
+        );
     }
 
     /// Lines across it fill one memory transaction.
     #[test]
     fn lines_across_the_rows_fill_a_transaction() {
         let hw = devices::m2_pro();
-        let line_bytes = WIDTH * size_of::<f32>();
+        let line_bytes = LINE_LANE_COUNT * size_of::<f32>();
         assert_eq!(
-            lines_across(&hw, &item(BATCH), WIDTH, LANES, LANES),
+            lines_across(&hw, &item(BATCH), LINE_LANE_COUNT, LANE_COUNT, LANE_COUNT),
             hw.transaction_bytes() / line_bytes
         );
     }
@@ -142,46 +145,62 @@ mod tests {
     #[test]
     fn no_more_lines_than_there_are() {
         let hw = devices::m2_pro();
-        assert_eq!(lines_across(&hw, &item(BATCH), WIDTH, 1, LANES), 1);
+        assert_eq!(
+            lines_across(&hw, &item(BATCH), LINE_LANE_COUNT, 1, LANE_COUNT),
+            1
+        );
     }
 
     /// A power of two, where the lines of rows are not.
     #[test]
     fn as_many_lines_as_a_power_of_two() {
         let hw = devices::m2_pro();
-        let lines = lines_across(&hw, &item(BATCH), 1, 3, LANES);
+        let lines = lines_across(&hw, &item(BATCH), 1, 3, LANE_COUNT);
         assert_eq!(lines, 2);
     }
 
     #[test]
     fn a_columns_units_take_the_reduced_dimension_in_turns() {
-        const COLUMNS: usize = 2;
-        const PER_COLUMN: usize = 16;
-        let space = Space::new(&[(BATCH, COLUMNS * WIDTH), (REDUCED, PER_COLUMN)]);
-        let levels = units_across(&[(BATCH, WIDTH)], COLUMNS, PER_COLUMN).planes(&[(BATCH, 1)]);
+        const COLUMN_COUNT: usize = 2;
+        const COLUMN_LANE_COUNT: usize = 16;
+        let space = Space::new(&[
+            (BATCH, COLUMN_COUNT * LINE_LANE_COUNT),
+            (REDUCED, COLUMN_LANE_COUNT),
+        ]);
+        let levels = units_across(&[(BATCH, LINE_LANE_COUNT)], COLUMN_COUNT, COLUMN_LANE_COUNT)
+            .planes(&[(BATCH, 1)]);
         let partitioning = Partitioning::new(space, levels.build());
         let plane = partitioning.box_of(ComputeScope::Plane);
         assert_eq!(
             [plane.extent(BATCH), plane.extent(REDUCED)],
-            [COLUMNS * WIDTH, PER_COLUMN]
+            [COLUMN_COUNT * LINE_LANE_COUNT, COLUMN_LANE_COUNT]
         );
     }
 
     /// One line wide, the plane's box of rows is the leaf: no level cuts it to units.
     #[test]
     fn one_line_across_is_the_owners_box() {
-        let levels = plane_levels(&[(BATCH, WIDTH)], 1, LANES).build();
-        assert_eq!(levels, Levels::leaf(&[(BATCH, WIDTH)]).build());
+        let levels = plane_levels(&[(BATCH, LINE_LANE_COUNT)], 1, LANE_COUNT).build();
+        assert_eq!(levels, Levels::leaf(&[(BATCH, LINE_LANE_COUNT)]).build());
     }
 
     /// A cube's planes take the reduced dimension after one another.
     #[test]
     fn a_cubes_planes_follow_one_another_along_the_reduced_dimension() {
-        const COLUMNS: usize = 2;
-        const PLANES: usize = 4;
-        let positions = LANES / COLUMNS * PLANES;
-        let space = Space::new(&[(BATCH, COLUMNS * WIDTH), (REDUCED, positions)]);
-        let levels = cube_columns(&[(BATCH, WIDTH)], COLUMNS, LANES, PLANES).cubes(&[BATCH]);
+        const COLUMN_COUNT: usize = 2;
+        const PLANE_COUNT: usize = 4;
+        let positions = LANE_COUNT / COLUMN_COUNT * PLANE_COUNT;
+        let space = Space::new(&[
+            (BATCH, COLUMN_COUNT * LINE_LANE_COUNT),
+            (REDUCED, positions),
+        ]);
+        let levels = cube_columns(
+            &[(BATCH, LINE_LANE_COUNT)],
+            COLUMN_COUNT,
+            LANE_COUNT,
+            PLANE_COUNT,
+        )
+        .cubes(&[BATCH]);
         let partitioning = Partitioning::new(space, levels.build());
         let cube = partitioning.box_of(ComputeScope::Cube);
         assert_eq!(cube.extent(REDUCED), positions);
@@ -190,8 +209,31 @@ mod tests {
     /// One line wide, a cube's box of rows is the leaf too.
     #[test]
     fn one_line_across_a_cube_is_the_owners_box() {
-        const PLANES: usize = 4;
-        let levels = cube_levels(&[(BATCH, WIDTH)], 1, LANES, PLANES).build();
-        assert_eq!(levels, Levels::leaf(&[(BATCH, WIDTH)]).build());
+        const PLANE_COUNT: usize = 4;
+        let levels = cube_levels(&[(BATCH, LINE_LANE_COUNT)], 1, LANE_COUNT, PLANE_COUNT).build();
+        assert_eq!(levels, Levels::leaf(&[(BATCH, LINE_LANE_COUNT)]).build());
+    }
+
+    /// Several lines wide, a plane's levels are its columns.
+    #[test]
+    fn several_lines_across_are_columns() {
+        const COLUMN_COUNT: usize = 2;
+        let owner = [(BATCH, LINE_LANE_COUNT)];
+        let levels = plane_levels(&owner, COLUMN_COUNT, LANE_COUNT).build();
+        assert_eq!(
+            levels,
+            plane_columns(&owner, COLUMN_COUNT, LANE_COUNT).build()
+        );
+    }
+
+    /// Several lines wide, a cube's levels are its columns.
+    #[test]
+    fn several_lines_across_a_cube_are_columns() {
+        const COLUMN_COUNT: usize = 2;
+        const PLANE_COUNT: usize = 4;
+        let owner = [(BATCH, LINE_LANE_COUNT)];
+        let levels = cube_levels(&owner, COLUMN_COUNT, LANE_COUNT, PLANE_COUNT).build();
+        let columns = cube_columns(&owner, COLUMN_COUNT, LANE_COUNT, PLANE_COUNT).build();
+        assert_eq!(levels, columns);
     }
 }

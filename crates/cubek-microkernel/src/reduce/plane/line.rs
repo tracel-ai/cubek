@@ -1,6 +1,6 @@
 use crate::reduce::read::{UnitStridedReduceMicrokernel, unit_strided_reduce_microkernel};
 use crate::reduce::write::{UnitRegionWriteMicrokernel, unit_region_write_microkernel};
-use crate::reduce::{Accumulable, REDUCED, ReduceWorkItem};
+use crate::reduce::{Accumulable, ReduceWorkItem};
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -79,68 +79,28 @@ pub(crate) fn plane_line_reduce_microkernel<
     #[comptime] microkernel: PlaneLineReduceMicrokernel,
 ) {
     let item = microkernel.item;
-    let rows = input.at(plane);
-    let count = rows.flat::<In, N>().shape();
-    let acc = unit_strided_reduce_microkernel::<In, Acc, N, C>(
-        &rows,
+    let read = unit_strided_reduce_microkernel::<In, Acc, N, C>(
+        &input.at(plane),
         UNIT_POS_PLANE as usize,
-        count,
         0,
         comptime!(UnitStridedReduceMicrokernel::new(item, microkernel.lanes)),
     );
-    let total = C::across(acc, UnitShare::Plane, item.operation.monoid());
-
-    let load = rows.vector_tile();
-    let row_lanes = comptime!(load.extent_along(REDUCED));
+    let total = C::across(read.carrier, UnitShare::Plane, item.operation.monoid());
     unit_region_write_microkernel::<Out, Idx, Acc, N, C>(
         plane,
         total,
         out,
         indices,
-        count * row_lanes,
+        read.values,
         UNIT_POS_PLANE == 0,
-        comptime!(UnitRegionWriteMicrokernel::new(microkernel.item, row_lanes)),
+        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lanes)),
     );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::reduce::ReduceCarrierFamily;
-    use crate::reduce::testing::{
-        ComponentLaunch, LaunchedRows, MicrokernelLauncher, a_plane_a_cube, plane_lanes,
-    };
-    use cubecl::tile::Levels;
-    use cubecl::tile::launch::Decline;
-    use cubek_std::Hardware;
 
-    /// A plane reads one line of rows wide.
-    #[derive(Debug, Clone, Copy)]
-    struct PlaneLineMicrokernelLauncher;
-
-    impl MicrokernelLauncher for PlaneLineMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            a_plane_a_cube(Levels::leaf(&rows.owner()))
-        }
-
-        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
-            plane_lanes(hw, item)
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let elements = launch.elements();
-            launch_component!(
-                launch,
-                plane_line_reduce_kernel::<F>,
-                sizes: [launch.rows.cells()],
-                [],
-                PlaneLineReduceMicrokernel::new(launch.rows.item, launch.rows.lanes),
-                elements,
-            );
-        }
-    }
-
-    region_reduce_kernel!(plane_line_reduce_kernel, PlaneLineReduceMicrokernel);
+    use crate::reduce::testing::PlaneLineMicrokernelLauncher;
 
     /// The plane's read one line of rows wide, 300 values long along the reduced dimension, four values
     /// a line.

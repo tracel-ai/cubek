@@ -1,11 +1,16 @@
 //! What every carrier does with one line: read it and index its lanes.
 
 use crate::reduce::{Accumulable, ReadMap, ReduceWorkItem};
-use cubecl::tile::Indexed;
+use cubecl::tile::{Indexed, TOP_K_UNROLL_BUDGET};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// One lane's value and index, what an [`Indexed`] row's lanes reduce to.
 pub(crate) type OneIndexed<Acc> = Indexed<Acc, Const<1>>;
+
+/// Whether a walk of `slot_count` slots into as many unrolls: where its steps are within the budget.
+pub(crate) const fn unrolls_a_walk_of_count(slot_count: usize) -> bool {
+    slot_count * slot_count <= TOP_K_UNROLL_BUDGET
+}
 
 /// `line` as `map` reads it.
 #[cube(harness)]
@@ -25,18 +30,19 @@ pub(crate) fn read_mapped<Acc: Numeric, N: Size>(
 }
 
 /// `read`, a line of a row in `In`, `row_lanes` of its lanes holding one row's values, mapped as
-/// `item`'s operation reads it and accumulated in `Acc` into `acc` as line `index` of its row.
+/// `item`'s operation reads it and accumulated in `Acc` into `acc` as line `offset + line` of its row.
 #[cube]
 pub(crate) fn accumulate_read<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
     acc: &mut C,
     read: Vector<In, N>,
-    index: usize,
+    offset: usize,
+    line: usize,
     #[comptime] row_lanes: usize,
     #[comptime] item: ReduceWorkItem,
 ) {
     let operation = item.operation;
     let mapped = read_mapped::<Acc, N>(Vector::<Acc, N>::cast_from(read), operation.read_map());
-    C::accumulate(acc, mapped, index, row_lanes, operation.monoid());
+    C::accumulate(acc, mapped, offset + line, row_lanes, operation.monoid());
 }
 
 /// The index of each lane of the line read `line_index` lines into the row, `row_lanes` of its
@@ -79,6 +85,7 @@ mod tests {
         accumulate_read::<i32, f32, N, Vector<f32, N>>(
             &mut acc,
             line,
+            0,
             0,
             row_lanes,
             comptime!(ReduceWorkItem::along_f32(ReduceOperation::MaxAbs)),

@@ -1,7 +1,7 @@
 //! The `K` best values without their indices: a top-k that writes only its values.
 
-use crate::reduce::{Accumulable, ReduceCarrierFamily};
-use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, TopValues};
+use crate::reduce::{Accumulable, ReduceCarrierFamily, unrolls_a_walk_of_count};
+use cubecl::tile::{Carrier, Monoid, TopValues};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// [`ReduceCarrier::TopValues`](crate::reduce::ReduceCarrier::TopValues): its carrier is [`TopValues`].
@@ -38,7 +38,7 @@ impl<Acc: Numeric, N: Size, K: Size> Accumulable<Acc, N> for TopValues<Acc, N, K
     /// Every lane's list inserted into one one-lane list, best first.
     fn one_row(acc: Self, #[comptime] monoid: Monoid) -> Self {
         let k = K::value();
-        let unrolled = comptime!(k * k <= TOP_K_UNROLL_BUDGET);
+        let unrolled = comptime!(unrolls_a_walk_of_count(k));
         let mut best = TopValues::<Acc, Const<1>, K>::identity(monoid);
         #[unroll]
         for lane in 0..N::value() {

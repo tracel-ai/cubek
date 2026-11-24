@@ -92,10 +92,13 @@ mod tests {
 
     #[test]
     fn it_asks_nothing_of_its_outputs_width() {
-        const WIDEST: usize = 8;
+        const WIDEST_COUNT: usize = 8;
         let mut vectorization = Vectorization::new();
         UnitDirectZeroMicrokernel {}.vectorize(&(), &mut vectorization);
-        assert_eq!(vectorization.width(ZeroOperand::Out, |_| WIDEST), WIDEST);
+        assert_eq!(
+            vectorization.width(ZeroOperand::Out, |_| WIDEST_COUNT),
+            WIDEST_COUNT
+        );
     }
 
     #[test]
@@ -194,8 +197,8 @@ mod tests {
     /// An output of `rows` rows of `cells` cells in `element`, holding sevens before the launch.
     #[derive(Debug, Clone, Copy)]
     struct ZeroCase {
-        pub rows: usize,
-        pub cells: usize,
+        pub row_count: usize,
+        pub cell_count: usize,
         pub element: ElemType,
     }
 
@@ -207,18 +210,18 @@ mod tests {
         type Case = ZeroCase;
 
         fn launch(&self, client: &Client, case: &ZeroCase) -> Result<Vec<Written>, Decline> {
-            let shape = Shape::from(vec![case.rows, case.cells]);
+            let shape = Shape::from(vec![case.row_count, case.cell_count]);
             let out = TestInput::builder(client.clone(), shape)
                 .dtype(case.element)
-                .custom(vec![7.0; case.rows * case.cells])
+                .custom(vec![7.0; case.row_count * case.cell_count])
                 .generate_without_host_data();
             let plane_width = self.hw.plane_dim().unwrap_or(1);
             launch_unit_zero(
                 client,
                 out.clone().binding().into_tensor_arg(),
                 case.element,
-                case.rows,
-                case.cells,
+                case.row_count,
+                case.cell_count,
                 plane_width,
             )?;
             let host = match case.element {
@@ -234,8 +237,8 @@ mod tests {
 
         fn reference(&self, case: &ZeroCase) -> Vec<HostData> {
             vec![HostData::row_major(
-                HostDataVec::F32(vec![0.0; case.rows * case.cells]),
-                Shape::from(vec![case.rows, case.cells]),
+                HostDataVec::F32(vec![0.0; case.row_count * case.cell_count]),
+                Shape::from(vec![case.row_count, case.cell_count]),
             )]
         }
 
@@ -244,23 +247,30 @@ mod tests {
         }
     }
 
-    /// A unit alone zeroes its row in `element`, at a row length that is not a power of two.
-    fn a_unit_zeroes_its_row(element: ElemType) {
-        let hw = Hardware::from_client(&cubecl::test_device().client());
-        UnitZeroScopeChecker { hw }.check([ZeroCase {
-            rows: 5,
-            cells: 37,
-            element,
-        }]);
+    impl UnitZeroScopeChecker {
+        /// A row length that is not a power of two, in `element`, on the test device.
+        fn check_element(element: ElemType) {
+            let hw = Hardware::from_client(&cubecl::test_device().client());
+            Self { hw }.check([ZeroCase {
+                row_count: 5,
+                cell_count: 37,
+                element,
+            }]);
+        }
     }
 
     #[test]
     fn a_unit_zeroes_a_row_of_floats() {
-        a_unit_zeroes_its_row(ElemType::Float(FloatKind::F32));
+        UnitZeroScopeChecker::check_element(ElemType::Float(FloatKind::F32));
     }
 
     #[test]
     fn a_unit_zeroes_a_row_of_integers() {
-        a_unit_zeroes_its_row(ElemType::Int(IntKind::I32));
+        UnitZeroScopeChecker::check_element(ElemType::Int(IntKind::I32));
+    }
+
+    #[test]
+    fn its_settings_display_as_the_default() {
+        assert_eq!(UnitDirectZeroMicrokernelSettings.to_string(), "default");
     }
 }

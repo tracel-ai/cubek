@@ -1,4 +1,6 @@
-use crate::reduce::read::{UnitStridedReduceMicrokernel, unit_strided_reduce_microkernel};
+use crate::reduce::read::{
+    RowsRead, UnitStridedReduceMicrokernel, unit_strided_reduce_microkernel,
+};
 use crate::reduce::{Accumulable, ReduceWorkItem};
 use cubecl::tile::Tile;
 use cubecl::tile::space::UnitShare;
@@ -30,32 +32,30 @@ impl CubeStridedReduceMicrokernel {
     }
 }
 
-impl CubeStridedReduceMicrokernel {
-    pub(crate) fn item(&self) -> ReduceWorkItem {
-        self.item
-    }
-}
-
 #[cube]
 impl CubeStridedReduceMicrokernel {
-    /// The first `count` lines of `input` accumulated by the cube into `C`, the line at `l` read
-    /// as line `first_line + l` of its row (`cube_strided_reduce_microkernel`).
+    /// The lines of `input` accumulated by the cube into `C`, the line at `l` read as line
+    /// `first_line + l` of its row (`cube_strided_reduce_microkernel`).
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         input: &Tile,
         first_line: usize,
-        count: usize,
-    ) -> C {
+    ) -> RowsRead<C> {
         cube_strided_reduce_microkernel::<In, Acc, N, C>(
             input,
             first_line,
-            count,
             comptime!(CubeStridedReduceMicrokernel {
                 item: self.item,
                 lanes: self.lanes,
                 planes: self.planes
             }),
         )
+    }
+}
+
+impl CubeStridedReduceMicrokernel {
+    pub(crate) fn item(&self) -> ReduceWorkItem {
+        self.item
     }
 }
 
@@ -70,15 +70,13 @@ pub(crate) fn cube_strided_reduce_microkernel<
 >(
     input: &Tile,
     first_line: usize,
-    count: usize,
     #[comptime] microkernel: CubeStridedReduceMicrokernel,
-) -> C {
+) -> RowsRead<C> {
     let monoid = microkernel.item.operation.monoid();
     let unit = PLANE_POS as usize * microkernel.lanes + UNIT_POS_PLANE as usize;
-    let acc = unit_strided_reduce_microkernel::<In, Acc, N, C>(
+    let read = unit_strided_reduce_microkernel::<In, Acc, N, C>(
         input,
         unit,
-        count,
         first_line,
         comptime!(UnitStridedReduceMicrokernel::new(
             microkernel.item,
@@ -86,16 +84,21 @@ pub(crate) fn cube_strided_reduce_microkernel<
         )),
     );
 
-    let plane = C::across(acc, UnitShare::Plane, monoid);
+    let plane = C::across(read.carrier, UnitShare::Plane, monoid);
     let one_column = comptime!(1usize);
-    across_planes::<Acc, N, C>(
+    let total = across_planes::<Acc, N, C>(
         plane,
         0,
         UNIT_POS_PLANE == 0,
         one_column,
         microkernel.planes,
         microkernel.item,
-    )
+    );
+    RowsRead::<C> {
+        carrier: total,
+        values: read.values,
+        row_lanes: read.row_lanes,
+    }
 }
 
 /// Bytes of shared memory [`across_planes`] allocates for `partials` partials of `item`'s carrier, its
@@ -242,88 +245,7 @@ fn staged_partial<Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
 mod tests {
     use super::*;
     use crate::reduce::ReduceOperation;
-    use crate::reduce::testing::{ComponentLaunch, LaunchedRows, MicrokernelLauncher, cube_lanes};
-    use crate::reduce::write::{UnitRegionWriteMicrokernel, unit_region_write_microkernel};
-    use crate::reduce::{BATCH, ReduceCarrierFamily};
-    use cubecl::ir::ElemType;
-    use cubecl::tile::launch::Decline;
-    use cubecl::tile::{Levels, Partitioning, TileTensor};
-    use cubek_std::Hardware;
-
-    /// A cube reads its rows into a carrier, whose line its first unit writes.
-    #[derive(Debug, Clone, Copy)]
-    struct CubeStridedMicrokernelLauncher {
-        planes: usize,
-    }
-
-    impl MicrokernelLauncher for CubeStridedMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            rows.whole_rows().cubes(&[BATCH])
-        }
-
-        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
-            cube_lanes(hw, item, self.planes)
-        }
-
-        fn launch_plane_width(&self, _hw: &Hardware, rows: &LaunchedRows) -> usize {
-            rows.lanes * self.planes
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let elements = launch.elements();
-            launch_component!(
-                launch,
-                cube_strided_reduce_kernel::<F>,
-                sizes: [launch.rows.cells()],
-                [launch.rows.reduced, launch.rows.row_lanes()],
-                CubeStridedReduceMicrokernel::new(launch.rows.item, launch.rows.lanes, self.planes),
-                elements,
-            );
-        }
-    }
-
-    /// Every cube's row, read by the cube into its carrier, which the region's write writes.
-    ///
-    /// Its operands' leaves:
-    /// - `input`: the rows, laid along or across the reduced dimension.
-    /// - `out`: one tensor of a cell a row (`k` for a top-k).
-    #[cube(launch_unchecked)]
-    fn cube_strided_reduce_kernel<
-        In: Numeric,
-        Acc: Numeric,
-        Out: Numeric,
-        N: Size,
-        K: Size,
-        F: ReduceCarrierFamily,
-    >(
-        input: &TileTensor<'_>,
-        out: &mut TileTensor<'_>,
-        partitioning: Partitioning,
-        #[comptime] values: usize,
-        #[comptime] row_lanes: usize,
-        #[comptime] microkernel: CubeStridedReduceMicrokernel,
-        #[define(In, Acc, Out)] _elements: [ElemType; 3],
-    ) {
-        let x = input.tile(&partitioning);
-        let o = out.tile_mut(&partitioning);
-
-        for cube in &partitioning {
-            let row = x.at(&cube);
-            let count = row.flat::<In, N>().shape();
-            let carrier = microkernel
-                .runtime()
-                .reduce::<In, Acc, N, F::Carrier<Acc, N, K>>(&row, 0, count);
-            unit_region_write_microkernel::<Out, Out, Acc, N, F::Carrier<Acc, N, K>>(
-                &cube,
-                carrier,
-                &o,
-                &ComptimeOption::new_None(),
-                values,
-                UNIT_POS == 0,
-                comptime!(UnitRegionWriteMicrokernel::new(microkernel.item, row_lanes)),
-            );
-        }
-    }
+    use crate::reduce::testing::CubeStridedMicrokernelLauncher;
 
     /// The cube's read into a carrier, rows 300 values long along the reduced dimension, four values a
     /// line.
@@ -338,21 +260,27 @@ mod tests {
         every_operation!(CubeStridedMicrokernelLauncher { planes: 4 }, Across, 300, 4);
     }
 
-    const PARTIALS: usize = 4;
-    const WIDTH: usize = 4;
+    const PARTIAL_COUNT: usize = 4;
+    const LINE_LANE_COUNT: usize = 4;
 
     /// A line of f32 values a partial, and a line in place of the indices.
     #[test]
     fn values_alone_stage_a_line_each_and_one_more() {
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
-        let line = WIDTH * size_of::<f32>();
-        assert_eq!(staged_bytes(item, PARTIALS, WIDTH), PARTIALS * line + line);
+        let line = LINE_LANE_COUNT * size_of::<f32>();
+        assert_eq!(
+            staged_bytes(item, PARTIAL_COUNT, LINE_LANE_COUNT),
+            PARTIAL_COUNT * line + line
+        );
     }
 
     #[test]
     fn indexed_values_stage_two_lines_each() {
         let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
-        let line = WIDTH * size_of::<f32>();
-        assert_eq!(staged_bytes(item, PARTIALS, WIDTH), 2 * PARTIALS * line);
+        let line = LINE_LANE_COUNT * size_of::<f32>();
+        assert_eq!(
+            staged_bytes(item, PARTIAL_COUNT, LINE_LANE_COUNT),
+            2 * PARTIAL_COUNT * line
+        );
     }
 }

@@ -78,7 +78,7 @@ impl ReduceWorkItem {
 
     /// Whether it is rightly handed an output of indices (`handed`): exactly where it writes them
     /// beside the values.
-    pub(crate) fn takes_indices(&self, handed: bool) -> bool {
+    pub(crate) fn takes_handed_indices(&self, handed: bool) -> bool {
         handed == (self.writes() == ReduceWrites::Both)
     }
 }
@@ -161,16 +161,30 @@ mod tests {
     /// A unit holds its carrier's lines, beside two registers of its own.
     #[test]
     fn a_unit_holds_its_carriers_lines_and_two() {
-        const K: u32 = 3;
-        let work = item(ReduceOperation::ArgTopK { k: K as usize }, REDUCED, false).unit_work();
-        assert_eq!(work.registers, 2 * K + 2);
+        const KEPT_COUNT: u32 = 3;
+        let work = item(
+            ReduceOperation::ArgTopK {
+                k: KEPT_COUNT as usize,
+            },
+            REDUCED,
+            false,
+        )
+        .unit_work();
+        assert_eq!(work.registers, 2 * KEPT_COUNT + 2);
     }
 
     #[test]
     fn a_merge_holds_two_carriers_lines_and_two() {
-        const K: u32 = 3;
-        let work = item(ReduceOperation::TopK { k: K as usize }, REDUCED, false).merge_work();
-        assert_eq!(work.registers, 2 * K + 2);
+        const KEPT_COUNT: u32 = 3;
+        let work = item(
+            ReduceOperation::TopK {
+                k: KEPT_COUNT as usize,
+            },
+            REDUCED,
+            false,
+        )
+        .merge_work();
+        assert_eq!(work.registers, 2 * KEPT_COUNT + 2);
     }
 
     #[test]
@@ -191,12 +205,12 @@ mod tests {
 
     #[test]
     fn an_item_that_writes_both_takes_indices() {
-        assert!(item(ReduceOperation::ArgMax, REDUCED, true).takes_indices(true));
+        assert!(item(ReduceOperation::ArgMax, REDUCED, true).takes_handed_indices(true));
     }
 
     #[test]
     fn an_item_that_writes_one_half_refuses_indices() {
-        assert!(!item(ReduceOperation::ArgMax, REDUCED, false).takes_indices(true));
+        assert!(!item(ReduceOperation::ArgMax, REDUCED, false).takes_handed_indices(true));
     }
 
     #[test]

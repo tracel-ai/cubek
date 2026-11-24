@@ -1,13 +1,12 @@
-use crate::reduce::testing::{ComponentLaunch, LaunchedRows, bound};
+use crate::reduce::testing::{ComponentLaunch, LaunchedRows};
 use crate::reduce::{
     IndexedReduceCarrierFamily, ReduceCarrier, ReduceCarrierFamily, ReduceWorkItem,
     TopKReduceCarrierFamily, TopValuesReduceCarrierFamily, ValuesReduceCarrierFamily,
 };
 use cubecl::client::Client;
 use cubecl::prelude::*;
-use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{Decline, Grid};
-use cubecl::tile::{Dimension, Launcher, Levels, Partitioning, Space};
+use cubecl::tile::{Launcher, Levels, Partitioning, Space, TileTensorLaunch};
 use cubek_std::Hardware;
 
 /// Launches one reduce microkernel alone on rows.
@@ -17,6 +16,11 @@ pub(crate) trait MicrokernelLauncher: Copy + core::fmt::Debug {
 
     /// The launch of its kernel into `F`'s carrier.
     fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>);
+
+    /// What every cell of its output holds before it runs.
+    fn unwritten(&self) -> f32 {
+        -7.0
+    }
 
     /// The parts it splits a row into.
     fn parts(&self) -> usize {
@@ -34,7 +38,7 @@ pub(crate) trait MicrokernelLauncher: Copy + core::fmt::Debug {
 
     /// What its launch counts as a plane: a cube's units where no level states one.
     fn launch_plane_width(&self, _hw: &Hardware, rows: &LaunchedRows) -> usize {
-        rows.lanes
+        rows.plane_lane_count
     }
 
     /// What its launch covers.
@@ -42,9 +46,9 @@ pub(crate) trait MicrokernelLauncher: Copy + core::fmt::Debug {
         rows.space()
     }
 
-    /// As [`LaunchedRows::input_dimensions`], with its parts where it splits a row.
-    fn input_dimensions(&self, rows: &LaunchedRows) -> Vec<Dimension> {
-        rows.input_dimensions()
+    /// The input bound over its dimensions, its parts among them where it splits a row.
+    fn bound_input(&self, input: TensorArg, rows: &LaunchedRows) -> TileTensorLaunch {
+        rows.bound_input(input, &rows.input_dimensions())
     }
 
     /// How far apart the values it reads of a row lie, on `hw`: every one unless it is one unit's
@@ -54,7 +58,7 @@ pub(crate) trait MicrokernelLauncher: Copy + core::fmt::Debug {
     }
 
     /// The values it reads of a row of `len`.
-    fn values_of_len(&self, len: usize) -> usize {
+    fn values_of_value_count(&self, len: usize) -> usize {
         len
     }
 
@@ -67,7 +71,7 @@ pub(crate) trait MicrokernelLauncher: Copy + core::fmt::Debug {
         &self,
         client: &Client,
         input: TensorArg,
-        out: TensorArg,
+        out: TensorBinding,
         rows: LaunchedRows,
     ) -> Result<(), Decline> {
         let hw = Hardware::from_client(client);
@@ -77,16 +81,11 @@ pub(crate) trait MicrokernelLauncher: Copy + core::fmt::Debug {
             cube_count: partitioning.cube_count(),
             cube_dim: partitioning.cube_dim(self.launch_plane_width(&hw, &rows) as u32),
         };
-        // Past its edge the input reads the identity of the operation's edge monoid; the output is
-        // written only within its own.
-        let edge = Boundary::Identity(rows.item.operation.edge_monoid());
-        let input_dimensions = self.input_dimensions(&rows);
-        let out_dimensions = rows.out_dimensions();
         let launch = ComponentLaunch {
             client,
             launcher: Launcher::new(client, partitioning, &space, grid)?,
-            input: bound(input, rows.item.input, rows.width, &input_dimensions, edge),
-            out: bound(out, rows.out, rows.owned(), &out_dimensions, Boundary::Zero),
+            input: self.bound_input(input, &rows),
+            out,
             rows,
         };
         match rows.item.operation.carrier() {

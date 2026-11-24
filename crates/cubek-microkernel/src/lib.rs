@@ -6,7 +6,7 @@
 //!
 //! Nothing here is launched. A kernel places microkernels over a grid, binds its tensors and
 //! launches; the kernels are their family's crate's (`cubek-matmul`'s, `cubek-attention`'s,
-//! `cubek-rms-norm`'s and `cubek-swiglu`'s `kernels`).
+//! `cubek-reduce`'s, `cubek-rms-norm`'s and `cubek-swiglu`'s `kernels`).
 //!
 //! A reduction's microkernels, by the part of the row each takes: a unit's
 //! ([`UnitDirectReduceMicrokernel`](reduce::unit::UnitDirectReduceMicrokernel)), a plane's
@@ -18,7 +18,8 @@
 //! [`CubeColumnsReduceMicrokernel`](reduce::cube::CubeColumnsReduceMicrokernel) and
 //! [`CubeStridedReduceMicrokernel`](reduce::cube::CubeStridedReduceMicrokernel)) and a hypercube's
 //! ([`HypercubeLastArrivalReduceMicrokernel`](reduce::hypercube::HypercubeLastArrivalReduceMicrokernel),
-//! built from [`CubePartialReduceMicrokernel`](reduce::cube::CubePartialReduceMicrokernel)). They
+//! built from [`CubePartialReduceMicrokernel`](reduce::cube::CubePartialReduceMicrokernel), or
+//! [`HypercubeAtomicReduceMicrokernel`](reduce::hypercube::HypercubeAtomicReduceMicrokernel)). They
 //! share the units' reads
 //! ([`UnitStridedReduceMicrokernel`](reduce::read::UnitStridedReduceMicrokernel),
 //! [`UnitWalkReduceMicrokernel`](reduce::read::UnitWalkReduceMicrokernel),
@@ -28,7 +29,11 @@
 //! [`UnitRegionWriteMicrokernel`](reduce::write::UnitRegionWriteMicrokernel),
 //! [`UnitGroupColumnWriteMicrokernel`](reduce::write::UnitGroupColumnWriteMicrokernel),
 //! [`UnitPartialStoreMicrokernel`](reduce::write::UnitPartialStoreMicrokernel)), and accumulate into the
-//! carrier a [`ReduceCarrierFamily`](reduce::ReduceCarrierFamily) names. A zeroing's is
+//! carrier a [`ReduceCarrierFamily`](reduce::ReduceCarrierFamily) names
+//! ([`ValuesReduceCarrierFamily`](reduce::ValuesReduceCarrierFamily),
+//! [`IndexedReduceCarrierFamily`](reduce::IndexedReduceCarrierFamily),
+//! [`TopKReduceCarrierFamily`](reduce::TopKReduceCarrierFamily),
+//! [`TopValuesReduceCarrierFamily`](reduce::TopValuesReduceCarrierFamily)). A zeroing's is
 //! [`UnitDirectZeroMicrokernel`](zero::unit::UnitDirectZeroMicrokernel).
 //!
 //! A folder per problem, behind its family's feature: what the problem is in its `base`, beside a

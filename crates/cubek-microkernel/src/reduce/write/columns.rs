@@ -1,4 +1,4 @@
-use crate::reduce::write::{UnitCarrierWriteMicrokernel, unit_carrier_write_microkernel};
+use crate::reduce::write::{UnitRegionWriteMicrokernel, unit_region_write_microkernel};
 use crate::reduce::{Accumulable, REDUCED, ReduceWorkItem};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -73,106 +73,25 @@ pub(crate) fn unit_group_column_write_microkernel<
 ) {
     let a_row_a_lane = comptime!(1usize);
     for unit in region.walk().region(0).leaves() {
-        let mut cell_out = out.at(&unit);
-        let cell_indices = indices.clone().map(|tile| tile.at(&unit));
-        if unit.origin(REDUCED) == 0 {
-            unit_carrier_write_microkernel::<Out, Idx, Acc, N, C>(
-                total.clone(),
-                &mut cell_out,
-                &cell_indices,
-                values,
-                comptime!(UnitCarrierWriteMicrokernel::new(
-                    microkernel.item,
-                    a_row_a_lane
-                )),
-            );
-        }
+        unit_region_write_microkernel::<Out, Idx, Acc, N, C>(
+            &unit,
+            total.clone(),
+            out,
+            indices,
+            values,
+            unit.origin(REDUCED) == 0,
+            comptime!(UnitRegionWriteMicrokernel::new(
+                microkernel.item,
+                a_row_a_lane
+            )),
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::reduce::ReduceCarrierFamily;
-    use crate::reduce::plane::PlaneColumnsReduceMicrokernel;
-    use crate::reduce::testing::{
-        ComponentLaunch, LaunchedRows, MicrokernelLauncher, a_plane_a_cube, plane_lanes,
-    };
-    use cubecl::ir::ElemType;
-    use cubecl::tile::launch::Decline;
-    use cubecl::tile::{Levels, Partitioning, TileTensor};
-    use cubek_std::Hardware;
 
-    /// A plane's units lie across several lines of rows, each taking its line of the walk's first step as its carrier.
-    #[derive(Debug, Clone, Copy)]
-    struct UnitGroupColumnMicrokernelLauncher {
-        columns: usize,
-    }
-
-    impl MicrokernelLauncher for UnitGroupColumnMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            a_plane_a_cube(
-                PlaneColumnsReduceMicrokernel::new(rows.item, rows.lanes, self.columns)
-                    .levels(&rows.owner()),
-            )
-        }
-
-        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
-            plane_lanes(hw, item)
-        }
-
-        fn values_of_len(&self, _len: usize) -> usize {
-            1
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let [_, accumulator, out] = launch.elements();
-            let elements = [accumulator, out];
-            launch_component!(
-                launch,
-                unit_group_column_write_kernel,
-                sizes: [],
-                [],
-                UnitGroupColumnWriteMicrokernel::new(launch.rows.item),
-                elements,
-            );
-        }
-    }
-
-    /// Every plane's units' lines of the walk's first step, each taken as its carrier of values alone, and each column's first unit's written to `out`.
-    ///
-    /// Its operands' leaves:
-    /// - `input`: the rows, a row a lane, across the reduced dimension.
-    /// - `out`: one tensor of a cell a row.
-    #[cube(launch_unchecked)]
-    fn unit_group_column_write_kernel<Acc: Numeric, Out: Numeric, N: Size>(
-        input: &TileTensor<'_>,
-        out: &mut TileTensor<'_>,
-        partitioning: Partitioning,
-        #[comptime] microkernel: UnitGroupColumnWriteMicrokernel,
-        #[define(Acc, Out)] _elements: [ElemType; 2],
-    ) {
-        let x = input.tile(&partitioning);
-        let o = out.tile_mut(&partitioning);
-
-        for plane in &partitioning {
-            let mut carrier = Vector::<Acc, N>::new(Acc::from_int(0));
-            for unit in plane.walk().region(0).leaves() {
-                let cell = x.at(&unit);
-                carrier = cell.flat::<Acc, N>().read(0);
-            }
-            let one_value = 1usize;
-            microkernel
-                .runtime()
-                .write::<Out, Out, Acc, N, Vector<Acc, N>>(
-                    &plane,
-                    carrier,
-                    &o,
-                    &ComptimeOption::new_None(),
-                    one_value,
-                );
-        }
-    }
+    use crate::reduce::testing::UnitGroupColumnMicrokernelLauncher;
 
     /// Each column's first unit's line of rows 300 values long, written as it is, a row a lane.
     mod walk_across_300_long_four_wide {

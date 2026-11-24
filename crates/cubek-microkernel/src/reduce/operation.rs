@@ -174,9 +174,9 @@ impl ReduceOperation {
     /// # Panics
     ///
     /// Where a top-k keeps `k = 0` values.
-    pub const fn widest_line_at_lane_slots(self, lane_slots: usize) -> Option<usize> {
+    pub const fn widest_line_at_lane_slot_count(self, lane_slots: usize) -> Option<usize> {
         match self {
-            Self::TopK { k } | Self::ArgTopK { k } => Some(lines_at_least_one(lane_slots / k)),
+            Self::TopK { k } | Self::ArgTopK { k } => Some(line_count_at_least_one(lane_slots / k)),
             _ => None,
         }
     }
@@ -211,8 +211,8 @@ impl ReduceOperation {
             Self::Max => vec![ranked(row, Rank::Largest)[0].0],
             Self::Min => vec![ranked(row, Rank::Smallest)[0].0],
             Self::MaxAbs => vec![ranked(&magnitudes(row), Rank::Largest)[0].0],
-            Self::Any => vec![flag(row.iter().any(|value| *value != 0.0))],
-            Self::All => vec![flag(row.iter().all(|value| *value != 0.0))],
+            Self::Any => vec![flag_of_holds(row.iter().any(|value| *value != 0.0))],
+            Self::All => vec![flag_of_holds(row.iter().all(|value| *value != 0.0))],
             Self::ArgMax => vec![ranked(row, Rank::Largest)[0].1 as f32],
             Self::ArgMin => vec![ranked(row, Rank::Smallest)[0].1 as f32],
             Self::TopK { k } => best_k(row, k, |(value, _)| value, f32::NEG_INFINITY),
@@ -268,12 +268,12 @@ fn magnitudes(row: &[f32]) -> Vec<f32> {
 
 /// One where `holds`, zero where not: how a reduction writes a truth.
 #[cfg(feature = "cpu-reference")]
-fn flag(holds: bool) -> f32 {
+fn flag_of_holds(holds: bool) -> f32 {
     f32::from(u8::from(holds))
 }
 
 /// `lines`, or one where it is none: a line holds at least one value.
-const fn lines_at_least_one(lines: usize) -> usize {
+const fn line_count_at_least_one(lines: usize) -> usize {
     match lines {
         0 => 1,
         lines => lines,
@@ -297,15 +297,21 @@ mod tests {
     /// A carrier of values and indices holds a line of each a slot.
     #[test]
     fn a_carrier_of_indices_holds_two_lines_a_slot() {
-        const K: usize = 3;
-        assert_eq!(ReduceCarrier::TopK { k: K }.lines(), 2 * K);
+        const KEPT_COUNT: usize = 3;
+        assert_eq!(
+            ReduceCarrier::TopK { k: KEPT_COUNT }.lines(),
+            2 * KEPT_COUNT
+        );
     }
 
     /// A carrier of values alone holds one.
     #[test]
     fn a_carrier_of_values_holds_one_line_a_slot() {
-        const K: usize = 3;
-        assert_eq!(ReduceCarrier::TopValues { k: K }.lines(), K);
+        const KEPT_COUNT: usize = 3;
+        assert_eq!(
+            ReduceCarrier::TopValues { k: KEPT_COUNT }.lines(),
+            KEPT_COUNT
+        );
     }
 
     /// A test of each property of `$operation` its table row states: its monoid, its read map
@@ -368,14 +374,20 @@ mod tests {
 
     #[test]
     fn a_top_k_writes_k_cells() {
-        const K: usize = 7;
-        assert_eq!(ReduceOperation::TopK { k: K }.written_per_row(), K);
+        const KEPT_COUNT: usize = 7;
+        assert_eq!(
+            ReduceOperation::TopK { k: KEPT_COUNT }.written_per_row(),
+            KEPT_COUNT
+        );
     }
 
     #[test]
     fn an_arg_top_k_writes_k_cells() {
-        const K: usize = 7;
-        assert_eq!(ReduceOperation::ArgTopK { k: K }.written_per_row(), K);
+        const KEPT_COUNT: usize = 7;
+        assert_eq!(
+            ReduceOperation::ArgTopK { k: KEPT_COUNT }.written_per_row(),
+            KEPT_COUNT
+        );
     }
 
     /// Every other operation writes one cell a row.
@@ -408,15 +420,15 @@ mod tests {
     edge_reads!(a_min_edge_reads_its_identity: ReduceOperation::Min => Monoid::Min);
     edge_reads!(an_arg_min_edge_reads_its_identity: ReduceOperation::ArgMin => Monoid::Min);
 
-    /// Lines `WIDTH` wide of f32 values.
-    const WIDTH: usize = 2;
+    /// Lines `LINE_LANE_COUNT` wide of f32 values.
+    const LINE_LANE_COUNT: usize = 2;
     const F32_BYTES: usize = 4;
 
     #[test]
     fn a_values_carrier_holds_a_line() {
         assert_eq!(
-            ReduceCarrier::Values.bytes(WIDTH, F32_BYTES),
-            WIDTH * F32_BYTES
+            ReduceCarrier::Values.bytes(LINE_LANE_COUNT, F32_BYTES),
+            LINE_LANE_COUNT * F32_BYTES
         );
     }
 
@@ -424,28 +436,28 @@ mod tests {
     #[test]
     fn an_indexed_carrier_holds_an_index_beside_each_value() {
         assert_eq!(
-            ReduceCarrier::Indexed.bytes(WIDTH, F32_BYTES),
-            WIDTH * (F32_BYTES + size_of::<u32>())
+            ReduceCarrier::Indexed.bytes(LINE_LANE_COUNT, F32_BYTES),
+            LINE_LANE_COUNT * (F32_BYTES + size_of::<u32>())
         );
     }
 
     /// A top-values carrier holds `k` lines of values.
     #[test]
     fn a_top_values_carrier_holds_k_lines() {
-        const K: usize = 3;
+        const KEPT_COUNT: usize = 3;
         assert_eq!(
-            ReduceCarrier::TopValues { k: K }.bytes(WIDTH, F32_BYTES),
-            K * WIDTH * F32_BYTES
+            ReduceCarrier::TopValues { k: KEPT_COUNT }.bytes(LINE_LANE_COUNT, F32_BYTES),
+            KEPT_COUNT * LINE_LANE_COUNT * F32_BYTES
         );
     }
 
     /// A top-k carrier holds `k` lines of values with their indices.
     #[test]
     fn a_top_k_carrier_holds_k_indexed_lines() {
-        const K: usize = 3;
+        const KEPT_COUNT: usize = 3;
         assert_eq!(
-            ReduceCarrier::TopK { k: K }.bytes(WIDTH, F32_BYTES),
-            K * WIDTH * (F32_BYTES + size_of::<u32>())
+            ReduceCarrier::TopK { k: KEPT_COUNT }.bytes(LINE_LANE_COUNT, F32_BYTES),
+            KEPT_COUNT * LINE_LANE_COUNT * (F32_BYTES + size_of::<u32>())
         );
     }
 
@@ -462,9 +474,9 @@ mod tests {
     /// No carrier but a top-k's bounds the line.
     #[test]
     fn a_line_is_unbounded_but_for_a_top_k() {
-        const LANE_SLOTS: usize = 32;
+        const LANE_SLOT_COUNT: usize = 32;
         assert_eq!(
-            ReduceOperation::Sum.widest_line_at_lane_slots(LANE_SLOTS),
+            ReduceOperation::Sum.widest_line_at_lane_slot_count(LANE_SLOT_COUNT),
             None
         );
     }
@@ -472,20 +484,21 @@ mod tests {
     /// A top-k's line spreads its lane slots over its `k` values.
     #[test]
     fn a_top_k_line_spreads_its_slots_over_k() {
-        const LANE_SLOTS: usize = 32;
-        const K: usize = 4;
+        const LANE_SLOT_COUNT: usize = 32;
+        const KEPT_COUNT: usize = 4;
         assert_eq!(
-            ReduceOperation::TopK { k: K }.widest_line_at_lane_slots(LANE_SLOTS),
-            Some(LANE_SLOTS / K)
+            ReduceOperation::TopK { k: KEPT_COUNT }.widest_line_at_lane_slot_count(LANE_SLOT_COUNT),
+            Some(LANE_SLOT_COUNT / KEPT_COUNT)
         );
     }
 
     #[test]
     fn a_top_k_longer_than_its_lane_slots_reads_one_value_a_line() {
-        const LANE_SLOTS: usize = 32;
-        const K: usize = 64;
+        const LANE_SLOT_COUNT: usize = 32;
+        const KEPT_COUNT: usize = 64;
         assert_eq!(
-            ReduceOperation::ArgTopK { k: K }.widest_line_at_lane_slots(LANE_SLOTS),
+            ReduceOperation::ArgTopK { k: KEPT_COUNT }
+                .widest_line_at_lane_slot_count(LANE_SLOT_COUNT),
             Some(1)
         );
     }
@@ -494,8 +507,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn a_top_k_keeping_nothing_panics() {
-        const LANE_SLOTS: usize = 32;
-        ReduceOperation::TopK { k: 0 }.widest_line_at_lane_slots(LANE_SLOTS);
+        const LANE_SLOT_COUNT: usize = 32;
+        ReduceOperation::TopK { k: 0 }.widest_line_at_lane_slot_count(LANE_SLOT_COUNT);
     }
 
     #[test]

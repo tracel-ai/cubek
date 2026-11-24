@@ -15,15 +15,15 @@ use cubek_std::microkernel::Microkernel;
 /// The top-k slots a thread keeps, the first the microkernels' settings list.
 pub(crate) const LANE_SLOT_COUNT: usize = crate::reduce::TOP_K_LANE_SLOT_COUNTS[0];
 
-/// The rows one launch reduces: `rows` of them, `reduced` values long, read `width` values a line by
-/// planes of `lanes` units, written in `out`.
+/// The rows one launch reduces: how many of them, how many values long, how many of them a line holds
+/// and how many units the planes that read them do, and the element they are written in.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct LaunchedRows {
     pub item: ReduceWorkItem,
-    pub rows: usize,
-    pub reduced: usize,
-    pub width: usize,
-    pub lanes: usize,
+    pub row_count: usize,
+    pub value_count: usize,
+    pub line_lane_count: usize,
+    pub plane_lane_count: usize,
     pub out: ElemType,
 }
 
@@ -42,14 +42,14 @@ impl LaunchedRows {
     pub(crate) fn owned(&self) -> usize {
         match self.direction() {
             LineDirection::Along => 1,
-            LineDirection::Across => self.width,
+            LineDirection::Across => self.line_lane_count,
         }
     }
 
     /// The lanes of a line that hold one row: all of them along the reduced dimension, one across it.
     pub(crate) fn row_lanes(&self) -> usize {
         match self.direction() {
-            LineDirection::Along => self.width,
+            LineDirection::Along => self.line_lane_count,
             LineDirection::Across => 1,
         }
     }
@@ -57,8 +57,8 @@ impl LaunchedRows {
     /// Every row and every position along it.
     pub(crate) fn space(&self) -> Space {
         Space::new(&[
-            (BATCH, self.rows),
-            (REDUCED, self.reduced),
+            (BATCH, self.row_count),
+            (REDUCED, self.value_count),
             (SLOTS, self.cells()),
         ])
     }
@@ -69,18 +69,18 @@ impl LaunchedRows {
     }
 
     /// The input's dimensions, outermost first.
-    pub(crate) fn input_dimensions(&self) -> Vec<Dimension> {
+    pub(crate) fn input_dimensions(&self) -> [Dimension; 2] {
         match self.direction() {
-            LineDirection::Along => vec![BATCH, REDUCED],
-            LineDirection::Across => vec![REDUCED, BATCH],
+            LineDirection::Along => [BATCH, REDUCED],
+            LineDirection::Across => [REDUCED, BATCH],
         }
     }
 
     /// The output's dimensions, outermost first.
-    pub(crate) fn out_dimensions(&self) -> Vec<Dimension> {
+    pub(crate) fn out_dimensions(&self) -> [Dimension; 2] {
         match self.direction() {
-            LineDirection::Along => vec![BATCH, SLOTS],
-            LineDirection::Across => vec![SLOTS, BATCH],
+            LineDirection::Along => [BATCH, SLOTS],
+            LineDirection::Across => [SLOTS, BATCH],
         }
     }
 
@@ -89,7 +89,7 @@ impl LaunchedRows {
         self.whole_rows().launch_units(
             &[BATCH],
             UnitCube {
-                plane_width: self.lanes,
+                plane_width: self.plane_lane_count,
                 planes: 1,
             },
         )
@@ -99,7 +99,7 @@ impl LaunchedRows {
     pub(crate) fn whole_rows(&self) -> Levels {
         Levels::leaf(&[
             (BATCH, self.owned()),
-            (REDUCED, self.reduced),
+            (REDUCED, self.value_count),
             (SLOTS, self.cells()),
         ])
     }
@@ -132,8 +132,39 @@ pub(crate) struct ComponentLaunch<'a> {
     pub client: &'a Client,
     pub launcher: Launcher,
     pub input: TileTensorLaunch,
-    pub out: TileTensorLaunch,
+    pub out: TensorBinding,
     pub rows: LaunchedRows,
+}
+
+impl LaunchedRows {
+    /// `input` bound over `dimensions`. Past its edge it reads the identity of the operation's edge
+    /// monoid.
+    pub(crate) fn bound_input(
+        &self,
+        input: TensorArg,
+        dimensions: &[Dimension],
+    ) -> TileTensorLaunch {
+        let edge = Boundary::Identity(self.item.operation.edge_monoid());
+        bound(
+            input,
+            self.item.input,
+            self.line_lane_count,
+            dimensions,
+            edge,
+        )
+    }
+
+    /// `out` bound over the output's dimensions, written only within its own edge.
+    pub(crate) fn bound_out(&self, out: TensorBinding) -> TileTensorLaunch {
+        let dimensions = self.out_dimensions();
+        bound(
+            out.into_tensor_arg(),
+            self.out,
+            self.owned(),
+            &dimensions,
+            Boundary::Zero,
+        )
+    }
 }
 
 impl ComponentLaunch<'_> {

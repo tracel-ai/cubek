@@ -1,5 +1,4 @@
 use crate::reduce::cube::across_planes;
-use crate::reduce::plane::values_of_columns;
 use crate::reduce::read::{UnitWalkReduceMicrokernel, unit_walk_reduce_microkernel};
 use crate::reduce::write::{UnitGroupColumnWriteMicrokernel, unit_group_column_write_microkernel};
 use crate::reduce::{Accumulable, ReduceWorkItem, cube_columns, spreads_across};
@@ -111,18 +110,15 @@ pub(crate) fn cube_columns_reduce_microkernel<
     let columns = microkernel.columns;
     let per_column = microkernel.lanes / columns;
     let per_step = microkernel.lanes * microkernel.planes / columns;
-    let window = input.at(cube);
-    let values = values_of_columns::<Vector<In, N>>(&window.flat::<In, N>(), columns);
-    let acc = unit_walk_reduce_microkernel::<In, Acc, N, C>(
+    let read = unit_walk_reduce_microkernel::<In, Acc, N, C>(
         cube,
         input,
-        values,
-        comptime!(UnitWalkReduceMicrokernel::new(item, per_step)),
+        comptime!(UnitWalkReduceMicrokernel::new(item, per_step, columns)),
     );
     let column = comptime!(UnitShare::Group {
         unit_bits: per_column - 1
     });
-    let plane = C::across(acc, column, item.operation.monoid());
+    let plane = C::across(read.carrier, column, item.operation.monoid());
     let lane = UNIT_POS_PLANE as usize;
     let total = across_planes::<Acc, N, C>(
         plane,
@@ -137,7 +133,7 @@ pub(crate) fn cube_columns_reduce_microkernel<
         total,
         out,
         indices,
-        values,
+        read.values,
         comptime!(UnitGroupColumnWriteMicrokernel::new(item)),
     );
 }
@@ -146,57 +142,21 @@ pub(crate) fn cube_columns_reduce_microkernel<
 mod tests {
     use super::*;
     use crate::reduce::ReduceOperation;
-    use crate::reduce::testing::{ComponentLaunch, LaunchedRows, MicrokernelLauncher, cube_lanes};
-    use crate::reduce::{BATCH, ReduceCarrierFamily};
-    use cubecl::tile::launch::Decline;
-    use cubek_std::Hardware;
+    use crate::reduce::testing::CubeColumnsMicrokernelLauncher;
 
-    const LANES: usize = 32;
-    const PLANES: usize = 4;
+    const LANE_COUNT: usize = 32;
+    const PLANE_COUNT: usize = 4;
 
     #[test]
     #[should_panic(expected = "64 columns of 32 lanes")]
     fn more_columns_than_lanes_panic() {
         CubeColumnsReduceMicrokernel::new(
             ReduceWorkItem::along_f32(ReduceOperation::Sum),
-            LANES,
-            PLANES,
-            2 * LANES,
+            LANE_COUNT,
+            PLANE_COUNT,
+            2 * LANE_COUNT,
         );
     }
-
-    /// A cube reads several lines of rows wide, a column of units of every plane each.
-    #[derive(Debug, Clone, Copy)]
-    struct CubeColumnsMicrokernelLauncher {
-        planes: usize,
-        columns: usize,
-    }
-
-    impl MicrokernelLauncher for CubeColumnsMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            CubeColumnsReduceMicrokernel::new(rows.item, rows.lanes, self.planes, self.columns)
-                .levels(&rows.owner())
-                .cubes(&[BATCH])
-        }
-
-        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
-            cube_lanes(hw, item, self.planes)
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let elements = launch.elements();
-            launch_component!(
-                launch,
-                cube_columns_reduce_kernel::<F>,
-                sizes: [launch.rows.cells()],
-                [],
-                CubeColumnsReduceMicrokernel::new(launch.rows.item, launch.rows.lanes, self.planes, self.columns),
-                elements,
-            );
-        }
-    }
-
-    region_reduce_kernel!(cube_columns_reduce_kernel, CubeColumnsReduceMicrokernel);
 
     /// The cube's read two lines of rows wide, 300 values long across the reduced dimension, each lane
     /// its own row.

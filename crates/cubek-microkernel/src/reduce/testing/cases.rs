@@ -14,14 +14,14 @@ macro_rules! reduce_tests {
         $(
             #[test]
             fn $name() {
-                $crate::reduce::testing::reduces_like_the_cpu($crate::reduce::testing::ReduceCase {
+                use cubek_test_utils::ScopeChecker;
+                    $crate::reduce::testing::ReduceMicrokernelScopeChecker::new($microkernel).check([$crate::reduce::testing::ReduceCase {
                     operation: $operation,
-                    microkernel: $microkernel,
-                    len: $len,
-                    width: $width,
+                    value_count: $len,
+                    lane_count: $width,
                     lines: $crate::reduce::testing::LineDirection::$lines,
                     rows: $crate::reduce::testing::Rows::$rows,
-                });
+                }]);
             }
         )*
     };
@@ -113,10 +113,10 @@ macro_rules! launch_component {
                 $launch.client,
                 $launch.launcher.cube_count(),
                 $launch.launcher.cube_dim(),
-                $launch.rows.width,
+                $launch.rows.line_lane_count,
                 $($size,)*
                 $launch.input,
-                $launch.out,
+                $launch.rows.bound_out($launch.out),
                 $launch.launcher.partitioning_arg(),
                 $($extra,)*
                 $microkernel,
@@ -132,8 +132,8 @@ macro_rules! region_reduce_kernel {
         /// Every region's rows, reduced by its owner.
         ///
         /// Its operands' leaves:
-        /// - `input`: the rows, laid along or across the reduced dimension.
-        /// - `out`: one tensor of a cell a row (`k` for a top-k).
+        /// - `input`: the region's rows, laid along or across the reduced dimension.
+        /// - `out`: the region's cells, one a row (`k` for a top-k).
         #[cube(launch_unchecked)]
         fn $kernel<
             In: Numeric,
@@ -162,6 +162,23 @@ macro_rules! region_reduce_kernel {
                         &ComptimeOption::new_None(),
                     );
             }
+        }
+    };
+}
+
+/// A test that a microkernel's estimate is its item's work.
+macro_rules! estimates_its_items_work {
+    ($microkernel:expr) => {
+        #[test]
+        fn its_estimate_is_its_items_work() {
+            let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+            let planes = CubePlanes {
+                count: 4,
+                width: 32,
+            };
+            let mut estimate = $crate::reduce::empty_estimate();
+            $microkernel.estimate(&item, &(), planes, &mut estimate);
+            assert_eq!(estimate.work, Some(item.unit_work()));
         }
     };
 }

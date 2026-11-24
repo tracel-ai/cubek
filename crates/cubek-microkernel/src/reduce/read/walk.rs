@@ -1,5 +1,5 @@
-use crate::reduce::read::accumulate_line;
-use crate::reduce::{Accumulable, REDUCED, ReduceWorkItem};
+use crate::reduce::read::RowsRead;
+use crate::reduce::{Accumulable, REDUCED, ReduceWorkItem, accumulate_read};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 
@@ -15,31 +15,37 @@ pub struct UnitWalkReduceMicrokernel {
     /// The positions of the reduced dimension one step of the walk covers.
     #[cube(comptime)]
     per_step: usize,
+    /// The lines of rows the units lie across.
+    #[cube(comptime)]
+    columns: usize,
 }
 
 impl UnitWalkReduceMicrokernel {
-    pub fn new(item: ReduceWorkItem, per_step: usize) -> Self {
-        Self { item, per_step }
+    pub fn new(item: ReduceWorkItem, per_step: usize, columns: usize) -> Self {
+        Self {
+            item,
+            per_step,
+            columns,
+        }
     }
 }
 
 #[cube]
 impl UnitWalkReduceMicrokernel {
-    /// The cells of `input` `region`'s walk gives this unit, `values` positions long, accumulated
-    /// from the identity (`unit_walk_reduce_microkernel`).
+    /// The cells of `input` `region`'s walk gives this unit, accumulated from the identity
+    /// (`unit_walk_reduce_microkernel`).
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         region: &Region,
         input: &Tile,
-        values: usize,
-    ) -> C {
+    ) -> RowsRead<C> {
         unit_walk_reduce_microkernel::<In, Acc, N, C>(
             region,
             input,
-            values,
             comptime!(UnitWalkReduceMicrokernel {
                 item: self.item,
-                per_step: self.per_step
+                per_step: self.per_step,
+                columns: self.columns
             }),
         )
     }
@@ -56,11 +62,12 @@ pub(crate) fn unit_walk_reduce_microkernel<
 >(
     region: &Region,
     input: &Tile,
-    values: usize,
     #[comptime] microkernel: UnitWalkReduceMicrokernel,
-) -> C {
+) -> RowsRead<C> {
     let item = microkernel.item;
     let walk = region.walk();
+    let window = input.at(region);
+    let values = window.flat::<In, N>().shape() / microkernel.columns;
     let load = input.vector_tile();
     let row_lanes = comptime!(load.extent_along(REDUCED));
     let full_steps = values / microkernel.per_step;
@@ -69,14 +76,9 @@ pub(crate) fn unit_walk_reduce_microkernel<
     for step in 0..full_steps {
         for unit in walk.region(step).leaves() {
             let cell = input.at(&unit);
-            accumulate_line::<In, Acc, N, C>(
-                &mut acc,
-                &cell.flat::<In, N>(),
-                first_cell,
-                unit.origin(REDUCED),
-                row_lanes,
-                item,
-            );
+            let line = cell.flat::<In, N>().read(first_cell);
+            let position = unit.origin(REDUCED);
+            accumulate_read::<In, Acc, N, C>(&mut acc, line, position, first_cell, row_lanes, item);
         }
     }
 
@@ -84,104 +86,31 @@ pub(crate) fn unit_walk_reduce_microkernel<
     for step in full_steps..values.div_ceil(microkernel.per_step) {
         for unit in walk.region(step).leaves() {
             let cell = input.at(&unit);
+            let lines = cell.flat::<In, N>();
             let position = unit.origin(REDUCED);
             if position < values {
-                accumulate_line::<In, Acc, N, C>(
+                accumulate_read::<In, Acc, N, C>(
                     &mut acc,
-                    &cell.flat::<In, N>(),
-                    first_cell,
+                    lines.read(first_cell),
                     position,
+                    first_cell,
                     row_lanes,
                     item,
                 );
             }
         }
     }
-    acc
+    RowsRead::<C> {
+        carrier: acc,
+        values,
+        row_lanes,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::reduce::ReduceCarrierFamily;
-    use crate::reduce::plane::PlaneColumnsReduceMicrokernel;
-    use crate::reduce::testing::{
-        ComponentLaunch, LaunchedRows, MicrokernelLauncher, a_plane_a_cube, plane_lanes,
-    };
-    use crate::reduce::write::{
-        UnitGroupColumnWriteMicrokernel, unit_group_column_write_microkernel,
-    };
-    use cubecl::ir::ElemType;
-    use cubecl::tile::launch::Decline;
-    use cubecl::tile::{Levels, Partitioning, TileTensor};
-    use cubek_std::Hardware;
 
-    /// A plane's units lie across several lines of rows, and each column's first unit's carrier is written.
-    #[derive(Debug, Clone, Copy)]
-    struct UnitWalkMicrokernelLauncher {
-        columns: usize,
-    }
-
-    impl MicrokernelLauncher for UnitWalkMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            a_plane_a_cube(
-                PlaneColumnsReduceMicrokernel::new(rows.item, rows.lanes, self.columns)
-                    .levels(&rows.owner()),
-            )
-        }
-
-        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
-            plane_lanes(hw, item)
-        }
-
-        fn stride_on(&self, hw: &Hardware) -> usize {
-            hw.plane_dim().unwrap_or(1) as usize / self.columns
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let elements = launch.elements();
-            launch_component!(
-                launch,
-                unit_walk_reduce_kernel,
-                sizes: [],
-                [launch.rows.reduced],
-                UnitWalkReduceMicrokernel::new(launch.rows.item, launch.rows.lanes / self.columns),
-                elements,
-            );
-        }
-    }
-
-    /// Every plane's rows, its units across lines of them, read by the walked read into a carrier of values alone, written by the column's write.
-    ///
-    /// Its operands' leaves:
-    /// - `input`: the rows, a row a lane, across the reduced dimension.
-    /// - `out`: one tensor of a cell a row.
-    #[cube(launch_unchecked)]
-    fn unit_walk_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
-        input: &TileTensor<'_>,
-        out: &mut TileTensor<'_>,
-        partitioning: Partitioning,
-        #[comptime] values: usize,
-        #[comptime] microkernel: UnitWalkReduceMicrokernel,
-        #[define(In, Acc, Out)] _elements: [ElemType; 3],
-    ) {
-        let x = input.tile(&partitioning);
-        let o = out.tile_mut(&partitioning);
-
-        for plane in &partitioning {
-            let carrier = microkernel
-                .runtime()
-                .reduce::<In, Acc, N, Vector<Acc, N>>(&plane, &x, values);
-            unit_group_column_write_microkernel::<Out, Out, Acc, N, Vector<Acc, N>>(
-                &plane,
-                carrier,
-                &o,
-                &ComptimeOption::new_None(),
-                values,
-                comptime!(UnitGroupColumnWriteMicrokernel::new(microkernel.item)),
-            );
-        }
-    }
+    use crate::reduce::testing::UnitWalkMicrokernelLauncher;
 
     /// Walked across rows 300 values long, each lane its own row: the last step of the walk is cut
     /// short.

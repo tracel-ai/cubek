@@ -56,8 +56,8 @@ impl Rows {
     pub(crate) fn row(self, operation: ReduceOperation, len: usize, r: usize) -> Vec<f32> {
         match self {
             Rows::Plain => plain_row(operation, len, r),
-            Rows::Ties => with_values(plain_row(operation, len, r), &ties_of_len(len)),
-            Rows::Nan => with_values(plain_row(operation, len, r), &nans_of_len(len)),
+            Rows::Ties => with_values(plain_row(operation, len, r), &ties_of_value_count(len)),
+            Rows::Nan => with_values(plain_row(operation, len, r), &nans_of_value_count(len)),
             Rows::NegativeInfinity => vec![f32::NEG_INFINITY; len],
             Rows::Zeros => vec![0.0; len],
         }
@@ -85,12 +85,12 @@ fn product_value_of_index(i: usize) -> f32 {
 }
 
 /// The positions and values of the ties of a row of `len` values.
-fn ties_of_len(len: usize) -> [(usize, f32); 4] {
+fn ties_of_value_count(len: usize) -> [(usize, f32); 4] {
     [(1, TIE), (len - 1, TIE), (2, -TIE), (len - 2, -TIE)]
 }
 
 /// The positions and values of the NaN of a row of `len` values.
-fn nans_of_len(len: usize) -> [(usize, f32); 2] {
+fn nans_of_value_count(len: usize) -> [(usize, f32); 2] {
     [len / 2, len - 1].map(|position| (position, f32::NAN))
 }
 

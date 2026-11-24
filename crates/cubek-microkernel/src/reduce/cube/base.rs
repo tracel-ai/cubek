@@ -109,7 +109,7 @@ impl CubeStagedReduceMicrokernel {
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
-            .widest_line_at_lane_slots(self.lane_slots)
+            .widest_line_at_lane_slot_count(self.lane_slots)
     }
 }
 
@@ -169,7 +169,7 @@ impl CubeStagedReduceMicrokernel {
     /// Bytes of shared memory it allocates with its lines `width` lanes wide: one slot of the
     /// carrier a plane and a column of rows, which its planes meet through, and one line in place
     /// of the indices of a carrier that keeps none.
-    pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
+    pub fn shared_memory_bytes_at_lane_count(&self, width: usize) -> usize {
         staged_bytes(self.item, self.planes * self.lines_across, width)
     }
 }
@@ -311,14 +311,9 @@ pub(crate) fn cube_staged_reduce_microkernel<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reduce::ReduceOperation;
     use crate::reduce::cube::{CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings};
-    use crate::reduce::testing::{
-        ComponentLaunch, LANE_SLOT_COUNT, LaunchedRows, MicrokernelLauncher, cube_lanes,
-    };
-    use crate::reduce::{BATCH, ReduceCarrierFamily, empty_estimate};
-    use cubecl::tile::Levels;
-    use cubecl::tile::launch::Decline;
+    use crate::reduce::testing::{CubeStagedMicrokernelLauncher, LANE_SLOT_COUNT};
+    use crate::reduce::{BATCH, ReduceOperation};
     use cubek_std::devices;
 
     fn item() -> ReduceWorkItem {
@@ -362,58 +357,60 @@ mod tests {
 
     #[test]
     fn a_cubes_units_are_its_planes_lanes() {
-        const LANES: usize = 32;
-        const PLANES: usize = 4;
-        const LANE_SLOTS: usize = 32;
+        const LANE_COUNT: usize = 32;
+        const PLANE_COUNT: usize = 4;
+        const LANE_SLOT_COUNT: usize = 32;
         let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
-        let cube = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
-        assert_eq!(cube.units(), LANES * PLANES);
+        let cube = CubeStagedReduceMicrokernel::new(item, LANE_COUNT, PLANE_COUNT, LANE_SLOT_COUNT);
+        assert_eq!(cube.units(), LANE_COUNT * PLANE_COUNT);
     }
 
     /// One line of rows wide, its levels make the whole cube a plane of the launch.
     #[test]
     fn one_line_wide_the_launchs_plane_is_the_cube() {
-        const LANES: usize = 32;
-        const PLANES: usize = 4;
-        const LANE_SLOTS: usize = 32;
-        let cube = CubeStagedReduceMicrokernel::new(item(), LANES, PLANES, LANE_SLOTS);
+        const LANE_COUNT: usize = 32;
+        const PLANE_COUNT: usize = 4;
+        const LANE_SLOT_COUNT: usize = 32;
+        let cube =
+            CubeStagedReduceMicrokernel::new(item(), LANE_COUNT, PLANE_COUNT, LANE_SLOT_COUNT);
         assert_eq!(cube.launch_plane_width(), cube.units());
     }
 
     /// Several lines of rows wide, its levels split its units into its planes.
     #[test]
     fn several_lines_wide_the_launchs_plane_is_its_planes_lanes() {
-        const LANES: usize = 32;
-        const PLANES: usize = 4;
-        const LANE_SLOTS: usize = 32;
-        const WIDTH: usize = 4;
-        const ROWS: usize = 64;
+        const LANE_COUNT: usize = 32;
+        const PLANE_COUNT: usize = 4;
+        const LANE_SLOT_COUNT: usize = 32;
+        const LINE_LANE_COUNT: usize = 4;
+        const ROW_COUNT: usize = 64;
         let across = ReduceWorkItem {
             lines_along: BATCH,
             ..item()
         };
-        let cube = CubeStagedReduceMicrokernel::new(across, LANES, PLANES, LANE_SLOTS).across_rows(
-            &devices::m2_pro(),
-            WIDTH,
-            ROWS,
-        );
-        assert_eq!(cube.launch_plane_width(), LANES);
+        let cube =
+            CubeStagedReduceMicrokernel::new(across, LANE_COUNT, PLANE_COUNT, LANE_SLOT_COUNT)
+                .across_rows(&devices::m2_pro(), LINE_LANE_COUNT, ROW_COUNT);
+        assert_eq!(cube.launch_plane_width(), LANE_COUNT);
     }
 
     /// A cube's shared memory is a carrier's slot a plane.
     #[test]
     fn a_cube_holds_a_slot_a_plane() {
-        const LANES: usize = 32;
-        const PLANES: usize = 4;
-        const LANE_SLOTS: usize = 32;
-        const WIDTH: usize = 4;
+        const LANE_COUNT: usize = 32;
+        const PLANE_COUNT: usize = 4;
+        const LANE_SLOT_COUNT: usize = 32;
+        const LINE_LANE_COUNT: usize = 4;
         let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
-        let cube = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        let cube = CubeStagedReduceMicrokernel::new(item, LANE_COUNT, PLANE_COUNT, LANE_SLOT_COUNT);
         let slot = item
             .operation
             .carrier()
-            .bytes(WIDTH, item.accumulator.size());
-        assert_eq!(cube.shared_memory_bytes_at_width(WIDTH), PLANES * slot);
+            .bytes(LINE_LANE_COUNT, item.accumulator.size());
+        assert_eq!(
+            cube.shared_memory_bytes_at_lane_count(LINE_LANE_COUNT),
+            PLANE_COUNT * slot
+        );
     }
 
     #[test]
@@ -447,17 +444,7 @@ mod tests {
         assert_eq!(vectorization.width(ReduceOperand::Out, |_| 8), 1);
     }
 
-    #[test]
-    fn its_estimate_is_its_items_work() {
-        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
-        let planes = CubePlanes {
-            count: 4,
-            width: 32,
-        };
-        let mut estimate = empty_estimate();
-        sum().estimate(&item, &(), planes, &mut estimate);
-        assert_eq!(estimate.work, Some(item.unit_work()));
-    }
+    estimates_its_items_work!(sum());
 
     #[test]
     fn it_displays_what_it_compiles() {
@@ -466,50 +453,6 @@ mod tests {
             "Sum Dimension(1) lanes=32 planes=4 lines_across=1"
         );
     }
-
-    /// A cube reduces its rows.
-    #[derive(Debug, Clone, Copy)]
-    struct CubeStagedMicrokernelLauncher {
-        planes: usize,
-    }
-
-    impl MicrokernelLauncher for CubeStagedMicrokernelLauncher {
-        fn levels(&self, hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            of_rows(hw, rows, self.planes)
-                .levels(&rows.owner())
-                .cubes(&[BATCH])
-        }
-
-        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
-            cube_lanes(hw, item, self.planes)
-        }
-
-        fn launch_plane_width(&self, hw: &Hardware, rows: &LaunchedRows) -> usize {
-            of_rows(hw, rows, self.planes).launch_plane_width()
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let elements = launch.elements();
-            let hw = Hardware::from_client(launch.client);
-            let microkernel = of_rows(&hw, &launch.rows, self.planes);
-            launch_component!(
-                launch,
-                cube_reduce_kernel::<F>,
-                sizes: [launch.rows.cells()],
-                [],
-                microkernel,
-                elements,
-            );
-        }
-    }
-
-    /// The cube microkernel of `planes` planes reducing `rows` on `hw`.
-    fn of_rows(hw: &Hardware, rows: &LaunchedRows, planes: usize) -> CubeStagedReduceMicrokernel {
-        CubeStagedReduceMicrokernel::new(rows.item, rows.lanes, planes, LANE_SLOT_COUNT)
-            .across_rows(hw, rows.width, rows.rows)
-    }
-
-    region_reduce_kernel!(cube_reduce_kernel, CubeStagedReduceMicrokernel);
 
     /// The cube's rows 37 values long along the reduced dimension, a value a line: fewer values than units.
     mod along_37_long_one_wide {
@@ -556,10 +499,19 @@ mod tests {
 
     #[test]
     fn a_top_k_bounds_its_line_to_its_slots_over_k() {
-        const K: usize = 4;
+        const KEPT_COUNT: usize = 4;
         let (lanes, planes) = (32, 4);
-        let item = ReduceWorkItem::along_f32(ReduceOperation::TopK { k: K });
+        let item = ReduceWorkItem::along_f32(ReduceOperation::TopK { k: KEPT_COUNT });
         let cube = CubeStagedReduceMicrokernel::new(item, lanes, planes, LANE_SLOT_COUNT);
-        assert_eq!(cube.widest_line(), Some(LANE_SLOT_COUNT / K));
+        assert_eq!(cube.widest_line(), Some(LANE_SLOT_COUNT / KEPT_COUNT));
+    }
+
+    #[test]
+    fn its_settings_display_their_planes_and_lane_slots() {
+        let settings = CubeStagedReduceMicrokernelSettings {
+            plane_count: 4,
+            lane_slot_count: 32,
+        };
+        assert_eq!(settings.to_string(), "planes=4 lane_slots=32");
     }
 }

@@ -11,7 +11,7 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 /// A row reduced by one unit alone: it reads every line of the row and accumulates each as it lands.
 /// Across rows, its lines hold a row a lane, so one unit reduces `width` rows at once.
 ///
-/// Every device runs it: it asks nothing of the plane.
+/// It asks nothing of the plane, so it runs on every device.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitDirectReduceMicrokernel {
     #[cube(comptime)]
@@ -33,7 +33,7 @@ impl UnitDirectReduceMicrokernel {
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
-            .widest_line_at_lane_slots(self.lane_slots)
+            .widest_line_at_lane_slot_count(self.lane_slots)
     }
 }
 
@@ -74,7 +74,7 @@ impl UnitDirectReduceMicrokernel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitDirectReduceMicrokernelSettings {
     /// Top-k slots a thread keeps across a line's lanes, which bound a top-k's line width
-    /// ([`ReduceOperation::widest_line_at_lane_slots`](crate::reduce::ReduceOperation::widest_line_at_lane_slots)).
+    /// ([`ReduceOperation::widest_line_at_lane_slot_count`](crate::reduce::ReduceOperation::widest_line_at_lane_slot_count)).
     pub lane_slot_count: usize,
 }
 
@@ -155,11 +155,13 @@ pub(crate) fn unit_direct_reduce_microkernel<
     let lines = input.flat::<In, N>();
     let count = lines.shape();
 
+    let first_line = 0usize;
     let mut acc = C::identity(monoid);
     for line in 0..count {
         accumulate_read::<In, Acc, N, C>(
             &mut acc,
             lines.read(line),
+            first_line,
             line,
             row_lanes,
             microkernel.item,
@@ -181,34 +183,29 @@ pub(crate) fn unit_direct_reduce_microkernel<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reduce::testing::{
-        ComponentLaunch, LANE_SLOT_COUNT, LaunchedRows, MicrokernelLauncher,
-    };
-    use crate::reduce::{ReduceCarrierFamily, empty_estimate};
+    use crate::reduce::testing::UnitDirectMicrokernelLauncher;
     use crate::reduce::{ReduceOperation, TOP_K_LANE_SLOT_COUNTS};
-    use cubecl::ir::ElemType;
-    use cubecl::tile::{Levels, Partitioning, TileTensor};
     use cubek_std::devices;
 
     #[test]
     fn a_sum_bounds_no_line() {
-        const LANE_SLOTS: usize = 32;
+        const LANE_SLOT_COUNT: usize = 32;
         let sum = UnitDirectReduceMicrokernel::new(
             ReduceWorkItem::along_f32(ReduceOperation::Sum),
-            LANE_SLOTS,
+            LANE_SLOT_COUNT,
         );
         assert_eq!(sum.widest_line(), None);
     }
 
     #[test]
     fn a_top_k_bounds_the_line_to_its_slots_over_k() {
-        const LANE_SLOTS: usize = 32;
-        const K: usize = 4;
+        const LANE_SLOT_COUNT: usize = 32;
+        const KEPT_COUNT: usize = 4;
         let top_k = UnitDirectReduceMicrokernel::new(
-            ReduceWorkItem::along_f32(ReduceOperation::TopK { k: K }),
-            LANE_SLOTS,
+            ReduceWorkItem::along_f32(ReduceOperation::TopK { k: KEPT_COUNT }),
+            LANE_SLOT_COUNT,
         );
-        assert_eq!(top_k.widest_line(), Some(LANE_SLOTS / K));
+        assert_eq!(top_k.widest_line(), Some(LANE_SLOT_COUNT / KEPT_COUNT));
     }
 
     /// One setting a lane-slot count.
@@ -241,80 +238,11 @@ mod tests {
         assert_eq!(vectorization.width(ReduceOperand::Out, |_| 8), 1);
     }
 
-    #[test]
-    fn its_estimate_is_its_items_work() {
-        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
-        let planes = CubePlanes {
-            count: 4,
-            width: 32,
-        };
-        let mut estimate = empty_estimate();
-        sum().estimate(&item, &(), planes, &mut estimate);
-        assert_eq!(estimate.work, Some(item.unit_work()));
-    }
+    estimates_its_items_work!(sum());
 
     #[test]
     fn it_displays_what_it_compiles() {
         assert_eq!(sum().to_string(), "Sum Dimension(1)");
-    }
-
-    /// Every unit reduces its own rows.
-    #[derive(Debug, Clone, Copy)]
-    struct UnitDirectMicrokernelLauncher;
-
-    impl MicrokernelLauncher for UnitDirectMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            rows.unit_levels()
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let elements = launch.elements();
-            launch_component!(
-                launch,
-                unit_reduce_kernel::<F>,
-                sizes: [launch.rows.cells()],
-                [],
-                UnitDirectReduceMicrokernel::new(launch.rows.item, LANE_SLOT_COUNT),
-                elements,
-            );
-        }
-    }
-
-    /// Every unit's row, reduced by the unit alone.
-    ///
-    /// Its operands' leaves:
-    /// - `input`: the rows, laid along or across the reduced dimension.
-    /// - `out`: one tensor of a cell a row (`k` for a top-k).
-    #[cube(launch_unchecked)]
-    fn unit_reduce_kernel<
-        In: Numeric,
-        Acc: Numeric,
-        Out: Numeric,
-        N: Size,
-        K: Size,
-        F: ReduceCarrierFamily,
-    >(
-        input: &TileTensor<'_>,
-        out: &mut TileTensor<'_>,
-        partitioning: Partitioning,
-        #[comptime] microkernel: UnitDirectReduceMicrokernel,
-        #[define(In, Acc, Out)] _elements: [ElemType; 3],
-    ) {
-        let x = input.tile(&partitioning);
-        let o = out.tile_mut(&partitioning);
-
-        for unit in &partitioning {
-            let mut row_out = o.at(&unit);
-            let row = x.at(&unit);
-
-            microkernel
-                .runtime()
-                .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
-                    &row,
-                    &mut row_out,
-                    &ComptimeOption::new_None(),
-                );
-        }
     }
 
     /// The unit's rows 37 values long along the reduced dimension, a value a line.
@@ -351,5 +279,13 @@ mod tests {
     mod edges_across {
         use super::*;
         edge_rows!(UnitDirectMicrokernelLauncher, Across, 300, 4);
+    }
+
+    #[test]
+    fn its_settings_display_their_lane_slots() {
+        let settings = UnitDirectReduceMicrokernelSettings {
+            lane_slot_count: 32,
+        };
+        assert_eq!(settings.to_string(), "lane_slots=32");
     }
 }

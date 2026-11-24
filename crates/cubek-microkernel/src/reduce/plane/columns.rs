@@ -1,7 +1,6 @@
 use crate::reduce::read::{UnitWalkReduceMicrokernel, unit_walk_reduce_microkernel};
 use crate::reduce::write::{UnitGroupColumnWriteMicrokernel, unit_group_column_write_microkernel};
 use crate::reduce::{Accumulable, ReduceWorkItem, plane_columns, spreads_across};
-use cubecl::tile::kind::Masked;
 use cubecl::tile::space::UnitShare;
 use cubecl::tile::{Dimension, Levels, Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
@@ -46,7 +45,7 @@ impl PlaneColumnsReduceMicrokernel {
 #[cube]
 impl PlaneColumnsReduceMicrokernel {
     /// As [`PlaneShuffleReduceMicrokernel::reduce`](crate::reduce::plane::PlaneShuffleReduceMicrokernel::reduce),
-    /// its `columns` lines of rows wide (`plane_columns_reduce_microkernel`).
+    /// several lines of rows wide (`plane_columns_reduce_microkernel`).
     ///
     /// # Panics
     ///
@@ -101,92 +100,42 @@ pub(crate) fn plane_columns_reduce_microkernel<
     let item = microkernel.item;
     let columns = microkernel.columns;
     let per_column = microkernel.lanes / columns;
-    let window = input.at(plane);
-    let values = values_of_columns::<Vector<In, N>>(&window.flat::<In, N>(), columns);
-    let acc = unit_walk_reduce_microkernel::<In, Acc, N, C>(
+    let read = unit_walk_reduce_microkernel::<In, Acc, N, C>(
         plane,
         input,
-        values,
-        comptime!(UnitWalkReduceMicrokernel::new(item, per_column)),
+        comptime!(UnitWalkReduceMicrokernel::new(item, per_column, columns)),
     );
     let column = comptime!(UnitShare::Group {
         unit_bits: per_column - 1
     });
-    let total = C::across(acc, column, item.operation.monoid());
+    let total = C::across(read.carrier, column, item.operation.monoid());
     unit_group_column_write_microkernel::<Out, Idx, Acc, N, C>(
         plane,
         total,
         out,
         indices,
-        values,
+        read.values,
         comptime!(UnitGroupColumnWriteMicrokernel::new(item)),
     );
-}
-
-/// The values a row holds where `lines` of a window lie across `columns` lines of rows.
-#[cube]
-pub(crate) fn values_of_columns<T: CubePrimitive>(
-    lines: &Masked<'_, T, usize>,
-    #[comptime] columns: usize,
-) -> usize {
-    lines.shape() / columns
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reduce::ReduceCarrierFamily;
     use crate::reduce::ReduceOperation;
-    use crate::reduce::testing::{
-        ComponentLaunch, LaunchedRows, MicrokernelLauncher, a_plane_a_cube, plane_lanes,
-    };
-    use cubecl::tile::launch::Decline;
-    use cubek_std::Hardware;
+    use crate::reduce::testing::PlaneColumnsMicrokernelLauncher;
 
-    const LANES: usize = 32;
+    const LANE_COUNT: usize = 32;
 
     #[test]
     #[should_panic(expected = "3 columns of 32 lanes")]
     fn columns_that_are_no_power_of_two_panic() {
         PlaneColumnsReduceMicrokernel::new(
             ReduceWorkItem::along_f32(ReduceOperation::Sum),
-            LANES,
+            LANE_COUNT,
             3,
         );
     }
-
-    /// A plane reads several lines of rows wide, a column of units each.
-    #[derive(Debug, Clone, Copy)]
-    struct PlaneColumnsMicrokernelLauncher {
-        columns: usize,
-    }
-
-    impl MicrokernelLauncher for PlaneColumnsMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            a_plane_a_cube(
-                PlaneColumnsReduceMicrokernel::new(rows.item, rows.lanes, self.columns)
-                    .levels(&rows.owner()),
-            )
-        }
-
-        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
-            plane_lanes(hw, item)
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let elements = launch.elements();
-            launch_component!(
-                launch,
-                plane_columns_reduce_kernel::<F>,
-                sizes: [launch.rows.cells()],
-                [],
-                PlaneColumnsReduceMicrokernel::new(launch.rows.item, launch.rows.lanes, self.columns),
-                elements,
-            );
-        }
-    }
-
-    region_reduce_kernel!(plane_columns_reduce_kernel, PlaneColumnsReduceMicrokernel);
 
     /// The plane's read two lines of rows wide, 300 values long across the reduced dimension, each lane
     /// its own row.

@@ -68,12 +68,11 @@ pub(crate) fn cube_partial_reduce_microkernel<
     #[comptime] microkernel: CubePartialReduceMicrokernel,
 ) {
     let cube = microkernel.cube;
-    let count = input.flat::<In, N>().shape();
-    let total = cube_strided_reduce_microkernel::<In, Acc, N, C>(input, first_line, count, cube);
+    let read = cube_strided_reduce_microkernel::<In, Acc, N, C>(input, first_line, cube);
 
     if UNIT_POS == 0 {
         unit_partial_store_microkernel::<Acc, N, C>(
-            total,
+            read.carrier,
             partials,
             partial_indices,
             part,
@@ -84,76 +83,8 @@ pub(crate) fn cube_partial_reduce_microkernel<
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::reduce::testing::{ComponentLaunch, LaunchedRows, MicrokernelLauncher, cube_lanes};
-    use crate::reduce::{BATCH, ReduceCarrierFamily, ReduceWorkItem};
-    use cubecl::ir::ElemType;
-    use cubecl::tile::launch::Decline;
-    use cubecl::tile::{Levels, Partitioning, TileTensor};
-    use cubek_std::Hardware;
 
-    /// A cube reduces its rows into their one partial.
-    #[derive(Debug, Clone, Copy)]
-    struct CubePartialMicrokernelLauncher {
-        planes: usize,
-    }
-
-    impl MicrokernelLauncher for CubePartialMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            rows.whole_rows().cubes(&[BATCH])
-        }
-
-        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
-            cube_lanes(hw, item, self.planes)
-        }
-
-        fn launch_plane_width(&self, _hw: &Hardware, rows: &LaunchedRows) -> usize {
-            rows.lanes * self.planes
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let [input, accumulator, _] = launch.elements();
-            let elements = [input, accumulator];
-            launch_component!(
-                launch,
-                cube_partial_reduce_kernel,
-                sizes: [],
-                [],
-                CubePartialReduceMicrokernel::new(CubeStridedReduceMicrokernel::new(launch.rows.item, launch.rows.lanes, self.planes)),
-                elements,
-            );
-        }
-    }
-
-    /// Every cube's row, reduced by the cube into a carrier of values alone and stored to `out` as its
-    /// one partial.
-    ///
-    /// Its operands' leaves:
-    /// - `input`: the rows, one value a line along the reduced dimension, or a row a lane across it.
-    /// - `out`: the partials, one line a row.
-    #[cube(launch_unchecked)]
-    fn cube_partial_reduce_kernel<In: Numeric, Acc: Numeric, N: Size>(
-        input: &TileTensor<'_>,
-        out: &mut TileTensor<'_>,
-        partitioning: Partitioning,
-        #[comptime] microkernel: CubePartialReduceMicrokernel,
-        #[define(In, Acc)] _elements: [ElemType; 2],
-    ) {
-        let x = input.tile(&partitioning);
-        let o = out.tile_mut(&partitioning);
-
-        for cube in &partitioning {
-            let mut partials = o.at(&cube);
-            let first = 0usize;
-            microkernel.runtime().reduce::<In, Acc, N, Vector<Acc, N>>(
-                &x.at(&cube),
-                &mut partials,
-                &ComptimeOption::new_None(),
-                first,
-                first,
-            );
-        }
-    }
+    use crate::reduce::testing::CubePartialMicrokernelLauncher;
 
     /// The cube's rows 300 values long along the reduced dimension, a value a line, each a partial.
     mod partial_along_300_long_one_wide {

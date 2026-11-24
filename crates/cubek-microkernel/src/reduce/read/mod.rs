@@ -4,9 +4,11 @@
 //! ([`UnitPartialsReduceMicrokernel`]).
 
 mod partials;
+mod rows;
 mod strided;
 mod walk;
 
 pub use partials::*;
+pub use rows::*;
 pub use strided::*;
 pub use walk::*;

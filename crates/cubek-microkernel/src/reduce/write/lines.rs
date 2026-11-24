@@ -78,7 +78,7 @@ pub(crate) fn unit_lines_write_microkernel<
         "UnitLinesWriteMicrokernel: {operation:?} keeps no index to write"
     ));
     comptime!(assert!(
-        microkernel.item.takes_indices(handed),
+        microkernel.item.takes_handed_indices(handed),
         "UnitLinesWriteMicrokernel: an output of indices is handed over exactly where they are \
          written beside the values"
     ));
@@ -147,13 +147,11 @@ fn divides_in_f32(accumulator: ElemType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reduce::ReduceCarrierFamily;
-    use crate::reduce::testing::{ComponentLaunch, LaunchedRows, MicrokernelLauncher};
+    use crate::reduce::testing::BothHalvesScopeChecker;
+    use crate::reduce::testing::UnitLinesMicrokernelLauncher;
     use cubecl::TestRuntime;
-    use cubecl::ir::ElemType;
-    use cubecl::ir::IntKind;
-    use cubecl::tile::{Levels, Partitioning, TileTensor};
-    use cubek_std::Hardware;
+    use cubecl::ir::{ElemType, IntKind};
+    use cubek_test_utils::ScopeChecker;
 
     /// A line as wide as it is written keeps its lanes.
     #[test]
@@ -211,62 +209,6 @@ mod tests {
         assert!(divides_in_f32(ElemType::Float(FloatKind::F16)));
     }
 
-    /// Each unit takes its one line of the input as its carrier of values and writes it as wide as it is.
-    #[derive(Debug, Clone, Copy)]
-    struct UnitLinesMicrokernelLauncher;
-
-    impl MicrokernelLauncher for UnitLinesMicrokernelLauncher {
-        fn levels(&self, _hw: &Hardware, rows: &LaunchedRows) -> Levels {
-            rows.unit_levels()
-        }
-
-        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
-            let [_, accumulator, out] = launch.elements();
-            let elements = [accumulator, out];
-            launch_component!(
-                launch,
-                unit_lines_write_kernel,
-                sizes: [],
-                [launch.rows.reduced],
-                UnitLinesWriteMicrokernel::new(launch.rows.item),
-                elements,
-            );
-        }
-    }
-
-    /// Every unit's one line of `input`, taken as its carrier of values alone and written to `out` as wide as it is.
-    ///
-    /// Its operands' leaves:
-    /// - `input`: one line a unit, the values of a row along the reduced dimension, or a value of a
-    ///   row a lane across it.
-    /// - `out`: one tensor of a cell a row.
-    #[cube(launch_unchecked)]
-    fn unit_lines_write_kernel<Acc: Numeric, Out: Numeric, N: Size>(
-        input: &TileTensor<'_>,
-        out: &mut TileTensor<'_>,
-        partitioning: Partitioning,
-        #[comptime] values: usize,
-        #[comptime] microkernel: UnitLinesWriteMicrokernel,
-        #[define(Acc, Out)] _elements: [ElemType; 2],
-    ) {
-        let x = input.tile(&partitioning);
-        let o = out.tile_mut(&partitioning);
-
-        for unit in &partitioning {
-            let row = x.at(&unit);
-            let carrier = row.flat::<Acc, N>().read(0);
-            let mut row_out = o.at(&unit);
-            microkernel
-                .runtime()
-                .write::<Out, Out, Acc, N, N, Vector<Acc, N>>(
-                    carrier,
-                    &mut row_out,
-                    &ComptimeOption::new_None(),
-                    values,
-                );
-        }
-    }
-
     /// Four rows a line, written as wide as it is.
     mod lines_across_one_value_four_wide {
         use super::*;
@@ -285,5 +227,12 @@ mod tests {
         reduce_tests!(UnitLinesMicrokernelLauncher, Along, 1, 1, Plain, [
             sum: ReduceOperation::Sum,
         ]);
+    }
+
+    /// A carrier of values and indices written to two outputs, each half to its own.
+    #[test]
+    fn both_halves_are_written_beside_each_other() {
+        const INDEX: u32 = 5;
+        BothHalvesScopeChecker::new().check([INDEX]);
     }
 }
