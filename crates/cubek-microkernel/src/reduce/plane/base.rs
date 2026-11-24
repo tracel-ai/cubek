@@ -1,6 +1,9 @@
-use super::microkernel::plane_shuffle_reduce_microkernel;
+use crate::reduce::plane::{
+    PlaneColumnsReduceMicrokernel, PlaneLineReduceMicrokernel, plane_columns_reduce_microkernel,
+    plane_line_reduce_microkernel,
+};
 use crate::reduce::{
-    ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across, plane_levels,
+    Accumulable, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOT_COUNTS, lines_across, plane_levels,
 };
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Dimension, Levels, Region, Tile};
@@ -8,8 +11,8 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// A row reduced by one plane: its lanes read consecutive lines, each accumulating every `lanes`-th
-/// into a partial of its own, and the partials meet across the plane in its instructions. Where
+/// A row reduced by one plane: its lanes read the lines in turns, each into a partial of its own, and
+/// the partials meet across the plane in its instructions. Where
 /// its lines run across the reduced dimension, its units lie across
 /// [`lines_across`](Self::lines_across) lines of rows instead, a column of them for each, and
 /// each column's partials meet within it.
@@ -31,7 +34,6 @@ pub struct PlaneShuffleReduceMicrokernel {
 }
 
 impl PlaneShuffleReduceMicrokernel {
-    /// A plane of `lanes` units reducing `item`, keeping `lane_slots` top-k slots across a line.
     pub fn new(item: ReduceWorkItem, lanes: usize, lane_slots: usize) -> Self {
         Self {
             item,
@@ -47,7 +49,7 @@ impl PlaneShuffleReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where `width` is zero.
+    /// Where its lines are zero wide.
     pub fn across_rows(self, hw: &Hardware, width: usize, rows: usize) -> Self {
         Self {
             lines_across: lines_across(hw, &self.item, width, rows.div_ceil(width), self.lanes),
@@ -67,10 +69,6 @@ impl PlaneShuffleReduceMicrokernel {
         plane_levels(owner, self.lines_across, self.lanes)
     }
 
-    pub fn item(&self) -> ReduceWorkItem {
-        self.item
-    }
-
     pub fn lanes(&self) -> usize {
         self.lanes
     }
@@ -79,7 +77,7 @@ impl PlaneShuffleReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// As it does.
+    /// Where the plane's top-k keeps no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
@@ -95,15 +93,15 @@ impl PlaneShuffleReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where `indices` is there and its item does not write them beside the values, or the other
-    /// way around; or where it writes indices its carrier does not keep.
+    /// Where the plane's item and `indices` disagree on whether the indices are written beside the values, or
+    /// its carrier keeps none of the indices it writes.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,
         Out: Numeric,
         Idx: Numeric,
         N: Size,
-        C: ReduceAccumulator<Acc, N> + Clone,
+        C: Accumulable<Acc, N> + Clone,
     >(
         &self,
         plane: &Region,
@@ -130,12 +128,12 @@ impl PlaneShuffleReduceMicrokernel {
 /// device's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleReduceMicrokernelSettings {
-    pub lane_slots: usize,
+    pub lane_slot_count: usize,
 }
 
 impl core::fmt::Display for PlaneShuffleReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "lane_slots={}", self.lane_slots)
+        write!(f, "lane_slots={}", self.lane_slot_count)
     }
 }
 
@@ -149,6 +147,20 @@ impl core::fmt::Display for PlaneShuffleReduceMicrokernel {
     }
 }
 
+/// The plane microkernel at `settings`, where `hw` commits to a plane width.
+fn candidate_of(
+    hw: &Hardware,
+    item: ReduceWorkItem,
+    settings: &PlaneShuffleReduceMicrokernelSettings,
+) -> Option<PlaneShuffleReduceMicrokernel> {
+    let lanes = hw.plane_dim().ok()?;
+    Some(PlaneShuffleReduceMicrokernel::new(
+        item,
+        lanes as usize,
+        settings.lane_slot_count,
+    ))
+}
+
 impl Microkernel for PlaneShuffleReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
     type Settings = PlaneShuffleReduceMicrokernelSettings;
@@ -158,8 +170,8 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
     const DECLINE: &'static str = "the plane reduce needs a plane width the device commits to";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        TOP_K_LANE_SLOTS
-            .map(|lane_slots| PlaneShuffleReduceMicrokernelSettings { lane_slots })
+        TOP_K_LANE_SLOT_COUNTS
+            .map(|lane_slot_count| PlaneShuffleReduceMicrokernelSettings { lane_slot_count })
             .to_vec()
     }
 
@@ -168,12 +180,7 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        hw.plane_dim().ok().into_iter().map(|lanes| Self {
-            item: *item,
-            lanes: lanes as usize,
-            lane_slots: settings.lane_slots,
-            lines_across: 1,
-        })
+        candidate_of(hw, *item, settings).into_iter()
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
@@ -192,10 +199,62 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
     }
 }
 
+/// One plane's rows, `plane`'s region of `input`, reduced into `out` and `indices` at the same
+/// region: read one line of rows wide ([`PlaneLineReduceMicrokernel`]), or
+/// [`lines_across`](PlaneShuffleReduceMicrokernel::lines_across) lines of rows wide
+/// ([`PlaneColumnsReduceMicrokernel`]).
+#[cube]
+pub(crate) fn plane_shuffle_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+    C: Accumulable<Acc, N> + Clone,
+>(
+    plane: &Region,
+    input: &Tile,
+    out: &Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
+) {
+    match microkernel.lines_across == 1 {
+        true => plane_line_reduce_microkernel::<In, Acc, Out, Idx, N, C>(
+            plane,
+            input,
+            out,
+            indices,
+            comptime!(PlaneLineReduceMicrokernel::new(
+                microkernel.item,
+                microkernel.lanes
+            )),
+        ),
+        false => plane_columns_reduce_microkernel::<In, Acc, Out, Idx, N, C>(
+            plane,
+            input,
+            out,
+            indices,
+            comptime!(PlaneColumnsReduceMicrokernel::new(
+                microkernel.item,
+                microkernel.lanes,
+                microkernel.lines_across
+            )),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::reduce::ReduceOperation;
+    use crate::reduce::plane::PlaneShuffleReduceMicrokernel;
+    use crate::reduce::testing::{
+        ComponentLaunch, LANE_SLOT_COUNT, LaunchedRows, MicrokernelLauncher, a_plane_a_cube,
+        plane_lanes,
+    };
+    use crate::reduce::{BATCH, ReduceCarrierFamily, empty_estimate};
+    use cubecl::tile::Levels;
+    use cubecl::tile::launch::Decline;
     use cubek_std::devices;
 
     /// Whether the plane microkernel runs on `hw`, at its first setting.
@@ -230,7 +289,7 @@ mod tests {
         const ROWS: usize = 64;
         let hw = devices::m2_pro();
         let item = ReduceWorkItem {
-            lines_along: crate::reduce::BATCH,
+            lines_along: BATCH,
             ..ReduceWorkItem::along_f32(ReduceOperation::Sum)
         };
         let plane = PlaneShuffleReduceMicrokernel::new(item, LANES, LANE_SLOTS);
@@ -290,7 +349,7 @@ mod tests {
     fn sum() -> PlaneShuffleReduceMicrokernel {
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
         let lanes = 32;
-        PlaneShuffleReduceMicrokernel::new(item, lanes, TOP_K_LANE_SLOTS[0])
+        PlaneShuffleReduceMicrokernel::new(item, lanes, TOP_K_LANE_SLOT_COUNTS[0])
     }
 
     #[test]
@@ -307,7 +366,7 @@ mod tests {
             count: 4,
             width: 32,
         };
-        let mut estimate = crate::reduce::empty_estimate();
+        let mut estimate = empty_estimate();
         sum().estimate(&item, &(), planes, &mut estimate);
         assert_eq!(estimate.work, Some(item.unit_work()));
     }
@@ -318,5 +377,82 @@ mod tests {
             sum().to_string(),
             "Sum Dimension(1) lanes=32 lines_across=1"
         );
+    }
+
+    /// A plane reduces its rows.
+    #[derive(Debug, Clone, Copy)]
+    struct PlaneShuffleMicrokernelLauncher;
+
+    impl MicrokernelLauncher for PlaneShuffleMicrokernelLauncher {
+        fn levels(&self, hw: &Hardware, rows: &LaunchedRows) -> Levels {
+            a_plane_a_cube(of_rows(hw, rows).levels(&rows.owner()))
+        }
+
+        fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
+            plane_lanes(hw, item)
+        }
+
+        fn launch_into<F: ReduceCarrierFamily>(&self, launch: ComponentLaunch<'_>) {
+            let elements = launch.elements();
+            let microkernel = of_rows(&Hardware::from_client(launch.client), &launch.rows);
+            launch_component!(
+                launch,
+                plane_reduce_kernel::<F>,
+                sizes: [launch.rows.cells()],
+                [],
+                microkernel,
+                elements,
+            );
+        }
+    }
+
+    /// The plane microkernel of `rows` on `hw`.
+    fn of_rows(hw: &Hardware, rows: &LaunchedRows) -> PlaneShuffleReduceMicrokernel {
+        PlaneShuffleReduceMicrokernel::new(rows.item, rows.lanes, LANE_SLOT_COUNT)
+            .across_rows(hw, rows.width, rows.rows)
+    }
+
+    region_reduce_kernel!(plane_reduce_kernel, PlaneShuffleReduceMicrokernel);
+
+    /// The plane's rows 37 values long along the reduced dimension, a value a line.
+    mod along_37_long_one_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Along, 37, 1);
+    }
+
+    /// Rows 20 values long along the reduced dimension, four values a line: fewer lines than lanes.
+    mod along_20_long_four_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Along, 20, 4);
+    }
+
+    /// Rows 1024 values long along the reduced dimension, four values a line: many lines a lane.
+    mod along_1024_long_four_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Along, 1024, 4);
+    }
+
+    /// The plane's rows 37 values long across the reduced dimension, a row a line.
+    mod across_37_long_one_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Across, 37, 1);
+    }
+
+    /// The plane's rows 300 values long across the reduced dimension, each lane its own row.
+    mod across_300_long_four_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Across, 300, 4);
+    }
+
+    /// The plane's edge rows, 1024 values long along the reduced dimension, four values a line.
+    mod edges_along {
+        use super::*;
+        edge_rows!(PlaneShuffleMicrokernelLauncher, Along, 1024, 4);
+    }
+
+    /// The plane's edge rows, 300 values long across the reduced dimension, each lane its own row.
+    mod edges_across {
+        use super::*;
+        edge_rows!(PlaneShuffleMicrokernelLauncher, Across, 300, 4);
     }
 }

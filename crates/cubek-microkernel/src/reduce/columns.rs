@@ -2,9 +2,7 @@
 //! of rows side by side, so that one load of the plane reads whole memory transactions.
 
 use crate::reduce::{BATCH, REDUCED, ReduceWorkItem};
-use cubecl::tile::kind::Masked;
 use cubecl::tile::{Dimension, Levels};
-use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::Hardware;
 
 /// Lines of rows a plane of `lanes` units lies across side by side, its lines `width` wide, where
@@ -88,15 +86,6 @@ pub(crate) fn cube_columns(
     units_across(owner, columns, lanes / columns)
         .planes(&[(REDUCED, planes)])
         .walk_every(&[REDUCED])
-}
-
-/// The values a row holds where `lines` of a window lie across `columns` lines of rows.
-#[cube]
-pub(crate) fn values_of_columns<T: CubePrimitive>(
-    lines: &Masked<'_, T, usize>,
-    #[comptime] columns: usize,
-) -> usize {
-    lines.shape() / columns
 }
 
 #[cfg(test)]

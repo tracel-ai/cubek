@@ -8,6 +8,29 @@
 //! launches; the kernels are their family's crate's (`cubek-matmul`'s, `cubek-attention`'s,
 //! `cubek-rms-norm`'s and `cubek-swiglu`'s `kernels`).
 //!
+//! A reduction's microkernels, by the part of the row each takes: a unit's
+//! ([`UnitDirectReduceMicrokernel`](reduce::unit::UnitDirectReduceMicrokernel)), a plane's
+//! ([`PlaneShuffleReduceMicrokernel`](reduce::plane::PlaneShuffleReduceMicrokernel), built from
+//! [`PlaneLineReduceMicrokernel`](reduce::plane::PlaneLineReduceMicrokernel) and
+//! [`PlaneColumnsReduceMicrokernel`](reduce::plane::PlaneColumnsReduceMicrokernel)), a cube's
+//! ([`CubeStagedReduceMicrokernel`](reduce::cube::CubeStagedReduceMicrokernel), built from
+//! [`CubeLineReduceMicrokernel`](reduce::cube::CubeLineReduceMicrokernel),
+//! [`CubeColumnsReduceMicrokernel`](reduce::cube::CubeColumnsReduceMicrokernel) and
+//! [`CubeStridedReduceMicrokernel`](reduce::cube::CubeStridedReduceMicrokernel)) and a hypercube's
+//! ([`HypercubeLastArrivalReduceMicrokernel`](reduce::hypercube::HypercubeLastArrivalReduceMicrokernel),
+//! built from [`CubePartialReduceMicrokernel`](reduce::cube::CubePartialReduceMicrokernel)). They
+//! share the units' reads
+//! ([`UnitStridedReduceMicrokernel`](reduce::read::UnitStridedReduceMicrokernel),
+//! [`UnitWalkReduceMicrokernel`](reduce::read::UnitWalkReduceMicrokernel),
+//! [`UnitPartialsReduceMicrokernel`](reduce::read::UnitPartialsReduceMicrokernel)) and writes
+//! ([`UnitCarrierWriteMicrokernel`](reduce::write::UnitCarrierWriteMicrokernel),
+//! [`UnitLinesWriteMicrokernel`](reduce::write::UnitLinesWriteMicrokernel),
+//! [`UnitRegionWriteMicrokernel`](reduce::write::UnitRegionWriteMicrokernel),
+//! [`UnitGroupColumnWriteMicrokernel`](reduce::write::UnitGroupColumnWriteMicrokernel),
+//! [`UnitPartialStoreMicrokernel`](reduce::write::UnitPartialStoreMicrokernel)), and accumulate into the
+//! carrier a [`ReduceCarrierFamily`](reduce::ReduceCarrierFamily) names. A zeroing's is
+//! [`UnitDirectZeroMicrokernel`](zero::unit::UnitDirectZeroMicrokernel).
+//!
 //! A folder per problem, behind its family's feature: what the problem is in its `base`, beside a
 //! folder per scope. What every family shares, as the ring a staged walk holds its stages in, is
 //! cubek-std's; what the producers of a product's lhs share, how they store their rows, is

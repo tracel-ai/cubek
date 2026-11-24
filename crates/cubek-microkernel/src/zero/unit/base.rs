@@ -1,4 +1,3 @@
-use super::microkernel::unit_direct_zero_microkernel;
 use crate::zero::ZeroOperand;
 use cubecl::tile::Tile;
 use cubecl::tile::launch::Vectorization;
@@ -62,11 +61,27 @@ impl Microkernel for UnitDirectZeroMicrokernel {
     }
 }
 
+#[cube]
+pub(crate) fn unit_direct_zero_microkernel(out: &mut Tile) {
+    out.zero();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cubecl::client::Client;
+    use cubecl::ir::{ElemType, FloatKind, IntKind};
+    use cubecl::prelude::*;
+    use cubecl::tile::kind::Boundary;
+    use cubecl::tile::launch::{BoundaryPolicy, Decline, Grid};
+    use cubecl::tile::space::UnitCube;
+    use cubecl::tile::{
+        Dimension, Launcher, Levels, Partitioning, Space, TileSpec, TileTensor, TileTensorLaunch,
+    };
+    use cubecl::zspace::Shape;
     use cubek_std::devices;
     use cubek_std::microkernel::CubeFootprint;
+    use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
     #[test]
     fn it_runs_on_a_device_lacking_every_feature() {
@@ -98,5 +113,154 @@ mod tests {
         };
         UnitDirectZeroMicrokernel {}.estimate(&(), &(), planes, &mut estimate);
         assert_eq!(estimate.work.map(|work| work.registers), Some(1));
+    }
+
+    /// The rows of the output, a unit each.
+    const ROWS: Dimension = Dimension(0);
+    /// The cells of a row.
+    const CELLS: Dimension = Dimension(1);
+
+    /// `out`, `rows` rows of `cells` cells in `element`, row-major, each row zeroed by a unit of its
+    /// own, a cube of one plane of `plane_width` units holding as many rows.
+    ///
+    /// # Errors
+    ///
+    /// Why the tile DSL cannot bind the launch.
+    fn launch_unit_zero(
+        client: &Client,
+        out: TensorArg,
+        element: ElemType,
+        rows: usize,
+        cells: usize,
+        plane_width: u32,
+    ) -> Result<(), Decline> {
+        let space = Space::new(&[(ROWS, rows), (CELLS, cells)]);
+        let partitioning = Partitioning::new(
+            space.clone(),
+            Levels::leaf(&[(ROWS, 1), (CELLS, cells)])
+                .launch_units(
+                    &[ROWS],
+                    UnitCube {
+                        plane_width: plane_width as usize,
+                        planes: 1,
+                    },
+                )
+                .build(),
+        );
+        let grid = Grid::Stated {
+            cube_count: partitioning.cube_count(),
+            cube_dim: partitioning.cube_dim(plane_width),
+        };
+        let launcher = Launcher::new(client, partitioning, &space, grid)?;
+        // A cube's units past the last row write nothing: their writes are masked.
+        let out = TileTensorLaunch::new(
+            out,
+            element,
+            1,
+            TileSpec::direct(&[ROWS, CELLS]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
+        );
+        // SAFETY: the output is bound through the launcher, which masks the writes of the units past
+        // its last row, and the kernel indexes no buffer but through its tile.
+        unsafe {
+            unit_zero_kernel::launch_unchecked(
+                client,
+                launcher.cube_count(),
+                launcher.cube_dim(),
+                out,
+                launcher.partitioning_arg(),
+                UnitDirectZeroMicrokernel {},
+            );
+        }
+        Ok(())
+    }
+
+    /// Every unit's row, zeroed by the unit.
+    ///
+    /// Its operands' leaves:
+    /// - `out`: one tensor of `rows` rows of `cells` cells, row-major.
+    #[cube(launch_unchecked)]
+    fn unit_zero_kernel(
+        out: &mut TileTensor<'_>,
+        partitioning: Partitioning,
+        #[comptime] microkernel: UnitDirectZeroMicrokernel,
+    ) {
+        let o = out.tile_mut(&partitioning);
+        for unit in &partitioning {
+            let mut cells = o.at(&unit);
+            microkernel.runtime().zero(&mut cells);
+        }
+    }
+
+    /// An output of `rows` rows of `cells` cells in `element`, holding sevens before the launch.
+    #[derive(Debug, Clone, Copy)]
+    struct ZeroCase {
+        pub rows: usize,
+        pub cells: usize,
+        pub element: ElemType,
+    }
+
+    struct UnitZeroScopeChecker {
+        hw: Hardware,
+    }
+
+    impl ScopeChecker for UnitZeroScopeChecker {
+        type Case = ZeroCase;
+
+        fn launch(&self, client: &Client, case: &ZeroCase) -> Result<Vec<Written>, Decline> {
+            let shape = Shape::from(vec![case.rows, case.cells]);
+            let out = TestInput::builder(client.clone(), shape)
+                .dtype(case.element)
+                .custom(vec![7.0; case.rows * case.cells])
+                .generate_without_host_data();
+            let plane_width = self.hw.plane_dim().unwrap_or(1);
+            launch_unit_zero(
+                client,
+                out.clone().binding().into_tensor_arg(),
+                case.element,
+                case.rows,
+                case.cells,
+                plane_width,
+            )?;
+            let host = match case.element {
+                ElemType::Int(_) => HostDataType::I32,
+                _ => HostDataType::F32,
+            };
+            Ok(vec![Written {
+                name: "out",
+                tensor: out,
+                host,
+            }])
+        }
+
+        fn reference(&self, case: &ZeroCase) -> Vec<HostData> {
+            vec![HostData::row_major(
+                HostDataVec::F32(vec![0.0; case.rows * case.cells]),
+                Shape::from(vec![case.rows, case.cells]),
+            )]
+        }
+
+        fn tolerance(&self, _case: &ZeroCase) -> f32 {
+            0.0
+        }
+    }
+
+    /// A unit alone zeroes its row in `element`, at a row length that is not a power of two.
+    fn a_unit_zeroes_its_row(element: ElemType) {
+        let hw = Hardware::from_client(&cubecl::test_device().client());
+        UnitZeroScopeChecker { hw }.check([ZeroCase {
+            rows: 5,
+            cells: 37,
+            element,
+        }]);
+    }
+
+    #[test]
+    fn a_unit_zeroes_a_row_of_floats() {
+        a_unit_zeroes_its_row(ElemType::Float(FloatKind::F32));
+    }
+
+    #[test]
+    fn a_unit_zeroes_a_row_of_integers() {
+        a_unit_zeroes_its_row(ElemType::Int(IntKind::I32));
     }
 }

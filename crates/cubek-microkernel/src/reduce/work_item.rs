@@ -35,6 +35,15 @@ impl ReduceWorkItem {
         }
     }
 
+    /// What a unit that merges stored partials works with: registers for the merged carrier's lines and
+    /// one partial's, beside two of its own.
+    pub fn merge_work(&self) -> UnitWork {
+        UnitWork {
+            instruction: ArithmeticInstruction::Vector,
+            registers: 2 * self.operation.carrier().lines() as u32 + 2,
+        }
+    }
+
     /// What the owner writes: both halves where the indices go beside the values, what the
     /// operation writes otherwise.
     pub fn writes(&self) -> ReduceWrites {
@@ -108,6 +117,7 @@ pub(crate) fn empty_estimate() -> KernelEstimate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reduce::BATCH;
     use cubecl::ir::FloatKind;
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -140,7 +150,7 @@ mod tests {
     #[test]
     fn across_the_axis_an_input_line_is_an_output_line() {
         assert_eq!(
-            item(ReduceOperation::Sum, crate::reduce::BATCH, false).requirement(),
+            item(ReduceOperation::Sum, BATCH, false).requirement(),
             VectorRequirement::Together {
                 operand: ReduceOperand::Input,
                 with: ReduceOperand::Out,
@@ -153,6 +163,13 @@ mod tests {
     fn a_unit_holds_its_carriers_lines_and_two() {
         const K: u32 = 3;
         let work = item(ReduceOperation::ArgTopK { k: K as usize }, REDUCED, false).unit_work();
+        assert_eq!(work.registers, 2 * K + 2);
+    }
+
+    #[test]
+    fn a_merge_holds_two_carriers_lines_and_two() {
+        const K: u32 = 3;
+        let work = item(ReduceOperation::TopK { k: K as usize }, REDUCED, false).merge_work();
         assert_eq!(work.registers, 2 * K + 2);
     }
 

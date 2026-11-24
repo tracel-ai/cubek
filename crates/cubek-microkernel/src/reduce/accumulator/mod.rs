@@ -1,4 +1,4 @@
-//! What a reduction accumulates its lines into ([`ReduceAccumulator`]), one module a carrier.
+//! What a reduction accumulates its lines into ([`Accumulable`]), one module a carrier.
 
 mod base;
 mod family;

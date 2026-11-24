@@ -1,6 +1,6 @@
 //! What every carrier does with one line: read it and index its lanes.
 
-use crate::reduce::{ReadMap, ReduceAccumulator, ReduceWorkItem};
+use crate::reduce::{Accumulable, ReadMap, ReduceWorkItem};
 use cubecl::tile::Indexed;
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -27,7 +27,7 @@ pub(crate) fn read_mapped<Acc: Numeric, N: Size>(
 /// `read`, a line of a row in `In`, `row_lanes` of its lanes holding one row's values, mapped as
 /// `item`'s operation reads it and accumulated in `Acc` into `acc` as line `index` of its row.
 #[cube]
-pub(crate) fn accumulate_read<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
+pub(crate) fn accumulate_read<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
     acc: &mut C,
     read: Vector<In, N>,
     index: usize,

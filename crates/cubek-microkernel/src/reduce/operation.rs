@@ -2,7 +2,7 @@ use cubecl::tile::Monoid;
 
 /// The top-k slots a thread keeps across a line's lanes that autotune tries: a setting of every
 /// reduce microkernel.
-pub const TOP_K_LANE_SLOTS: [usize; 1] = [32];
+pub const TOP_K_LANE_SLOT_COUNTS: [usize; 1] = [32];
 
 /// A reduction along one dimension: a map on each value as it is read, a monoid that combines the
 /// values, and a last step on the total.
@@ -283,6 +283,16 @@ const fn lines_at_least_one(lines: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_top_k_with_indices_carries_them() {
+        assert!(ReduceCarrier::TopK { k: 2 }.carries_indices());
+    }
+
+    #[test]
+    fn values_alone_carry_no_index() {
+        assert!(!ReduceCarrier::Values.carries_indices());
+    }
 
     /// A carrier of values and indices holds a line of each a slot.
     #[test]

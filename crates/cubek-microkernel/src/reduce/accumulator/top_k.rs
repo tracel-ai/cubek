@@ -1,6 +1,6 @@
 //! The `K` best values with their indices: the top-k.
 
-use crate::reduce::{ReduceAccumulator, ReduceCarrierFamily, lane_indices};
+use crate::reduce::{Accumulable, ReduceCarrierFamily, lane_indices};
 use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -12,7 +12,7 @@ impl ReduceCarrierFamily for TopKReduceCarrierFamily {
 }
 
 #[cube]
-impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, K> {
+impl<Acc: Numeric, N: Size, K: Size> Accumulable<Acc, N> for TopK<Acc, N, K> {
     fn accumulate(
         acc: &mut Self,
         line: Vector<Acc, N>,
