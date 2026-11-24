@@ -16,7 +16,7 @@ use cubecl::tile::{
     kind::Write,
     launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
 };
-use cubek_std::routine::{Grid, Routine};
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid, Routine};
 
 /// What a launch that allocated its output hands back.
 const ALLOCATED: &str = "a launch allocating its output hands it back";
@@ -41,13 +41,17 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
 
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its kernel reaching the
     /// output through the destination `O`, whatever `tensors`' output is.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the launch breaks what `prepare` claimed of it, nothing launched.
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
-    );
+    ) -> Result<(), Decline>;
 
     /// Launch the kernel `blueprint` compiles, on `grid`, replacing `tensors`' output buffer: what
     /// every launch below runs once it has prepared.
@@ -66,8 +70,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         let binding = tensors
             .bind(&blueprint, &grid)?
             .map_out(|out| (out, Write::Replace));
-        self.dispatch::<Buffered, _>(tensors, binding, blueprint, grid);
-        Ok(())
+        self.dispatch::<Buffered, _>(tensors, binding, blueprint, grid)
     }
 
     /// `lhs · rhs` on `client`'s device, prepared for `hw`: the device as it reports itself, or
@@ -133,8 +136,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     ) -> Result<(), Decline> {
         let tensors = MatmulTensors::writing_into(client, lhs, rhs, out, Self::ROWS_KIND)?;
         let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
-        Ok(())
+        self.dispatch_into_buffer(&tensors, blueprint, grid)
     }
 
     /// `lhs · rhs` on `client`'s device, every batch reading its entry of `table`, written into
@@ -161,8 +163,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     ) -> Result<(), Decline> {
         let tensors = MatmulTensors::indexed(client, lhs, rhs, table, out, Self::ROWS_KIND)?;
         let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
-        Ok(())
+        self.dispatch_into_buffer(&tensors, blueprint, grid)
     }
 
     /// `lhs · rhs` at the first of the routine's own settings that prepares a launch on `hw`
@@ -275,6 +276,7 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> SinkLaunch for MatmulSin
     fn launch<O: DestinationLaunch>(self, sink: impl FnOnce(Unbound) -> O::Operand) {
         let binding = self.binding.map_out(sink);
         self.routine
-            .dispatch::<O, _>(&self.tensors, binding, self.blueprint, self.grid);
+            .dispatch::<O, _>(&self.tensors, binding, self.blueprint, self.grid)
+            .expect(ADMITTED_PLAN_RUNS);
     }
 }

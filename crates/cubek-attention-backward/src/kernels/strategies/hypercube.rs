@@ -152,20 +152,25 @@ impl AttentionBackwardLaunch for HypercubeAttentionBackward {
         })
     }
 
-    fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint) {
+    fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        blueprint: Self::Blueprint,
+    ) -> Result<(), Decline> {
         let query_sum = QueryGradientSum::zeros(tensors);
-        PlaneDeltaRoutine.dispatch(tensors, &blueprint.delta);
+        PlaneDeltaRoutine.dispatch(tensors, &blueprint.delta)?;
         match &blueprint.keys {
             KeyHeadsBlueprint::Together(walk) => {
-                HypercubeKeyGradientQuerySumRoutine.dispatch(tensors, walk, &query_sum)
+                HypercubeKeyGradientQuerySumRoutine.dispatch(tensors, walk, &query_sum)?
             }
             KeyHeadsBlueprint::Apart { sums: walk, cast } => {
                 let sums = KeyGradientSums::zeros(tensors);
-                HypercubeGradientSumRoutine.dispatch(tensors, walk, &sums, &query_sum);
-                CastKeyGradientRoutine.dispatch(tensors, cast, &sums);
+                HypercubeGradientSumRoutine.dispatch(tensors, walk, &sums, &query_sum)?;
+                CastKeyGradientRoutine.dispatch(tensors, cast, &sums)?;
             }
         }
-        CastQueryGradientRoutine.dispatch(tensors, &blueprint.cast_queries, &query_sum);
+        CastQueryGradientRoutine.dispatch(tensors, &blueprint.cast_queries, &query_sum)?;
+        Ok(())
     }
 
     fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {

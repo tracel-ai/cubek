@@ -1,7 +1,9 @@
 use crate::quantized_arg;
 use cubecl::tile::{
-    Launcher, Partitioning, Projection, Space, TileSpec, TileTensor, TileTensorLaunch, kind::Field,
-    launch::Grid, layout::PhysicalAxisMap,
+    Launcher, Partitioning, Projection, Space, TileSpec, TileTensor, TileTensorLaunch,
+    kind::Field,
+    launch::{Decline, Grid},
+    layout::PhysicalAxisMap,
 };
 use cubecl::{
     ir::ElemType,
@@ -17,6 +19,10 @@ use cubek_std::matmul_dimensions::{M, N};
 /// The decode is the kernel's own statement: the values are fields of the scheme's element read
 /// out of words, under their scale, and `output.dequantize_from(&values)` multiplies each by the
 /// scale where it is written. Nothing decodes behind a read.
+///
+/// # Errors
+///
+/// Why the tile engine cannot launch or bind it on this device.
 pub fn launch_ref(
     client: &Client,
     input: TensorBinding,
@@ -24,7 +30,7 @@ pub fn launch_ref(
     scales: TensorBinding,
     scheme: &QuantScheme,
     output_dtype: ElemType,
-) -> Result<(), LaunchError> {
+) -> Result<(), Decline> {
     assert!(
         scheme.store == QuantStore::Native,
         "only native quantization is supported for now."
@@ -85,8 +91,7 @@ pub fn launch_ref(
             cube_count: cube_count.clone(),
             cube_dim,
         },
-    )
-    .unwrap_or_else(|decline| panic!("dequantize_tiled: {decline}"));
+    )?;
     // One scale for the whole tensor: a scale tile over no dimension of the values.
     let per_tensor = Projection::new(&[M, N], &[PhysicalAxisMap::broadcast()]);
     let values = quantized_arg(
@@ -97,8 +102,7 @@ pub fn launch_ref(
         [launch
             .arg(scales, u32::elem_type_native())
             .gathered(per_tensor)],
-    )
-    .unwrap_or_else(|decline| panic!("dequantize_tiled: {decline}"));
+    )?;
     dequantize::launch(
         client,
         cube_count,

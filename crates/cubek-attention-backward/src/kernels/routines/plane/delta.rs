@@ -68,9 +68,16 @@ impl PlaneDeltaRoutine {
             (),
         ))
     }
-
-    pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &PlaneDeltaBlueprint) {
-        let binding = tensors.bind(walk);
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
+    pub fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        walk: &PlaneDeltaBlueprint,
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -88,5 +95,6 @@ impl PlaneDeltaRoutine {
                 AttentionBackwardProblem::SUM,
             );
         }
+        Ok(())
     }
 }

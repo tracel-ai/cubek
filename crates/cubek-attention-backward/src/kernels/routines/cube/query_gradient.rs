@@ -71,14 +71,17 @@ impl CubeStagedQueryGradientRoutine {
             ring,
         ))
     }
-
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &CubeStagedQueryGradientBlueprint,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -108,5 +111,6 @@ impl CubeStagedQueryGradientRoutine {
                 [AttentionBackwardProblem::SUM, problem.element],
             );
         }
+        Ok(())
     }
 }

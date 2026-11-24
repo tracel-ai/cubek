@@ -105,7 +105,7 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: CubeStagedReduceBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let elements = problem.elements;
         // SAFETY: both operands are bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
@@ -147,6 +147,7 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
                 ),
             }
         }
+        Ok(())
     }
 }
 

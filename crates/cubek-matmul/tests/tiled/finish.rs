@@ -134,7 +134,9 @@ where
             // SAFETY: one `u32` the kernel only adds into.
             units: unsafe { BufferArg::from_raw_parts(counter.clone(), 1) },
         });
-    routine.dispatch::<Counted, _>(&tensors, binding, blueprint, grid);
+    routine
+        .dispatch::<Counted, _>(&tensors, binding, blueprint, grid)
+        .expect("the counted product launches as it prepared");
 
     let finished = u32::from_bytes(&client.read_one_unchecked(counter))[0];
     assert_eq!(finished, units, "{name}: units that reached finish");

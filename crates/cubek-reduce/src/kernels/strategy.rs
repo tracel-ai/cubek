@@ -7,12 +7,13 @@ use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceBlueprint, HypercubeAtomicReduceRoutine,
     HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceRoutine, ReduceTensors,
-    UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine, launch_tuned, select,
+    UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine, launch_atomic, launch_tuned, select,
 };
+use core::convert::identity;
 use cubecl::Device;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
-use cubecl::tile::launch::{Decline, TileOperand, Unbound};
+use cubecl::tile::launch::{Bound, Decline, StoredTileOperand, TileOperand, Unbound};
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, Routine};
 use serde::{Deserialize, Serialize};
@@ -172,7 +173,7 @@ pub(crate) fn launch_kernel(
 }
 
 /// `tensors` summed by the atomic hypercube, at the launch `prepared` holds, into their output,
-/// zeroed first. The zeroing prepares before either launches, so a decline leaves the output as
+/// zeroed first. Both prepare and bind before either launches, so a decline leaves the output as
 /// the caller gave it.
 ///
 /// # Errors
@@ -186,8 +187,15 @@ pub(crate) fn launch_zeroed_atomic(
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) = prepared;
-    UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid);
-    HypercubeAtomicReduceRoutine::launch(tensors, blueprint, grid);
+    let binding = tensors.bind(&blueprint, &grid)?.map(Bound::arg, identity);
+    UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid)?;
+    launch_atomic::<StoredTileOperand>(
+        tensors.problem(),
+        tensors.client(),
+        binding,
+        blueprint,
+        grid,
+    );
     Ok(())
 }
 
@@ -205,8 +213,15 @@ pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) = prepared;
-    UnitDirectZeroReduceRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
-    HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input);
+    let binding = tensors.bind(&blueprint, &grid)?.map(input, identity);
+    UnitDirectZeroReduceRoutine::zero_unbound(tensors, zero_blueprint, zero_grid)?;
+    launch_atomic::<I>(
+        tensors.problem(),
+        tensors.client(),
+        binding,
+        blueprint,
+        grid,
+    );
     Ok(())
 }
 
@@ -216,8 +231,7 @@ fn launch_first_served<R: ReduceRoutine<M>, M>(
     tensors: &ReduceTensors,
 ) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare_first_served(hw, tensors.problem())?;
-    R::launch(tensors, blueprint, grid);
-    Ok(())
+    R::launch(tensors, blueprint, grid)
 }
 
 #[cfg(test)]

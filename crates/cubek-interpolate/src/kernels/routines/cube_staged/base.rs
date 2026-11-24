@@ -141,14 +141,14 @@ impl InterpolateRoutine for CubeStagedInterpolateRoutine {
         tensors: &InterpolateTensors,
         blueprint: CubeStagedInterpolateRoutineBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
         let binding = tensors.bind(
             &blueprint.partitioning,
             blueprint.width,
             blueprint.checked,
             &grid,
-        );
+        )?;
         cube_staged_interpolate_kernel::launch::<F>(
             tensors.client(),
             grid.launch.cube_count,
@@ -162,5 +162,6 @@ impl InterpolateRoutine for CubeStagedInterpolateRoutine {
             blueprint.microkernel,
             problem.element,
         );
+        Ok(())
     }
 }

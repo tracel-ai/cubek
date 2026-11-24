@@ -84,8 +84,7 @@ fn launch_tested<R: ReduceRoutine<M>, M>(
         .map(|settings| R::prepare(hw, problem, settings))
         .reduce(|first, next| first.or(next))
         .unwrap_or(Err(ROUTINE_LISTS_NO_SETTING))?;
-    R::launch(tensors, blueprint, grid);
-    Ok(())
+    R::launch(tensors, blueprint, grid)
 }
 
 /// `shape` reduced along `axis` by `operation`, through the routine `routine` names.
@@ -312,8 +311,7 @@ fn launch_unbound<R: ReduceRoutine<M>, M>(
     let tensors = unbound_tensors::<R, M>(client, &input, out, reduction)?;
     let hw = Hardware::from_client(client);
     let (blueprint, grid) = R::prepare_first_served(&hw, tensors.problem())?;
-    R::launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input));
-    Ok(())
+    R::launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input))
 }
 
 /// The atomic hypercube launched unbound as [`launch_unbound`] launches a routine, into `out`
@@ -750,7 +748,7 @@ impl ScopeUnderTest for ZeroScopeUnderTest {
         let hw = Hardware::from_client(client);
         let (blueprint, grid) =
             UnitDirectZeroReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
-        UnitDirectZeroReduceRoutine::launch(&tensors, blueprint, grid);
+        UnitDirectZeroReduceRoutine::launch(&tensors, blueprint, grid)?;
         Ok(vec![written_output(out, reduction)])
     }
 

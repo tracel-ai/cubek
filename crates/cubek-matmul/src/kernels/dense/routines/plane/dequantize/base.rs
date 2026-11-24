@@ -21,6 +21,12 @@ use cubek_std::matmul_dimensions::{K, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
+/// A decode prepared over a float input.
+const DEQUANTIZE_OF_A_FLOAT_INPUT: Decline = Decline::Broken {
+    condition: "a decode is prepared over a packed input",
+    cause: None,
+};
+
 /// A packed input decoded into a float one, in dense rows of the dimension its words do not run
 /// along: the first launch of a product that then runs the float routine. It places the plane
 /// shuffle routine's microkernel over the packed input alone, as the `[k, n]` input of a product of
@@ -81,7 +87,11 @@ impl PlaneDequantizeMatmulRoutine {
             },
         );
         let (blueprint, grid) = PlaneDequantizeMatmulRoutine::prepare(hw, problem, settings)?;
-        let packing = &problem.inputs.rhs.packing().expect(MatmulView::PREPARED);
+        let packing = &problem
+            .inputs
+            .rhs
+            .packing()
+            .ok_or(DEQUANTIZE_OF_A_FLOAT_INPUT)?;
         let lined = packing.operand.lined();
         // Rows of the dimension the words do not run along, a line of the dimension they do in
         // each.
@@ -102,9 +112,9 @@ impl PlaneDequantizeMatmulRoutine {
                     blueprint.partitioning.kernel(),
                     blueprint.partitioning.as_tile().space().clone(),
                 )
-            }),
+            })?,
             blueprint.widths.rhs,
-        );
+        )?;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; it holds no shared memory.

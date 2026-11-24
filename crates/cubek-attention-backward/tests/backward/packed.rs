@@ -226,6 +226,7 @@ fn check_packed(case: Case) {
                 }
                 read += 1;
             }
+            Err(broken) if broken.is_broken() => panic!("{settings}: {broken}"),
             Err(Decline::Unserved { why }) => eprintln!("{settings}: declined, {why}"),
             Err(decline) => eprintln!("{settings}: declined, {decline:?}"),
         }

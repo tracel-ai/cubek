@@ -129,21 +129,29 @@ impl Routine for HypercubeAtomicReduceRoutine {
 impl ReduceRoutine<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine {
     const NAME: &'static str = "hypercube-atomic-reduce";
 
-    /// Never reached: [`launch`](Self::launch) and [`launch_unbound`](Self::launch_unbound) bind
-    /// the output as the atomic argument the kernel adds into, which a plain output tensor is not.
+    /// Always [`Decline::Broken`]: [`launch`](Self::launch) and
+    /// [`launch_unbound`](Self::launch_unbound) bind the output as the atomic argument the kernel
+    /// adds into, which a plain output tensor is not.
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         _problem: &ReduceRoutineProblem,
         _client: &Client,
         _binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         _blueprint: HypercubeAtomicReduceBlueprint,
         _grid: Grid,
-    ) {
-        unreachable!("the atomic hypercube binds its output in `launch` and `launch_unbound`")
+    ) -> Result<(), Decline> {
+        Err(Decline::Broken {
+            condition: "the atomic hypercube binds its output in `launch` and `launch_unbound`",
+            cause: None,
+        })
     }
 
     /// `tensors` reduced on `grid`, each cube's total added into the output.
-    fn launch(tensors: &ReduceTensors, blueprint: HypercubeAtomicReduceBlueprint, grid: Grid) {
-        let binding = tensors.bind(&blueprint, &grid).map(Bound::arg, identity);
+    fn launch(
+        tensors: &ReduceTensors,
+        blueprint: HypercubeAtomicReduceBlueprint,
+        grid: Grid,
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?.map(Bound::arg, identity);
         launch_atomic::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
@@ -151,6 +159,7 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine
             blueprint,
             grid,
         );
+        Ok(())
     }
 
     /// `tensors`, whose input the caller binds, reduced on `grid`, each cube's total added into
@@ -160,8 +169,8 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine
         blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) {
-        let binding = tensors.bind(&blueprint, &grid).map(input, identity);
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?.map(input, identity);
         launch_atomic::<I>(
             tensors.problem(),
             tensors.client(),
@@ -169,12 +178,13 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for HypercubeAtomicReduceRoutine
             blueprint,
             grid,
         );
+        Ok(())
     }
 }
 
 /// The kernel `blueprint` compiles for `problem`, launched on `grid`, its input served as `I`
 /// serves it and its output bound as the atomic argument the kernel adds into.
-fn launch_atomic<I: TileOperand>(
+pub(crate) fn launch_atomic<I: TileOperand>(
     problem: &ReduceRoutineProblem,
     client: &Client,
     binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Bound>,

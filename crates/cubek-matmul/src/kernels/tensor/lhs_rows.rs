@@ -5,7 +5,7 @@ use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::row_store::{ROWS, RowStore, WIDTH};
 use cubek_std::layout::stored::BlockScales;
 use cubek_std::matmul_dimensions::{K, M};
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
 /// What a tiled launch declines before preparing anything: an output that is not a float matrix
 /// of the producer's rows stored in tiles, at the producer's element.
@@ -58,13 +58,17 @@ impl TiledRows {
     }
 
     /// The matrix bound under `launcher` over the rows and the row span, `width` elements a line.
-    pub fn bind(&self, launcher: &Launcher, width: usize) -> Bound {
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<Bound, Decline> {
         launcher
             .arg(self.tensor.binding.clone(), self.tensor.elem)
             .dimensions(&[ROWS, WIDTH])
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS)
+            .or_broken(ADMITTED_PLAN_RUNS)
     }
 }
 
@@ -120,7 +124,11 @@ impl PackedRows {
     /// The matrix as one tile of its words under their scales under `launcher`, a load as wide as
     /// a line of the producer's rows, `width`, or a word, whichever is wider: a line of the stage
     /// the rows are encoded from lies inside one load.
-    pub fn bind(&self, launcher: &Launcher, width: usize) -> TileTensorLaunch {
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<TileTensorLaunch, Decline> {
         self.packed.bind(
             launcher,
             self.packed.scheme().num_quants().max(width),

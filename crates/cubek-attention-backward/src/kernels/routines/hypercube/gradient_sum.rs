@@ -36,20 +36,23 @@ impl HypercubeGradientSumRoutine {
             cubes_with_heads_apart(tiling, problem.group)
         })
     }
-
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &HypercubeKeyWalkBlueprint,
         key_sums: &KeyGradientSums,
         query_sum: &QueryGradientSum,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let bind_sum = |tensor, operand| tensors.bind_beside(&binding, walk, tensor, operand);
-        let key_summed = bind_sum(&key_sums.key, AttentionBackwardOperand::KeyGradient);
-        let value_summed = bind_sum(&key_sums.value, AttentionBackwardOperand::ValueGradient);
-        let query_summed = bind_sum(&query_sum.0, AttentionBackwardOperand::QueryGradient);
+        let key_summed = bind_sum(&key_sums.key, AttentionBackwardOperand::KeyGradient)?;
+        let value_summed = bind_sum(&key_sums.value, AttentionBackwardOperand::ValueGradient)?;
+        let query_summed = bind_sum(&query_sum.0, AttentionBackwardOperand::QueryGradient)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -80,5 +83,6 @@ impl HypercubeGradientSumRoutine {
                 problem.element,
             );
         }
+        Ok(())
     }
 }

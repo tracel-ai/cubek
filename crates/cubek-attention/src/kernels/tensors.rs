@@ -23,8 +23,8 @@ use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, B, CacheLines, D, DV, G, KV, Q, S,
 };
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
 /// What a launch declines before preparing anything: an element the routines do not take, or
 /// operands of two elements other than an FP8 score's.
@@ -617,11 +617,15 @@ impl AttentionTensors {
     /// ([`AttentionMicrokernel::served`]), each side of a float cache under its per-tensor scale
     /// ([`KvSource::scales`]). A packed cache binds no tile: its kernel decodes it as it reads it
     /// ([`AttentionCacheBinding::Packed`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
     pub fn bind<M: AttentionMicrokernel, SM>(
         &self,
         blueprint: &AttentionBlueprint<M, SM>,
         grid: &Grid,
-    ) -> AttentionBinding {
+    ) -> Result<AttentionBinding, Decline> {
         let partitioning = &blueprint.partitioning;
         let launcher = Launcher::new(
             &self.client,
@@ -632,7 +636,7 @@ impl AttentionTensors {
                 cube_dim: grid.launch.cube_dim,
             },
         )
-        .expect(ADMITTED_PLAN_RUNS);
+        .or_broken(ADMITTED_PLAN_RUNS)?;
         let widths = blueprint.widths;
         let problem = self.problem();
         let read = blueprint.microkernel.served(&problem.work_item()).elements;
@@ -706,8 +710,8 @@ impl AttentionTensors {
                     ),
                     Indexing::Run(Q),
                 )
-                .expect(ADMITTED_PLAN_RUNS),
-            None => bound,
+                .or_broken(ADMITTED_PLAN_RUNS),
+            None => Ok(bound),
         };
         let query = runs(
             read_operand(
@@ -718,9 +722,9 @@ impl AttentionTensors {
             )
             .delivery(query_delivery)
             .build()
-            .expect(ADMITTED_PLAN_RUNS)
+            .or_broken(ADMITTED_PLAN_RUNS)?
             .arg(),
-        );
+        )?;
         let planned = blueprint
             .microkernel
             .delivery(&widths, &problem.work_item());
@@ -748,7 +752,7 @@ impl AttentionTensors {
                         let arg = read_operand(tensor, dimensions, width, operand)
                             .delivery(delivery(operand, planned))
                             .build()
-                            .expect(ADMITTED_PLAN_RUNS)
+                            .or_broken(ADMITTED_PLAN_RUNS)?
                             .arg();
                         let arg = match scale {
                             Some(scale) => arg.scales(scale),
@@ -757,8 +761,8 @@ impl AttentionTensors {
                         match &self.kv.pages {
                             Some(pages) => arg
                                 .indexed_covering(page_table(pages), Indexing::Coordinate(B))
-                                .expect(ADMITTED_PLAN_RUNS),
-                            None => arg,
+                                .or_broken(ADMITTED_PLAN_RUNS),
+                            None => Ok(arg),
                         }
                     };
                 let order = blueprint.microkernel.cache_order();
@@ -784,7 +788,7 @@ impl AttentionTensors {
                     widths.key,
                     AttentionOperand::Key,
                     scales.key.as_ref().map(|scale| per_tensor(scale, D)),
-                );
+                )?;
                 let value = read_side(
                     value,
                     &[B, KV, S, DV],
@@ -792,11 +796,11 @@ impl AttentionTensors {
                     widths.value,
                     AttentionOperand::Value,
                     scales.value.as_ref().map(|scale| per_tensor(scale, DV)),
-                );
+                )?;
                 AttentionCacheBinding::Tiles { key, value }
             }
             AttentionCache::Packed(cache) => {
-                AttentionCacheBinding::Packed(cache.bind(&launcher, self.kv.pages.as_ref()))
+                AttentionCacheBinding::Packed(cache.bind(&launcher, self.kv.pages.as_ref())?)
             }
         };
         let out = runs(
@@ -807,22 +811,30 @@ impl AttentionTensors {
                 problem.elements.out,
             )
             .build()
-            .expect(ADMITTED_PLAN_RUNS)
+            .or_broken(ADMITTED_PLAN_RUNS)?
             .arg(),
-        );
+        )?;
         // A value a query, written by whoever holds its row.
-        let logsumexp = self.logsumexp.as_ref().map(|(_, view)| {
-            arg(view, &[B, KV, G, Q], 1, AttentionRoutineProblem::SUM)
-                .build()
-                .expect(ADMITTED_PLAN_RUNS)
-        });
+        let logsumexp = self
+            .logsumexp
+            .as_ref()
+            .map(|(_, view)| {
+                arg(view, &[B, KV, G, Q], 1, AttentionRoutineProblem::SUM)
+                    .build()
+                    .or_broken(ADMITTED_PLAN_RUNS)
+            })
+            .transpose()?;
         // A cell a read: a mask broadcast over a dim lies there at stride zero.
-        let mask = self.mask.as_ref().map(|mask| {
-            arg(mask, &[B, KV, G, Q, S], 1, mask.elem)
-                .build()
-                .expect(ADMITTED_PLAN_RUNS)
-        });
-        AttentionBinding {
+        let mask = self
+            .mask
+            .as_ref()
+            .map(|mask| {
+                arg(mask, &[B, KV, G, Q, S], 1, mask.elem)
+                    .build()
+                    .or_broken(ADMITTED_PLAN_RUNS)
+            })
+            .transpose()?;
+        Ok(AttentionBinding {
             launcher,
             query,
             cache,
@@ -834,7 +846,7 @@ impl AttentionTensors {
                 .query_runs
                 .as_ref()
                 .map(|(ends, _)| ends.binding.clone().into_tensor_arg()),
-        }
+        })
     }
 
     /// The slots the cubes sharing a box of queries leave their partials in, one for each of the

@@ -2,7 +2,8 @@
 //! cases, launches the scope on each, and says what the reference writes; [`ScopeUnderTest::check`]
 //! compares the two at the case's tolerance and hands the outcome to the active test policy. A
 //! scope that refuses a case on the device is a skip, which the policy decides on, never a pass;
-//! a launch it accepted and the device failed is a failure.
+//! a launch it accepted and the device failed is a failure, and so is one it claims and finds
+//! broken ([`Decline::Broken`]).
 //!
 //! The reference is the scope's own: a microkernel's is written for what it computes alone, a
 //! kernel's for what its routines compute, even where the two happen to agree.
@@ -34,7 +35,8 @@ pub trait ScopeUnderTest {
     ///
     /// # Errors
     ///
-    /// Why the device runs no such scope at `case`: a skip, not a failure.
+    /// Why the device runs no such scope at `case`: a skip, not a failure, unless it is
+    /// [`Decline::Broken`].
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline>;
 
     /// What the scope must write for `case`, computed on the host: one value per output
@@ -102,10 +104,19 @@ pub trait ScopeUnderTest {
 
     /// The outcome of one case the scope launched, or why it refused the case. Only a refusal
     /// is a skip: a launch the scope accepted and the device then failed, compiling it, short of
-    /// a resource or running it, fails, since the scope promised what it could not keep.
+    /// a resource or running it, fails, since the scope promised what it could not keep. One it
+    /// refuses as [`Decline::Broken`] fails as well: it is a bug in the scope.
     #[track_caller]
     fn attempt(&self, client: &Client, case: &Self::Case) -> Result<TestOutcome, Decline> {
-        let written = self.launch(client, case)?;
+        let written = match self.launch(client, case) {
+            Ok(written) => written,
+            Err(broken) if broken.is_broken() => {
+                return Ok(TestOutcome::Validated(ValidationResult::Fail(format!(
+                    "{case:?}: {broken}"
+                ))));
+            }
+            Err(refused) => return Err(refused),
+        };
         let handles: Vec<_> = written.iter().map(|output| &output.tensor.handle).collect();
         if let ExecutionOutcome::CompileError(why) = ExecutionOutcome::of_outputs(client, &handles)
         {
@@ -135,5 +146,51 @@ pub trait ScopeUnderTest {
             }
         }
         Ok(TestOutcome::Validated(ValidationResult::Pass))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scope that refuses its one case for the reason it holds.
+    struct Refusing(Decline);
+
+    impl ScopeUnderTest for Refusing {
+        type Case = ();
+
+        fn launch(&self, _client: &Client, _case: &()) -> Result<Vec<Written>, Decline> {
+            Err(self.0.clone())
+        }
+
+        fn reference(&self, _case: &()) -> Vec<HostData> {
+            Vec::new()
+        }
+
+        fn tolerance(&self, _case: &()) -> f32 {
+            0.
+        }
+    }
+
+    fn outcome(refusal: Decline) -> TestOutcome {
+        Refusing(refusal).outcome(&cubecl::test_device().client(), &())
+    }
+
+    #[test]
+    fn a_launch_the_scope_does_not_claim_is_a_skip() {
+        assert!(matches!(
+            outcome(Decline::NoUnits),
+            TestOutcome::Validated(ValidationResult::Skipped(_))
+        ));
+    }
+
+    #[test]
+    fn a_launch_the_scope_claims_and_finds_broken_fails() {
+        let broken = Decline::broken_by("the cube holds units", Decline::NoUnits);
+
+        assert!(matches!(
+            outcome(broken),
+            TestOutcome::Validated(ValidationResult::Fail(_))
+        ));
     }
 }
