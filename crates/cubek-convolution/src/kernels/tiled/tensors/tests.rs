@@ -231,6 +231,54 @@ fn a_tiled_tensor_of_a_grouped_convolution_is_refused() {
     assert_eq!(declined, ConvDecline::PermutedTiled.into());
 }
 
+/// A forward of 32 filters whose bias has `shape` and `element`, the sum's by default.
+fn forward_with_bias(shape: [usize; 1], element: Option<ElemType>) -> Decline {
+    let client = cubecl::test_device().client();
+    let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
+        lhs: F16,
+        rhs: F16,
+        out: F16,
+    });
+    let element = element.unwrap_or(dtypes.acc_global);
+    let dense = |shape: &[usize], element| -> TensorBinding {
+        TensorHandle::empty(&client, shape.to_vec(), element).binding()
+    };
+    ConvTensors::forward(
+        &client,
+        InputBinding::new(dense(&[1, 6, 6, 64], F16), F16),
+        InputBinding::new(dense(&[32, 3, 3, 64], F16), F16),
+        Some(InputBinding::new(dense(&shape, element), element)),
+        dense(&[1, 6, 6, 32], F16),
+        &SAME,
+        dtypes,
+    )
+    .expect_err("the tensors were accepted")
+}
+
+/// A bias is one value for each output channel.
+#[test]
+fn a_bias_of_fewer_values_than_the_output_channels_is_refused() {
+    assert_eq!(forward_with_bias([31], None), ConvDecline::BiasShape.into());
+}
+
+/// A bias is of the element the output channels are summed in.
+#[test]
+fn a_bias_of_another_element_than_the_sum_is_refused() {
+    let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
+        lhs: F16,
+        rhs: F16,
+        out: F16,
+    });
+    let other = match dtypes.acc_global == F32 {
+        true => F16,
+        false => F32,
+    };
+    assert_eq!(
+        forward_with_bias([32], Some(other)),
+        ConvDecline::BiasElement.into()
+    );
+}
+
 #[test]
 fn the_channel_axis_splits_by_shape_and_strides() {
     let client = cubecl::test_device().client();

@@ -1,12 +1,12 @@
 use crate::kernels::tiled::BiasTile;
-use cubecl::tile::{Dimension, Partitioning, Region, SoftwareMatmul, Tile, TileTensor};
+use cubecl::tile::{Dimension, Partitioning, SoftwareMatmul, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::matmul::plane::plane_window_microkernel;
 
 /// Every plane of the launch, each of its units contracting its block of the output against the
 /// gathered input and the rhs, read straight from global memory. The block is written as a memory
 /// window, whose leaf walks every contracted dimension itself: a register accumulator cannot step a
-/// gathered operand. A plane whose box starts past the output on any bounded dimension does
+/// gathered operand. A plane whose box starts past the output on any bounded dimension contracts
 /// nothing. A bias is added to a plane's box once its units are done.
 #[allow(
     clippy::extra_unused_type_parameters,
@@ -42,22 +42,10 @@ pub fn plane_window_conv_kernel<EA: Numeric, EL: Numeric, EO: Float>(
             inside = inside && plane.origin(dimension) < *extents.index(i);
         }
         if inside {
-            contract_and_bias::<EO>(plane, &input, &rhs, &out, &bias, block);
+            plane_window_microkernel(plane.clone(), &input, &rhs, &out, block);
         }
+        // Every plane reaches the bias barrier. One past the edge only touches cells the tile
+        // masks.
+        BiasTile::add_to::<EO>(&bias, &out, &plane);
     }
-}
-
-/// The plane's box of the output, then its bias: the units' blocks are the whole contraction each,
-/// so the bias joins finished cells.
-#[cube]
-fn contract_and_bias<EO: Float>(
-    plane: Region,
-    input: &Tile,
-    rhs: &Tile,
-    out: &Tile,
-    bias: &ComptimeOption<BiasTile>,
-    #[comptime] block: SoftwareMatmul,
-) {
-    plane_window_microkernel(plane.clone(), input, rhs, out, block);
-    BiasTile::add_to::<EO>(bias, out, &plane);
 }

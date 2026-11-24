@@ -2,7 +2,7 @@ use super::block::{BlockDepth, BlockForm};
 use super::kernel::plane_window_conv_kernel;
 use super::settings::{PlaneWindowConvSettings, UnitBlock};
 use crate::kernels::tiled::{
-    ConvBias, ConvBinding, ConvPartitioning, ConvProblem, ConvRoles, ConvRoutine, ConvStaging,
+    ConvBinding, ConvPartitioning, ConvProblem, ConvRoles, ConvRoutine, ConvStaging,
     TileConvBlueprint,
 };
 use core::num::NonZeroUsize;
@@ -192,12 +192,6 @@ impl PlaneWindowConvRoutine {
         let roles = problem.roles();
         let dimensions = roles.dimensions();
         let runs_along = |dimension| dimensions.dim(dimension);
-        // The bias is added through a one-wide view of the output.
-        if problem.bias == ConvBias::PerChannel {
-            vectorization.require(VectorRequirement::Elementwise {
-                operand: MatmulOperand::Out,
-            });
-        }
         let lhs_access = (runs_along(roles.inner.lhs) == Some(MatmulDim::K)).then(|| {
             VectorRequirement::Access {
                 operand: MatmulOperand::Lhs,

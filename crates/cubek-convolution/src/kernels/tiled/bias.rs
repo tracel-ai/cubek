@@ -24,12 +24,12 @@ impl BiasTile {
         }
     }
 
-    /// Waits for the whole cube where there is a bias, before planes read back an output the
-    /// cube wrote together.
+    /// Waits for the whole cube, storage memory included, where there is a bias, before planes
+    /// read back an output the cube wrote together.
     pub fn wait_for_cube(bias: &ComptimeOption<BiasTile>) {
         #[comptime]
         match bias {
-            ComptimeOption::Some(_) => sync_cube(),
+            ComptimeOption::Some(_) => sync_storage(),
             ComptimeOption::None => {}
         }
     }
@@ -48,7 +48,7 @@ impl BiasTile {
 #[cube]
 impl BiasTile {
     fn add<EO: Float>(&self, out: &Tile, plane: &Region) {
-        sync_plane();
+        sync_plane_storage();
         out.at(plane)
             .along(CO)
             .scale_add::<EO>(EO::from_int(1), &self.values.at(plane));
