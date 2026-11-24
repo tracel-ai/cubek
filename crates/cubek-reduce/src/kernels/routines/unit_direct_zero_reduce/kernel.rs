@@ -21,6 +21,6 @@ pub(crate) fn unit_direct_zero_reduce_kernel<Out: Numeric>(
     let o = out.tile_mut(&partitioning);
     for unit in &partitioning {
         let mut cells = o.at(&unit);
-        microkernel.runtime().execute(&mut cells);
+        microkernel.runtime().zero(&mut cells);
     }
 }

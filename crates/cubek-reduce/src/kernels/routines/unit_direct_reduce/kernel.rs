@@ -29,7 +29,7 @@ pub(crate) fn unit_direct_reduce_kernel<
     for unit in &partitioning {
         let mut rows_out = o.at(&unit);
         let rows = x.at(&unit);
-        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
             &rows,
             &mut rows_out,
             &ComptimeOption::new_None(),
@@ -67,7 +67,7 @@ pub(crate) fn unit_direct_reduce_with_indices_kernel<
     for unit in &partitioning {
         let mut rows_out = o.at(&unit);
         let rows = x.at(&unit);
-        microkernel.runtime().execute::<In, Acc, Out, Idx, N>(
+        microkernel.runtime().reduce::<In, Acc, Out, Idx, N>(
             &rows,
             &mut rows_out,
             &ComptimeOption::new_Some(i.at(&unit)),

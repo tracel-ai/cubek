@@ -24,13 +24,12 @@ pub struct ReduceWorkItem {
 }
 
 impl ReduceWorkItem {
-    /// What one unit of any reduce microkernel works with: vector arithmetic, and registers for a
-    /// value and an index a slot of the row it writes, beside two of its own.
+    /// What one unit works with: vector arithmetic, and registers for its carrier's lines beside
+    /// two of its own.
     pub fn unit_work(&self) -> UnitWork {
-        let slots = self.operation.written_per_row() as u32;
         UnitWork {
             instruction: ArithmeticInstruction::Vector,
-            registers: 2 * slots + 2,
+            registers: self.operation.carrier().lines() as u32 + 2,
         }
     }
 
@@ -120,11 +119,11 @@ mod tests {
         );
     }
 
-    /// A unit holds a value and an index a slot, beside two registers of its own.
+    /// A unit holds its carrier's lines, beside two registers of its own.
     #[test]
-    fn a_unit_holds_two_registers_a_slot_and_two() {
+    fn a_unit_holds_its_carriers_lines_and_two() {
         const K: u32 = 3;
-        let work = item(ReduceOperation::TopK { k: K as usize }, REDUCED, false).unit_work();
+        let work = item(ReduceOperation::ArgTopK { k: K as usize }, REDUCED, false).unit_work();
         assert_eq!(work.registers, 2 * K + 2);
     }
 

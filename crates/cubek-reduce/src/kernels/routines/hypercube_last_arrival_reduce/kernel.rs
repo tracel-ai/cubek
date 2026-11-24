@@ -90,7 +90,7 @@ pub(crate) fn hypercube_last_arrival_reduce_kernel<
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
             &rows,
             &mut rows_out,
             &ComptimeOption::new_None(),
@@ -147,7 +147,7 @@ pub(crate) fn hypercube_last_arrival_reduce_indexed_kernel<
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
             &rows,
             &mut rows_out,
             &ComptimeOption::new_None(),
@@ -207,7 +207,7 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
         let rows = x.at(&cube);
         let mut rows_out = o.at(&cube);
         let mut slots = p.at(&cube);
-        microkernel.runtime().execute::<In, Acc, Out, Idx, N>(
+        microkernel.runtime().reduce::<In, Acc, Out, Idx, N>(
             &rows,
             &mut rows_out,
             &ComptimeOption::new_Some(i.at(&cube)),

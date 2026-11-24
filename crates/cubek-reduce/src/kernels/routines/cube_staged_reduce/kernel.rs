@@ -27,7 +27,7 @@ pub(crate) fn cube_staged_reduce_kernel<
     let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     for cube in &partitioning {
-        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
             &cube,
             &x,
             &o,
@@ -67,6 +67,6 @@ pub(crate) fn cube_staged_reduce_with_indices_kernel<
     for cube in &partitioning {
         microkernel
             .runtime()
-            .execute::<In, Acc, Out, Idx, N>(&cube, &x, &o, &indices);
+            .reduce::<In, Acc, Out, Idx, N>(&cube, &x, &o, &indices);
     }
 }

@@ -27,7 +27,7 @@ pub(crate) fn plane_shuffle_reduce_kernel<
     let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     for plane in &partitioning {
-        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
+        microkernel.runtime().reduce::<In, Acc, Out, Out, N>(
             &plane,
             &x,
             &o,
@@ -67,6 +67,6 @@ pub(crate) fn plane_shuffle_reduce_with_indices_kernel<
     for plane in &partitioning {
         microkernel
             .runtime()
-            .execute::<In, Acc, Out, Idx, N>(&plane, &x, &o, &indices);
+            .reduce::<In, Acc, Out, Idx, N>(&plane, &x, &o, &indices);
     }
 }

@@ -49,14 +49,14 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its item writes the indices beside the values and `indices` is none, or writes
-    /// indices its carrier does not keep; or where its carrier keeps indices and
-    /// `partial_indices` is none.
+    /// Where `indices` is there and its item does not write them beside the values, or the other
+    /// way around; or where it writes indices its carrier does not keep; or where `partial_indices` is there and its carrier
+    /// keeps no index, or the other way around.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"
     )]
-    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    pub fn reduce<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,
         out: &mut Tile,
@@ -130,8 +130,8 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
         self.part.vectorize(&(), vectorization);
     }
 
-    /// Each unit holds its carrier and one line; each cube a slot of the carrier a plane, and the
-    /// merging unit the merged carrier and one partial.
+    /// The merging unit holds the merged carrier and one partial, beside two registers of its own:
+    /// a lower bound.
     fn estimate(
         &self,
         _item: &ReduceWorkItem,
@@ -139,10 +139,10 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let slots = self.part.item().operation.written_per_row() as u32;
+        let lines = self.part.item().operation.carrier().lines() as u32;
         estimate.work = Some(UnitWork {
             instruction: ArithmeticInstruction::Vector,
-            registers: 4 * slots + 2,
+            registers: 2 * lines + 2,
         });
     }
 }

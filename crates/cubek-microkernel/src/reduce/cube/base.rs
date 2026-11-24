@@ -1,7 +1,6 @@
-use super::microkernel::{cube_staged_reduce_microkernel, cube_staged_reduce_part};
+use super::microkernel::cube_staged_reduce_microkernel;
 use crate::reduce::{
-    REDUCED, ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across,
-    units_across,
+    REDUCED, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across, units_across,
 };
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Dimension, Levels, Region, Tile};
@@ -122,9 +121,9 @@ impl CubeStagedReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its item writes the indices beside the values and `indices` is none, or writes
-    /// indices its carrier does not keep.
-    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    /// Where `indices` is there and its item does not write them beside the values, or the other
+    /// way around; or where it writes indices its carrier does not keep.
+    pub fn reduce<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         cube: &Region,
         input: &Tile,
@@ -136,29 +135,6 @@ impl CubeStagedReduceMicrokernel {
             input,
             out,
             indices,
-            comptime!(CubeStagedReduceMicrokernel {
-                item: self.item,
-                lanes: self.lanes,
-                planes: self.planes,
-                lane_slots: self.lane_slots,
-                lines_across: self.lines_across
-            }),
-        )
-    }
-
-    /// The first `count` lines of `input` accumulated by the cube into `C`, the line at `l` read
-    /// as line `first_line + l` of its row: a part of a row that cubes split, which the cube's
-    /// first unit is left holding (`cube_staged_reduce_part`).
-    pub fn reduce_part<In: Numeric, Acc: Numeric, N: Size, C: ReduceAccumulator<Acc, N>>(
-        &self,
-        input: &Tile,
-        first_line: usize,
-        count: usize,
-    ) -> C {
-        cube_staged_reduce_part::<In, Acc, N, C>(
-            input,
-            first_line,
-            count,
             comptime!(CubeStagedReduceMicrokernel {
                 item: self.item,
                 lanes: self.lanes,
@@ -257,7 +233,8 @@ impl Microkernel for CubeStagedReduceMicrokernel {
         vectorization.require(self.item.requirement());
     }
 
-    /// Each unit holds its carrier and one line; the cube a slot of the carrier a plane.
+    /// Each unit holds its carrier and one line, a lower bound; the cube a slot of the carrier a
+    /// plane.
     fn estimate(
         &self,
         _item: &ReduceWorkItem,
@@ -370,6 +347,36 @@ mod tests {
         let item = ReduceWorkItem::along_f32(ReduceOperation::ArgMax);
         let cube = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
         assert_eq!(cube.units(), LANES * PLANES);
+    }
+
+    /// One line of rows wide, its levels make the whole cube a plane of the launch.
+    #[test]
+    fn one_line_wide_the_launchs_plane_is_the_cube() {
+        const LANES: usize = 32;
+        const PLANES: usize = 4;
+        const LANE_SLOTS: usize = 32;
+        let cube = CubeStagedReduceMicrokernel::new(item(), LANES, PLANES, LANE_SLOTS);
+        assert_eq!(cube.launch_plane_width(), cube.units());
+    }
+
+    /// Several lines of rows wide, its levels split its units into its planes.
+    #[test]
+    fn several_lines_wide_the_launchs_plane_is_its_planes_lanes() {
+        const LANES: usize = 32;
+        const PLANES: usize = 4;
+        const LANE_SLOTS: usize = 32;
+        const WIDTH: usize = 4;
+        const ROWS: usize = 64;
+        let across = ReduceWorkItem {
+            lines_along: crate::reduce::BATCH,
+            ..item()
+        };
+        let cube = CubeStagedReduceMicrokernel::new(across, LANES, PLANES, LANE_SLOTS).across_rows(
+            &devices::m2_pro(),
+            WIDTH,
+            ROWS,
+        );
+        assert_eq!(cube.launch_plane_width(), LANES);
     }
 
     /// A cube's shared memory is a carrier's slot a plane.

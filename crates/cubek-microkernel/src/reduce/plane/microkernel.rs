@@ -83,62 +83,109 @@ fn plane_shuffle_reduce<
     indices: &ComptimeOption<Tile>,
     #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
 ) {
-    let item = microkernel.item();
-    let monoid = item.operation.monoid();
-    if microkernel.lines_across() == 1 {
-        // One line of rows wide: each lane takes every `lanes`-th line of the plane's window,
-        // consecutive lanes reading consecutive lines, and the lanes meet across the plane.
-        let rows = input.at(plane);
-        let count = rows.flat::<In, N>().shape();
-        let acc = unit_strided_reduce_microkernel::<In, Acc, N, C>(
-            &rows,
-            UNIT_POS_PLANE as usize,
-            count,
-            0,
-            comptime!(UnitStridedReduceMicrokernel::new(item, microkernel.lanes())),
-        );
-        let total = C::across(acc, UnitShare::Plane, monoid);
-
-        if UNIT_POS_PLANE == 0 {
-            let load = rows.vector_tile();
-            let row_lanes = comptime!(load.extent_along(REDUCED));
-            let mut rows_out = out.at(plane);
-            let rows_indices = indices.clone().map(|tile| tile.at(plane));
-            unit_carrier_write_microkernel::<Out, Idx, Acc, N, C>(
-                total,
-                &mut rows_out,
-                &rows_indices,
-                count * row_lanes,
-                comptime!(UnitCarrierWriteMicrokernel::new(item, row_lanes)),
-            );
-        }
-    } else {
-        // `lines_across` lines of rows wide: the units of a column hold the low bits of the lane,
-        // as `plane`'s units level lays the reduced dimension innermost, so a column meets across
-        // those bits alone.
-        let columns = microkernel.lines_across();
-        let per_column = microkernel.lanes() / columns;
-        let window = input.at(plane);
-        let values = window.flat::<In, N>().shape() / columns;
-        let acc = unit_walk_reduce_microkernel::<In, Acc, N, C>(
+    match microkernel.lines_across() == 1 {
+        true => plane_shuffle_reduce_line::<In, Acc, Out, Idx, N, C>(
             plane,
             input,
-            values,
-            comptime!(UnitWalkReduceMicrokernel::new(item, per_column)),
-        );
-        let column = comptime!(UnitShare::Group {
-            unit_bits: per_column - 1
-        });
-        let total = C::across(acc, column, monoid);
-        unit_walk_write_microkernel::<Out, Idx, Acc, N, C>(
-            plane,
-            total,
             out,
             indices,
-            values,
-            comptime!(UnitWalkWriteMicrokernel::new(item)),
+            microkernel,
+        ),
+        false => plane_shuffle_reduce_columns::<In, Acc, Out, Idx, N, C>(
+            plane,
+            input,
+            out,
+            indices,
+            microkernel,
+        ),
+    }
+}
+
+/// [`plane_shuffle_reduce`] one line of rows wide: each lane takes every `lanes`-th line of the
+/// plane's window, consecutive lanes reading consecutive lines, and the lanes meet across the plane.
+#[cube]
+fn plane_shuffle_reduce_line<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+    C: ReduceAccumulator<Acc, N> + Clone,
+>(
+    plane: &Region,
+    input: &Tile,
+    out: &Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
+) {
+    let item = microkernel.item();
+    let rows = input.at(plane);
+    let count = rows.flat::<In, N>().shape();
+    let acc = unit_strided_reduce_microkernel::<In, Acc, N, C>(
+        &rows,
+        UNIT_POS_PLANE as usize,
+        count,
+        0,
+        comptime!(UnitStridedReduceMicrokernel::new(item, microkernel.lanes())),
+    );
+    let total = C::across(acc, UnitShare::Plane, item.operation.monoid());
+
+    let load = rows.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
+    let mut rows_out = out.at(plane);
+    let rows_indices = indices.clone().map(|tile| tile.at(plane));
+    if UNIT_POS_PLANE == 0 {
+        unit_carrier_write_microkernel::<Out, Idx, Acc, N, C>(
+            total,
+            &mut rows_out,
+            &rows_indices,
+            count * row_lanes,
+            comptime!(UnitCarrierWriteMicrokernel::new(item, row_lanes)),
         );
     }
+}
+
+/// [`plane_shuffle_reduce`] [`lines_across`](PlaneShuffleReduceMicrokernel::lines_across) lines of
+/// rows wide: the units of a column hold the low bits of the lane, as `plane`'s units level lays the
+/// reduced dimension innermost, so a column meets across those bits alone.
+#[cube]
+fn plane_shuffle_reduce_columns<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+    C: ReduceAccumulator<Acc, N> + Clone,
+>(
+    plane: &Region,
+    input: &Tile,
+    out: &Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
+) {
+    let item = microkernel.item();
+    let columns = microkernel.lines_across();
+    let per_column = microkernel.lanes() / columns;
+    let window = input.at(plane);
+    let values = window.flat::<In, N>().shape() / columns;
+    let acc = unit_walk_reduce_microkernel::<In, Acc, N, C>(
+        plane,
+        input,
+        values,
+        comptime!(UnitWalkReduceMicrokernel::new(item, per_column)),
+    );
+    let column = comptime!(UnitShare::Group {
+        unit_bits: per_column - 1
+    });
+    let total = C::across(acc, column, item.operation.monoid());
+    unit_walk_write_microkernel::<Out, Idx, Acc, N, C>(
+        plane,
+        total,
+        out,
+        indices,
+        values,
+        comptime!(UnitWalkWriteMicrokernel::new(item)),
+    );
 }
 
 /// [`plane_shuffle_reduce_microkernel`] into a top-k of `k` slots, `K` bound in the

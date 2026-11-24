@@ -95,9 +95,9 @@ impl PlaneShuffleReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its item writes the indices beside the values and `indices` is none, or writes
-    /// indices its carrier does not keep.
-    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    /// Where `indices` is there and its item does not write them beside the values, or the other
+    /// way around; or where it writes indices its carrier does not keep.
+    pub fn reduce<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         plane: &Region,
         input: &Tile,
@@ -203,6 +203,26 @@ mod tests {
         assert_eq!(
             plane.lanes() as u32,
             hw.plane_dim().expect("a committed width")
+        );
+    }
+
+    /// Where its lines run along the row, its units read one line of rows.
+    #[test]
+    fn lines_along_the_row_lie_one_across() {
+        const LANES: usize = 32;
+        const LANE_SLOTS: usize = 32;
+        const WIDTH: usize = 4;
+        const ROWS: usize = 64;
+        let plane = PlaneShuffleReduceMicrokernel::new(
+            ReduceWorkItem::along_f32(ReduceOperation::Sum),
+            LANES,
+            LANE_SLOTS,
+        );
+        assert_eq!(
+            plane
+                .across_rows(&devices::m2_pro(), WIDTH, ROWS)
+                .lines_across(),
+            1
         );
     }
 

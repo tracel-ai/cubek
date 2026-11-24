@@ -67,6 +67,15 @@ impl ReduceCarrier {
         !matches!(self, Self::Values | Self::TopValues { .. })
     }
 
+    /// The lines it holds: one of values a slot and, where it carries indices, one of them beside
+    /// each.
+    pub const fn lines(self) -> usize {
+        match self.carries_indices() {
+            true => 2 * self.slots(),
+            false => self.slots(),
+        }
+    }
+
     /// Bytes one carrier of `width` lanes holds, its values `value_bytes` each and, where it
     /// carries indices, a `u32` beside each.
     pub const fn bytes(self, width: usize, value_bytes: usize) -> usize {
@@ -74,11 +83,17 @@ impl ReduceCarrier {
             true => value_bytes + size_of::<u32>(),
             false => value_bytes,
         };
-        let slots = match self {
+        self.slots() * width * lane
+    }
+}
+
+impl ReduceCarrier {
+    /// The values it keeps of a row.
+    const fn slots(self) -> usize {
+        match self {
             Self::TopK { k } | Self::TopValues { k } => k,
             Self::Values | Self::Indexed => 1,
-        };
-        slots * width * lane
+        }
     }
 }
 
@@ -268,6 +283,20 @@ const fn lines_at_least_one(lines: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A carrier of values and indices holds a line of each a slot.
+    #[test]
+    fn a_carrier_of_indices_holds_two_lines_a_slot() {
+        const K: usize = 3;
+        assert_eq!(ReduceCarrier::TopK { k: K }.lines(), 2 * K);
+    }
+
+    /// A carrier of values alone holds one.
+    #[test]
+    fn a_carrier_of_values_holds_one_line_a_slot() {
+        const K: usize = 3;
+        assert_eq!(ReduceCarrier::TopValues { k: K }.lines(), K);
+    }
 
     /// A test of each property of `$operation` its table row states: its monoid, its read map
     /// and its carrier.

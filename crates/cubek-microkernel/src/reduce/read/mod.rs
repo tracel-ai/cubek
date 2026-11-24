@@ -1,9 +1,12 @@
-//! How a unit reads its share of a row that several units read together, into its carrier: every
-//! `stride`-th line ([`UnitStridedReduceMicrokernel`]), or the cells a region's walk gives it
-//! ([`UnitWalkReduceMicrokernel`]).
+//! How one unit reads into its carrier: its share of a row that several units read together, every
+//! `stride`-th line ([`UnitStridedReduceMicrokernel`]) or the cells a region's walk gives it
+//! ([`UnitWalkReduceMicrokernel`]), or the partials several cubes stored of its rows
+//! ([`UnitPartialsReduceMicrokernel`]).
 
-mod base;
-mod microkernel;
+mod partials;
+mod strided;
+mod walk;
 
-pub use base::*;
-pub(crate) use microkernel::*;
+pub use partials::*;
+pub use strided::*;
+pub use walk::*;

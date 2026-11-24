@@ -9,7 +9,7 @@
 //! reads its lines through its window of the input and accumulates each as it lands, never holding the
 //! row, so a row as long as a vocabulary costs registers for one line; what tells the scopes apart
 //! is only where the partials meet. Each ends on one unit writing its carrier, or one a column where
-//! its units spread across lines of rows ([`write`]).
+//! its units spread across lines of rows ([`write`](mod@write)).
 
 mod accumulator;
 mod columns;
@@ -17,6 +17,7 @@ pub mod cube;
 pub mod hypercube;
 mod operand;
 mod operation;
+mod partial_indices;
 pub mod plane;
 pub mod read;
 pub mod unit;
@@ -27,4 +28,5 @@ pub use accumulator::*;
 pub(crate) use columns::*;
 pub use operand::*;
 pub use operation::*;
+pub(crate) use partial_indices::*;
 pub use work_item::*;

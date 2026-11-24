@@ -1,10 +1,10 @@
-//! The write every reduce microkernel ends on, alone: a unit's carrier of values written to its
-//! window of the output. The carrier is the unit's line of the input as it is, so the operations
-//! are those whose carrier is the values themselves, read as they are.
+//! The writes other microkernels share, alone: a unit's carrier of values written. The carrier is
+//! the unit's line of the input as it is, so the operations are those whose carrier is the values
+//! themselves, read as they are.
 
 use crate::launch::reduce::TestedMicrokernel;
 
-/// The microkernel under test.
+/// The write every reduce microkernel ends on, to the unit's window of the output.
 const MICROKERNEL: TestedMicrokernel = TestedMicrokernel::UnitCarrierWrite;
 
 /// Rows of four values, one line each: its lanes combined into the row's cell.
@@ -30,5 +30,32 @@ mod across_one_value_four_wide {
         mean: ReduceOperation::Mean,
         max: ReduceOperation::Max,
         min: ReduceOperation::Min,
+    ]);
+}
+
+/// The write after a walked read, a plane's units across two lines of rows.
+const WALK: TestedMicrokernel = TestedMicrokernel::UnitWalkWrite { columns: 2 };
+
+/// The store of a partial.
+const PARTIAL: TestedMicrokernel = TestedMicrokernel::UnitPartialStore;
+
+/// Each column's first unit's line of rows 300 values long, written as it is, a row a lane.
+mod walk_across_300_long_four_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(WALK, Across, 300, 4, Plain, [
+        sum: ReduceOperation::Sum,
+        mean: ReduceOperation::Mean,
+        max: ReduceOperation::Max,
+    ]);
+}
+
+/// Rows of one value, four rows a line: the line stored as it is.
+mod partial_across_one_value_four_wide {
+    use super::*;
+    use cubek_microkernel::reduce::ReduceOperation;
+    reduce_tests!(PARTIAL, Across, 1, 4, Plain, [
+        sum: ReduceOperation::Sum,
+        max: ReduceOperation::Max,
     ]);
 }

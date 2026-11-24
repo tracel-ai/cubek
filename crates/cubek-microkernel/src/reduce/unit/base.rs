@@ -47,9 +47,9 @@ impl UnitDirectReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its item writes the indices beside the values and `indices` is none, or writes
-    /// indices its carrier does not keep.
-    pub fn execute<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
+    /// Where `indices` is there and its item does not write them beside the values, or the other
+    /// way around; or where it writes indices its carrier does not keep.
+    pub fn reduce<In: Numeric, Acc: Numeric, Out: Numeric, Idx: Numeric, N: Size>(
         &self,
         input: &Tile,
         out: &mut Tile,

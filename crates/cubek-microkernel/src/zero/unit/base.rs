@@ -16,7 +16,7 @@ pub struct UnitDirectZeroMicrokernel {}
 #[cube]
 impl UnitDirectZeroMicrokernel {
     /// A unit's window `out`, every cell set to zero (`unit_direct_zero_microkernel`).
-    pub fn execute(&self, out: &mut Tile) {
+    pub fn zero(&self, out: &mut Tile) {
         unit_direct_zero_microkernel(out)
     }
 }
