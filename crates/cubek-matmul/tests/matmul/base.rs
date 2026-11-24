@@ -95,6 +95,7 @@ pub(crate) struct Product {
     elems: MatmulGlobalElems,
     broadcast: Option<Broadcast>,
     values: Values,
+    out_rows_at_stride_one: bool,
     #[cfg(feature = "tiled")]
     rhs_tiles: Option<RhsTiles>,
 }
@@ -119,6 +120,7 @@ impl Product {
             elems: MatmulElems::from_single_dtype(element).as_global_elems(),
             broadcast: None,
             values: Values::Seeded,
+            out_rows_at_stride_one: false,
             #[cfg(feature = "tiled")]
             rhs_tiles: None,
         }
@@ -188,6 +190,16 @@ impl Product {
     pub(crate) fn in_eighths(self) -> Self {
         Self {
             values: Values::Eighths,
+            ..self
+        }
+    }
+
+    /// The same product of one row a batch, written into an output whose row has a stride of one:
+    /// what a dim of one entry may hold, as a single column viewed transposed does.
+    pub(crate) fn out_rows_at_stride_one(self) -> Self {
+        assert_eq!(self.extents.m, 1, "only a single row may take any stride");
+        Self {
+            out_rows_at_stride_one: true,
             ..self
         }
     }
@@ -284,9 +296,20 @@ impl Product {
     /// An output filled with values no product here reaches, so a kernel that wrote nothing shows.
     fn poisoned_out(&self, client: &Client) -> TensorHandle {
         let problem = self.problem();
+        let layout = match self.out_rows_at_stride_one {
+            true => {
+                let mut strides = StridedLayout::RowMajor
+                    .compute_strides(&problem.out_shape)
+                    .to_vec();
+                let rank = strides.len();
+                strides[rank - 2] = 1;
+                StridedLayout::Explicit(strides)
+            }
+            false => StridedLayout::RowMajor,
+        };
         let out = TestInput::builder(client.clone(), problem.out_shape.clone())
             .dtype(self.elems.out)
-            .layout(StridedLayout::RowMajor);
+            .layout(layout);
         match self.elems.out {
             ElemType::Int(_) => out.custom(vec![77_777.; problem.out_shape.num_elements()]),
             _ => out.uniform(4242, 10., 100.),
@@ -367,6 +390,9 @@ impl Debug for Product {
         }
         if self.values == Values::Eighths {
             write!(f, ", in eighths")?;
+        }
+        if self.out_rows_at_stride_one {
+            write!(f, ", out rows at stride one")?;
         }
         #[cfg(feature = "tiled")]
         if let Some(tiles) = self.rhs_tiles {

@@ -185,7 +185,7 @@ impl PlainTensor {
     ///
     /// On an innermost stride other than 1: a row is a contiguous line.
     pub fn as_rows(&self, rows: usize, line: usize) -> Self {
-        let step = self.row_step().unwrap_or(line);
+        let step = self.merged_row_step().unwrap_or(line);
         self.viewed(Metadata::new([rows, line], [step, 1]))
     }
 
@@ -203,7 +203,7 @@ impl PlainTensor {
         values_per_element: usize,
     ) -> TensorBinding {
         let step = self
-            .row_step()
+            .merged_row_step()
             .map_or(line, |step| step * values_per_element);
         TensorBinding {
             handle: self.binding.handle.clone(),
@@ -422,6 +422,26 @@ impl PlainTensor {
             "a row-bound operand's innermost stride must be 1, got {strides:?}"
         );
         (rank >= 2).then(|| strides[rank - 2])
+    }
+
+    /// The step between the rows its leading dims merge into: the stride of the innermost one
+    /// holding more than one entry. A dim of one entry addresses nothing and may take any stride,
+    /// as a single column viewed transposed takes 1. The [`row_step`](Self::row_step) where every
+    /// leading dim holds one.
+    ///
+    /// # Panics
+    ///
+    /// As [`row_step`](Self::row_step).
+    fn merged_row_step(&self) -> Option<usize> {
+        let step = self.row_step()?;
+        let (shape, strides) = (&self.binding.shape, &self.binding.strides);
+        let leading = shape.len() - 1;
+        Some(
+            (0..leading)
+                .rev()
+                .find(|&dim| shape[dim] > 1)
+                .map_or(step, |dim| strides[dim]),
+        )
     }
 }
 
