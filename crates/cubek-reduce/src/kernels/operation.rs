@@ -85,9 +85,7 @@ impl Reduce {
     ///
     /// # Errors
     ///
-    /// As [`execute`](Self::execute); [`ReduceError::IndicesUnsupported`] for an operation whose
-    /// values carry no index; and [`ReduceError::MismatchIndicesShape`] where `indices` differs
-    /// from `values` in shape.
+    /// Every [`ReduceError`].
     ///
     /// # Panics
     ///
@@ -269,13 +267,43 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_sum_has_no_index_to_write() {
-        let result = indexed(ReduceOperation::Sum);
+    /// Checks that `operation` is refused under its own `name`.
+    fn has_no_index_to_write(operation: ReduceOperation, name: &str) {
+        let result = indexed(operation);
         assert!(
-            matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
+            matches!(result, Err(ReduceError::IndicesUnsupported { operation }) if operation == name),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_sum_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Sum, "Sum");
+    }
+
+    #[test]
+    fn a_prod_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Prod, "Prod");
+    }
+
+    #[test]
+    fn a_mean_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Mean, "Mean");
+    }
+
+    #[test]
+    fn a_max_abs_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::MaxAbs, "MaxAbs");
+    }
+
+    #[test]
+    fn an_any_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Any, "Any");
+    }
+
+    #[test]
+    fn an_all_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::All, "All");
     }
 
     #[test]
@@ -283,6 +311,22 @@ mod tests {
         assert!(matches!(
             indexed(ReduceOperation::Max),
             Ok(ReduceOperation::ArgMax)
+        ));
+    }
+
+    #[test]
+    fn a_min_with_indices_writes_an_argmin() {
+        assert!(matches!(
+            indexed(ReduceOperation::Min),
+            Ok(ReduceOperation::ArgMin)
+        ));
+    }
+
+    #[test]
+    fn a_top_k_with_indices_writes_an_arg_top_k() {
+        assert!(matches!(
+            indexed(ReduceOperation::TopK { k: 3 }),
+            Ok(ReduceOperation::ArgTopK { k: 3 })
         ));
     }
 

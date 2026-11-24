@@ -135,7 +135,7 @@ pub(crate) fn unit_launch(
 ///
 /// # Errors
 ///
-/// Where the device cannot launch that grid.
+/// As [`unit_launch`].
 pub(crate) fn split_launch(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
@@ -192,7 +192,6 @@ mod tests {
     use crate::kernels::ReduceIndices;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
-    use cubek_std::routine::Routine;
 
     /// Each microkernel setting crossed with each knob, the microkernel's outermost.
     #[test]
@@ -203,7 +202,6 @@ mod tests {
         assert_eq!(crossed, vec![('a', 1), ('a', 2), ('b', 1), ('b', 2)]);
     }
 
-    /// A carrier's widest line bounds the input's width.
     #[test]
     fn the_widest_line_bounds_the_width() {
         let hw = devices::m2_pro();
@@ -213,7 +211,6 @@ mod tests {
         assert_eq!(width, 1);
     }
 
-    /// Rows across the reduced axis go out a line of rows at a time.
     #[test]
     fn rows_across_the_axis_go_out_a_line_at_a_time() {
         let hw = devices::m2_pro();
@@ -254,34 +251,28 @@ mod tests {
         );
     }
 
-    /// Settings of the unit routine: one plane of units a cube, the default top-k slots.
-    fn unit_settings(hw: &Hardware) -> crate::kernels::UnitDirectReduceSettings {
-        crate::kernels::UnitDirectReduceRoutine::settings(hw)[0]
-    }
+    const ROWS: usize = 64;
 
+    /// A sum of [`ROWS`] rows whose input the caller binds `input_width` wide.
     fn sum_with_fixed_input_width(row_len: usize, input_width: usize) -> ReduceRoutineProblem {
-        let mut problem = ReduceRoutineProblem::dense(&[64, row_len], 1, ReduceOperation::Sum);
+        let mut problem = ReduceRoutineProblem::dense(&[ROWS, row_len], 1, ReduceOperation::Sum);
         problem.elem_alignments[0] = ElemAlignment::stored_piece(input_width);
         problem
     }
 
     #[test]
     fn an_input_wider_than_the_device_can_read_declines() {
-        use crate::kernels::UnitDirectReduceRoutine;
-        let hw = devices::m2_pro();
         let problem = sum_with_fixed_input_width(4096, 64);
-        let declined = UnitDirectReduceRoutine::prepare(&hw, &problem, &unit_settings(&hw))
+        let declined = reduce_widths(&devices::m2_pro(), &problem, Vectorization::new(), None)
             .expect_err("the device cannot read 64 elements per line");
-        assert_eq!(declined.to_string(), UNBOUND_LINES_NARROWER.to_string());
+        assert_eq!(declined, UNBOUND_LINES_NARROWER);
     }
 
     #[test]
     fn a_two_wide_input_declines_when_the_row_requires_scalar_reads() {
-        use crate::kernels::UnitDirectReduceRoutine;
-        let hw = devices::m2_pro();
         let problem = sum_with_fixed_input_width(7, 2);
-        let declined = UnitDirectReduceRoutine::prepare(&hw, &problem, &unit_settings(&hw))
+        let declined = reduce_widths(&devices::m2_pro(), &problem, Vectorization::new(), None)
             .expect_err("a scalar read would split the caller's two-element line");
-        assert_eq!(declined.to_string(), UNBOUND_LINES_NARROWER.to_string());
+        assert_eq!(declined, UNBOUND_LINES_NARROWER);
     }
 }

@@ -1,7 +1,7 @@
 //! One routine at one of its settings, as the autotune races it ([`ReduceRoutineRunner`]).
 
 use crate::kernels::{
-    HypercubeAtomicReduceRoutine, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
+    HypercubeAtomicReduceRoutine, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem,
     ReduceTensors, launch_zeroed_atomic, launch_zeroed_atomic_unbound, tune::*,
 };
 use core::marker::PhantomData;
@@ -25,7 +25,7 @@ pub(crate) struct ReduceRoutineRunner<R: Routine> {
 
 impl<R, M> ReduceRoutineRunner<R>
 where
-    R: ReduceLauncher<M> + Routine<Microkernel = M>,
+    R: ReduceRoutine<M> + Routine<Microkernel = M>,
     R::Settings: core::fmt::Display,
 {
     /// Every setting `R` lists on `hw`, as candidates, each named by the routine's prefix
@@ -45,10 +45,10 @@ where
 
 impl<R, M> ReduceRoutineRunner<R>
 where
-    R: ReduceLauncher<M> + Routine<Microkernel = M>,
+    R: ReduceRoutine<M> + Routine<Microkernel = M>,
 {
     /// `tensors`, whose input the caller binds, reduced at this candidate's setting
-    /// ([`ReduceLauncher::launch_unbound`]).
+    /// ([`ReduceRoutine::launch_unbound`]).
     ///
     /// # Errors
     ///
@@ -67,7 +67,7 @@ where
 
 impl<R, M> ReduceRoutineRunner<R>
 where
-    R: ReduceLauncher<M> + Routine<Microkernel = M>,
+    R: ReduceRoutine<M> + Routine<Microkernel = M>,
 {
     /// `tensors` reduced at this candidate's setting.
     pub(super) fn run(&self, tensors: ReduceTensors) -> Result<(), String> {
@@ -113,7 +113,7 @@ impl ReduceRoutineRunner<HypercubeAtomicReduceRoutine> {
 
 impl<R, M: PartialEq> TuneCandidate for ReduceRoutineRunner<R>
 where
-    R: ReduceLauncher<M> + Routine<Microkernel = M>,
+    R: ReduceRoutine<M> + Routine<Microkernel = M>,
 {
     type Strategy = String;
     type Key = ReduceKey;
@@ -136,5 +136,130 @@ where
 
     fn blueprint(&self, key: &ReduceKey) -> Option<Self::Blueprint> {
         self.prepared(key).map(|(blueprint, _)| blueprint)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::{CubeStagedReduceRoutine, UnitDirectReduceRoutine};
+    use cubecl::tile::launch::StoredTileOperand;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    /// The first candidate of the cube routine on a device that runs none of it.
+    fn declining() -> ReduceRoutineRunner<CubeStagedReduceRoutine> {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        ReduceRoutineRunner::list(&hw).remove(0)
+    }
+
+    /// The unit routine's first candidate on an M2 Pro.
+    fn unit() -> ReduceRoutineRunner<UnitDirectReduceRoutine> {
+        ReduceRoutineRunner::list(&devices::m2_pro()).remove(0)
+    }
+
+    /// The atomic hypercube's first candidate on an M2 Pro.
+    fn atomic() -> ReduceRoutineRunner<HypercubeAtomicReduceRoutine> {
+        ReduceRoutineRunner::list(&devices::m2_pro()).remove(0)
+    }
+
+    const ROW_LEN: usize = 16;
+
+    /// The key of sums of `rows` rows of [`ROW_LEN`] values.
+    fn key_of_rows(rows: usize) -> ReduceKey {
+        ReduceKey::from(&ReduceRoutineProblem::dense(
+            &[rows, ROW_LEN],
+            1,
+            ReduceOperation::Sum,
+        ))
+    }
+
+    #[test]
+    fn every_setting_of_a_routine_is_a_candidate() {
+        let hw = devices::m2_pro();
+        let settings: Vec<_> = ReduceRoutineRunner::<UnitDirectReduceRoutine>::list(&hw)
+            .into_iter()
+            .map(|candidate| candidate.settings)
+            .collect();
+        assert_eq!(settings, UnitDirectReduceRoutine::settings(&hw));
+    }
+
+    #[test]
+    fn a_candidate_is_named_by_its_routine_and_setting() {
+        let settings = UnitDirectReduceRoutine::settings(&devices::m2_pro())[0];
+        assert_eq!(unit().strategy(), &format!("unit-direct-reduce {settings}"));
+    }
+
+    #[test]
+    fn a_candidate_that_fills_the_device_comes_first() {
+        assert_eq!(
+            unit().priority(&key_of_rows(1 << 18)),
+            CandidatePriority::FIRST
+        );
+    }
+
+    /// Eight rows take one cube of 128 units, where an M2 Pro takes 76.
+    #[test]
+    fn a_candidate_that_leaves_the_device_idle_is_lowered_a_level_a_halving() {
+        assert_eq!(
+            unit().priority(&key_of_rows(8)),
+            CandidatePriority::FIRST.lowered(76u32.ilog2())
+        );
+    }
+
+    #[test]
+    fn a_candidate_that_declines_the_key_comes_last() {
+        assert_eq!(
+            declining().priority(&key_of_rows(8)),
+            CandidatePriority::LAST
+        );
+    }
+
+    #[test]
+    fn a_candidates_blueprint_is_the_one_it_prepares_for_the_keys_problem() {
+        let key = key_of_rows(8);
+        let hw = devices::m2_pro();
+        let (prepared, _) = UnitDirectReduceRoutine::prepare(
+            &hw,
+            &ReduceRoutineProblem::from(&key),
+            &UnitDirectReduceRoutine::settings(&hw)[0],
+        )
+        .expect("the unit routine serves every problem");
+        assert_eq!(unit().blueprint(&key), Some(prepared));
+    }
+
+    #[test]
+    fn a_candidate_that_declines_the_key_has_no_blueprint() {
+        assert_eq!(declining().blueprint(&key_of_rows(8)), None);
+    }
+
+    #[test]
+    fn a_candidate_that_declines_the_tensors_does_not_run() {
+        let tensors = ReduceTensors::zeros(&[4, 8], 1, ReduceOperation::Sum);
+        assert!(declining().run(tensors).is_err());
+    }
+
+    #[test]
+    fn a_candidate_that_declines_an_unbound_input_does_not_ask_for_it() {
+        let tensors = ReduceTensors::unbound_zeros(&[4, 8], 1, ReduceOperation::Sum);
+        let launched = declining().launch_unbound::<StoredTileOperand>(&tensors, |_| {
+            unreachable!("a declined candidate binds no input")
+        });
+        assert!(launched.is_err());
+    }
+
+    #[test]
+    fn an_atomic_candidate_does_not_run_a_max() {
+        let tensors = ReduceTensors::zeros(&[4, 8], 1, ReduceOperation::Max);
+        assert!(atomic().run_zeroed(tensors).is_err());
+    }
+
+    #[test]
+    fn an_atomic_candidate_does_not_ask_for_a_maxs_unbound_input() {
+        let tensors = ReduceTensors::unbound_zeros(&[4, 8], 1, ReduceOperation::Max);
+        let launched = atomic().launch_zeroed_unbound::<StoredTileOperand>(&tensors, |_| {
+            unreachable!("a declined candidate binds no input")
+        });
+        assert!(launched.is_err());
     }
 }

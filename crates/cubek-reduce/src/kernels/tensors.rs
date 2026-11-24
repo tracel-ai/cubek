@@ -7,10 +7,12 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Decline, Unbound};
-use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Dimension, Geometry, Launcher};
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
+
+#[cfg(test)]
+use crate::kernels::tests::zeros;
 
 /// Why an unbound reduction declines where its microkernel reads narrower lines than the caller's
 /// input is stated at ([`ReduceTensors::unbound`]): the caller computes its lines whole.
@@ -101,8 +103,8 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// # Panics
     ///
-    /// As [`new`](Self::new), and where the operation's values carry no index (a sum's do not),
-    /// or `indices` does not have `values`' shape.
+    /// As [`new`](Self::new), and where the operation's carrier keeps no index (a sum's, or a
+    /// max's, whose pair an argmax writes), or `indices` does not have `values`' shape.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -119,7 +121,7 @@ impl ReduceTensors<TensorBinding> {
     ) -> Self {
         assert!(
             operation.carrier().carries_indices(),
-            "{operation:?} accumulates the values themselves, which carry no index"
+            "{operation:?} accumulates values without their indices"
         );
         assert!(
             indices.shape == values.shape,
@@ -187,19 +189,11 @@ impl ReduceTensors<Geometry> {
     /// The problem as the input's own geometry states it, its alignment the geometry's rather than
     /// the width the caller binds it at.
     pub(crate) fn stated_problem(&self) -> ReduceRoutineProblem {
-        let [_, out] = self.problem.elem_alignments;
-        let input = ElemAlignment::new(self.input.shape(), self.input.strides());
-        ReduceRoutineProblem {
-            elem_alignments: [input, out],
-            ..self.problem.clone()
-        }
+        self.problem.with_input_aligned_as(&self.input)
     }
 
-    /// The input's spec and geometry as `blueprint` states them, on `grid`, for the caller to bind, and the output bound.
-    ///
-    /// # Panics
-    ///
-    /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
+    /// The input's spec and geometry as `blueprint` states them, on `grid`, for the caller to bind,
+    /// and the output bound. It panics where binding both operands does.
     pub(crate) fn bind<M>(
         &self,
         blueprint: &ReduceBlueprint<M>,
@@ -227,7 +221,6 @@ pub(crate) struct ReduceBinding<In = Bound, Out = In> {
     pub out: Out,
     /// The indices beside the values, where the launch writes both.
     pub indices: Option<Bound>,
-    /// The scratch the caller gave, where it gave any.
     pub workspace: Option<ReduceWorkspace>,
 }
 
@@ -374,4 +367,82 @@ pub(crate) fn bound_at(
         .vectorize(width)
         .build()
         .expect(ADMITTED_PLAN_RUNS)
+}
+
+#[cfg(test)]
+impl ReduceTensors {
+    /// A tensor of `shape` in f32 reduced along `axis` by `operation` on the test device, holding
+    /// zeros as its output does.
+    pub(crate) fn zeros(shape: &[usize], axis: usize, operation: ReduceOperation) -> Self {
+        let client = cubecl::test_device().client();
+        let problem = ReduceRoutineProblem::dense(shape, axis, operation);
+        let out_shape = problem.shape_with_reduced_extent(operation.written_per_row());
+        Self::new(
+            &client,
+            zeros(&client, shape),
+            zeros(&client, &out_shape),
+            axis,
+            operation,
+            problem.elements,
+        )
+    }
+}
+
+#[cfg(test)]
+impl ReduceTensors<Geometry> {
+    /// [`zeros`](ReduceTensors::zeros), its input a dense one the caller binds a value a line.
+    pub(crate) fn unbound_zeros(shape: &[usize], axis: usize, operation: ReduceOperation) -> Self {
+        let bound = ReduceTensors::zeros(shape, axis, operation);
+        Self::unbound(
+            &bound.client,
+            Geometry::from(&bound.input),
+            1,
+            bound.out,
+            axis,
+            operation,
+            bound.problem.elements,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::{FloatKind, IntKind};
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+    const INPUT_SHAPE: [usize; 2] = [4, 8];
+    const VALUES_SHAPE: [usize; 2] = [4, 1];
+
+    /// `ReduceTensors::with_indices` for `operation` along the last axis of an [`INPUT_SHAPE`]
+    /// input, the values of [`VALUES_SHAPE`] and the indices of `indices_shape`.
+    fn tensors_with_indices(operation: ReduceOperation, indices_shape: &[usize]) -> ReduceTensors {
+        let client = cubecl::test_device().client();
+        ReduceTensors::with_indices(
+            &client,
+            zeros(&client, &INPUT_SHAPE),
+            zeros(&client, &VALUES_SHAPE),
+            zeros(&client, indices_shape),
+            VALUES_SHAPE.len() - 1,
+            operation,
+            ReduceElements {
+                input: F32,
+                accumulator: F32,
+                out: F32,
+            },
+            ElemType::Int(IntKind::I32),
+        )
+    }
+
+    #[test]
+    #[should_panic(expected = "accumulates values without their indices")]
+    fn indices_beside_a_sum_panic() {
+        tensors_with_indices(ReduceOperation::Sum, &VALUES_SHAPE);
+    }
+
+    #[test]
+    #[should_panic(expected = "the indices have the values' shape")]
+    fn indices_of_another_shape_panic() {
+        tensors_with_indices(ReduceOperation::ArgMax, &[1, 4]);
+    }
 }
