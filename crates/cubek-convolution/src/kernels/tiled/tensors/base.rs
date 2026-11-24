@@ -2,7 +2,7 @@ use super::axes;
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{
     B, CO, ChannelAxis, ConvBias, ConvBinding, ConvChannelOperands, ConvDecline, ConvGrouping,
-    ConvPhasing, ConvProblem, ConvRoles, SpatialDim, SpatialDimCount, TileConvBlueprint,
+    ConvPhasing, ConvProblem, ConvRoles, SpatialDim, TileConvBlueprint,
 };
 use crate::launch::{SpatialExtent, SpatialWindow, TapCount};
 use cubecl::client::Client;
@@ -122,21 +122,17 @@ impl ConvTensors {
             Some(_) => ConvBias::PerChannel,
             None => ConvBias::Absent,
         };
-        let stated = ConvProblem::from_views(
-            self.operation,
-            self.grouping,
+        let roles = ConvRoles::of(self.operation, self.grouping, &self.window)
+            .expect("tensors are checked when they are built");
+        ConvProblem::from_views(
+            &roles,
             &self.window,
             MatmulOperands {
                 lhs: shape(&self.input),
                 rhs: shape(&self.rhs),
                 out: shape(&self.out),
             },
-            MatmulOperands {
-                lhs: self.dtypes.lhs_global,
-                rhs: self.dtypes.rhs_global,
-                out: self.dtypes.acc_global,
-            },
-            self.dtypes.acc_register,
+            &self.dtypes,
             MatmulOperands {
                 lhs: ElemAlignment::from(&self.input),
                 rhs: ElemAlignment::from(&self.rhs),
@@ -147,8 +143,8 @@ impl ConvTensors {
                 rhs: start(&self.rhs),
                 out: start(&self.out),
             },
-        );
-        ConvProblem { bias, ..stated }
+            bias,
+        )
     }
 
     /// These tensors of `problem` bound under the launcher `grid` spawns for `blueprint`, each
@@ -183,19 +179,19 @@ impl ConvTensors {
         let phased = roles.phasing != ConvPhasing::Whole;
         let rhs = launcher.arg(self.rhs, problem.elements.rhs);
         let rhs = match phased {
-            true => rhs.gathered(problem.weight_projection()),
+            true => rhs.gathered(problem.phased_weight_projection()),
             false => rhs.dimensions(&roles.rhs),
         }
         .vectorize(widths.rhs);
         // A tap past the weight's end reads zero, which only a checked axis does.
-        let rhs = match problem.tap_strides().is_empty() {
+        let rhs = match problem.phased_tap_strides().is_empty() {
             true => rhs,
             false => rhs.boundary(BoundaryPolicy::Every(Boundary::Zero)),
         };
         let free = roles.free.in_order();
         let out = launcher.arg(self.out, problem.elements.out);
         let mut out = match phased {
-            true => out.gathered(problem.output_projection()),
+            true => out.gathered(problem.phased_output_projection()),
             false => out.dimensions(&free),
         }
         .vectorize(widths.out)
@@ -221,7 +217,9 @@ impl ConvTensors {
         Ok(ConvBinding {
             launcher,
             input: input.arg(),
-            rhs: rhs.arg().runtime_map(problem.tap_strides(), Vec::new()),
+            rhs: rhs
+                .arg()
+                .runtime_map(problem.phased_tap_strides(), Vec::new()),
             out: out.arg(),
             bias: bias.map(|bias| bias.arg()),
         })
@@ -250,7 +248,6 @@ impl ConvTensors {
         {
             return Err(ConvDecline::RankMismatch.into());
         }
-        let spatial_dims = SpatialDimCount(window.len());
         let channels = ConvChannelOperands::of(operation)?;
         let shapes = MatmulOperands {
             lhs: &input.shape[..],
@@ -258,12 +255,11 @@ impl ConvTensors {
             out: &out.shape[..],
         };
         let grouping = ConvGrouping::of(channels.groups(&shapes)?);
-        let phasing = ConvPhasing::of(operation, window.iter().copied());
-        let roles = ConvRoles::of(operation, spatial_dims, grouping, phasing)?;
-        let input = roles.split(MatmulOperand::Lhs, input)?;
-        let rhs = roles.split(MatmulOperand::Rhs, rhs)?;
-        let out = roles.split(MatmulOperand::Out, out)?;
-        let (rhs, out) = (roles.rhs_view(rhs)?, roles.out_view(out)?);
+        let roles = ConvRoles::of(operation, grouping, window)?;
+        let input = axes::split(&roles, MatmulOperand::Lhs, input)?;
+        let rhs = axes::split(&roles, MatmulOperand::Rhs, rhs)?;
+        let out = axes::split(&roles, MatmulOperand::Out, out)?;
+        let (rhs, out) = (axes::rhs_view(&roles, rhs)?, axes::out_view(&roles, out)?);
         let extents = &roles.extents;
         let channels = |dimension| {
             (dimension == roles.inner.lhs).then_some(

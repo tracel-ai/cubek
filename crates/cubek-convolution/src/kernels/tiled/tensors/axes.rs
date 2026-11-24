@@ -4,6 +4,7 @@ use cubecl::prelude::TensorBinding;
 use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, Strides};
+use cubek_microkernel::matmul::MatmulOperand;
 
 /// Refuses a tiled `tensor`: a rewrite of its axes by shape and strides alone reads a plain layout.
 fn refuse_tiled(tensor: &TensorBinding) -> Result<(), Decline> {
@@ -48,7 +49,7 @@ pub(in crate::kernels::tiled) fn split_channels(
 /// # Errors
 ///
 /// [`ConvDecline::PermutedTiled`], where the dims move and `tensor` is tiled.
-pub(in crate::kernels::tiled) fn permute(
+fn permute(
     order: ViewOrder,
     mut tensor: TensorBinding,
     spatial_dims: SpatialDimCount,
@@ -62,6 +63,39 @@ pub(in crate::kernels::tiled) fn permute(
     tensor.shape = Shape::from(order.view(spatial_dims, grouping, &tensor.shape));
     tensor.strides = Strides::new(&order.view(spatial_dims, grouping, &tensor.strides));
     Ok(tensor)
+}
+
+/// `tensor`, the `operand` of the operation in its own layout, with its channels split by group
+/// where the roles are grouped.
+///
+/// # Errors
+///
+/// [`ConvDecline::PermutedTiled`], where the channels split and `tensor` is tiled.
+pub(super) fn split(
+    roles: &ConvRoles,
+    operand: MatmulOperand,
+    tensor: TensorBinding,
+) -> Result<TensorBinding, Decline> {
+    split_channels(roles.channels.axis(operand), tensor, roles.grouping)
+}
+
+/// `rhs` with its dims listed in the order of [`ConvRoles::rhs`].
+///
+/// # Errors
+///
+/// [`ConvDecline::PermutedTiled`], where the dims move and `rhs` is tiled.
+pub(super) fn rhs_view(roles: &ConvRoles, rhs: TensorBinding) -> Result<TensorBinding, Decline> {
+    permute(roles.rhs_order, rhs, roles.spatial_dims, roles.grouping)
+}
+
+/// `out`, a tensor of the operation's output in its own layout, with its dims listed in the order
+/// of [`ConvRoles::free`].
+///
+/// # Errors
+///
+/// [`ConvDecline::PermutedTiled`], where the dims move and `out` is tiled.
+pub(super) fn out_view(roles: &ConvRoles, out: TensorBinding) -> Result<TensorBinding, Decline> {
+    permute(roles.out_order, out, roles.spatial_dims, roles.grouping)
 }
 
 /// Whether `rhs` and `out`, viewed through `roles`, and the input's `extent` of `dimension`

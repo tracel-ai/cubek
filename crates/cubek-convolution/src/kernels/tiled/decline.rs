@@ -8,8 +8,8 @@ pub enum ConvDecline {
     BiasShape,
     /// A bias of another element than the output's.
     BiasElement,
-    /// Input channels, or a weight's filters, that no whole number of groups states: the input
-    /// channels are not a whole number of the weight's input channels.
+    /// Input channels that are not a whole number of groups of the weight's input channels, or
+    /// filters that the same number of groups does not divide.
     Groups,
     /// A group of one input and one output channel, which the depthwise kernel serves.
     Depthwise,
@@ -68,7 +68,7 @@ impl ConvDecline {
             }
             Self::BiasElement => "the tiled forward convolution's bias is of the output's element",
             Self::Groups => {
-                "the tiled convolution's input channels and filters are whole groups of the weight's input channels"
+                "the tiled convolution's input channels are a whole number of groups of the weight's input channels, and its filters split into that same number of groups"
             }
             Self::Depthwise => {
                 "a group of one input and one output channel is a depthwise convolution, which has a kernel of its own"
@@ -107,7 +107,7 @@ impl ConvDecline {
                 "the output gradient's extent is (input gradient + 2 padding - dilation (taps - 1) - 1) / stride + 1 along each spatial dimension"
             }
             Self::PermutedTiled => {
-                "the tiled convolution reorders a tensor's dims and splits its channels by group, which it cannot do to a tiled one"
+                "the tiled convolution cannot reorder a tiled tensor's dims or split its channels by group"
             }
             Self::Transposed => {
                 "the tiled convolution has no transposed forward, which is its data backward at a stride"

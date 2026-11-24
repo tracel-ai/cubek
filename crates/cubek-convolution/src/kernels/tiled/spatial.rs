@@ -68,7 +68,7 @@ impl SpatialDim {
     }
 
     /// The weight's tap axis over `tap` and `phase`: `stride * tap + phase`. Where some phase has a
-    /// tap past the end the stride is a launch value ([`ConvProblem::tap_strides`]), so the map is
+    /// tap past the end the stride is a launch value ([`ConvProblem::phased_tap_strides`]), so the map is
     /// not a radix chain that the tile would take as in bounds.
     pub fn phased_tap_map(&self, tap: Dimension, phase: Dimension) -> PhysicalAxisMap {
         match self.has_ragged_taps() {

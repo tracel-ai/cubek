@@ -5,9 +5,8 @@ use super::groups::{ConvChannelOperands, ConvGrouping};
 use super::phases::ConvPhasing;
 use super::views::ViewOrder;
 use crate::components::ConvolutionOperation;
-use crate::kernels::tiled::tensors::axes;
 use crate::kernels::tiled::{B, CI, CO, ConvDecline, ConvDimension, SpatialDimCount};
-use cubecl::prelude::TensorBinding;
+use crate::launch::SpatialWindow;
 use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
@@ -16,6 +15,8 @@ use cubek_microkernel::matmul::{MatmulDimensions, MatmulLayout, MatmulOperand, M
 /// Which dimension of the space plays which part in an operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConvRoles {
+    /// The operation these roles are of.
+    pub operation: ConvolutionOperation,
     /// The spatial dims of the convolution.
     pub spatial_dims: SpatialDimCount,
     /// Whether the channels are split by group: the group is then the first free dimension.
@@ -50,8 +51,9 @@ pub struct ConvRoles {
 }
 
 impl ConvRoles {
-    /// The roles `operation` gives the dimensions of the space of a convolution over `spatial_dims`
-    /// spatial dims, with the channels as `grouping` says and the strided dims as `phasing` says.
+    /// The roles `operation` gives the dimensions of the space of a convolution with one spatial
+    /// dim for each of `windows`, with the channels as `grouping` says. Only a data backward over
+    /// a strided window is split into phases ([`ConvPhasing::of`]).
     ///
     /// # Errors
     ///
@@ -60,10 +62,10 @@ impl ConvRoles {
     /// transposed forward.
     pub fn of(
         operation: ConvolutionOperation,
-        spatial_dims: SpatialDimCount,
         grouping: ConvGrouping,
-        phasing: ConvPhasing,
+        windows: &[SpatialWindow],
     ) -> Result<Self, Decline> {
+        let spatial_dims = SpatialDimCount(windows.len());
         if spatial_dims.0 == 0 {
             return Err(ConvDecline::NoSpatialDim.into());
         }
@@ -71,6 +73,7 @@ impl ConvRoles {
             return Err(ConvDecline::TooManySpatialDims.into());
         }
         let channels = ConvChannelOperands::of(operation)?;
+        let phasing = ConvPhasing::of(operation, windows.iter().copied());
         let spatial = SpatialDimensions::new(spatial_dims, grouping, phasing);
         let build = match operation {
             ConvolutionOperation::Forward => Self::forward,
@@ -140,42 +143,9 @@ impl ConvRoles {
         [&[free.m, free.n, free.across], &free.outer[..]].concat()
     }
 
-    /// `rhs` with its dims listed in the order of [`Self::rhs`].
-    ///
-    /// # Errors
-    ///
-    /// [`ConvDecline::PermutedTiled`], where the dims move and `rhs` is tiled.
-    pub fn rhs_view(&self, rhs: TensorBinding) -> Result<TensorBinding, Decline> {
-        axes::permute(self.rhs_order, rhs, self.spatial_dims, self.grouping)
-    }
-
-    /// `out`, a tensor of the operation's output in its own layout, with its dims listed in the
-    /// order of [`Self::free`].
-    ///
-    /// # Errors
-    ///
-    /// [`ConvDecline::PermutedTiled`], where the dims move and `out` is tiled.
-    pub fn out_view(&self, out: TensorBinding) -> Result<TensorBinding, Decline> {
-        axes::permute(self.out_order, out, self.spatial_dims, self.grouping)
-    }
-
-    /// `tensor`, the `operand` of the operation in its own layout, with its channels split by
-    /// group where the roles are grouped.
-    ///
-    /// # Errors
-    ///
-    /// [`ConvDecline::PermutedTiled`], where the channels split and `tensor` is tiled.
-    pub fn split(
-        &self,
-        operand: MatmulOperand,
-        tensor: TensorBinding,
-    ) -> Result<TensorBinding, Decline> {
-        axes::split_channels(self.channels.axis(operand), tensor, self.grouping)
-    }
-
     /// `shapes`, the operation's operands in their own layouts and split by group where the roles
-    /// are grouped, as each is viewed through the roles ([`Self::rhs_view`],
-    /// [`Self::out_view`]).
+    /// are grouped, as each is viewed through the roles' `rhs_order` and
+    /// `out_order`.
     pub fn views(&self, shapes: &MatmulOperands<Vec<usize>>) -> MatmulOperands<Vec<usize>> {
         let view =
             |order: ViewOrder, shape: &[usize]| order.view(self.spatial_dims, self.grouping, shape);
@@ -187,8 +157,8 @@ impl ConvRoles {
     }
 
     /// The alignments of dense buffers of `shapes`, which are already split by group where the
-    /// roles are grouped, as the rhs and the output are viewed through the roles
-    /// ([`Self::rhs_view`], [`Self::out_view`]).
+    /// roles are grouped, as the rhs and the output are viewed through the roles'
+    /// `rhs_order` and `out_order`.
     pub fn dense_alignments(
         &self,
         shapes: &MatmulOperands<Vec<usize>>,
@@ -227,6 +197,7 @@ impl ConvRoles {
         let free = [groups, &[B], &spatial.outs, &[CO]].concat();
         let contracted = [&spatial.taps[..], &[CI]].concat();
         Self {
+            operation: ConvolutionOperation::Forward,
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
             phasing: ConvPhasing::Whole,
@@ -264,6 +235,7 @@ impl ConvRoles {
         let free = [groups, &spatial.taps, &[CI, CO]].concat();
         let contracted = [&[B][..], &spatial.outs].concat();
         Self {
+            operation: ConvolutionOperation::BackwardWeight,
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
             phasing: ConvPhasing::Whole,
@@ -301,6 +273,7 @@ impl ConvRoles {
         let free = [groups, &spatial.phases, &[B], &spatial.outs, &[CI]].concat();
         let contracted = [&spatial.taps[..], &[CO]].concat();
         Self {
+            operation: ConvolutionOperation::BackwardData,
             spatial_dims: spatial.spatial_dims,
             grouping: spatial.grouping,
             phasing: spatial.phasing.clone(),
@@ -341,6 +314,22 @@ mod tests {
 
     const OPERATIONS: [ConvolutionOperation; 3] = [Forward, BackwardWeight, BackwardData];
 
+    /// `strides.len()` windows of those strides.
+    fn windows(strides: &[usize]) -> Vec<SpatialWindow> {
+        (strides.iter())
+            .map(|&stride| SpatialWindow {
+                stride,
+                padding: 1,
+                dilation: 1,
+            })
+            .collect()
+    }
+
+    /// `count` spatial dims at stride 1.
+    fn unit(count: usize) -> Vec<SpatialWindow> {
+        windows(&vec![1; count])
+    }
+
     /// A transposed forward is no operation of the tiled convolution, which states it as the data
     /// backward at a stride.
     #[test]
@@ -348,9 +337,8 @@ mod tests {
         assert_eq!(
             ConvRoles::of(
                 ConvolutionOperation::ForwardTransposed,
-                SpatialDimCount(2),
                 ConvGrouping::Whole,
-                ConvPhasing::Whole
+                &unit(2)
             ),
             Err(ConvDecline::Transposed.into())
         );
@@ -359,12 +347,7 @@ mod tests {
     #[test]
     fn no_spatial_dim_is_refused_by_name() {
         assert_eq!(
-            ConvRoles::of(
-                Forward,
-                SpatialDimCount(0),
-                ConvGrouping::Whole,
-                ConvPhasing::Whole
-            ),
+            ConvRoles::of(Forward, ConvGrouping::Whole, &unit(0)),
             Err(ConvDecline::NoSpatialDim.into())
         );
     }
@@ -372,22 +355,9 @@ mod tests {
     #[test]
     fn spatial_dims_past_the_label_range_are_refused_by_name() {
         let max = ConvDimension::MAX_SPATIAL_DIMS;
-        assert!(
-            ConvRoles::of(
-                Forward,
-                SpatialDimCount(max),
-                ConvGrouping::Whole,
-                ConvPhasing::Whole
-            )
-            .is_ok()
-        );
+        assert!(ConvRoles::of(Forward, ConvGrouping::Whole, &unit(max)).is_ok());
         assert_eq!(
-            ConvRoles::of(
-                Forward,
-                SpatialDimCount(max + 1),
-                ConvGrouping::Whole,
-                ConvPhasing::Whole
-            ),
+            ConvRoles::of(Forward, ConvGrouping::Whole, &unit(max + 1)),
             Err(ConvDecline::TooManySpatialDims.into())
         );
     }
@@ -400,13 +370,7 @@ mod tests {
             .try_into()
             .expect("two spatial dims");
         let roles = |operation| {
-            ConvRoles::of(
-                operation,
-                SpatialDimCount(2),
-                ConvGrouping::Whole,
-                ConvPhasing::Whole,
-            )
-            .expect("a served operation")
+            ConvRoles::of(operation, ConvGrouping::Whole, &unit(2)).expect("a served operation")
         };
         let whole = ConvGrouping::Whole;
 
@@ -495,10 +459,8 @@ mod tests {
             .collect::<Vec<_>>()
             .try_into()
             .expect("two spatial dims");
-        let roles = |operation| {
-            ConvRoles::of(operation, SpatialDimCount(2), grouped, ConvPhasing::Whole)
-                .expect("a served operation")
-        };
+        let roles =
+            |operation| ConvRoles::of(operation, grouped, &unit(2)).expect("a served operation");
         let dims = SpatialDimCount(2);
 
         let forward = roles(Forward);
@@ -538,9 +500,8 @@ mod tests {
             for count in [1, 3] {
                 for grouping in [ConvGrouping::Whole, ConvGrouping::Grouped(2)] {
                     let spatial_dims = SpatialDimCount(count);
-                    let roles =
-                        ConvRoles::of(operation, spatial_dims, grouping, ConvPhasing::Whole)
-                            .expect("a served operation");
+                    let roles = ConvRoles::of(operation, grouping, &unit(count))
+                        .expect("a served operation");
                     let groups = grouping.dimensions().len();
                     let space: HashSet<Dimension> = roles.space.iter().copied().collect();
                     assert_eq!(space.len(), roles.space.len(), "{operation:?} {count}");
@@ -575,9 +536,7 @@ mod tests {
             ConvDimension::Phase(1).dimension(),
         );
         let roles = |grouping, strides: Vec<usize>| {
-            let phasing = ConvPhasing::Strided(strides);
-            ConvRoles::of(BackwardData, SpatialDimCount(2), grouping, phasing)
-                .expect("a served operation")
+            ConvRoles::of(BackwardData, grouping, &windows(&strides)).expect("a served operation")
         };
 
         let both = roles(ConvGrouping::Whole, vec![2, 2]);

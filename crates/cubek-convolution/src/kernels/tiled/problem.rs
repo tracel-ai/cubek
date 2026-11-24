@@ -6,7 +6,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::layout::{ElemAlignment, PhysicalAxisMap};
 use cubecl::tile::{Dimension, Projection, Space};
 use cubecl::tune::Work;
-use cubek_matmul::definition::MatmulGlobalElems;
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
 use cubek_microkernel::matmul::{
     MatmulDestination, MatmulOperands, MatmulReading, MatmulRows, MatmulWorkItem,
 };
@@ -132,26 +132,22 @@ pub struct ConvProblem {
 }
 
 impl ConvProblem {
-    /// The problem of `operation` over operands whose shapes, as the roles of `grouping` view them
-    /// ([`ConvRoles::views`]), are `views`.
+    /// The problem of `roles`' operation over operands whose shapes, as `roles` view them
+    /// ([`ConvRoles::views`]), are `views`, summing in `dtypes`' registers.
     pub fn from_views(
-        operation: ConvolutionOperation,
-        grouping: ConvGrouping,
+        roles: &ConvRoles,
         window: &[SpatialWindow],
         views: MatmulOperands<Vec<usize>>,
-        elements: MatmulOperands<ElemType>,
-        sum: ElemType,
+        dtypes: &MatmulElems,
         alignments: MatmulOperands<ElemAlignment>,
         start_bytes: MatmulOperands<u64>,
+        bias: ConvBias,
     ) -> Self {
-        let phasing = ConvPhasing::of(operation, window.iter().copied());
-        let extents = ConvRoles::of(operation, SpatialDimCount(window.len()), grouping, phasing)
-            .expect("a problem is stated by tensors that were checked")
-            .extents;
+        let extents = &roles.extents;
         let (kernel, out) = (extents.kernel.read(&views), extents.out.read(&views));
         let gathered = extents.gathered.read(&views);
         Self {
-            operation,
+            operation: roles.operation,
             batch: extents.batch.read(&views),
             groups: extents.groups.map_or(1, |groups| groups.read(&views)),
             channels_in: extents.channels_in.read(&views),
@@ -164,11 +160,15 @@ impl ConvProblem {
                     window: window[dim],
                 })
                 .collect(),
-            elements,
-            sum,
+            elements: MatmulOperands {
+                lhs: dtypes.lhs_global,
+                rhs: dtypes.rhs_global,
+                out: dtypes.acc_global,
+            },
+            sum: dtypes.acc_register,
             alignments,
             start_bytes,
-            bias: ConvBias::Absent,
+            bias,
         }
     }
 
@@ -179,14 +179,9 @@ impl ConvProblem {
     /// On a transposed forward, which [`ConvTensors`](super::ConvTensors) refuses before any
     /// problem is stated.
     pub fn roles(&self) -> ConvRoles {
-        let grouping = ConvGrouping::of(self.groups);
-        ConvRoles::of(
-            self.operation,
-            SpatialDimCount(self.spatial.len()),
-            grouping,
-            self.phasing(),
-        )
-        .expect("a problem is stated by tensors that were checked")
+        let windows: Vec<_> = self.spatial.iter().map(|dim| dim.window).collect();
+        ConvRoles::of(self.operation, ConvGrouping::of(self.groups), &windows)
+            .expect("a problem is stated by tensors that were checked")
     }
 
     /// Whether the strided dims of this problem are split into phases.
@@ -299,7 +294,7 @@ impl ConvProblem {
 
     /// The weight of a phased data backward over [`ConvRoles::rhs`], whose tap axes are each
     /// addressed by a tap dimension and a phase dimension where the dim is strided.
-    pub fn weight_projection(&self) -> Projection {
+    pub fn phased_weight_projection(&self) -> Projection {
         let roles = self.roles();
         let taps = self.spatial.iter().enumerate().map(|(dim, spatial_dim)| {
             let tap = ConvDimension::Tap(dim).dimension();
@@ -318,7 +313,7 @@ impl ConvProblem {
 
     /// The input gradient of a phased data backward over [`ConvRoles::free`], whose spatial axes
     /// are each addressed by an out dimension and a phase dimension where the dim is strided.
-    pub fn output_projection(&self) -> Projection {
+    pub fn phased_output_projection(&self) -> Projection {
         let roles = self.roles();
         let spatial = self.spatial.iter().enumerate().map(|(dim, spatial_dim)| {
             let out = ConvDimension::Out(dim).dimension();
@@ -338,7 +333,7 @@ impl ConvProblem {
 
     /// The value of each tap map's launch coefficient ([`SpatialDim::phased_tap_map`]), the stride
     /// of each dim with a ragged phase, in the order of the weight's axes.
-    pub fn tap_strides(&self) -> Vec<u32> {
+    pub fn phased_tap_strides(&self) -> Vec<u32> {
         let phasing = self.phasing();
         (self.spatial.iter().enumerate())
             .filter(|&(dim, spatial_dim)| phasing.is_phased(dim) && spatial_dim.has_ragged_taps())

@@ -12,11 +12,12 @@ pub enum ConvGrouping {
 }
 
 impl ConvGrouping {
-    /// The grouping of a convolution of `groups` groups. A count of zero never reaches it:
-    /// [`ConvChannelOperands::groups`] declines the operands that state one.
+    /// The grouping of a convolution of `groups` groups, where none is as good as one: a count of
+    /// zero never comes from [`ConvChannelOperands::groups`], which declines the operands that
+    /// state one.
     pub fn of(groups: usize) -> Self {
         match groups {
-            1 => Self::Whole,
+            0 | 1 => Self::Whole,
             _ => Self::Grouped(groups),
         }
     }
@@ -252,6 +253,7 @@ mod tests {
 
     #[test]
     fn a_group_count_names_its_grouping() {
+        assert_eq!(ConvGrouping::of(0), ConvGrouping::Whole);
         assert_eq!(ConvGrouping::of(1), ConvGrouping::Whole);
         assert_eq!(ConvGrouping::of(3), ConvGrouping::Grouped(3));
     }
