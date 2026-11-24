@@ -19,12 +19,35 @@ pub enum MGroupedRowSource {
         tokens: PlainTensor,
         sort: RouteSort,
     },
-    /// `silu(gate) · up` of another grouped product's `[gate | up]` output, `2 · k` wide and padded
-    /// to its own tiles, over the same groups.
-    Gated(PaddedRows),
+    /// `activation` of another grouped product's output, padded to its own tiles, over the same
+    /// groups.
+    Activated {
+        rows: PaddedRows,
+        activation: RowActivation,
+    },
 }
 
-/// Which [`MGroupedRowSource`] a product pads: a launch that gathers or gates its rows as it pads
+/// The activation an [`MGroupedRowSource::Activated`] source applies to each row as it moves the
+/// row between two products' tiles.
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum RowActivation {
+    /// `silu(gate) · up` of a `[gate | up]` row, half as wide.
+    SiluGated,
+    /// `max(x, 0)²`, as wide as the row.
+    ReluSquared,
+}
+
+impl RowActivation {
+    /// The width of a row this activation makes out of one `width` wide.
+    pub fn activated_width(self, width: usize) -> usize {
+        match self {
+            Self::SiluGated => width / 2,
+            Self::ReluSquared => width,
+        }
+    }
+}
+
+/// Which [`MGroupedRowSource`] a product pads: a launch that gathers or activates its rows as it pads
 /// them is timed apart from one that only copies them.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum MGroupedRowSourceKind {
@@ -32,8 +55,8 @@ pub enum MGroupedRowSourceKind {
     Sorted,
     /// Rows gathered from their tokens through a route sort as they are padded.
     Routed,
-    /// Rows gated out of another grouped product's output as they are padded.
-    Gated,
+    /// Rows activated out of another grouped product's output as they are padded.
+    Activated(RowActivation),
 }
 
 impl From<PlainTensor> for MGroupedRowSource {
@@ -48,7 +71,7 @@ impl MGroupedRowSource {
         match self {
             Self::Sorted(rows) => rows.shape()[0],
             Self::Routed { sort, .. } => sort.route_at_place.shape().num_elements(),
-            Self::Gated(both) => both.layout().rows(),
+            Self::Activated { rows, .. } => rows.layout().rows(),
         }
     }
 
@@ -57,7 +80,9 @@ impl MGroupedRowSource {
         match self {
             Self::Sorted(rows) => rows.shape()[1],
             Self::Routed { tokens, .. } => tokens.shape()[1],
-            Self::Gated(both) => both.rows().shape()[1] / 2,
+            Self::Activated { rows, activation } => {
+                activation.activated_width(rows.rows().shape()[1])
+            }
         }
     }
 
@@ -66,7 +91,7 @@ impl MGroupedRowSource {
         match self {
             Self::Sorted(_) => MGroupedRowSourceKind::Sorted,
             Self::Routed { .. } => MGroupedRowSourceKind::Routed,
-            Self::Gated(_) => MGroupedRowSourceKind::Gated,
+            Self::Activated { activation, .. } => MGroupedRowSourceKind::Activated(*activation),
         }
     }
 
@@ -75,7 +100,7 @@ impl MGroupedRowSource {
         match self {
             Self::Sorted(rows) => rows.clone(),
             Self::Routed { tokens, .. } => tokens.clone(),
-            Self::Gated(both) => PlainTensor::of_handle(both.rows().clone()),
+            Self::Activated { rows, .. } => PlainTensor::of_handle(rows.rows().clone()),
         }
     }
 
@@ -86,7 +111,7 @@ impl MGroupedRowSource {
         let rows = match self {
             Self::Sorted(rows) => layout.pad(rows),
             Self::Routed { tokens, sort } => layout.pad_routes(tokens, sort),
-            Self::Gated(both) => layout.gate(&both),
+            Self::Activated { rows, activation } => layout.activate(&rows, activation),
         };
         PaddedRows::new(rows, layout)
     }

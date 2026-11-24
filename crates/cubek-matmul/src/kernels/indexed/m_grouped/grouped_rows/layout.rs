@@ -1,5 +1,6 @@
 use super::PaddedRows;
-use super::kernel::{combine_routes, gate_rows, group_tiles, pad_rows, unpad_rows};
+use super::kernel::{activate_rows, combine_routes, group_tiles, pad_rows, unpad_rows};
+use crate::kernels::indexed::m_grouped::RowActivation;
 use crate::kernels::tensor::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -203,44 +204,46 @@ impl GroupedRows {
         self.pad_from(tokens, Some(sort))
     }
 
-    /// `silu(gate) · up` of `both`, a product's `[gate | up]` rows padded by
-    /// another layout over the same groups, padded by this one: the gated
-    /// activation moves the rows between two products' tiles in the pass it
-    /// makes anyway. `[tiles · align, width / 2]`, padding zero.
+    /// `activation` of `from`, a product's rows padded by another layout over the same groups,
+    /// padded by this one: the activation moves the rows between two products' tiles in the pass
+    /// it makes anyway. `[tiles · align, activated width]`, padding zero.
     ///
     /// # Panics
     ///
-    /// On `both` grouping other rows than this layout, or a width that is not
-    /// two halves.
-    pub fn gate(&self, both: &PaddedRows) -> TensorHandle {
-        let from = both.layout();
-        assert_eq!(from.rows, self.rows, "both layouts group the same rows");
-        let rows = PlainTensor::of_handle(both.rows().clone()).into_contiguous(&self.client);
+    /// On `from` grouping other rows than this layout, or a gated width that is not two halves.
+    pub fn activate(&self, from: &PaddedRows, activation: RowActivation) -> TensorHandle {
+        let from_layout = from.layout();
+        assert_eq!(
+            from_layout.rows, self.rows,
+            "the two layouts group the same rows"
+        );
+        let rows = PlainTensor::of_handle(from.rows().clone()).into_contiguous(&self.client);
         let width = rows.shape()[1];
         assert!(
-            width.is_multiple_of(2),
+            activation != RowActivation::SiluGated || width.is_multiple_of(2),
             "`[gate | up]` rows hold two halves"
         );
-        let half = width / 2;
-        let gated = self.output([self.padded_rows(), half], rows.elem);
-        let flat = FlatLaunch::new(&self.client, rows.elem, [self.padded_rows(), half]);
-        gate_rows::launch(
+        let shape = [self.padded_rows(), activation.activated_width(width)];
+        let activated = self.output(shape, rows.elem);
+        let flat = FlatLaunch::new(&self.client, rows.elem, shape);
+        activate_rows::launch(
             &self.client,
             flat.count,
             flat.cube_dim,
             flat.vector,
             rows.binding.clone().into_tensor_arg(),
-            gated.clone().binding().into_tensor_arg(),
+            activated.clone().binding().into_tensor_arg(),
             self.ends.binding.clone().into_tensor_arg(),
             self.table.clone().binding().into_tensor_arg(),
             self.sources.clone().binding().into_tensor_arg(),
-            from.starts.clone().binding().into_tensor_arg(),
+            from_layout.starts.clone().binding().into_tensor_arg(),
             self.rows as u32,
             self.align,
-            from.align,
+            from_layout.align,
+            activation,
             rows.elem,
         );
-        gated
+        activated
     }
 
     /// Every token's routes read back out of `padded`, rows in this layout,

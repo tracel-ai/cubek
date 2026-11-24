@@ -1,3 +1,4 @@
+use crate::kernels::indexed::m_grouped::RowActivation;
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// Where each tile of the padded rows reads from: one unit per group, laying
@@ -175,54 +176,74 @@ fn padded_row_of(
     starts[group] as usize * align + place - first
 }
 
-/// `gated[row] = silu(gate) · up` of the grouped row padded row `row` holds, read out of `both`,
-/// `[gate | up]` rows padded by another layout (`from_starts`, `from_align`), and written in
-/// this one (`table`, `sources`, `align`); zero where the row is padding. The gated activation
-/// moves the rows between two products' tiles in the pass it already makes. One unit per output
-/// vector, in f32.
+/// `activated[row]`, `activation` of the grouped row padded row `row` holds, read out of `rows`,
+/// padded by another layout (`from_starts`, `from_align`), and written in this one (`table`,
+/// `sources`, `align`); zero where the row is padding. The activation moves the rows between two
+/// products' tiles in the pass it already makes. One unit per output vector, in f32.
 #[cube(launch)]
-pub fn gate_rows<F: Float, N: Size>(
-    both: &Tensor<Vector<F, N>>,
-    gated: &mut Tensor<Vector<F, N>>,
+pub fn activate_rows<F: Float, N: Size>(
+    rows: &Tensor<Vector<F, N>>,
+    activated: &mut Tensor<Vector<F, N>>,
     ends: &Tensor<u32>,
     table: &Tensor<u32>,
     sources: &Tensor<u32>,
     from_starts: &Tensor<u32>,
-    rows: u32,
+    row_count: u32,
     #[comptime] align: usize,
     #[comptime] from_align: usize,
+    #[comptime] activation: RowActivation,
     #[define(F)] _dtype: ElemType,
 ) {
     let at = ABSOLUTE_POS;
-    if at >= gated.len() {
+    if at >= activated.len() {
         terminate!();
     }
 
-    let vectors = gated.shape(1) / gated.vector_size();
+    let vectors = activated.shape(1) / activated.vector_size();
     let (row, v) = (at / vectors, at % vectors);
-    let source = Source::new(row, rows as usize, ends, table, sources, align);
+    let source = Source::new(row, row_count as usize, ends, table, sources, align);
 
-    let (both_step, gated_step) = (
-        both.stride(0) / both.vector_size(),
-        gated.stride(0) / gated.vector_size(),
+    let (rows_step, activated_step) = (
+        rows.stride(0) / rows.vector_size(),
+        activated.stride(0) / activated.vector_size(),
     );
 
     let mut out = Vector::<F, N>::cast_from(0u32);
     if source.real {
         let group = table[row / align] as usize;
         let from = padded_row_of(source.row, group, ends, from_starts, from_align);
-        let gate = both[from * both_step + v];
-        let up = both[from * both_step + vectors + v];
+        let first = rows[from * rows_step + v];
+        // The up half exists only beside a gate.
+        let second = match activation {
+            RowActivation::SiluGated => rows[from * rows_step + vectors + v],
+            RowActivation::ReluSquared => first,
+        };
 
         #[unroll]
-        for lane in 0..gated.vector_size() {
-            let g = f32::cast_from(gate.extract(lane));
-            let u = f32::cast_from(up.extract(lane));
-            out.insert(lane, F::cast_from(g / (1.0 + (-g).exp()) * u));
+        for lane in 0..activated.vector_size() {
+            let x = f32::cast_from(first.extract(lane));
+            let value = match activation {
+                RowActivation::SiluGated => silu_gated(x, f32::cast_from(second.extract(lane))),
+                RowActivation::ReluSquared => relu_squared(x),
+            };
+            out.insert(lane, F::cast_from(value));
         }
     }
 
-    gated[row * gated_step + v] = out;
+    activated[row * activated_step + v] = out;
+}
+
+/// `silu(gate) · up`.
+#[cube]
+fn silu_gated(gate: f32, up: f32) -> f32 {
+    gate / (1.0 + (-gate).exp()) * up
+}
+
+/// `max(x, 0)²`.
+#[cube]
+fn relu_squared(x: f32) -> f32 {
+    let positive = f32::max(x, 0.0);
+    positive * positive
 }
 
 /// `out[t] = Σ_s weights[t, s] · grouped[padded row of route t · slots + s]`: every token's

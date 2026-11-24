@@ -1,4 +1,5 @@
 use super::{GroupedRows, PaddedRows, RouteSort, upload};
+use crate::kernels::indexed::m_grouped::RowActivation;
 use crate::kernels::tensor::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
@@ -97,7 +98,10 @@ fn an_uploaded_layout_is_the_launched_one() {
             &values(launched.padded_rows() * 2, 1),
         );
         let gated = |from: GroupedRows| {
-            let gated = launched.gate(&PaddedRows::new(both.clone(), from));
+            let gated = launched.activate(
+                &PaddedRows::new(both.clone(), from),
+                RowActivation::SiluGated,
+            );
             read_f32(&client, gated)
         };
         assert_eq!(gated(launched.clone()), gated(uploaded), "gate of {ends:?}");
@@ -225,43 +229,51 @@ fn pad_routes_lays_out_each_routes_token() {
     }
 }
 
-/// The gated rows land in the second layout's tiles: `[gate | up]` rows padded to four rows
-/// a tile, gated into a layout of two and of eight.
+/// The activated rows land in the second layout's tiles: rows padded to four rows a tile,
+/// activated into a layout of two and of eight, `[gate | up]` rows gated and plain rows squared
+/// through a ReLU.
 #[test]
-fn gate_moves_the_gated_rows_between_layouts() {
+fn activate_moves_the_activated_rows_between_layouts() {
     let client = client();
     let routing = Routing::new(SPREAD);
     let rows = routing.routes.len();
     let ends = u32s(&client, &routing.ends);
-    for half in [3usize, 8] {
-        let both = values(rows * 2 * half, half);
-        let from = GroupedRows::new(&client, ends.clone(), rows, ALIGN);
-        let padded = PaddedRows::new(
-            from.pad(PlainTensor::of_handle(f32s(
-                &client,
-                [rows, 2 * half],
-                &both,
-            ))),
-            from,
-        );
-        let want: Vec<f32> = (0..rows)
-            .flat_map(|row| {
-                let both = &both[row * 2 * half..(row + 1) * 2 * half];
-                (0..half)
-                    .map(|at| {
-                        let (gate, up) = (both[at], both[half + at]);
-                        gate / (1.0 + (-gate).exp()) * up
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        for align in [2usize, 8] {
-            let to = GroupedRows::new(&client, ends.clone(), rows, align);
-            let gated = to.gate(&padded);
-            let got = read_f32(&client, to.unpad(PlainTensor::of_handle(gated)));
-            assert_close(&got, &want, "gate");
+    for activation in [RowActivation::SiluGated, RowActivation::ReluSquared] {
+        for out_width in [3usize, 8] {
+            let width = match activation {
+                RowActivation::SiluGated => 2 * out_width,
+                RowActivation::ReluSquared => out_width,
+            };
+            let input = values(rows * width, out_width);
+            let from = GroupedRows::new(&client, ends.clone(), rows, ALIGN);
+            let padded = PaddedRows::new(
+                from.pad(PlainTensor::of_handle(f32s(&client, [rows, width], &input))),
+                from,
+            );
+            let want: Vec<f32> = (0..rows)
+                .flat_map(|row| {
+                    let row = &input[row * width..(row + 1) * width];
+                    (0..out_width)
+                        .map(|at| match activation {
+                            RowActivation::SiluGated => silu_gated(row[at], row[out_width + at]),
+                            RowActivation::ReluSquared => row[at].max(0.0).powi(2),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            for align in [2usize, 8] {
+                let to = GroupedRows::new(&client, ends.clone(), rows, align);
+                let activated = to.activate(&padded, activation);
+                let got = read_f32(&client, to.unpad(PlainTensor::of_handle(activated)));
+                assert_close(&got, &want, &format!("{activation:?}"));
+            }
         }
     }
+}
+
+/// `silu(gate) · up` on the host.
+fn silu_gated(gate: f32, up: f32) -> f32 {
+    gate / (1.0 + (-gate).exp()) * up
 }
 
 /// Every token's routes summed back under their weights out of a padded output, in the

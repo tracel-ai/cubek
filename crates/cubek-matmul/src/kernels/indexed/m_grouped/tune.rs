@@ -20,6 +20,7 @@ use crate::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings,
     MatmulRoutine, PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
 };
+use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
@@ -224,13 +225,21 @@ fn evenly_spread(
                 },
             }
         }
-        MGroupedRowSource::Gated(both) => {
-            let align = both.layout().align();
-            let layout = GroupedRows::uploaded(client, &spread, rows, align);
-            MGroupedRowSource::Gated(PaddedRows::new(both.rows().clone(), layout))
-        }
+        MGroupedRowSource::Activated {
+            rows: from,
+            activation,
+        } => MGroupedRowSource::Activated {
+            rows: relaid(client, from, &spread, rows),
+            activation: *activation,
+        },
     };
     tensors.with_rows(source, ends)
+}
+
+/// `from`'s rows under a layout over `ends`, at its own tile height.
+fn relaid(client: &Client, from: &PaddedRows, ends: &[u32], rows: usize) -> PaddedRows {
+    let layout = GroupedRows::uploaded(client, ends, rows, from.layout().align());
+    PaddedRows::new(from.rows().clone(), layout)
 }
 
 #[cfg(test)]
@@ -243,7 +252,8 @@ mod tests {
 
     use super::evenly_spread;
     use crate::kernels::indexed::m_grouped::{
-        GroupedRows, MGroupedMatmulTensors, MGroupedRowSource, PaddedRows, RouteSort, upload,
+        GroupedRows, MGroupedMatmulTensors, MGroupedRowSource, PaddedRows, RouteSort,
+        RowActivation, upload,
     };
     use crate::kernels::indexed::stack::SlabDimension;
     use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -259,9 +269,16 @@ mod tests {
         u32::from_bytes(&bytes).to_vec()
     }
 
+    /// Asserts that two layouts place the same groups on the same tiles.
+    fn assert_same_layout(client: &Client, got: &GroupedRows, want: &GroupedRows) {
+        let read_handle = |handle: TensorHandle| read(client, &PlainTensor::of_handle(handle));
+        assert_eq!(read_handle(got.starts()), read_handle(want.starts()));
+        assert_eq!(read_handle(got.table()), read_handle(want.table()));
+    }
+
     /// Ends and places far out of range, as a discarded sort leaves them, replaced for every
     /// source by ends spreading the rows evenly, places naming the rows' own tokens, and a
-    /// gated source's layout built on those ends.
+    /// activated source's layout built on those ends.
     #[test]
     fn evenly_spread_replaces_a_discarded_sorts_garbage() {
         let client = cubek_test_utils::client();
@@ -285,14 +302,17 @@ mod tests {
                     slots,
                 },
             },
-            MGroupedRowSource::Gated(PaddedRows::new(
-                TensorHandle::zeros(
-                    &client,
-                    [garbage_layout.padded_rows(), 2 * k],
-                    ElemType::Float(FloatKind::F32),
+            MGroupedRowSource::Activated {
+                rows: PaddedRows::new(
+                    TensorHandle::zeros(
+                        &client,
+                        [garbage_layout.padded_rows(), 2 * k],
+                        ElemType::Float(FloatKind::F32),
+                    ),
+                    garbage_layout,
                 ),
-                garbage_layout,
-            )),
+                activation: RowActivation::SiluGated,
+            },
         ];
         for source in sources {
             let tensors = MGroupedMatmulTensors::new(
@@ -314,14 +334,11 @@ mod tests {
                             .all(|&route| (route as usize) < rows)
                     );
                 }
-                MGroupedRowSource::Gated(both) => {
-                    let layout = both.layout();
-                    let launched = GroupedRows::new(&client, spread.ends().clone(), rows, align);
-                    let read_handle =
-                        |handle: TensorHandle| read(&client, &PlainTensor::of_handle(handle));
-                    assert_eq!(read_handle(layout.starts()), read_handle(launched.starts()));
-                    assert_eq!(read_handle(layout.table()), read_handle(launched.table()));
-                }
+                MGroupedRowSource::Activated { rows: from, .. } => assert_same_layout(
+                    &client,
+                    from.layout(),
+                    &GroupedRows::new(&client, spread.ends().clone(), rows, align),
+                ),
             }
         }
     }
