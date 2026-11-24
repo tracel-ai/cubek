@@ -15,6 +15,7 @@ mod partitioning;
 mod problem;
 mod roles;
 mod routines;
+mod spatial;
 mod staging;
 mod tensors;
 mod tune;
@@ -30,10 +31,11 @@ pub(crate) use binding::ConvBinding;
 pub(crate) use blueprint::TileConvBlueprint;
 pub(crate) use launch::ConvRoutine;
 pub(crate) use partitioning::{ConvPartitioning, ConvTiles, InstructionShape};
-pub(crate) use problem::{B, CI, CO, ConvDimension, ConvProblem, G, SpatialDim, SpatialDimCount};
+pub(crate) use problem::{B, CI, CO, ConvDimension, ConvProblem, G, SpatialDimCount};
 pub(crate) use roles::{
     ChannelAxis, ConvChannelOperands, ConvGather, ConvGrouping, ConvPhasing, ConvRoles,
 };
 pub(crate) use routines::{CubeStagedConvRoutine, PlaneWindowConvRoutine};
+pub(crate) use spatial::SpatialDim;
 pub(crate) use staging::ConvStaging;
 pub(crate) use tune::launch_tuned;
