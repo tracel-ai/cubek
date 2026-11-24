@@ -8,9 +8,11 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::*;
 use cubecl::tile::launch::Decline;
+use cubecl::tile::{TileSpec, TileTensorLaunch};
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
+use cubek_microkernel::attention::{B, S};
 
 /// What an attention routine declines where a packed cache is read through an index list.
 pub const INDEXED_KEYS_UNREAD: Decline = Decline::Unserved {
@@ -28,11 +30,6 @@ pub const INDEXED_VISIBILITY_UNREAD: Decline = Decline::Unserved {
 pub const KEY_BLOCK_SPLITS_A_PAGE: Decline = Decline::Unserved {
     why: "a block of listed keys lies in one page, and at the same place of the key and value \
           buffers",
-};
-
-/// What an attention routine declines where a packed cache lies in pools of pages.
-pub const PAGED_PACKED_UNREAD: Decline = Decline::Unserved {
-    why: "the packed attention reads a packed cache laid out as sequences, not in pages",
 };
 
 /// What an attention routine declines where a packed cache is stated under per-tensor scales: its
@@ -61,7 +58,8 @@ pub struct KvSource {
     pub cache: AttentionCache,
     /// The `u32` table `[b, pages_per_sequence]` naming each sequence's pages in order: sequence
     /// `b`'s position `s` lies in page `pages[b, s / page_size]`, and the cache's buffers are pools
-    /// of pages, `[pages, kv, page_size, ·]`. `None` where the buffers are `[b, kv, s, ·]`.
+    /// of pages, `[pages, kv, page_size, ·]`, a packed cache's words, norms and residual lengths
+    /// alike. `None` where the buffers are `[b, kv, s, ·]`.
     pub pages: Option<PlainTensor>,
     /// The blocks each sequence reads, in order. `None` where a sequence reads every position its
     /// length attends.
@@ -228,8 +226,9 @@ impl KvSource {
         }
     }
 
-    /// How the keys and values lie, for a source the routines read: no blocks listed, and a packed
-    /// cache laid out as sequences.
+    /// How the keys and values lie, for a source the routines read, listing no blocks. A packed
+    /// cache is packed wherever it lies: its pages are its binding's, which reads them through the
+    /// table as it decodes ([`PackedAttentionCache::bind`]).
     pub(crate) fn layout(&self) -> AttentionCacheLayout {
         match (&self.cache, &self.pages) {
             (AttentionCache::Packed(cache), _) => AttentionCacheLayout::Packed(cache.layout()),
@@ -239,6 +238,17 @@ impl KvSource {
             },
         }
     }
+}
+
+/// The page table `pages` ([`KvSource::pages`]) bound for a launch: keyed by the batch and the
+/// keys' positions, it covers the launch, its rows the batch and its columns the keys.
+pub(crate) fn page_table(pages: &PlainTensor) -> TileTensorLaunch {
+    TileTensorLaunch::new(
+        pages.binding.clone().into_tensor_arg(),
+        ElemType::UInt(UIntKind::U32),
+        1,
+        TileSpec::direct(&[B, S]),
+    )
 }
 
 /// One buffer of a cache viewed as a pool of pages of one block each: `[blocks, kv, size, ·]`,
@@ -316,10 +326,10 @@ mod tests {
     use cubek_std::Hardware;
     use cubek_test_utils::{HostData, HostDataType, TestInput, ValidationResult};
 
-    /// A packed cache in pages or under per-tensor scales, and blocks of keys listed over a packed
-    /// cache, at a causal visibility or straddling a page, are each declined by the one entry,
-    /// before any routine is launched; the same queries and keys read contiguously, as listed
-    /// blocks, or under per-tensor scales, are admitted.
+    /// A packed cache under per-tensor scales, and blocks of keys listed over a packed cache, at a
+    /// causal visibility or straddling a page, are each declined by the one entry, before any
+    /// routine is launched; the same queries and keys read contiguously, as listed blocks, or
+    /// under per-tensor scales, and a packed cache in pages, are admitted.
     #[test]
     fn the_entry_declines_what_no_routine_reads() {
         let client: Client = cubecl::test_device().client();
@@ -395,7 +405,7 @@ mod tests {
         );
         let paged_packed =
             KvSource::new(AttentionCache::Packed(packed.clone())).paged(tensor(&[1, 2], u32));
-        assert_eq!(attention(dense(), paged_packed), Some(PAGED_PACKED_UNREAD));
+        assert_eq!(attention(dense(), paged_packed), None);
         let listed_packed =
             KvSource::new(AttentionCache::Packed(packed)).indexed(tensor(&[1, 2], u32), block(4));
         assert_eq!(attention(dense(), listed_packed), Some(INDEXED_KEYS_UNREAD));

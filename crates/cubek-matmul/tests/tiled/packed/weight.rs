@@ -1,9 +1,15 @@
 //! A packed weight against a float activation.
 
+use core::num::NonZeroUsize;
 use cubek_matmul::kernels::{
     CubeShuffleMatmulRoutine, CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine,
-    HypercubeLastArrivalMatmulRoutine, LoadingSchedule, PlaneShuffleMatmulRoutine,
+    HypercubeLastArrivalMatmulRoutine, HypercubeLastArrivalMatmulRoutineSettings, LoadingSchedule,
+    PlaneShuffleMatmulRoutine,
 };
+use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
+use cubek_microkernel::matmul::hypercube::HypercubeStagedMicrokernelSettings;
+use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
+use cubek_std::microkernel::StageRing;
 use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
 
 use crate::matmul::Declines;
@@ -130,4 +136,35 @@ fn a_packed_weight_answers_a_prompt_at_every_staged_setting() {
         Some(TestOutcome::Validated(ValidationResult::Skipped(_))) | None => hypercube.check(cases),
         Some(_) => hypercube.check_some(cases),
     }
+}
+
+/// A hypercube box whose stages take most of the device's shared memory, against a packed weight
+/// it decodes into its stages: every byte its cubes allocate is one its prepare counted, so the
+/// box answers or is declined, never accepted and then refused by the device. Four by four
+/// fragments on four by two planes, a second stage in flight, against MXFP4 at a prompt's rows,
+/// once asked for 65540 bytes of a 64 KiB device at launch where prepare had counted 36868.
+#[test]
+fn a_hypercube_box_near_the_shared_memory_limit_answers_or_is_declined() {
+    let product = PackedProduct::of(
+        Stored::Bf16,
+        Stored::Packed {
+            format: PackedFormat::Mxfp4,
+            seed: 5,
+        },
+    )
+    .m(128)
+    .n(128)
+    .k(2048);
+    let settings = HypercubeLastArrivalMatmulRoutineSettings {
+        microkernel: HypercubeStagedMicrokernelSettings {
+            cube: CubeStagedMicrokernelSettings::boxed(
+                PlaneFragmentMicrokernelSettings::grid(4, 4, 1),
+                MatmulPlaneLayout::new(4, 2),
+            )
+            .ringed(StageRing::DOUBLE),
+        },
+        cubes_per_worker: NonZeroUsize::MIN,
+    };
+    let hypercube = ByRoutine::new(HypercubeLastArrivalMatmulRoutine, Declines::AsItStates);
+    hypercube.check(hypercube.at([settings], &[product]));
 }
