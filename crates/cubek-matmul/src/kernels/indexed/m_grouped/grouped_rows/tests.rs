@@ -240,10 +240,7 @@ fn activate_moves_the_activated_rows_between_layouts() {
     let ends = u32s(&client, &routing.ends);
     for activation in [RowActivation::SiluGated, RowActivation::ReluSquared] {
         for out_width in [3usize, 8] {
-            let width = match activation {
-                RowActivation::SiluGated => 2 * out_width,
-                RowActivation::ReluSquared => out_width,
-            };
+            let width = activation.expansions() * out_width;
             let input = values(rows * width, out_width);
             let from = GroupedRows::new(&client, ends.clone(), rows, ALIGN);
             let padded = PaddedRows::new(

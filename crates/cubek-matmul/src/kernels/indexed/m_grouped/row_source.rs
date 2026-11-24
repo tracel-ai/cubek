@@ -38,12 +38,17 @@ pub enum RowActivation {
 }
 
 impl RowActivation {
+    /// How many expansions of the hidden width a row holds before this activation.
+    pub fn expansions(self) -> usize {
+        match self {
+            Self::SiluGated => 2,
+            Self::ReluSquared => 1,
+        }
+    }
+
     /// The width of a row this activation makes out of one `width` wide.
     pub fn activated_width(self, width: usize) -> usize {
-        match self {
-            Self::SiluGated => width / 2,
-            Self::ReluSquared => width,
-        }
+        width / self.expansions()
     }
 }
 

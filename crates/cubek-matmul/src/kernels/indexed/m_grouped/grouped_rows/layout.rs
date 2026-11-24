@@ -210,7 +210,7 @@ impl GroupedRows {
     ///
     /// # Panics
     ///
-    /// On `from` grouping other rows than this layout, or a gated width that is not two halves.
+    /// On `from` grouping other rows than this layout, or a width that is not whole expansions.
     pub fn activate(&self, from: &PaddedRows, activation: RowActivation) -> TensorHandle {
         let from_layout = from.layout();
         assert_eq!(
@@ -220,8 +220,8 @@ impl GroupedRows {
         let rows = PlainTensor::of_handle(from.rows().clone()).into_contiguous(&self.client);
         let width = rows.shape()[1];
         assert!(
-            activation != RowActivation::SiluGated || width.is_multiple_of(2),
-            "`[gate | up]` rows hold two halves"
+            width.is_multiple_of(activation.expansions()),
+            "a row holds whole expansions"
         );
         let shape = [self.padded_rows(), activation.activated_width(width)];
         let activated = self.output(shape, rows.elem);
