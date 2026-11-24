@@ -136,7 +136,7 @@ impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedWgmmaMatmu
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: CubeStagedMatmulRoutineBlueprint,
         grid: Grid,
-    ) {
-        base::dispatch::<O, Out>(tensors, binding, blueprint, grid);
+    ) -> Result<(), Decline> {
+        base::dispatch::<O, Out>(tensors, binding, blueprint, grid)
     }
 }

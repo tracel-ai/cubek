@@ -37,13 +37,17 @@ pub(crate) trait ReduceRoutine<M>:
 
     /// Launch the kernel `blueprint` compiles for `problem`, on `grid`, accumulating into `F`'s
     /// carrier, its input served as `I` serves it, from the arguments `binding` holds.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the launch breaks what `prepare` claimed of it, nothing launched.
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Self::Out>,
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
-    );
+    ) -> Result<(), Decline>;
 
     /// The lanes `problem`'s input binds at on `hw` by what `microkernel`, whose lines are at most
     /// `widest_line` wide, asks of them ([`reduce_lane_count`]).
@@ -66,13 +70,17 @@ pub(crate) trait ReduceRoutine<M>:
     }
 
     /// [`dispatch`](Self::dispatch) into the carrier `problem`'s operation accumulates into.
+    ///
+    /// # Errors
+    ///
+    /// As [`dispatch`](Self::dispatch).
     fn dispatch_carrier<I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Self::Out>,
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         match problem.operation.carrier() {
             ReduceCarrier::Values => Self::dispatch::<ValuesReduceCarrierFamily, I>(
                 problem, client, binding, blueprint, grid,
@@ -90,34 +98,46 @@ pub(crate) trait ReduceRoutine<M>:
     }
 
     /// `tensors` bound as `blueprint` states them and reduced on `grid`.
-    fn launch(tensors: &ReduceTensors, blueprint: ReduceBlueprint<M>, grid: Grid) {
-        let binding = bound_as(tensors.bind(&blueprint, &grid), Bound::arg, Self::out_arg);
+    ///
+    /// # Errors
+    ///
+    /// As [`dispatch`](Self::dispatch).
+    fn launch(
+        tensors: &ReduceTensors,
+        blueprint: ReduceBlueprint<M>,
+        grid: Grid,
+    ) -> Result<(), Decline> {
+        let binding = bound_as(tensors.bind(&blueprint, &grid)?, Bound::arg, Self::out_arg);
         Self::dispatch_carrier::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
             binding,
             blueprint,
             grid,
-        );
+        )
     }
 
     /// `tensors`, whose input the caller binds, reduced on `grid` as `blueprint` states it: `input`
     /// builds the input's argument from the spec and geometry the launch derived for it, served as
     /// `I` serves it.
+    ///
+    /// # Errors
+    ///
+    /// As [`dispatch`](Self::dispatch).
     fn launch_unbound<I: TileOperand>(
         tensors: &ReduceTensors<Geometry>,
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) {
-        let binding = bound_as(tensors.bind(&blueprint, &grid), input, Self::out_arg);
+    ) -> Result<(), Decline> {
+        let binding = bound_as(tensors.bind(&blueprint, &grid)?, input, Self::out_arg);
         Self::dispatch_carrier::<I>(
             tensors.problem(),
             tensors.client(),
             binding,
             blueprint,
             grid,
-        );
+        )
     }
 }
 

@@ -128,8 +128,8 @@ impl RandomRoutine for UnitRandomRoutine {
         seeds: SeedsLaunch,
         blueprint: UnitRandomRoutineBlueprint,
         grid: Grid,
-    ) {
-        let binding = tensor.bind(&blueprint.partitioning, blueprint.width, &grid);
+    ) -> Result<(), Decline> {
+        let binding = tensor.bind(&blueprint.partitioning, blueprint.width, &grid)?;
         // SAFETY: the output is bound through the launcher, which masks the writes of a run the
         // output's end cuts short, and the kernel indexes no buffer but through its tile; it
         // holds no shared memory.
@@ -147,5 +147,6 @@ impl RandomRoutine for UnitRandomRoutine {
                 tensor.problem().element,
             );
         }
+        Ok(())
     }
 }

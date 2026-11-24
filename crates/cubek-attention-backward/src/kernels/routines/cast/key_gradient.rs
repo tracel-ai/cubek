@@ -3,6 +3,7 @@
 use super::kernel::cast_key_gradient_kernel;
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Decline;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 
@@ -49,27 +50,30 @@ impl CastKeyGradientRoutine {
     ) -> CastKeyGradientBlueprint {
         summed.placement()
     }
-
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &CastKeyGradientBlueprint,
         sums: &KeyGradientSums,
-    ) {
-        let binding = tensors.bind(walk);
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(walk)?;
         let (key_sum, value_sum) = (
             tensors.bind_beside(
                 &binding,
                 walk,
                 &sums.key,
                 AttentionBackwardOperand::KeyGradient,
-            ),
+            )?,
             tensors.bind_beside(
                 &binding,
                 walk,
                 &sums.value,
                 AttentionBackwardOperand::ValueGradient,
-            ),
+            )?,
         );
         let operands = binding.operands;
 
@@ -90,5 +94,6 @@ impl CastKeyGradientRoutine {
                 binding.launcher.partitioning_arg(),
             );
         }
+        Ok(())
     }
 }

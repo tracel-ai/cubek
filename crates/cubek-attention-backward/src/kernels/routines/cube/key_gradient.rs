@@ -27,10 +27,17 @@ impl CubeStagedKeyGradientRoutine {
     ) -> Result<CubeStagedKeyWalkBlueprint, Decline> {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
     }
-
-    pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &CubeStagedKeyWalkBlueprint) {
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
+    pub fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        walk: &CubeStagedKeyWalkBlueprint,
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -60,5 +67,6 @@ impl CubeStagedKeyGradientRoutine {
                 [AttentionBackwardProblem::SUM, problem.element],
             );
         }
+        Ok(())
     }
 }

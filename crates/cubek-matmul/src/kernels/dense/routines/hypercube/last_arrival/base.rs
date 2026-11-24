@@ -311,7 +311,7 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: HypercubeLastArrivalMatmulRoutineBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         // The elements its cubes contract: packed inputs a fill decodes at the element they decode
         // into, ones read as stored at the element their values name.
         let elements = blueprint
@@ -319,7 +319,7 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
             .cube
             .contracted(&tensors.work_item())
             .kernel_elements();
-        let merge = tensors.bind_last_arrival(&blueprint, &binding.launcher);
+        let merge = tensors.bind_last_arrival(&blueprint, &binding.launcher)?;
         let out_width = blueprint.widths.out;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes of
         // a tile the problem's edge cuts short; the kernel indexes no buffer but through its tiles
@@ -343,6 +343,7 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
                 elements,
             );
         }
+        Ok(())
     }
 }
 

@@ -115,7 +115,7 @@ where
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
-                .map_out(|out| (out, Write::Replace))
+                .map(|binding| binding.map_out(|out| (out, Write::Replace)))
         })
     }
 
@@ -163,12 +163,7 @@ where
             return Err(RMS_NORM_SINK_TAKES_NO_ROWS);
         }
         let prepared = self.prepare(tensors.problem())?;
-        Ok(RmsNormRoutineSinkLaunch::new(
-            self.routine,
-            tensors,
-            prepared,
-            call.epsilon,
-        ))
+        RmsNormRoutineSinkLaunch::new(self.routine, tensors, prepared, call.epsilon)
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
@@ -191,13 +186,13 @@ where
         &self,
         call: &RmsNormCall,
         tensors: &RmsNormTensors<Out>,
-        bind: impl FnOnce(&RmsNormBlueprint<M>, &Grid) -> RmsNormBinding<O::Operand>,
+        bind: impl FnOnce(&RmsNormBlueprint<M>, &Grid) -> Result<RmsNormBinding<O::Operand>, Decline>,
     ) -> Result<(), Decline> {
         if tensors.problem().rows == 0 {
             return Ok(());
         }
         let (blueprint, grid) = self.prepare(tensors.problem())?;
-        let binding = bind(&blueprint, &grid);
+        let binding = bind(&blueprint, &grid)?;
         self.routine
             .dispatch::<O, _>(tensors, binding, blueprint, grid, call.epsilon);
         Ok(())
@@ -220,7 +215,7 @@ where
         self.launch_on::<Buffered, _>(call, &tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
-                .map_out(|out| (out, Write::Replace))
+                .map(|binding| binding.map_out(|out| (out, Write::Replace)))
         })?;
         Ok(tensors.into_out())
     }

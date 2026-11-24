@@ -3,7 +3,8 @@ use super::kernel::{
 };
 use crate::kernels::{
     PARTIALS, REDUCED, ReduceBinding, ReduceBlueprint, ReducePartials, ReduceRoutine,
-    ReduceRoutineProblem, bound_at, each_microkernel_with, estimated_work, split_launch,
+    ReduceRoutineProblem, WORKSPACE_LOST, bound_at, each_microkernel_with, estimated_work,
+    split_launch,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -228,16 +229,13 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: HypercubeLastArrivalReduceBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let extents = ReduceSplitExtents::new(problem, &blueprint.partitioning);
         // A box of rows' partials lie where its output does, the reduced dim's cells holding
         // every part's carrier, each stored by its part's cube before any is read, so they start
         // unset; the counters, one a box of rows, hold zero, as the caller gave them and as every
         // launch leaves them. All of it is the caller's workspace, which prepare checked.
-        let workspace = binding
-            .workspace
-            .clone()
-            .expect("prepare declines a launch whose caller gave no workspace");
+        let workspace = binding.workspace.clone().ok_or(WORKSPACE_LOST)?;
         let partial_count = blueprint.partitioning.space().extent(PARTIALS);
         let partial_shape = problem.shape_with_reduced_count(partial_count);
         let counter = ElemType::UInt(UIntKind::U32);
@@ -258,13 +256,18 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
                 blueprint.lane_count,
             )
         };
-        let partials = bind_partials(partials, problem.elements.accumulator);
+        let partials = bind_partials(partials, problem.elements.accumulator)?;
         // The partials' indices, only where the carrier keeps any.
-        let partial_indices = problem.operation.carrier().carries_indices().then(|| {
-            let handle =
-                TensorHandle::new_contiguous(partial_shape, workspace.partial_indices, counter);
-            bind_partials(handle, counter)
-        });
+        let partial_indices = problem
+            .operation
+            .carrier()
+            .carries_indices()
+            .then(|| {
+                let handle =
+                    TensorHandle::new_contiguous(partial_shape, workspace.partial_indices, counter);
+                bind_partials(handle, counter)
+            })
+            .transpose()?;
         let arrivals = arrivals.binding().into_tensor_arg().into_buffer_arg();
         // Its counters are indexed past its tiles, one a box of rows, which the cubes count
         // themselves in at by their box's coordinates. A cube writes no partial but its own part's,
@@ -280,7 +283,8 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
             partial_indices.map(Bound::arg).into(),
             arrivals,
             ReduceSplitExtentsLaunch::new(extents.part_count, extents.value_count),
-        )
+        );
+        Ok(())
     }
 }
 
@@ -404,8 +408,7 @@ mod tests {
             })
             .reduce(|first, next| first.or(next))
             .unwrap_or(Err(ROUTINE_LISTS_NO_SETTING))?;
-        HypercubeLastArrivalReduceRoutine::launch(tensors, blueprint, grid);
-        Ok(())
+        HypercubeLastArrivalReduceRoutine::launch(tensors, blueprint, grid)
     }
 
     /// A launch leaves its arrival counters at zero, so its caller's workspace serves the next

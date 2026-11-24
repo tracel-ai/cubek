@@ -59,10 +59,17 @@ impl UnitKeyGradientRoutine {
             (),
         ))
     }
-
-    pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &UnitKeyGradientBlueprint) {
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
+    pub fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        walk: &UnitKeyGradientBlueprint,
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -90,5 +97,6 @@ impl UnitKeyGradientRoutine {
                 AttentionBackwardProblem::SUM,
             );
         }
+        Ok(())
     }
 }

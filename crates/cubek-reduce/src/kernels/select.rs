@@ -139,14 +139,14 @@ fn filling_the_device<R: ReduceRoutine<M>, M>(
         .map(|(settings, blueprint, _)| (settings, blueprint))
 }
 
-/// Whether `R` at `settings` launched on `tensors`: `false` where it declines their problem.
+/// Whether `R` at `settings` launched on `tensors`: `false` where it declines them.
 fn launched<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     tensors: &ReduceTensors,
     settings: &R::Settings,
 ) -> bool {
     R::prepare(hw, tensors.problem(), settings)
-        .map(|(blueprint, grid)| R::launch(tensors, blueprint, grid))
+        .and_then(|(blueprint, grid)| R::launch(tensors, blueprint, grid))
         .is_ok()
 }
 

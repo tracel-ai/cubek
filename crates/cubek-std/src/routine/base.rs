@@ -6,8 +6,8 @@ use crate::Hardware;
 use crate::microkernel::{KernelEstimate, Microkernel};
 use crate::routine::Grid;
 
-/// The message a launch expects with when the tile engine refuses a plan its routine prepared:
-/// the two disagree, which is a bug in the routine rather than a limit of the device.
+/// What should hold of a plan its routine prepared, and a launch is [`Broken`](Decline::Broken)
+/// without.
 pub const ADMITTED_PLAN_RUNS: &str =
     "the selector admitted this plan, so the tile engine launches it and binds its operands";
 

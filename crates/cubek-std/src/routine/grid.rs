@@ -1,6 +1,6 @@
 use crate::Hardware;
 use crate::microkernel::{CubeFootprint, CubePlanes, KernelEstimate};
-use crate::routine::{ADMITTED_PLAN_RUNS, LaunchSettings};
+use crate::routine::{ADMITTED_PLAN_RUNS, Breakable, LaunchSettings};
 use cubecl::CubeCount;
 use cubecl::client::Client;
 use cubecl::tile::launch::Decline;
@@ -26,7 +26,7 @@ pub struct Grid {
 /// but the grid and the blueprint the grid was prepared beside, and building it settles the
 /// partitioning over the problem's extents, which costs more host time than a small product.
 #[derive(Clone, Default)]
-struct SettledLauncher(Arc<SyncOnceCell<Launcher>>);
+struct SettledLauncher(Arc<SyncOnceCell<Result<Launcher, Decline>>>);
 
 impl core::fmt::Debug for SettledLauncher {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -49,14 +49,15 @@ impl Grid {
     /// partitioning states, not ones cubek derives again. `settle` runs on the grid's first launch
     /// alone: every later one clones the launcher it built.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Where the device refuses the grid, which [`Grid::new`] already admitted for it.
+    /// [`Decline::Broken`] where the device refuses the grid, which [`Grid::new`] already admitted
+    /// for it.
     pub fn launcher(
         &self,
         client: &Client,
         settle: impl FnOnce() -> (Partitioning, Space),
-    ) -> Launcher {
+    ) -> Result<Launcher, Decline> {
         self.launcher
             .0
             .get_or_init(|| {
@@ -71,7 +72,7 @@ impl Grid {
                     },
                 )
                 .and_then(|launcher| launcher.holding(self.shared_memory))
-                .expect(ADMITTED_PLAN_RUNS)
+                .or_broken(ADMITTED_PLAN_RUNS)
             })
             .clone()
     }

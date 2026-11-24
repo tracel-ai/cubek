@@ -82,23 +82,18 @@ impl Strategy {
             return tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
                 .launch_ref(client, lhs, rhs, out, dtypes);
         }
-        if let Err(err) = multi_level::Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
+        let picked = multi_level::Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
             client,
             lhs.clone(),
             rhs.clone(),
             out.clone(),
             dtypes,
-        ) {
-            match err {
-                MatmulSetupError::Unavailable(_) => {
-                    multi_level::Strategy::SimpleUnit(Default::default())
-                        .launch_ref(client, lhs, rhs, out, dtypes)?;
-                }
-                _ => panic!("{err:?}"),
-            }
+        );
+        match picked {
+            Ok(()) => Ok(()),
+            Err(_) => multi_level::Strategy::SimpleUnit(Default::default())
+                .launch_ref(client, lhs, rhs, out, dtypes),
         }
-
-        Ok(())
     }
 
     /// The tiled-only pair. `CpuGemm` takes the fallback slot as the one tiled routine with no
@@ -111,21 +106,15 @@ impl Strategy {
         out: TensorBinding,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
-        if let Err(err) =
+        let picked =
             tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
-                .launch_ref(client, lhs.clone(), rhs.clone(), out.clone(), dtypes)
-        {
-            match err {
-                MatmulSetupError::Unavailable(_) => {
-                    tiled::Strategy::CpuGemm(
-                        crate::kernels::UnitRegistersMatmulRoutineSettings::DEFAULT,
-                    )
-                    .launch_ref(client, lhs, rhs, out, dtypes)?;
-                }
-                _ => panic!("{err:?}"),
-            }
+                .launch_ref(client, lhs.clone(), rhs.clone(), out.clone(), dtypes);
+        match picked {
+            Ok(()) => Ok(()),
+            Err(_) => tiled::Strategy::CpuGemm(
+                crate::kernels::UnitRegistersMatmulRoutineSettings::DEFAULT,
+            )
+            .launch_ref(client, lhs, rhs, out, dtypes),
         }
-
-        Ok(())
     }
 }

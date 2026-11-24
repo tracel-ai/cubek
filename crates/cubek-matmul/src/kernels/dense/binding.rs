@@ -1,9 +1,9 @@
 use crate::kernels::tensor::{PackedTensor, PlainTensor};
-use cubecl::tile::launch::{Bound, Delivery};
+use cubecl::tile::launch::{Bound, Decline, Delivery};
 use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_std::layout::stored::BlockScales;
 use cubek_std::matmul_dimensions::{K, N};
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
 /// The operands of one launch, bound under its launcher; `Out` is a buffer's [`Bound`] or a sink's
 /// `Unbound`. A float operand is one [`Bound`]; the dense product binds each input as one tile
@@ -41,12 +41,16 @@ impl MatmulDequantizeBinding {
     /// `packed`, its words `width` values wide, beside `into`, under `launcher`: a float `[k, n]`
     /// matrix in dense rows of the dimension the packed words do not run along, so each read of the
     /// words decodes into the line it writes.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
     pub fn new(
         packed: &PackedTensor,
         into: &PlainTensor,
         launcher: Launcher,
         width: usize,
-    ) -> Self {
+    ) -> Result<Self, Decline> {
         let operand = packed.operand();
         let lined = operand.lined();
         let across = match lined == K {
@@ -63,12 +67,12 @@ impl MatmulDequantizeBinding {
             .dimensions(&out_dimensions)
             .vectorize(operand.read(lined))
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        let packed = packed.bind(&launcher, width, BlockScales::Fields, Delivery::SyncPerUnit);
-        Self {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        let packed = packed.bind(&launcher, width, BlockScales::Fields, Delivery::SyncPerUnit)?;
+        Ok(Self {
             launcher,
             packed,
             out,
-        }
+        })
     }
 }

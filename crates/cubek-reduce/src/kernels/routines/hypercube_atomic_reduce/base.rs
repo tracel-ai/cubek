@@ -149,7 +149,7 @@ impl ReduceRoutine<HypercubeAtomicReduceMicrokernel> for HypercubeAtomicReduceRo
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Bound>,
         blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let elements = problem.elements;
         let (spec, lane_count) = (binding.out.spec.clone(), binding.out.vector_size);
         let out = AccumulateArgLaunch::new(binding.out.tensor(), lane_count, spec);
@@ -170,6 +170,7 @@ impl ReduceRoutine<HypercubeAtomicReduceMicrokernel> for HypercubeAtomicReduceRo
                 [elements.input, elements.accumulator, elements.out],
             )
         }
+        Ok(())
     }
 }
 

@@ -14,7 +14,7 @@ use cubek_matmul::kernels::tensor::{
 use cubek_microkernel::row_store::RowStore;
 use cubek_microkernel::swiglu::{D, H, R, SwigluOperands};
 use cubek_std::Hardware;
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid};
 
 /// What a launch of this kind declines before preparing anything: rows that are not floats.
 pub const SWIGLU_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
@@ -95,19 +95,27 @@ impl SwigluTensors {
 
     /// The two operands bound as `blueprint` states them, on `grid`: under its partitioning, at
     /// its width.
-    pub fn bind<M>(&self, blueprint: &SwigluBlueprint<M>, grid: &Grid) -> SwigluBinding<Bound> {
-        let (launcher, input) = self.bind_input(blueprint, grid);
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub fn bind<M>(
+        &self,
+        blueprint: &SwigluBlueprint<M>,
+        grid: &Grid,
+    ) -> Result<SwigluBinding<Bound>, Decline> {
+        let (launcher, input) = self.bind_input(blueprint, grid)?;
         let out = launcher
             .arg(self.out.rows.binding.clone(), self.problem.element)
             .dimensions(&[R, D])
             .vectorize(blueprint.width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        SwigluBinding {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(SwigluBinding {
             launcher,
             input,
             out,
-        }
+        })
     }
 }
 
@@ -163,18 +171,22 @@ impl SwigluTensors<PackedRows> {
 
     /// The input bound as `blueprint` states it, on `grid`, and the output as one tile of its
     /// words under their scales ([`PackedRows::bind`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
     pub fn bind<M>(
         &self,
         blueprint: &SwigluBlueprint<M>,
         grid: &Grid,
-    ) -> SwigluBinding<TileTensorLaunch> {
-        let (launcher, input) = self.bind_input(blueprint, grid);
-        let out = self.out.bind(&launcher, blueprint.width);
-        SwigluBinding {
+    ) -> Result<SwigluBinding<TileTensorLaunch>, Decline> {
+        let (launcher, input) = self.bind_input(blueprint, grid)?;
+        let out = self.out.bind(&launcher, blueprint.width)?;
+        Ok(SwigluBinding {
             launcher,
             input,
             out,
-        }
+        })
     }
 }
 
@@ -200,14 +212,22 @@ impl SwigluTensors<TiledRows> {
 
     /// The input bound as `blueprint` states it, on `grid`, and the output over the rows and the
     /// width, through the tiles its binding states.
-    pub fn bind<M>(&self, blueprint: &SwigluBlueprint<M>, grid: &Grid) -> SwigluBinding<Bound> {
-        let (launcher, input) = self.bind_input(blueprint, grid);
-        let out = self.out.bind(&launcher, blueprint.width);
-        SwigluBinding {
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub fn bind<M>(
+        &self,
+        blueprint: &SwigluBlueprint<M>,
+        grid: &Grid,
+    ) -> Result<SwigluBinding<Bound>, Decline> {
+        let (launcher, input) = self.bind_input(blueprint, grid)?;
+        let out = self.out.bind(&launcher, blueprint.width)?;
+        Ok(SwigluBinding {
             launcher,
             input,
             out,
-        }
+        })
     }
 }
 
@@ -224,7 +244,11 @@ impl<Out> SwigluTensors<Out> {
 
     /// The launcher of `blueprint`'s partitioning on `grid`, and the fused rows bound under it at
     /// its width, as the store states the rows: what every output binds beside.
-    fn bind_input<M>(&self, blueprint: &SwigluBlueprint<M>, grid: &Grid) -> (Launcher, Bound) {
+    fn bind_input<M>(
+        &self,
+        blueprint: &SwigluBlueprint<M>,
+        grid: &Grid,
+    ) -> Result<(Launcher, Bound), Decline> {
         let partitioning = &blueprint.partitioning;
         // The grid's launcher, settled over the extents on its first launch and cloned after.
         let launcher = grid.launcher(self.client(), || {
@@ -232,15 +256,15 @@ impl<Out> SwigluTensors<Out> {
                 partitioning.kernel(),
                 partitioning.as_tile().space().clone(),
             )
-        });
+        })?;
         let (meta, dimensions) = self.problem.store.restated(&self.input.meta(), &[R, H]);
         let input = launcher
             .arg(self.input.bound_as(meta), self.problem.element)
             .dimensions(&dimensions)
             .vectorize(blueprint.width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        (launcher, input)
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok((launcher, input))
     }
 }
 

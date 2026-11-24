@@ -99,12 +99,16 @@ impl Routine for UnitDirectZeroReduceRoutine {
 
 impl UnitDirectZeroReduceRoutine {
     /// The output of `tensors` zeroed on `grid`, as `blueprint` states it: their input is never read.
+    ///
+    /// # Errors
+    ///
+    /// As [`ReduceTensors::bind_out`].
     pub fn launch<In>(
         tensors: &ReduceTensors<In>,
         blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
-    ) {
-        let (launcher, out) = tensors.bind_out(&blueprint, &grid);
+    ) -> Result<(), Decline> {
+        let (launcher, out) = tensors.bind_out(&blueprint, &grid)?;
         // SAFETY: the output is bound through the launcher, which masks the writes of a tile the
         // problem's edge cuts short, and the kernel indexes no buffer but through its tile; it holds
         // no shared memory.
@@ -119,6 +123,7 @@ impl UnitDirectZeroReduceRoutine {
                 tensors.problem().elements.out,
             )
         }
+        Ok(())
     }
 }
 
@@ -155,7 +160,7 @@ mod tests {
             let hw = Hardware::from_client(client);
             let (blueprint, grid) =
                 UnitDirectZeroReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
-            UnitDirectZeroReduceRoutine::launch(&tensors, blueprint, grid);
+            UnitDirectZeroReduceRoutine::launch(&tensors, blueprint, grid)?;
             Ok(vec![written_output(out, reduction)])
         }
 

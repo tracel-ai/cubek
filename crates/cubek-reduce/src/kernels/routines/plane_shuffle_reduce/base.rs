@@ -124,7 +124,7 @@ impl ReduceRoutine<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine 
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: PlaneShuffleReduceBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; it holds no shared memory.
@@ -143,6 +143,7 @@ impl ReduceRoutine<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine 
                 problem.compiled_elements(),
             )
         }
+        Ok(())
     }
 }
 

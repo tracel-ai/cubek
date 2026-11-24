@@ -42,7 +42,16 @@ pub trait AttentionBackwardLaunch {
     ) -> Result<Self::Blueprint, Decline>;
 
     /// Launch every routine `blueprint` holds, in order, over `tensors`.
-    fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint);
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`]: the routines before the one that errs have launched,
+    /// and the gradients hold nothing a caller may read until another strategy writes them.
+    fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        blueprint: Self::Blueprint,
+    ) -> Result<(), Decline>;
 
     /// The grid of its largest launch, which autotune ranks the setting by: the walk owned by the
     /// keys.
@@ -60,7 +69,7 @@ pub trait AttentionBackwardLaunch {
         settings: &Self::Settings,
     ) -> Result<AttentionBackwardGradients, Decline> {
         let blueprint = self.prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch(&tensors, blueprint);
+        self.dispatch(&tensors, blueprint)?;
         Ok(tensors.into_gradients())
     }
 }

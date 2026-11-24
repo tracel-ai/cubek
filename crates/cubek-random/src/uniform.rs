@@ -1,9 +1,14 @@
 use crate::base::random;
 use crate::kernels::RandomStrategy;
 use cubecl::prelude::*;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::random::Uniform;
 
 /// `out` filled with values spread evenly over `[lower_bound, upper_bound)`, drawn off `seed`.
+///
+/// # Errors
+///
+/// Why no random kernel runs on this device.
 pub fn random_uniform(
     client: &Client,
     lower_bound: f32,
@@ -11,7 +16,7 @@ pub fn random_uniform(
     out: TensorBinding,
     dtype: ElemType,
     seed: u64,
-) -> Result<(), LaunchError> {
+) -> Result<(), Decline> {
     random_uniform_with_strategy(
         client,
         lower_bound,
@@ -31,7 +36,7 @@ pub(crate) fn random_uniform_with_strategy(
     dtype: ElemType,
     strategy: RandomStrategy,
     seed: u64,
-) -> Result<(), LaunchError> {
+) -> Result<(), Decline> {
     random(
         client,
         Uniform {

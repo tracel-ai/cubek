@@ -111,7 +111,7 @@ impl ReduceRoutine<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: UnitDirectReduceBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; it holds no shared memory.
@@ -130,6 +130,7 @@ impl ReduceRoutine<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
                 problem.compiled_elements(),
             )
         }
+        Ok(())
     }
 }
 

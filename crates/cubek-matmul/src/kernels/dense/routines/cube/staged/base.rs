@@ -332,7 +332,7 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
     binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
     blueprint: CubeStagedMatmulRoutineBlueprint,
     grid: Grid,
-) {
+) -> Result<(), Decline> {
     // The elements of the item its planes contract: packed inputs it decodes at the element
     // they decode into, ones it reads as stored at the element their values name.
     let elements = blueprint
@@ -356,12 +356,12 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
                 blueprint.widths,
                 blueprint.microkernel.block_scales(),
                 blueprint.microkernel.planned_space(),
-            ),
+            )?,
         CubeStagedDelivery::Tma => tensors.tma_operands(
             &stage,
             &blueprint.shared_memory,
             blueprint.microkernel.plane.orders,
-        ),
+        )?,
     };
     // SAFETY: every operand is bound through the launcher, which masks the reads and writes
     // of a tile the problem's edge cuts short, or by a descriptor, whose copies fill what lies
@@ -401,6 +401,7 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
             );
         },
     }
+    Ok(())
 }
 
 /// A cube staged routine's estimate over a block-split space: each cube reads its box's rows of the

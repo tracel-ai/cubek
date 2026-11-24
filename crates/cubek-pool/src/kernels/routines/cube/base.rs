@@ -137,14 +137,19 @@ impl Routine for CubeMaxPoolRoutine {
 }
 
 impl PoolRoutine for CubeMaxPoolRoutine {
-    fn dispatch(&self, tensors: &PoolTensors, blueprint: CubeMaxPoolRoutineBlueprint, grid: Grid) {
+    fn dispatch(
+        &self,
+        tensors: &PoolTensors,
+        blueprint: CubeMaxPoolRoutineBlueprint,
+        grid: Grid,
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
         let binding = tensors.bind(
             &blueprint.partitioning,
             blueprint.width,
             blueprint.checked,
             &grid,
-        );
+        )?;
         cube_max_pool_kernel::launch(
             tensors.client(),
             grid.launch.cube_count,
@@ -154,5 +159,6 @@ impl PoolRoutine for CubeMaxPoolRoutine {
             binding.launcher.partitioning_arg(),
             problem.element,
         );
+        Ok(())
     }
 }

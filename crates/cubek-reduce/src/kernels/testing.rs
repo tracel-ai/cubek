@@ -241,8 +241,7 @@ pub(crate) fn launch_unbound<R: ReduceRoutine<M>, M>(
     let tensors = unbound_tensors::<R, M>(client, &input, out, reduction)?;
     let hw = Hardware::from_client(client);
     let (blueprint, grid) = R::prepare_first_served(&hw, tensors.problem())?;
-    R::launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input));
-    Ok(())
+    R::launch_unbound::<StoredTileOperand>(&tensors, blueprint, grid, bound_back(input))
 }
 
 /// Launches a reduction on buffers and checks it against the reference, row by row.

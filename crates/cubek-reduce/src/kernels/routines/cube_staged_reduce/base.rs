@@ -112,7 +112,7 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: CubeStagedReduceBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; its shared memory is the slots its microkernel declares, which the grid
@@ -132,6 +132,7 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
                 problem.compiled_elements(),
             )
         }
+        Ok(())
     }
 }
 

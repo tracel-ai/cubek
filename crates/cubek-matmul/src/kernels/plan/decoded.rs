@@ -25,12 +25,9 @@ impl Decoded {
     ///
     /// # Errors
     ///
-    /// Where the decode declines the input and the caller states no framework dequantize for it.
-    ///
-    /// # Panics
-    ///
-    /// Where the decode declines an input stored in tiles, which the framework's dequantize reads
-    /// by its strides alone and would answer wrong.
+    /// Where the decode declines the input and the caller states no framework dequantize for it,
+    /// or the input is stored in tiles, which the framework's dequantize reads by its strides alone
+    /// and would answer wrong.
     pub fn input(
         &self,
         call: &MatmulCall,
@@ -40,9 +37,7 @@ impl Decoded {
             StoredTensor::Plain(_) => Ok(input.clone()),
             StoredTensor::Packed(packed) => decode(call, packed)
                 .or_else(|why| match packed.words().is_tiled() {
-                    true => panic!(
-                        "the decode declines this input stored in tiles ({why}); store it untiled"
-                    ),
+                    true => Err(why),
                     false => framework_dequantized(input),
                 })
                 .map_err(|why| Declined {
@@ -54,7 +49,7 @@ impl Decoded {
 }
 
 impl Step<MatmulCall> for Decoded {
-    /// # Panics
+    /// # Errors
     ///
     /// As [`Decoded::input`].
     fn apply(&self, call: &MatmulCall) -> Result<MatmulCall, Declined> {

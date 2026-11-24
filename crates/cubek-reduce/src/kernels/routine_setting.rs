@@ -57,8 +57,7 @@ where
     /// Why the routine cannot run the problem at its setting.
     pub(crate) fn launch(&self, tensors: &ReduceTensors) -> Result<(), Decline> {
         let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)?;
-        R::launch(tensors, blueprint, grid);
-        Ok(())
+        R::launch(tensors, blueprint, grid)
     }
 
     /// The launch this setting prepares for the problem `key` describes, or `None` where the
@@ -80,8 +79,7 @@ where
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Decline> {
         let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)?;
-        R::launch_unbound::<I>(tensors, blueprint, grid, input);
-        Ok(())
+        R::launch_unbound::<I>(tensors, blueprint, grid, input)
     }
 }
 

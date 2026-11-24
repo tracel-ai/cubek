@@ -229,6 +229,7 @@ impl Reference {
                 }
                 reference.check(&client, gradients, tolerance)
             }
+            Err(broken) if broken.is_broken() => panic!("{settings}: {broken}"),
             Err(decline) => eprintln!("{settings}: declined on this device, {decline:?}"),
         }
     }

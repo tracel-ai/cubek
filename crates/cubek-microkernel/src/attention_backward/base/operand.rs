@@ -117,18 +117,33 @@ impl<T> AttentionBackwardOperands<T> {
         &self,
         f: impl Fn(AttentionBackwardOperand, &T) -> U,
     ) -> AttentionBackwardOperands<U> {
+        let Ok(mapped) =
+            self.try_map(|operand, value| Ok::<_, core::convert::Infallible>(f(operand, value)));
+        mapped
+    }
+
+    /// A value per operand, computed from each operand and its value here, or the first error `f`
+    /// gives.
+    ///
+    /// # Errors
+    ///
+    /// What `f` errs with.
+    pub fn try_map<U, E>(
+        &self,
+        f: impl Fn(AttentionBackwardOperand, &T) -> Result<U, E>,
+    ) -> Result<AttentionBackwardOperands<U>, E> {
         use AttentionBackwardOperand as Operand;
-        AttentionBackwardOperands {
-            query: f(Operand::Query, &self.query),
-            key: f(Operand::Key, &self.key),
-            value: f(Operand::Value, &self.value),
-            out: f(Operand::Out, &self.out),
-            out_gradient: f(Operand::OutGradient, &self.out_gradient),
-            logsumexp: f(Operand::Logsumexp, &self.logsumexp),
-            delta: f(Operand::Delta, &self.delta),
-            query_gradient: f(Operand::QueryGradient, &self.query_gradient),
-            key_gradient: f(Operand::KeyGradient, &self.key_gradient),
-            value_gradient: f(Operand::ValueGradient, &self.value_gradient),
-        }
+        Ok(AttentionBackwardOperands {
+            query: f(Operand::Query, &self.query)?,
+            key: f(Operand::Key, &self.key)?,
+            value: f(Operand::Value, &self.value)?,
+            out: f(Operand::Out, &self.out)?,
+            out_gradient: f(Operand::OutGradient, &self.out_gradient)?,
+            logsumexp: f(Operand::Logsumexp, &self.logsumexp)?,
+            delta: f(Operand::Delta, &self.delta)?,
+            query_gradient: f(Operand::QueryGradient, &self.query_gradient)?,
+            key_gradient: f(Operand::KeyGradient, &self.key_gradient)?,
+            value_gradient: f(Operand::ValueGradient, &self.value_gradient)?,
+        })
     }
 }
