@@ -5,7 +5,7 @@ use cubecl::tile::space::ComputeScope;
 /// stage, in units: steps of the device's matrix unit for the product's elements, its largest
 /// square instruction
 /// ([`PlaneFragmentMicrokernel::matrix_unit`](super::PlaneFragmentMicrokernel::matrix_unit)), each
-/// the fewest calls of it every load fills whole ([`MatmulStep`](crate::matmul::MatmulStep)). So a
+/// the fewest calls of it every load fills whole ([`MacroRegion`](cubecl::tile::MacroRegion)). So a
 /// setting is one tile shape in elements on a device, whichever instruction cuts it. The
 /// instruction is not a setting: the tile layer picks it for the product
 /// ([`Instruction::for_accumulator`](cubecl::tile::Instruction::for_accumulator)).

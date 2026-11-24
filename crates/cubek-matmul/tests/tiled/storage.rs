@@ -13,7 +13,7 @@ use cubek_matmul::{
         untile,
     },
 };
-use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
+use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::layout::{
     stored::Operand,
     tile_order::{TileOrder, nvfp4_scheme},
@@ -706,7 +706,7 @@ fn elements_are_stored_in_the_step_of_their_product() {
             assert_eq!(tile, None, "{input:?} stays in rows for the TMA fill");
             continue;
         }
-        let step = MatmulStep::stored_on(&hw, input, Operand::plain(), f16, f16);
+        let step = input.stored_region(&hw, Operand::plain(), f16, f16);
         let want = step.map(|step| {
             input
                 .dimensions()

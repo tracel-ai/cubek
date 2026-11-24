@@ -22,8 +22,8 @@ use cubecl::{
 
 use cubecl::quant::scheme::QuantScheme;
 use cubecl::tile::layout::Stagger;
+use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernel;
-use cubek_microkernel::matmul::{MatmulOperand, MatmulStep};
 use cubek_std::layout::{
     stored::Operand,
     tile_order::{TileOrder, TileWords},
@@ -121,7 +121,7 @@ pub fn tile_order_on(
 
 /// The tile a load stores matmul input `input` in on `hw`, over the input's two dimensions: the
 /// step a product against it takes under the largest instruction `hw` offers
-/// ([`MatmulStep::stored_on`]), the other input contracted at `contracted`.
+/// ([`MatmulOperand::stored_region`]), the other input contracted at `contracted`.
 ///
 /// `None` where no tile is worth storing: no instruction contracts the input on `hw`; codes under
 /// a scheme tile order does not store ([`TileOrder::stores`]); or elements on a device whose TMA
@@ -146,11 +146,11 @@ pub fn stored_tile(
         StoredValues::Elements(_) if hw.bulk_tensor_copy() => return None,
         StoredValues::Elements(element) => (Operand::plain(), element),
     };
-    let step = MatmulStep::stored_on(hw, input, operand, element, contracted)?;
+    let region = input.stored_region(hw, operand, element, contracted)?;
     Some(Space::new(
         &input
             .dimensions()
-            .map(|dimension| (dimension, step.along(dimension))),
+            .map(|dimension| (dimension, region.along(dimension))),
     ))
 }
 

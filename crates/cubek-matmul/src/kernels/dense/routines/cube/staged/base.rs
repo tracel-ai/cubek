@@ -55,7 +55,7 @@ pub(crate) struct CubeStagedPlacement<'a> {
 impl<'a> CubeStagedPlacement<'a> {
     /// The first of `settings`' microkernels on `hw` for `problem`, its stages filled by `fill`
     /// and its box stored by `store`, placed one cube a box in `cube_order` and resolved. A
-    /// microkernel decoding a packed input reads it in whole steps ([`MatmulView::check_steps`]).
+    /// microkernel decoding a packed input reads it in whole steps ([`MatmulView::check_reads`]).
     /// A box the TMA engine stores is checked before resolving, which sizes the shared memory it
     /// is drained into ([`CubeStagedTmaStoreDecline`]).
     /// A stage an engine fills lands as it lies, so there a float product's planes read their
@@ -76,7 +76,7 @@ impl<'a> CubeStagedPlacement<'a> {
             None => Self::pick(hw, &item, settings, fill, store)?,
         };
         if microkernel.walk().decoded().is_some() {
-            view.check_steps(hw)?;
+            view.check_reads(hw)?;
         }
         let contracted = microkernel.contracted(&item);
         let cube_space = view

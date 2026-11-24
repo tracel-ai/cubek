@@ -4,7 +4,7 @@ use crate::matmul::plane::{
 };
 use crate::matmul::{
     MatmulBlocks, MatmulDim, MatmulDimensions, MatmulLayout, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRows, MatmulStage, MatmulStep, MatmulWorkItem,
+    MatmulOperands, MatmulRows, MatmulStage, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::features::MmaConfig;
@@ -14,8 +14,8 @@ use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{
-    Dimension, FragmentSource, Instruction, LaneMap, Levels, MmaOperands, ProductStep, Scratch,
-    ShapedInstruction, Space, StageStorage, StepCost,
+    Dimension, FragmentSource, Instruction, LaneMap, Levels, MacroRegion, MmaOperands, ProductStep,
+    Scratch, ShapedInstruction, Space, StageStorage, StepCost,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
@@ -63,7 +63,7 @@ pub struct PlaneFragmentMicrokernel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlaneUnit {
     /// The device's matrix unit for the product's elements, `m × n × k` along the caller's
-    /// dimensions, and the calls of it every load fills whole along each ([`MatmulStep`]): the
+    /// dimensions, and the calls of it every load fills whole along each ([`MacroRegion`]): the
     /// plane states its tile as a grid of them, each one unit deep, and the tile cuts it into the
     /// calls of the instruction it picks.
     Matrix { unit: [usize; 3], calls: [usize; 3] },
@@ -93,7 +93,14 @@ impl PlaneFragmentMicrokernel {
 
     /// The one instruction whose fragments decode a packed rhs as they load, as `(m, n, k)`: the
     /// 16-bit `16 × 8 × 16`, whose `B` fragment's lanes the tile DSL's lane runs are laid over.
-    const DECODING_SHAPE: (u32, u32, u32) = (16, 8, 16);
+    const DECODING_SHAPE: (u32, u32, u32) =
+        (16, 8, Self::DECODING_RUNS * Self::DECODING_RUN as u32);
+
+    /// The quads of `k` the units of one of its fragments split, one a unit.
+    const DECODING_RUNS: u32 = 4;
+
+    /// The values of `k` one of its instructions has a unit read: its quad.
+    const DECODING_RUN: usize = 4;
 
     /// The values of `K` a fragment's lane run looks one scale up for: NVFP4's block. A packed
     /// rhs's fragments decode under scale blocks a whole number of them long, NVFP4's sixteen
@@ -193,7 +200,7 @@ impl PlaneFragmentMicrokernel {
         // they hold whole ([`MatmulBlocks::within`]). MXFP4 in tile order, bound for a 32-value
         // load, is read two words at a time in a run of 16, its scales one at a time in a window
         // of 64.
-        let planned = space.within(window / Self::RUNS_A_WINDOW, window);
+        let planned = space.within(settings.depth.get() * Self::DECODING_RUN, window);
         let reads_whole = planned.is_some();
         let space = planned.unwrap_or(space);
         // A window states `K` as whole scale blocks and the position inside one.
@@ -287,7 +294,7 @@ impl PlaneFragmentMicrokernel {
 
     /// The planes against a float rhs. A plane's settings count the device's
     /// [`matrix_unit`](Self::matrix_unit) for the elements, the fewest of its calls every load
-    /// fills whole ([`MatmulStep`]), so the instruction never changes what a setting means. With
+    /// fills whole ([`MacroRegion`]), so the instruction never changes what a setting means. With
     /// fragments one instruction deep, held by a plane, the one plane holding that tile, which the
     /// tile cuts into the calls of the instruction it picks for it
     /// ([`Instruction::for_accumulator`]); otherwise the planes that state their fragments
@@ -422,9 +429,25 @@ impl PlaneFragmentMicrokernel {
             PlaneFragmentRowsAlong::M => (m, n),
             PlaneFragmentRowsAlong::N => (n, m),
         };
-        let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), item.elements)
-            .under(Space::new(&[(M, m), (N, n), (K, k)]));
-        Some(([m, n, k], [step.calls(M), step.calls(N), step.calls(K)]))
+        let region = Self::macro_region(hw, &item.elements, [m, n, k]);
+        Some((
+            [m, n, k],
+            [M, N, K].map(|dimension| region.instructions(dimension)),
+        ))
+    }
+
+    /// The macro region of a product of float inputs of `elements` under an instruction of
+    /// `[m, n, k]` along the caller's dimensions.
+    fn macro_region(
+        hw: &Hardware,
+        elements: &MatmulOperands<ElemType>,
+        [m, n, k]: [usize; 3],
+    ) -> MacroRegion {
+        let float = MatmulOperands::all(Operand::plain());
+        MacroRegion::new(
+            &float.micro_region(hw, elements),
+            Space::new(&[(M, m), (N, n), (K, k)]),
+        )
     }
 
     /// The edges along the caller's `m` and `n` of the tile a plane holds where its settings count
@@ -737,11 +760,7 @@ impl PlaneFragmentMicrokernel {
 
     /// This plane stating its fragments, a grid of its instruction's calls, where its settings
     /// count the device's matrix unit ([`stated_candidates`](Self::stated_candidates)). `None`
-    /// where the instruction does not cut the plane's tile in whole steps ([`MatmulStep`]).
-    ///
-    /// A division, against "multiply, never divide": a plane that states its fragments needs the
-    /// count of its instruction's calls, which the tile cuts by itself for a plane that states its
-    /// tile.
+    /// where the instruction does not cut the plane's tile in whole [`MacroRegion`]s.
     fn stated(self, hw: &Hardware, elements: MatmulOperands<ElemType>) -> Option<Self> {
         let PlaneUnit::Matrix {
             unit: [unit_m, unit_n, unit_k],
@@ -752,25 +771,20 @@ impl PlaneFragmentMicrokernel {
         };
         let settings = self.settings;
         let [(_, m), (_, n), (_, k)] = self.shape();
-        let step = MatmulStep::new(hw, MatmulOperands::all(Operand::plain()), elements)
-            .under(Space::new(&[(M, m), (N, n), (K, k)]));
+        let region = Self::macro_region(hw, &elements, [m, n, k]);
         Some(Self {
             settings: PlaneFragmentMicrokernelSettings {
                 along_m: Self::calls_cutting(
                     settings.along_m.get() * unit_m * calls_m,
-                    m,
-                    step.calls(M),
+                    &region,
+                    M,
                 )?,
                 along_n: Self::calls_cutting(
                     settings.along_n.get() * unit_n * calls_n,
-                    n,
-                    step.calls(N),
+                    &region,
+                    N,
                 )?,
-                depth: Self::calls_cutting(
-                    settings.depth.get() * unit_k * calls_k,
-                    k,
-                    step.calls(K),
-                )?,
+                depth: Self::calls_cutting(settings.depth.get() * unit_k * calls_k, &region, K)?,
                 ..settings
             },
             unit: PlaneUnit::Instruction,
@@ -778,15 +792,15 @@ impl PlaneFragmentMicrokernel {
         })
     }
 
-    /// The instruction's calls of `extent` each that cut `edge` of a plane's tile, where they cut
-    /// it in whole steps of `calls` of them.
-    ///
-    /// A division, against "multiply, never divide": a plane states its grid of fragments, so it
-    /// needs the count of each instruction's calls that cut the tile its settings name in the
-    /// device's matrix unit.
-    fn calls_cutting(edge: usize, extent: usize, calls: usize) -> Option<NonZeroUsize> {
-        let step = extent * calls;
-        NonZeroUsize::new(edge / extent).filter(|_| edge.is_multiple_of(step))
+    /// The instructions of `region` along `dimension` that cut `edge` of a plane's tile, where
+    /// whole regions do.
+    fn calls_cutting(
+        edge: usize,
+        region: &MacroRegion,
+        dimension: Dimension,
+    ) -> Option<NonZeroUsize> {
+        let regions = Space::new(&[(dimension, edge)]).count_along(dimension, &region.space())?;
+        NonZeroUsize::new(regions * region.instructions(dimension))
     }
 
     /// The planes reading both packed inputs of `space` as they are stored: each block-scaled
@@ -881,10 +895,10 @@ impl PlaneFragmentMicrokernel {
                 // A span of whole blocks, or, shorter than one, part of a single block: an `f16`
                 // step of 16 inside MXFP4's block of 32.
                 let (blocks, inside) = blocked(K);
-                let span = k * depth;
-                match span >= block {
-                    true => vec![(blocks, span / block), (inside, block)],
-                    false => vec![(blocks, 1), (inside, span)],
+                let span = Space::new(&[(K, k * depth)]);
+                match span.count_along(K, &Space::new(&[(K, block)])) {
+                    Some(count) => vec![(blocks, count), (inside, block)],
+                    None => vec![(blocks, 1), (inside, span.along(K))],
                 }
             }
             _ => vec![(self.dimensions.k, k * depth)],
@@ -991,11 +1005,11 @@ impl PlaneFragmentMicrokernel {
         let MatmulDimensions { m, n, .. } = self.dimensions;
         let (blocks, inside) = blocked(K);
         let [(_, rows), (_, columns), _] = self.shape();
-        let window = self.leaf_extent(MatmulDim::K);
+        let window = Space::new(&[(K, self.leaf_extent(MatmulDim::K))]);
         let leaf = Levels::leaf(&[
             (m, rows),
             (n, columns),
-            (blocks, window / block),
+            (blocks, window.count_along(K, &Space::new(&[(K, block)]))?),
             (inside, block),
         ])
         .walk_every(&[m]);
@@ -1187,18 +1201,13 @@ impl PlaneFragmentMicrokernel {
         [m, n, (dim, k * depth)]
     }
 
-    /// The runs a window of `K` splits into, one a unit, where the plane decodes a packed rhs as
-    /// it loads: the four quads of `k` its fragment's units split.
-    const RUNS_A_WINDOW: usize = 4;
-
     /// The values of `K` one unit reads in one run where it decodes a packed rhs as it loads its
     /// fragments: a quarter of its window, the settings' steps of its instruction. A load of the
     /// rhs is no wider. `None` for a plane reading no packed rhs so: a float one, or the
     /// block-scaled instruction's.
     pub fn decoding_run(&self) -> Option<usize> {
-        let [_, _, (_, k)] = self.shape();
         let decodes = self.blocks.is_some() && !self.instruction.block_scaled();
-        decodes.then(|| self.settings.depth.get() * k / Self::RUNS_A_WINDOW)
+        decodes.then(|| self.settings.depth.get() * Self::DECODING_RUN)
     }
 
     /// The extent along `dim` of the leaf a unit reads: one fragment's tile, as deep as its

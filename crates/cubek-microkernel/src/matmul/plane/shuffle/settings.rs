@@ -106,7 +106,7 @@ impl PlaneShuffleMicrokernelSettings {
 
     /// `columns` steps of `N` a unit and one step of `K` a turn, by the whole plane,
     /// `rows_per_unit` rows a unit or every row where `None`: what a packed rhs is read in, its
-    /// step the rhs's ([`MatmulStep`](crate::matmul::MatmulStep)).
+    /// step the rhs's ([`MicroRegion`](cubecl::tile::MicroRegion)).
     ///
     /// # Panics
     ///

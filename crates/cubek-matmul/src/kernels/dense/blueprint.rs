@@ -96,7 +96,7 @@ impl<M> MatmulBlueprint<M> {
     /// means nothing for words. In values: the rhs's a whole read, every dimension it spans, the
     /// lhs and the output that read's run along the dimension they share with it, one value across
     /// it. A packed lhs is contracted in those runs too, whole words of it
-    /// ([`MatmulView::check_steps`](crate::kernels::MatmulView::check_steps)).
+    /// ([`MatmulView::check_reads`](crate::kernels::MatmulView::check_reads)).
     pub fn packed(rhs: &Packing, microkernel: M, partitioning: MatmulPartitioning) -> Self {
         let operand = &rhs.operand;
         let lined = operand.lined();
