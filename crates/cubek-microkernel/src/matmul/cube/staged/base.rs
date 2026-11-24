@@ -519,19 +519,25 @@ impl CubeStagedMicrokernel {
             stage_layout,
             ..self
         };
-        let shared_memory = microkernel.shared_memory_of(
-            placed.contracting_planes,
-            hw,
-            item,
-            stage,
-            &storage,
-            window,
-        );
+        let memory = |windows: CubeStagedWindows| {
+            microkernel.shared_memory_of(
+                placed.contracting_planes,
+                hw,
+                item,
+                stage,
+                &storage,
+                window,
+                windows,
+            )
+        };
+        let shared_memory = memory(CubeStagedWindows::InStages);
+        let shared_memory_beside_windows = memory(CubeStagedWindows::BesideStages);
         Ok(CubeStagedResolved {
             microkernel,
             storage,
             plane_width,
             shared_memory,
+            shared_memory_beside_windows,
         })
     }
 
@@ -551,7 +557,15 @@ impl CubeStagedMicrokernel {
         storage: &StageStorage,
         window: Scratch,
     ) -> usize {
-        self.shared_memory_of(self.contracting_planes(), hw, item, stage, storage, window)
+        self.shared_memory_of(
+            self.contracting_planes(),
+            hw,
+            item,
+            stage,
+            storage,
+            window,
+            CubeStagedWindows::InStages,
+        )
     }
 
     /// [`shared_memory`](Self::shared_memory) of a cube holding `planes` contracting planes.
@@ -563,6 +577,7 @@ impl CubeStagedMicrokernel {
         stage: &MatmulStage,
         storage: &StageStorage,
         window: Scratch,
+        windows_open: CubeStagedWindows,
     ) -> usize {
         let accumulator = match self.drain() {
             CubeStagedDrain::EachPlane => 0,
@@ -582,11 +597,16 @@ impl CubeStagedMicrokernel {
             .ring
             .bytes(stage.bytes(hw, item.elements, storage, self.plane.orders) + scales);
         // The windows open once the walk has freed its stages, and take their bytes
-        // (`CubeStagedWalk::drain_sum`); so does the box planes set aside to fill drain into.
+        // (`CubeStagedWalk::drain_sum`), or open beside them where the stages stay live; so does
+        // the box planes set aside to fill drain into.
+        let staged = match windows_open {
+            CubeStagedWindows::InStages => stages.max(windows),
+            CubeStagedWindows::BesideStages => stages + windows,
+        };
         if self.fill.filling_planes > 0 {
-            stages.max(windows).max(stored) + accumulator
+            staged.max(stored) + accumulator
         } else {
-            stages.max(windows) + accumulator + stored
+            staged + accumulator + stored
         }
     }
 
@@ -646,6 +666,19 @@ pub struct CubeStagedResolved {
     pub storage: StageStorage,
     pub plane_width: u32,
     pub shared_memory: usize,
+    /// Bytes of shared memory one cube holds where the windows its planes' fragments bounce
+    /// through open beside its stages rather than in their bytes: what a cube holds that walks
+    /// several boxes in turn, its stages live across them.
+    pub shared_memory_beside_windows: usize,
+}
+
+/// Where the windows a cube's fragments bounce through as its sum drains open.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CubeStagedWindows {
+    /// In the stages' bytes, once the walk has freed them.
+    InStages,
+    /// Beside the stages, which stay live.
+    BesideStages,
 }
 
 impl Microkernel for CubeStagedMicrokernel {
