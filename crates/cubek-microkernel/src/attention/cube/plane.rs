@@ -301,7 +301,6 @@ impl CubeAttentionPlane {
         }
     }
 
-    /// `item` as its steps read it ([`AttentionMicrokernel::served`]).
     /// The dimension its planes' values' lines run along.
     pub fn value_lines(&self) -> ValueLines {
         match self {
@@ -310,6 +309,7 @@ impl CubeAttentionPlane {
         }
     }
 
+    /// `item` as its steps read it ([`AttentionMicrokernel::served`]).
     pub fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         match self {
             Self::Fragment(plane) => plane.served(item),
