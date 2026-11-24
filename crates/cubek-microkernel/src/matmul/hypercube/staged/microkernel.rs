@@ -19,7 +19,7 @@ pub fn hypercube_staged_last_arrival_microkernel<'a, EA: Numeric, D: ServedDesti
 ) {
     // As a staged cube's: the scales the sum took out of its inputs are applied as each run parks
     // its part.
-    let opened = CubeStagedWalk::opened::<EA>(&merge.tile(), a, b, walk);
+    let opened = CubeStagedWalk::opened_as_given::<EA>(&merge.tile(), a, b, walk);
     cube_staged_sum_microkernel(run, &opened.sum, &opened.a, &opened.b, walk, storage);
 
     let sum = opened.scaled(CubeStagedWalk::drain_sum(opened.sum.clone(), walk));

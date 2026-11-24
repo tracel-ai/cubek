@@ -92,9 +92,21 @@ impl CubeStagedWalk {
         #[comptime] walk: CubeStagedWalk,
     ) -> OpenedSum {
         let (a, b) = (Self::as_staged(a, walk), Self::as_staged(b, walk));
-        let sum = Self::open_sum::<EA>(over, &a, &b, walk);
-        let (a, a_factor) = Self::factored(&a, &sum, walk);
-        let (b, b_factor) = Self::factored(&b, &sum, walk);
+        Self::opened_as_given::<EA>(over, &a, &b, walk)
+    }
+
+    /// [`opened`](Self::opened) over `a` and `b` as they are, their scales where they ride: what
+    /// the hypercube's cubes open, which read the inputs as the walk's stages hold them without
+    /// keeping block scales beside the values.
+    pub(crate) fn opened_as_given<EA: Numeric>(
+        over: &Tile,
+        a: &Tile,
+        b: &Tile,
+        #[comptime] walk: CubeStagedWalk,
+    ) -> OpenedSum {
+        let sum = Self::open_sum::<EA>(over, a, b, walk);
+        let (a, a_factor) = Self::factored(a, &sum, walk);
+        let (b, b_factor) = Self::factored(b, &sum, walk);
         OpenedSum {
             sum,
             a,
