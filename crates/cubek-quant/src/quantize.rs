@@ -96,7 +96,10 @@ fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
 /// integer grid `{0, 1, 2, 3, 4, 5, 6}`; casting `e4m3` would do the same to its fractions and
 /// then wrap, since its codes reach ±448 while a byte read as two's complement stops at ±127.
 #[cube]
-fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: QuantValue) -> QS {
+pub(crate) fn pack_q<F: Float, N: Size, QS: Int>(
+    value: Vector<F, N>,
+    #[comptime] quant: QuantValue,
+) -> QS {
     let size_quant = quant.size_bits();
 
     let size_store = QS::size_bits().comptime();

@@ -3,6 +3,7 @@ use crate::kernels::{
     CUBE_STRIPS, MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine,
     MatmulRoutineProblem, MatmulTensors, cube_order_name,
 };
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
@@ -106,6 +107,27 @@ impl CubeStagedMatmulRoutine {
         CubeStagedMicrokernelSettings::stored((4, 2, 4), (1, 8), StageRing::DOUBLE),
     ];
 
+    /// Boxes of a product of 8-bit floats, activations stored in one
+    /// ([`RowScaledTensor`](crate::kernels::tensor::RowScaledTensor)) against a packed weight the
+    /// fill decodes into their element, whatever its format, a second stage in flight: four by
+    /// four fragments on four by two planes, one step deep and two. Measured with MXFP4: on an
+    /// R9700 the first was the fastest box of every grid raced on Qwen3.8 27B's projections at 512
+    /// and 2048 rows (FP8-row against MXFP4 with row-factored scales, 156 to 187 TFLOP/s), but at
+    /// its output projection at 512 rows, which the second took. They join the race of every
+    /// packed product on such a device.
+    const EIGHT_BIT_FLOAT_BOXES: [CubeStagedMicrokernelSettings; 2] = [
+        CubeStagedMicrokernelSettings::boxed(
+            PlaneFragmentMicrokernelSettings::grid(4, 4, 1),
+            MatmulPlaneLayout::new(4, 2),
+        )
+        .ringed(StageRing::DOUBLE),
+        CubeStagedMicrokernelSettings::boxed(
+            PlaneFragmentMicrokernelSettings::grid(4, 4, 2),
+            MatmulPlaneLayout::new(4, 2),
+        )
+        .ringed(StageRing::DOUBLE),
+    ];
+
     /// The steps of `K` a stage decoding a packed input holds, each a step of the inputs' finest
     /// reads, which the stage then reads as widely as it holds whole: four, which over byte scales
     /// is a word of them, NVFP4's 64 of `K` and MXFP4's 128; and two, which on an RTX PRO 6000
@@ -156,8 +178,10 @@ impl CubeStagedMatmulRoutine {
     /// stage with the next held in registers while it is contracted, each
     /// at every count of steps of `K` a stage holds ([`PACKED_STAGE_STEPS`](Self::PACKED_STAGE_STEPS)),
     /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
-    /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
-    /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
+    /// a device without a copy engine, the boxes staged as stored (`STORED`), then, on a device
+    /// whose manual MMA multiplies 8-bit floats, the boxes of an 8-bit float product
+    /// (`EIGHT_BIT_FLOAT_BOXES`). Planes splitting `K` only on a device whose shared memory takes the
+    /// atomic `f32` add they merge through:
     /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
     ///
     /// The instruction is the tile layer's, `cmma` for a sum written out: on an L4 the `mma`
@@ -184,8 +208,16 @@ impl CubeStagedMatmulRoutine {
             .into_iter()
             .map(|settings| settings.microkernel);
         let stored = Self::STORED.into_iter().filter(|_| !hw.unit_async_copy());
+        let f32_sum = ElemType::Float(FloatKind::F32);
+        let multiplies_8_bit_floats = [FloatKind::E4M3, FloatKind::E5M2]
+            .map(ElemType::Float)
+            .into_iter()
+            .any(|element| hw.manual_mma(element, element, f32_sum));
+        let eight_bit = Self::EIGHT_BIT_FLOAT_BOXES
+            .into_iter()
+            .filter(|_| multiplies_8_bit_floats);
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
-        for candidate in boxed.chain(one_step).chain(stored) {
+        for candidate in boxed.chain(one_step).chain(stored).chain(eight_bit) {
             let merges = candidate.planes_along_k.get() > 1;
             if (!merges || hw.shared_f32_atomic_add()) && !settings.contains(&candidate) {
                 settings.push(candidate);

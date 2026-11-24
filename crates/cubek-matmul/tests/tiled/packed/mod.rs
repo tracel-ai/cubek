@@ -2,6 +2,7 @@ mod activation;
 mod base;
 mod binding;
 mod product;
+mod row;
 mod weight;
 
 pub(crate) use base::*;

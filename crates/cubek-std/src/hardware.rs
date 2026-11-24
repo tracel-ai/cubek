@@ -315,6 +315,18 @@ impl Hardware {
         !matmul.cmma.is_empty() || !matmul.mma.is_empty()
     }
 
+    /// Whether the device's manual MMA multiplies an `lhs` by an `rhs` operand into a `sum`, at
+    /// any shape: what an 8-bit float product contracts through, its scales applied as its sum
+    /// drains.
+    pub fn manual_mma(&self, lhs: ElemType, rhs: ElemType, sum: ElemType) -> bool {
+        self.properties
+            .features
+            .matmul
+            .mma
+            .iter()
+            .any(|config| config.a_type == lhs && config.b_type == rhs && config.cd_type == sum)
+    }
+
     /// Whether a stage may be filled by the TMA engine: the bulk tensor copy, and the barriers its
     /// copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn bulk_tensor_copy(&self) -> bool {

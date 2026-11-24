@@ -33,6 +33,7 @@ pub fn quantized_arg_shifted<'a>(
         .map(|block| block.dtype)
         .into_iter()
         .chain(scheme.tensor_scale())
+        .chain(scheme.row_scale())
         .map(Field::of_scale);
     let shifted = |arg: TileTensorLaunch| match offsets.is_empty() {
         true => arg,

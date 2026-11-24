@@ -1,6 +1,7 @@
 //! What the selection ([`super::selector::select`]) asks of a packed input: whether the kernels
 //! stream its scheme ([`matmul_supported`]).
 
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
@@ -31,7 +32,10 @@ use cubek_std::layout::stored::Operand;
 /// first, or on the framework's quantized matmul — it just never reaches one
 /// of the tiled kernels packed. This is the gate that decides which, so
 /// everything downstream may take the form, and the decode, for granted.
-pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
+pub fn matmul_supported(hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
+    if scheme.row_scale().is_some() && scheme.block_scale().is_none() {
+        return row_scaled_supported(hw, scheme, input);
+    }
     let value = matches!(
         scheme.value,
         QuantValue::Q4F
@@ -55,6 +59,23 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOpera
         .and_then(|dimension| Operand::of_scheme(scheme, dimension, dimensions))
         .is_some();
     value && numbers && laid
+}
+
+/// Whether the kernels read `input` row-scaled under `scheme` ([`QuantScheme::fp8_per_row`]):
+/// 8-bit float values in dense rows under one scale a row, its only level, as the lhs, on a
+/// device whose manual MMA multiplies two of them into `f32` ([`Hardware::manual_mma`]), which
+/// contracts them as they are. Their row scales come out of the sum along the output's rows; a
+/// launch against an rhs whose values do not decode exactly into theirs declines.
+fn row_scaled_supported(hw: &Hardware, scheme: &QuantScheme, input: MatmulOperand) -> bool {
+    let element = match scheme.value {
+        QuantValue::E4M3 => ElemType::Float(FloatKind::E4M3),
+        QuantValue::E5M2 => ElemType::Float(FloatKind::E5M2),
+        _ => return false,
+    };
+    scheme.mode == QuantMode::Symmetric
+        && scheme.num_levels() == 1
+        && input == MatmulOperand::Lhs
+        && hw.manual_mma(element, element, ElemType::Float(FloatKind::F32))
 }
 
 /// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.

@@ -12,6 +12,7 @@ use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
 use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
+use cubek_quant::per_row::factor_block_scales_by_row;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_dimensions::K;
 use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
@@ -20,6 +21,13 @@ use crate::tiled::upload;
 
 /// The per-tensor scale a two-level format is built under.
 const GLOBAL_SCALE: f32 = 2.;
+
+/// Powers of two a block's scale falls below the matrix's largest, for every format without a
+/// per-row level: a few.
+const SPREAD: i32 = 3;
+/// The same for a format with its block scales factored by row: past the eight its decode of
+/// `e2m1` into `e4m3` takes exactly, so some blocks round.
+const ROW_SPREAD: i32 = 12;
 
 /// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly;
 /// a `ue8m0` byte holds only the first.
@@ -32,6 +40,13 @@ pub(crate) enum PackedFormat {
     Q4,
     Nvfp4,
     Mxfp4,
+    /// MXFP4 with its scales factored by row, by the step a caller runs
+    /// ([`factor_block_scales_by_row`](cubek_quant::per_row::factor_block_scales_by_row)), its
+    /// blocks' scales spread wider than the decode into `e4m3` takes exactly, so some round and
+    /// are counted.
+    Mxfp4RowFactored,
+    /// `e2m1` codes under `ue8m0` blocks of 64, factored by row as MXFP4's are.
+    E2m1Blocks64RowFactored,
     Mxfp8,
 }
 
@@ -47,6 +62,12 @@ impl PackedFormat {
             Self::Q8 => blocks_of_32(QuantValue::Q8S),
             Self::Q4 => blocks_of_32(QuantValue::Q4S),
             Self::Nvfp4 => nvfp4_scheme(),
+            Self::Mxfp4RowFactored => QuantScheme::mxfp4_row_factored(),
+            Self::E2m1Blocks64RowFactored => QuantScheme::default()
+                .with_value(QuantValue::E2M1)
+                .per_block([64], ScaleDtype::UE8M0)
+                .per_row(ScaleDtype::F32)
+                .with_store(QuantStore::PackedU32(0)),
             Self::Mxfp4 => QuantScheme::default()
                 .with_value(QuantValue::E2M1)
                 .per_block([32], ScaleDtype::UE8M0)
@@ -110,7 +131,25 @@ impl PackedSlabs {
             quantized.quantization.expect("a quantized tensor").scale,
             (rows, spec.k / block_of(&scheme)),
         );
-        let global = (scheme.num_levels() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
+        let (scales, global) = match scheme.row_scale() {
+            Some(_) => {
+                let e4m3 = ElemType::Float(cubecl::ir::FloatKind::E4M3);
+                let restated = factor_block_scales_by_row(client, &scheme, &scales, e4m3)
+                    .expect("power-of-two block scales");
+                let row_scales = TensorHandle::new_contiguous(
+                    Shape::from(vec![rows, 1]),
+                    restated.row_scales.handle,
+                    restated.row_scales.dtype,
+                );
+                let global = PlainTensor::of_handle(row_scales);
+                (restated.block_scales, Some(global))
+            }
+            None => {
+                let global =
+                    (scheme.num_levels() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
+                (scales, global)
+            }
+        };
         let across = across(spec.operand);
         let tensor = PackedTensor::new(
             PlainTensor::of_handle(quantized.handle),
@@ -179,7 +218,8 @@ impl PackedSlabsSpec {
     pub(crate) fn dequantized(&self) -> HostSlabs {
         let scheme = self.format.scheme();
         let exact = self.exact_values(&scheme);
-        let values = match scheme.num_levels() > 1 {
+        // The load step factoring MXFP4 scales by row changes no value.
+        let values = match scheme.tensor_scale().is_some() {
             true => exact.into_iter().map(|v| v * GLOBAL_SCALE).collect(),
             false => exact,
         };
@@ -209,7 +249,11 @@ impl PackedSlabsSpec {
                     ScaleDtype::UE8M0 => MANTISSAS[0],
                     _ => MANTISSAS[h % 4],
                 };
-                let scale = mantissa * 2f32.powi(-headroom - ((h / 4) % 3) as i32);
+                let spread = match scheme.row_scale() {
+                    Some(_) => ROW_SPREAD,
+                    None => SPREAD,
+                };
+                let scale = mantissa * 2f32.powi(-headroom - (h / 4) as i32 % spread);
                 let pick = hashed(i, self.seed) % (2 * codes.len());
                 let code = match within {
                     0 => peak,

@@ -12,6 +12,9 @@ pub mod dequantize_tiled;
 pub mod quantize;
 
 #[cfg(feature = "kernels")]
+pub mod per_row;
+
+#[cfg(feature = "kernels")]
 mod tile_tensor;
 #[cfg(feature = "kernels")]
 pub use tile_tensor::{quantized_arg, quantized_arg_shifted};

@@ -646,11 +646,7 @@ impl PackedTensor {
             None => self.rows_dim(rows_along),
             Some(_) => PhysicalAxisMap::of(blocked(rows_along).1),
         };
-        let global = self.global_scale.as_ref().map(|scale| {
-            launcher
-                .arg(scale.rows(1, 1), WORD)
-                .gathered(Self::over_whole_matrix(&words_dimensions, tiled_along))
-        });
+        let global = self.outer_scale(launcher, &words_dimensions, tiled_along, &scale_rows);
         match scales {
             // A read taking its one scale alone ([`Packing::by_block`]): each bound as the element
             // it is, a `ue4m3` the `e4m3` byte with its sign clear, so a unit loads the scale it
@@ -769,11 +765,7 @@ impl PackedTensor {
         let (blocks_dimension, inside) = blocked(tiled_along);
         let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
         let scale_rows = PhysicalAxisMap::of(blocked(rows_along).1);
-        let global = self.global_scale.as_ref().map(|scale| {
-            launcher
-                .arg(scale.rows(1, 1), WORD)
-                .gathered(Self::over_whole_matrix(&words_dimensions, tiled_along))
-        });
+        let global = self.outer_scale(launcher, &words_dimensions, tiled_along, &scale_rows);
         match scales {
             // Each scale read alone, as `bind` binds it, beside the words the engine lands.
             BlockScales::Fields if self.packing().reads_scales_alone() => {
@@ -1143,14 +1135,39 @@ impl PackedTensor {
         self.under_global(tile, global)
     }
 
-    /// `tile` under `global`, the per-tensor scale packed as the scheme's field for it, where the
-    /// scheme has one; as it is otherwise.
+    /// Its outer scale under `launcher`, where its scheme has one, a word apiece: the per-tensor
+    /// one over the whole matrix ([`over_whole_matrix`](Self::over_whole_matrix)), or the per-row
+    /// one a row of `scale_rows`, the rows its block scales are looked up at, broadcast along the
+    /// rest.
+    fn outer_scale<'l>(
+        &self,
+        launcher: &'l Launcher,
+        words_dimensions: &[Dimension],
+        tiled_along: Dimension,
+        scale_rows: &PhysicalAxisMap,
+    ) -> Option<Arg<'l, Labelled>> {
+        let scale = self.global_scale.as_ref()?;
+        Some(match self.scheme.row_scale() {
+            None => launcher
+                .arg(scale.rows(1, 1), WORD)
+                .gathered(Self::over_whole_matrix(words_dimensions, tiled_along)),
+            Some(_) => launcher
+                .arg(scale.rows(scale.shape().num_elements(), 1), WORD)
+                .gathered(Self::per_row(words_dimensions, tiled_along, scale_rows)),
+        })
+    }
+
+    /// `tile` under `global`, the per-tensor or per-row scale packed as the scheme's field for it,
+    /// where the scheme has one; as it is otherwise.
     fn under_global(
         &self,
         tile: TileTensorLaunch,
         global: Option<Arg<'_, Labelled>>,
     ) -> Result<TileTensorLaunch, Decline> {
-        match (global, self.scheme.tensor_scale()) {
+        match (
+            global,
+            self.scheme.tensor_scale().or(self.scheme.row_scale()),
+        ) {
             (Some(global), Some(field)) => {
                 Ok(tile.scales(global.packed(Field::of_scale(field)).build()?.arg()))
             }
@@ -1299,16 +1316,34 @@ impl PackedTensor {
     /// bound words carry, that its block scales span, none addressed. A factor is looked up at the
     /// values' coordinates, so it spans no dimension they do not carry.
     fn over_whole_matrix(words_dimensions: &[Dimension], tiled_along: Dimension) -> Projection {
+        Projection::new(
+            &Self::outer_dimensions(words_dimensions, tiled_along),
+            &[PhysicalAxisMap::broadcast(), PhysicalAxisMap::broadcast()],
+        )
+    }
+
+    /// One value a row of `scale_rows` over the same dimensions as
+    /// [`over_whole_matrix`](Self::over_whole_matrix), broadcast along the rest.
+    fn per_row(
+        words_dimensions: &[Dimension],
+        tiled_along: Dimension,
+        scale_rows: &PhysicalAxisMap,
+    ) -> Projection {
+        Projection::new(
+            &Self::outer_dimensions(words_dimensions, tiled_along),
+            &[scale_rows.clone(), PhysicalAxisMap::broadcast()],
+        )
+    }
+
+    /// The dimensions an outer scale spans: every one of `words_dimensions`, the dimensions the
+    /// bound words carry, that their block scales span.
+    fn outer_dimensions(words_dimensions: &[Dimension], tiled_along: Dimension) -> Vec<Dimension> {
         let inside = blocked(tiled_along).1;
-        let dimensions: Vec<Dimension> = words_dimensions
+        words_dimensions
             .iter()
             .copied()
             .filter(|&dimension| dimension != inside)
-            .collect();
-        Projection::new(
-            &dimensions,
-            &[PhysicalAxisMap::broadcast(), PhysicalAxisMap::broadcast()],
-        )
+            .collect()
     }
 
     /// The values of a quantized matrix bound under its logical shape, `values`, as the elements
