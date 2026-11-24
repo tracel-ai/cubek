@@ -7,6 +7,7 @@ use crate::kernels::tune::{ListedFor, MatmulProduct, RoutineIdentity};
 use crate::kernels::{
     CubeShuffleMatmulRoutineSettings, CubeStagedAsyncCopyMatmulRoutineSettings,
     CubeStagedMatmulRoutineSettings, CubeStagedTmaFillerMatmulRoutineSettings,
+    CubeStagedTmaMatmulRoutineSettings, CubeStagedTmaStoredMatmulRoutineSettings,
     HypercubeLastArrivalMatmulRoutineSettings, MatmulRoutine, MatmulTensors,
     PlaneShuffleMatmulRoutineSettings,
 };
@@ -45,6 +46,18 @@ impl PackedContraction for CubeStagedMatmulRoutineSettings {
 }
 
 impl PackedContraction for CubeStagedAsyncCopyMatmulRoutineSettings {
+    fn on_matrix_instructions(&self) -> bool {
+        true
+    }
+}
+
+impl PackedContraction for CubeStagedTmaMatmulRoutineSettings {
+    fn on_matrix_instructions(&self) -> bool {
+        true
+    }
+}
+
+impl PackedContraction for CubeStagedTmaStoredMatmulRoutineSettings {
     fn on_matrix_instructions(&self) -> bool {
         true
     }
