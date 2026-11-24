@@ -21,7 +21,7 @@ mod fragment {
     use cubek_microkernel::attention::plane::{
         PlaneFragmentAttentionMicrokernelSettings, QueryHolder, ROW_STATE_HELD_BY_UNIT, ScoreHolder,
     };
-    use cubek_microkernel::attention::{AttentionMicrokernel, D, G, Q, S};
+    use cubek_microkernel::attention::{AttentionMicrokernel, CacheLines, D, G, Q, S};
     use cubek_microkernel::matmul::MatmulDim;
     use cubek_std::microkernel::{StageLayout, StageRing};
 
@@ -399,6 +399,53 @@ mod fragment {
             offering(devices::h100(), 16),
             [manual]
         )));
+    }
+
+    /// A query held in registers is listed only where the device offers the manual `mma` it is the
+    /// `A` of.
+    #[test]
+    fn a_held_query_is_listed_only_beside_the_manual_mma() {
+        let held = |hw: &Hardware| {
+            CubeStagedAttentionRoutine::settings(hw)
+                .iter()
+                .any(|settings| settings.microkernel.plane.holds_query())
+        };
+        assert!(!held(&offering(devices::m2_pro(), 8)));
+        assert!(held(&offering_square_mma()));
+    }
+
+    /// A packed cache is bound as it is stored, so values staged along the keys decline it.
+    #[test]
+    fn values_along_the_keys_decline_a_packed_cache() {
+        use crate::kernels::{AttentionCacheLayout, KeyFixup, KvBitWidths, PackedLayout};
+        let hw = offering(devices::h100(), 16);
+        let [_, _, problem, _] = problems();
+        let packed = AttentionRoutineProblem {
+            cache: AttentionCacheLayout::Packed(PackedLayout {
+                bits: KvBitWidths { key: 4, value: 4 },
+                fixup: KeyFixup::RoundOnly,
+            }),
+            ..problem
+        };
+        let prepared = |value_lines| {
+            let lead = Settings::DEFAULT;
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    plane: CubeAttentionPlaneSettings::Fragment(
+                        PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
+                            .along(value_lines),
+                    ),
+                    ..lead.microkernel
+                },
+                ..lead
+            };
+            CubeStagedAttentionRoutine::prepare(&hw, &packed, &settings)
+        };
+        assert!(prepared(CacheLines::AsStored).is_ok());
+        assert_eq!(
+            prepared(CacheLines::AlongKeys).err(),
+            Some(STAGED_PACKED_TRANSPOSED)
+        );
     }
 
     /// The copy engine fills a stage where the device has one and the ring lands the lines in

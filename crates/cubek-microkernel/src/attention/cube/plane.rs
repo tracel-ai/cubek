@@ -63,6 +63,14 @@ impl CubePlaneLayout {
 }
 
 impl CubeAttentionPlaneSettings {
+    /// Whether each plane holds its query in registers ([`QueryHolder::Registers`]).
+    pub fn holds_query(&self) -> bool {
+        match self {
+            Self::Fragment(plane) => plane.query == QueryHolder::Registers,
+            Self::Shuffle(_) => false,
+        }
+    }
+
     /// What the routines whose cubes run planes of this kind are named after, as a cube of
     /// fragments is `cube-fragment-attention`.
     pub fn name(&self) -> &'static str {

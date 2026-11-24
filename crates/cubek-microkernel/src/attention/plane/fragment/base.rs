@@ -3,7 +3,7 @@ use crate::attention::plane::{
 };
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionRead, AttentionWorkItem, B,
-    CacheOrder, D, DV, G, KV, Q, S,
+    CacheLines, CacheOrder, D, DV, G, KV, Q, S,
 };
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
@@ -79,6 +79,17 @@ impl PlaneFragmentAttentionMicrokernel {
         match holder {
             QueryHolder::Stage => true,
             QueryHolder::Registers => stored == read.score || stored.size() < 4,
+        }
+    }
+
+    /// Whether a stage of `item`'s values, read in `read`, lies in `lines`. Along the keys it is
+    /// filled by a stride over the buffer, a value at a time: values bound as their words to be
+    /// decoded have none, where a word holds several.
+    fn lays_values(lines: CacheLines, item: &AttentionWorkItem, read: AttentionRead) -> bool {
+        let stored = item.elements.value;
+        match lines {
+            CacheLines::AsStored => true,
+            CacheLines::AlongKeys => stored == read.value || stored.size() >= 4,
         }
     }
 
@@ -165,7 +176,9 @@ impl PlaneFragmentAttentionMicrokernel {
         // element, as an `f32` read at tf32 or `e4m3` values read at `f16` are: its fragments load
         // the values it decodes, and the kernel opens its sums on them as decoded. Both sides
         // decoded are decoded to one element alike.
-        if !Self::holds_query(settings.query, item, read) {
+        if !Self::holds_query(settings.query, item, read)
+            || !Self::lays_values(settings.value_lines, item, read)
+        {
             return Vec::new();
         }
         let [keys, values] = item.stage_sources(read);

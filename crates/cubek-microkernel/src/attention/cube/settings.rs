@@ -85,8 +85,8 @@ impl CubeAttentionMicrokernelSettings {
 
     /// The cube's settings worth trying on `hw` over planes of the kind this lead runs, the lead
     /// first: a cube's own knobs are worth different values over each plane microkernel, so its
-    /// list is one for each. Only the stage layouts its planes lay as named
-    /// ([`laid_as_named`](Self::laid_as_named)).
+    /// list is one for each. Only those whose planes lay their stages and hold their query as named
+    /// ([`laid_as_named`](Self::laid_as_named), [`held_as_named`](Self::held_as_named)).
     pub fn listed(self, hw: &Hardware) -> Vec<Self> {
         let listed = match self.plane {
             CubeAttentionPlaneSettings::Fragment(plane) => Self::fragments_listed(self, plane),
@@ -94,7 +94,7 @@ impl CubeAttentionMicrokernelSettings {
         };
         listed
             .into_iter()
-            .filter(|settings| settings.laid_as_named(hw))
+            .filter(|settings| settings.laid_as_named(hw) && settings.held_as_named(hw))
             .collect()
     }
 
@@ -106,6 +106,12 @@ impl CubeAttentionMicrokernelSettings {
     /// kernel twice.
     pub fn laid_as_named(&self, hw: &Hardware) -> bool {
         self.layout != StageLayout::SwizzledBlocks || manual_mma(hw).next().is_some()
+    }
+
+    /// Whether a plane on `hw` holds its query where these settings name it: in registers it is the
+    /// `A` of the manual `mma`, which a device that offers none declines.
+    pub fn held_as_named(&self, hw: &Hardware) -> bool {
+        !self.plane.holds_query() || manual_mma(hw).next().is_some()
     }
 
     /// A star off `lead`: each larger box of fragments, each count of heads, two and four planes
