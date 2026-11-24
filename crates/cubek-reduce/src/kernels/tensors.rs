@@ -101,8 +101,8 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// # Panics
     ///
-    /// As [`new`](Self::new), and where the operation's values carry no index (a sum's do not),
-    /// or `indices` does not have `values`' shape.
+    /// As [`new`](Self::new), and where the operation's carrier keeps no index (a sum's, or a
+    /// max's, whose pair an argmax writes), or `indices` does not have `values`' shape.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -119,7 +119,7 @@ impl ReduceTensors<TensorBinding> {
     ) -> Self {
         assert!(
             operation.carrier().carries_indices(),
-            "{operation:?} accumulates the values themselves, which carry no index"
+            "{operation:?} accumulates values without their indices"
         );
         assert!(
             indices.shape == values.shape,

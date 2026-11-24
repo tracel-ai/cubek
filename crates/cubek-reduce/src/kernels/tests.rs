@@ -710,6 +710,23 @@ mod hypercube_last_arrival {
         );
     }
 
+    /// Launched unbound, as a fused read stands in for, along the contiguous dim.
+    mod unbound {
+        use super::super::*;
+        reduction_tests!(
+            reduces_unbound_like_the_cpu,
+            TestedRoutine::HypercubeLastArrival,
+            [2, 3, 5000],
+            2,
+            [
+                sum: ReduceOperation::Sum,
+                max: ReduceOperation::Max,
+                mean: ReduceOperation::Mean,
+                arg_max: ReduceOperation::ArgMax,
+            ]
+        );
+    }
+
     reduces_more_row_axes_than_the_grid_has!(TestedRoutine::HypercubeLastArrival);
 }
 
