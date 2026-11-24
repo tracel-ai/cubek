@@ -17,15 +17,18 @@ mod fragment {
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
     use cubecl::tile::stage::RowChunks;
-    use cubek_microkernel::attention::cube::CubeAttentionPlane;
-    use cubek_microkernel::attention::plane::{ROW_STATE_HELD_BY_UNIT, ScoreHolder};
-    use cubek_microkernel::attention::{AttentionMicrokernel, D, G, Q, S};
+    use cubek_microkernel::attention::cube::{CubeAttentionPlane, CubeAttentionPlaneSettings};
+    use cubek_microkernel::attention::plane::{
+        PlaneFragmentAttentionMicrokernelSettings, QueryHolder, ROW_STATE_HELD_BY_UNIT, ScoreHolder,
+    };
+    use cubek_microkernel::attention::{AttentionMicrokernel, CacheLines, D, G, Q, S};
     use cubek_microkernel::matmul::MatmulDim;
     use cubek_std::microkernel::{StageLayout, StageRing};
 
     type Settings = CubeStagedAttentionRoutineSettings;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
+    const E4M3: ElemType = ElemType::Float(FloatKind::E4M3);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
     /// `hw` offering the square instruction of `edge` for `f16` and for `f32`, summed in `f32`.
@@ -196,7 +199,7 @@ mod fragment {
                 .shared_memory(&hw, &item, &blueprint.shared_memory)
         };
         let microkernel = prepared(StageLayout::Strided).microkernel;
-        let stage = item.stage(microkernel.seq_kv(), microkernel.key_order());
+        let stage = item.stage(microkernel.seq_kv(), microkernel.cache_order());
         let whole_rows: usize = stage
             .iter()
             .chain([&microkernel.staged_query(&item)])
@@ -236,6 +239,115 @@ mod fragment {
             bytes(StageLayout::PaddedBlocks),
             strided + padded_block_rows * chunk
         );
+    }
+
+    /// A device whose manual `mma` and fragment API are `16 × 16`, 16 or 32 deep, in `f16` and in
+    /// `e4m3`, whose manual accumulator is laid as its `A`, and whose cubes hold 64 KiB of shared
+    /// memory, as RDNA4's do.
+    fn offering_square_mma() -> Hardware {
+        let squares = [F16, E4M3].map(|element| {
+            [16, 32].map(|k| MmaConfig {
+                a_type: element,
+                b_type: element,
+                cd_type: F32,
+                m: 16,
+                n: 16,
+                k,
+            })
+        });
+        let squares = squares.as_flattened();
+        let hw = devices::offering_cmma(devices::h100(), squares.to_vec());
+        let mut hw = devices::offering_mma(hw, squares.to_vec());
+        devices::topology(&mut hw).max_shared_memory_size = 64 * 1024;
+        hw
+    }
+
+    /// Planes holding their query in registers take its stage's bytes out of the cube's shared
+    /// memory, so every head of a group of six shares each stage with four planes a head at a head
+    /// dim of 256, where staging those planes' query does not fit.
+    #[test]
+    fn a_held_query_leaves_the_shared_memory_to_the_keys() {
+        let hw = offering_square_mma();
+        let problem = AttentionRoutineProblem::dense((1, 24, 4), (2048, 4096), (256, 256), F16);
+        let item = problem.work_item();
+        let shared = |query, heads, planes| {
+            let lead = Settings::DEFAULT;
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    plane: CubeAttentionPlaneSettings::Fragment(
+                        PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1).querying(query),
+                    ),
+                    heads: NonZeroUsize::new(heads).unwrap(),
+                    planes_along_queries: NonZeroUsize::new(planes).unwrap(),
+                    ..lead.microkernel
+                },
+                ..lead
+            };
+            let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)?;
+            Ok::<_, Decline>(blueprint.microkernel.shared_memory(
+                &hw,
+                &item,
+                &blueprint.shared_memory,
+            ))
+        };
+        let query = 16 * 256 * F16.size();
+        assert_eq!(
+            shared(QueryHolder::Stage, 1, 1).expect("one plane's query fits")
+                - shared(QueryHolder::Registers, 1, 1).expect("a held query fits"),
+            query
+        );
+        assert!(shared(QueryHolder::Registers, 6, 4).is_ok());
+        assert!(matches!(
+            shared(QueryHolder::Stage, 6, 4),
+            Err(Decline::SharedMemoryPastDevice { .. })
+        ));
+    }
+
+    /// An `e4m3` cache beside an `f16` query held in registers is multiplied on the FP8 instruction
+    /// on both sides: the query is cast as it loads, the keys and values are staged as stored.
+    #[test]
+    fn a_held_query_reads_an_fp8_cache_as_it_is_stored() {
+        let hw = offering_square_mma();
+        let mut problem = AttentionRoutineProblem::dense((1, 24, 4), (2048, 4096), (256, 256), F16);
+        problem.elements.key = E4M3;
+        problem.elements.value = E4M3;
+        let lead = Settings::DEFAULT;
+        let settings = Settings {
+            microkernel: CubeAttentionMicrokernelSettings {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
+                        .querying(QueryHolder::Registers),
+                ),
+                heads: NonZeroUsize::new(8).unwrap(),
+                planes_along_queries: NonZeroUsize::new(4).unwrap(),
+                ..lead.microkernel
+            },
+            ..lead
+        };
+        let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)
+            .expect("the held query reads the cache");
+        let served = blueprint.microkernel.served(&problem.work_item()).elements;
+        assert_eq!([served.query, served.key, served.value], [F16, E4M3, E4M3]);
+    }
+
+    /// A query held in registers is the `A` of a score in fragments: where the device gives no such
+    /// score, as RDNA3's transposed accumulator, the setting is declined, not read some other way.
+    #[test]
+    fn a_held_query_asks_for_a_score_in_fragments() {
+        let hw = offering(devices::m2_pro(), 8);
+        let [_, _, problem, _] = problems();
+        let lead = Settings::DEFAULT;
+        let held = Settings {
+            microkernel: CubeAttentionMicrokernelSettings {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
+                        .querying(QueryHolder::Registers),
+                ),
+                ..lead.microkernel
+            },
+            ..lead
+        };
+        assert!(CubeStagedAttentionRoutine::prepare(&hw, &problem, &held).is_err());
     }
 
     /// A swizzled stage is one a cmma fragment cannot read, which takes its tiles off a pointer
@@ -287,6 +399,53 @@ mod fragment {
             offering(devices::h100(), 16),
             [manual]
         )));
+    }
+
+    /// A query held in registers is listed only where the device offers the manual `mma` it is the
+    /// `A` of.
+    #[test]
+    fn a_held_query_is_listed_only_beside_the_manual_mma() {
+        let held = |hw: &Hardware| {
+            CubeStagedAttentionRoutine::settings(hw)
+                .iter()
+                .any(|settings| settings.microkernel.plane.holds_query())
+        };
+        assert!(!held(&offering(devices::m2_pro(), 8)));
+        assert!(held(&offering_square_mma()));
+    }
+
+    /// A packed cache is bound as it is stored, so values staged along the keys decline it.
+    #[test]
+    fn values_along_the_keys_decline_a_packed_cache() {
+        use crate::kernels::{AttentionCacheLayout, KeyFixup, KvBitWidths, PackedLayout};
+        let hw = offering(devices::h100(), 16);
+        let [_, _, problem, _] = problems();
+        let packed = AttentionRoutineProblem {
+            cache: AttentionCacheLayout::Packed(PackedLayout {
+                bits: KvBitWidths { key: 4, value: 4 },
+                fixup: KeyFixup::RoundOnly,
+            }),
+            ..problem
+        };
+        let prepared = |value_lines| {
+            let lead = Settings::DEFAULT;
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    plane: CubeAttentionPlaneSettings::Fragment(
+                        PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
+                            .along(value_lines),
+                    ),
+                    ..lead.microkernel
+                },
+                ..lead
+            };
+            CubeStagedAttentionRoutine::prepare(&hw, &packed, &settings)
+        };
+        assert!(prepared(CacheLines::AsStored).is_ok());
+        assert_eq!(
+            prepared(CacheLines::AlongKeys).err(),
+            Some(STAGED_PACKED_TRANSPOSED)
+        );
     }
 
     /// The copy engine fills a stage where the device has one and the ring lands the lines in
