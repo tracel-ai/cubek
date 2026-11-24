@@ -44,8 +44,7 @@ pub fn plane_window_conv_kernel<EA: Numeric, EL: Numeric, EO: Float>(
         if inside {
             plane_window_microkernel(plane.clone(), &input, &rhs, &out, block);
         }
-        // Every plane reaches the bias barrier. One past the edge only touches cells the tile
-        // masks.
-        BiasTile::add_to::<EO>(&bias, &out, &plane);
+        BiasTile::wait_for_plane(&bias);
+        BiasTile::add_inside::<EO>(&bias, &out, &plane, inside);
     }
 }

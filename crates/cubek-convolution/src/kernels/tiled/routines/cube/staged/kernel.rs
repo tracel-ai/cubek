@@ -43,6 +43,7 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric, EO: Float>(
             BiasTile::wait_for_cube(&bias);
         }
         for plane in cube.planes() {
+            BiasTile::wait_for_plane(&bias);
             BiasTile::add_to::<EO>(&bias, &out, &plane);
         }
     }

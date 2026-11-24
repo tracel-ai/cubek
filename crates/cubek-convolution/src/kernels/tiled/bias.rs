@@ -34,6 +34,29 @@ impl BiasTile {
         }
     }
 
+    /// Waits for the plane, storage memory included, where there is a bias, before it reads back
+    /// the output cells its units wrote. Every plane reaches it, inside the output or not.
+    pub fn wait_for_plane(bias: &ComptimeOption<BiasTile>) {
+        #[comptime]
+        match bias {
+            ComptimeOption::Some(_) => sync_plane_storage(),
+            ComptimeOption::None => {}
+        }
+    }
+
+    /// [`add_to`](Self::add_to) for a plane whose box starts `inside` the output: one past its edge
+    /// wrote nothing and owns no cell to add to.
+    pub fn add_inside<EO: Float>(
+        bias: &ComptimeOption<BiasTile>,
+        out: &Tile,
+        plane: &Region,
+        inside: bool,
+    ) {
+        if inside {
+            Self::add_to::<EO>(bias, out, plane);
+        }
+    }
+
     /// Adds `bias`, where there is one, to the cells of `out` in `plane`'s window, once every one
     /// of them is written: the sum is finished, partials merged, before a channel's value joins it.
     pub fn add_to<EO: Float>(bias: &ComptimeOption<BiasTile>, out: &Tile, plane: &Region) {
@@ -48,7 +71,6 @@ impl BiasTile {
 #[cube]
 impl BiasTile {
     fn add<EO: Float>(&self, out: &Tile, plane: &Region) {
-        sync_plane_storage();
         out.at(plane)
             .along(CO)
             .scale_add::<EO>(EO::from_int(1), &self.values.at(plane));
