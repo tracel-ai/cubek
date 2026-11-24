@@ -17,8 +17,8 @@ use cubek_matmul::kernels::tensor::{
 use cubek_microkernel::rms_norm::{B, D, R, RmsNormOperands};
 use cubek_microkernel::row_store::RowStore;
 use cubek_std::Hardware;
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
 /// What a launch of this kind declines before preparing anything: rows that are not floats.
 pub const RMS_NORM_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
@@ -250,20 +250,28 @@ impl RmsNormTensors {
 
     /// The three operands bound as `blueprint` states them, on `grid`: under its partitioning, at
     /// its width.
-    pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Bound> {
-        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub fn bind<M>(
+        &self,
+        blueprint: &RmsNormBlueprint<M>,
+        grid: &Grid,
+    ) -> Result<RmsNormBinding<Bound>, Decline> {
+        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid)?;
         let out = launcher
             .arg(self.out.rows.binding.clone(), self.problem.element)
             .dimensions(&[B, R, D])
             .vectorize(blueprint.width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        RmsNormBinding {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(RmsNormBinding {
             launcher,
             input,
             weight,
             out,
-        }
+        })
     }
 }
 
@@ -310,20 +318,28 @@ impl RmsNormTensors<Geometry> {
     /// The three operands bound as `blueprint` states them, on `grid`, the output derived over
     /// the sink's layout rather than a buffer: its spec, and the geometry the derivation settled,
     /// which the caller's sink addresses through.
-    pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Unbound> {
-        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub fn bind<M>(
+        &self,
+        blueprint: &RmsNormBlueprint<M>,
+        grid: &Grid,
+    ) -> Result<RmsNormBinding<Unbound>, Decline> {
+        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid)?;
         let out = launcher
             .unbound(&self.out)
             .dimensions(&[B, R, D])
             .vectorize(blueprint.width)
             .build_spec()
-            .expect(ADMITTED_PLAN_RUNS);
-        RmsNormBinding {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(RmsNormBinding {
             launcher,
             input,
             weight,
             out,
-        }
+        })
     }
 
     /// The sink the output is laid out as.
@@ -360,19 +376,23 @@ impl RmsNormTensors<PackedRows> {
 
     /// The rows and the weight bound as `blueprint` states them, on `grid`, and the output as one
     /// tile of its words under their scales ([`PackedRows::bind`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
     pub fn bind<M>(
         &self,
         blueprint: &RmsNormBlueprint<M>,
         grid: &Grid,
-    ) -> RmsNormBinding<TileTensorLaunch> {
-        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
-        let out = self.out.bind(&launcher, blueprint.width);
-        RmsNormBinding {
+    ) -> Result<RmsNormBinding<TileTensorLaunch>, Decline> {
+        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid)?;
+        let out = self.out.bind(&launcher, blueprint.width)?;
+        Ok(RmsNormBinding {
             launcher,
             input,
             weight,
             out,
-        }
+        })
     }
 }
 
@@ -404,15 +424,23 @@ impl RmsNormTensors<TiledRows> {
 
     /// The rows and the weight bound as `blueprint` states them, on `grid`, and the output over
     /// the rows and the dim, through the tiles its binding states.
-    pub fn bind<M>(&self, blueprint: &RmsNormBlueprint<M>, grid: &Grid) -> RmsNormBinding<Bound> {
-        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid);
-        let out = self.out.bind(&launcher, blueprint.width);
-        RmsNormBinding {
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub fn bind<M>(
+        &self,
+        blueprint: &RmsNormBlueprint<M>,
+        grid: &Grid,
+    ) -> Result<RmsNormBinding<Bound>, Decline> {
+        let (launcher, [input, weight]) = self.bind_operands(blueprint, grid)?;
+        let out = self.out.bind(&launcher, blueprint.width)?;
+        Ok(RmsNormBinding {
             launcher,
             input,
             weight,
             out,
-        }
+        })
     }
 }
 
@@ -433,7 +461,7 @@ impl<Out> RmsNormTensors<Out> {
         &self,
         blueprint: &RmsNormBlueprint<M>,
         grid: &Grid,
-    ) -> (Launcher, [Bound; 2]) {
+    ) -> Result<(Launcher, [Bound; 2]), Decline> {
         let partitioning = &blueprint.partitioning;
         // The grid's launcher, settled over the extents on its first launch and cloned after.
         let launcher = grid.launcher(self.client(), || {
@@ -441,7 +469,7 @@ impl<Out> RmsNormTensors<Out> {
                 partitioning.kernel(),
                 partitioning.as_tile().space().clone(),
             )
-        });
+        })?;
         // Each operand as the store states the rows: as it lies, or its row split into blocks.
         let bind = |tensor: &PlainTensor, leading: &[Dimension]| {
             let (meta, dimensions) = self.problem.store.restated(&tensor.meta(), leading);
@@ -450,13 +478,13 @@ impl<Out> RmsNormTensors<Out> {
                 .dimensions(&dimensions)
                 .vectorize(blueprint.width)
                 .build()
-                .expect(ADMITTED_PLAN_RUNS)
+                .or_broken(ADMITTED_PLAN_RUNS)
         };
         let operands = [
-            bind(&self.input, &[B, R]),
-            bind(self.weight.tensor(), self.weight.leading_dimensions()),
+            bind(&self.input, &[B, R])?,
+            bind(self.weight.tensor(), self.weight.leading_dimensions())?,
         ];
-        (launcher, operands)
+        Ok((launcher, operands))
     }
 }
 

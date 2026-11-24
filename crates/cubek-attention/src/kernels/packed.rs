@@ -4,10 +4,12 @@
 use crate::kernels::page_table;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::tile::kind::Field;
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Dimension, Indexing, Launcher, TileSpec, TileTensorLaunch};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{B, D, DV, KV, S};
+use cubek_std::routine::Breakable;
 
 /// A packed cache: both operands at their bit widths, and the keys' fix-up where they carry one.
 ///
@@ -162,27 +164,32 @@ impl PackedAttentionCache {
     /// under the residual lengths, where they carry one. Every operand is read through `pages`
     /// where it is the cache's page table ([`KvSource::pages`](crate::kernels::KvSource::pages)).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// A table that does not place the cache's pools, which
+    /// [`Decline::Broken`] for buffers other than [`PackedAttentionCache::new`] checks, and for a
+    /// table that does not place the cache's pools, which
     /// [`AttentionTensors::attention`](crate::kernels::AttentionTensors::attention) checks first.
     pub(crate) fn bind(
         &self,
         launcher: &Launcher,
         pages: Option<&PlainTensor>,
-    ) -> PackedCacheBinding {
-        PackedCacheBinding {
-            key: self.key.bind(launcher, self.bits.key, D, pages),
-            value: self.value.bind(launcher, self.bits.value, DV, pages),
-            fixup: self.fixup.as_ref().map(|fixup| {
-                let fixup = PackedAttentionOperand {
-                    words: self.key.words.clone(),
-                    norms: fixup.errs.clone(),
-                    codebook: fixup.sign_codebook.clone(),
-                };
-                fixup.bind(launcher, self.bits.key, D, pages)
-            }),
-        }
+    ) -> Result<PackedCacheBinding, Decline> {
+        Ok(PackedCacheBinding {
+            key: self.key.bind(launcher, self.bits.key, D, pages)?,
+            value: self.value.bind(launcher, self.bits.value, DV, pages)?,
+            fixup: self
+                .fixup
+                .as_ref()
+                .map(|fixup| {
+                    let fixup = PackedAttentionOperand {
+                        words: self.key.words.clone(),
+                        norms: fixup.errs.clone(),
+                        codebook: fixup.sign_codebook.clone(),
+                    };
+                    fixup.bind(launcher, self.bits.key, D, pages)
+                })
+                .transpose()?,
+        })
     }
 }
 
@@ -211,7 +218,7 @@ impl PackedAttentionOperand {
         bits: u32,
         head: Dimension,
         pages: Option<&PlainTensor>,
-    ) -> TileTensorLaunch {
+    ) -> Result<TileTensorLaunch, Decline> {
         const TABLE: ElemType = ElemType::Float(FloatKind::F32);
         let dimensions = [B, KV, S, head];
         // A norm per vector, `[b, kv, s, 1]`, scales the vector along `[b, kv, s]`.
@@ -224,9 +231,9 @@ impl PackedAttentionOperand {
             .arg(rows.binding, TABLE)
             .dimensions(&dimensions[..3])
             .build()
-            .expect(CHECKED_BY_NEW)
+            .or_broken(CHECKED_BY_NEW)?
             .arg();
-        let norms = paged(norms, pages);
+        let norms = paged(norms, pages)?;
         let codebook = TileTensorLaunch::new(
             self.codebook.binding.clone().into_tensor_arg(),
             TABLE,
@@ -252,22 +259,25 @@ impl PackedAttentionOperand {
                 bits: bits as usize,
             })
             .build()
-            .expect(CHECKED_BY_NEW)
+            .or_broken(CHECKED_BY_NEW)?
             .arg()
             .codebook(codebook)
-            .expect(CHECKED_BY_NEW)
+            .or_broken(CHECKED_BY_NEW)?
             .scales(norms);
         paged(words, pages)
     }
 }
 
 /// `operand`, a buffer over `[B, KV, S, ·]`, read through [`page_table`] where there is one.
-fn paged(operand: TileTensorLaunch, pages: Option<&PlainTensor>) -> TileTensorLaunch {
+fn paged(
+    operand: TileTensorLaunch,
+    pages: Option<&PlainTensor>,
+) -> Result<TileTensorLaunch, Decline> {
     match pages {
         Some(pages) => operand
             .indexed_covering(page_table(pages), Indexing::Coordinate(B))
-            .expect(CHECKED_BY_ATTENTION),
-        None => operand,
+            .or_broken(CHECKED_BY_ATTENTION),
+        None => Ok(operand),
     }
 }
 

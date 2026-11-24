@@ -176,18 +176,23 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
         Ok(CubeStagedAttentionBackwardBlueprint { queries, keys })
     }
 
-    fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint) {
-        CubeStagedQueryGradientRoutine.dispatch(tensors, &blueprint.queries);
+    fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        blueprint: Self::Blueprint,
+    ) -> Result<(), Decline> {
+        CubeStagedQueryGradientRoutine.dispatch(tensors, &blueprint.queries)?;
         match &blueprint.keys {
             KeyHeadsBlueprint::Together(walk) => {
-                CubeStagedKeyGradientRoutine.dispatch(tensors, walk)
+                CubeStagedKeyGradientRoutine.dispatch(tensors, walk)?
             }
             KeyHeadsBlueprint::Apart { sums: walk, cast } => {
                 let sums = KeyGradientSums::zeros(tensors);
-                CubeStagedKeyGradientSumRoutine.dispatch(tensors, walk, &sums);
-                CastKeyGradientRoutine.dispatch(tensors, cast, &sums);
+                CubeStagedKeyGradientSumRoutine.dispatch(tensors, walk, &sums)?;
+                CastKeyGradientRoutine.dispatch(tensors, cast, &sums)?;
             }
         }
+        Ok(())
     }
 
     fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {

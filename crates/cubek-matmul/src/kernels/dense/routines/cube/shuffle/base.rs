@@ -379,7 +379,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
         blueprint: CubeShuffleMatmulRoutineBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let microkernel = blueprint.microkernel;
         let item = tensors.work_item();
         let [sum, _, _, out] = item.kernel_elements();
@@ -406,6 +406,7 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
                 [sum, out],
             );
         }
+        Ok(())
     }
 }
 

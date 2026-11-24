@@ -1579,6 +1579,7 @@ dependencies = [
  "cubecl-common",
  "cubecl-environment",
  "cubek-test-utils",
+ "log",
  "serde",
  "tempfile",
 ]

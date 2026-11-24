@@ -3,6 +3,7 @@
 use super::kernel::cast_query_gradient_kernel;
 use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Decline;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 use cubek_std::Hardware;
@@ -53,20 +54,23 @@ impl CastQueryGradientRoutine {
         });
         walk
     }
-
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &CastQueryGradientBlueprint,
         sum: &QueryGradientSum,
-    ) {
-        let binding = tensors.bind(walk);
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(walk)?;
         let sum = tensors.bind_beside(
             &binding,
             walk,
             &sum.0,
             AttentionBackwardOperand::QueryGradient,
-        );
+        )?;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
@@ -82,5 +86,6 @@ impl CastQueryGradientRoutine {
                 binding.launcher.partitioning_arg(),
             );
         }
+        Ok(())
     }
 }

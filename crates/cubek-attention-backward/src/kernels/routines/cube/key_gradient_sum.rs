@@ -33,28 +33,31 @@ impl CubeStagedKeyGradientSumRoutine {
             cubes_with_heads_apart(tiling, problem.group)
         })
     }
-
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &CubeStagedKeyWalkBlueprint,
         sums: &KeyGradientSums,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let (key_summed, value_summed) = (
             tensors.bind_beside(
                 &binding,
                 walk,
                 &sums.key,
                 AttentionBackwardOperand::KeyGradient,
-            ),
+            )?,
             tensors.bind_beside(
                 &binding,
                 walk,
                 &sums.value,
                 AttentionBackwardOperand::ValueGradient,
-            ),
+            )?,
         );
         let operands = binding.operands;
 
@@ -85,5 +88,6 @@ impl CubeStagedKeyGradientSumRoutine {
                 problem.element,
             );
         }
+        Ok(())
     }
 }

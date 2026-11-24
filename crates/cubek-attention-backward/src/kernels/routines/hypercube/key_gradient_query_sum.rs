@@ -31,21 +31,24 @@ impl HypercubeKeyGradientQuerySumRoutine {
     ) -> Result<HypercubeKeyWalkBlueprint, Decline> {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
     }
-
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &HypercubeKeyWalkBlueprint,
         query_sum: &QueryGradientSum,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let query_summed = tensors.bind_beside(
             &binding,
             walk,
             &query_sum.0,
             AttentionBackwardOperand::QueryGradient,
-        );
+        )?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -76,5 +79,6 @@ impl HypercubeKeyGradientQuerySumRoutine {
                 [AttentionBackwardProblem::SUM, problem.element],
             );
         }
+        Ok(())
     }
 }

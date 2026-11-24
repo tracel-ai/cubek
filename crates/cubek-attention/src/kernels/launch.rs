@@ -94,7 +94,7 @@ where
         settings: &R::Settings,
     ) -> Result<TensorHandle, Decline> {
         let (blueprint, grid) = R::prepare(hw, &tensors.problem(), settings)?;
-        let binding = tensors.bind(&blueprint, &grid);
+        let binding = tensors.bind(&blueprint, &grid)?;
         self.0.dispatch(&tensors, binding, blueprint, grid);
         Ok(tensors.into_out())
     }

@@ -12,7 +12,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{AttentionVisibility, G};
 use cubek_microkernel::attention_backward::{AttentionBackwardOperand, AttentionBackwardOperands};
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
 /// What a backward pass declines before preparing anything: an element the routines do not
 /// take, inputs of two elements, or a logsumexp not stored in `f32`.
@@ -209,10 +209,14 @@ impl AttentionBackwardTensors {
 
     /// Every operand bound as `walk` states it: under its partitioning, at its widths, on its
     /// grid. A walk passes its kernel the ones it reads and writes.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
     pub(crate) fn bind<M, SM>(
         &self,
         walk: &AttentionBackwardWalk<M, SM>,
-    ) -> AttentionBackwardBinding {
+    ) -> Result<AttentionBackwardBinding, Decline> {
         let launcher = Launcher::new(
             &self.client,
             walk.kernel_partitioning(),
@@ -222,28 +226,32 @@ impl AttentionBackwardTensors {
                 cube_dim: walk.grid.launch.cube_dim,
             },
         )
-        .expect(ADMITTED_PLAN_RUNS);
-        let operands = self.views.map(|operand, view| {
+        .or_broken(ADMITTED_PLAN_RUNS)?;
+        let operands = self.views.try_map(|operand, view| {
             launcher
                 .arg(view.binding.clone(), view.elem)
                 .dimensions(operand.dimensions())
                 .vectorize(walk.widths.get(operand))
                 .build()
-                .expect(ADMITTED_PLAN_RUNS)
-        });
-        AttentionBackwardBinding { launcher, operands }
+                .or_broken(ADMITTED_PLAN_RUNS)
+        })?;
+        Ok(AttentionBackwardBinding { launcher, operands })
     }
 
     /// `tensor`, shaped as `operand` is (`[b, h, q, ·]` like the query's gradient, `[b, kv, s, ·]`
     /// like the keys'), bound under `binding`'s launcher as `operand` is under `walk`: a buffer a
     /// routine allocates beside the pass's own, such as a sum it adds into.
+    ///
+    /// # Errors
+    ///
+    /// As [`bind`](Self::bind).
     pub(crate) fn bind_beside<M, SM>(
         &self,
         binding: &AttentionBackwardBinding,
         walk: &AttentionBackwardWalk<M, SM>,
         tensor: &PlainTensor,
         operand: AttentionBackwardOperand,
-    ) -> Bound {
+    ) -> Result<Bound, Decline> {
         let view = match operand.dimensions().contains(&G) {
             true => Self::grouped(tensor, self.problem().group),
             false => tensor.clone(),
@@ -254,6 +262,6 @@ impl AttentionBackwardTensors {
             .dimensions(operand.dimensions())
             .vectorize(walk.widths.get(operand))
             .build()
-            .expect(ADMITTED_PLAN_RUNS)
+            .or_broken(ADMITTED_PLAN_RUNS)
     }
 }

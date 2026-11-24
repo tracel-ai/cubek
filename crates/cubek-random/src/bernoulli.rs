@@ -1,16 +1,21 @@
 use crate::base::random;
 use crate::kernels::RandomStrategy;
 use cubecl::prelude::*;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::random::Bernoulli;
 
 /// `out` filled with `1` at probability `probability` and `0` otherwise, drawn off `seed`.
+///
+/// # Errors
+///
+/// Why no random kernel runs on this device.
 pub fn random_bernoulli(
     client: &Client,
     probability: f32,
     out: TensorBinding,
     dtype: ElemType,
     seed: u64,
-) -> Result<(), LaunchError> {
+) -> Result<(), Decline> {
     random_bernoulli_with_strategy(
         client,
         probability,
@@ -28,7 +33,7 @@ pub(crate) fn random_bernoulli_with_strategy(
     dtype: ElemType,
     strategy: RandomStrategy,
     seed: u64,
-) -> Result<(), LaunchError> {
+) -> Result<(), Decline> {
     random(
         client,
         Bernoulli { probability },

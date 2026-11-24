@@ -9,7 +9,7 @@ use cubecl::prelude::TensorBinding;
 use cubecl::tile::launch::{Bound, Decline, Unbound};
 use cubecl::tile::{Dimension, Geometry, Launcher};
 use cubek_microkernel::reduce::ReduceOperation;
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid};
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid};
 
 #[cfg(test)]
 use crate::kernels::tests::zeros;
@@ -167,11 +167,15 @@ impl ReduceTensors<Geometry> {
 impl ReduceTensors<TensorBinding> {
     /// Both operands bound as `blueprint` states them, on `grid`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Where `blueprint` and `grid` were not prepared for these tensors' problem.
-    pub(crate) fn bind<M>(&self, blueprint: &ReduceBlueprint<M>, grid: &Grid) -> ReduceBinding {
-        ReduceBinding {
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub(crate) fn bind<M>(
+        &self,
+        blueprint: &ReduceBlueprint<M>,
+        grid: &Grid,
+    ) -> Result<ReduceBinding, Decline> {
+        Ok(ReduceBinding {
             workspace: self.workspace.clone(),
             ..ReduceBinding::bound(
                 &self.client,
@@ -180,8 +184,8 @@ impl ReduceTensors<TensorBinding> {
                 self.indices.as_ref(),
                 blueprint,
                 grid,
-            )
-        }
+            )?
+        })
     }
 }
 
@@ -193,13 +197,17 @@ impl ReduceTensors<Geometry> {
     }
 
     /// The input's spec and geometry as `blueprint` states them, on `grid`, for the caller to bind,
-    /// and the output bound. It panics where binding both operands does.
+    /// and the output bound.
+    ///
+    /// # Errors
+    ///
+    /// Where binding both operands errs.
     pub(crate) fn bind<M>(
         &self,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
-    ) -> ReduceBinding<Unbound, Bound> {
-        ReduceBinding {
+    ) -> Result<ReduceBinding<Unbound, Bound>, Decline> {
+        Ok(ReduceBinding {
             workspace: self.workspace.clone(),
             ..ReduceBinding::unbound(
                 &self.client,
@@ -208,8 +216,8 @@ impl ReduceTensors<Geometry> {
                 &self.out,
                 blueprint,
                 grid,
-            )
-        }
+            )?
+        })
     }
 }
 
@@ -251,8 +259,8 @@ impl ReduceBinding {
         indices: Option<&TensorBinding>,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
-    ) -> Self {
-        let launcher = launcher_of(client, problem, blueprint, grid);
+    ) -> Result<Self, Decline> {
+        let launcher = launcher_of(client, problem, blueprint, grid)?;
         let (input, dimensions) = problem.labelled(input.clone(), REDUCED);
         let input = launcher
             .arg(input, problem.elements.input)
@@ -260,22 +268,24 @@ impl ReduceBinding {
             .boundary(problem.input_boundary())
             .vectorize(blueprint.width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        let out = out_bound(&launcher, out, problem.elements.out, problem, blueprint);
-        let indices = indices.map(|indices| {
-            let element = problem
-                .indices
-                .expect("indices beside the values have an element")
-                .element;
-            out_bound(&launcher, indices, element, problem, blueprint)
-        });
-        ReduceBinding {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        let out = out_bound(&launcher, out, problem.elements.out, problem, blueprint)?;
+        let indices = indices
+            .map(|indices| {
+                let element = problem
+                    .indices
+                    .expect("indices beside the values have an element")
+                    .element;
+                out_bound(&launcher, indices, element, problem, blueprint)
+            })
+            .transpose()?;
+        Ok(ReduceBinding {
             launcher,
             input,
             out,
             indices,
             workspace: None,
-        }
+        })
     }
 }
 
@@ -289,8 +299,8 @@ impl ReduceBinding<Unbound, Bound> {
         out: &TensorBinding,
         blueprint: &ReduceBlueprint<M>,
         grid: &Grid,
-    ) -> Self {
-        let launcher = launcher_of(client, problem, blueprint, grid);
+    ) -> Result<Self, Decline> {
+        let launcher = launcher_of(client, problem, blueprint, grid)?;
         let (input, dimensions) = problem.labelled_geometry(input, REDUCED);
         let input = launcher
             .unbound(&input)
@@ -298,15 +308,15 @@ impl ReduceBinding<Unbound, Bound> {
             .boundary(problem.input_boundary())
             .vectorize(blueprint.width)
             .build_spec()
-            .expect(ADMITTED_PLAN_RUNS);
-        let out = out_bound(&launcher, out, problem.elements.out, problem, blueprint);
-        ReduceBinding {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        let out = out_bound(&launcher, out, problem.elements.out, problem, blueprint)?;
+        Ok(ReduceBinding {
             launcher,
             input,
             out,
             indices: None,
             workspace: None,
-        }
+        })
     }
 }
 
@@ -317,7 +327,7 @@ fn launcher_of<M>(
     problem: &ReduceRoutineProblem,
     blueprint: &ReduceBlueprint<M>,
     grid: &Grid,
-) -> Launcher {
+) -> Result<Launcher, Decline> {
     grid.launcher(client, || {
         (
             problem.kernel(&blueprint.partitioning),
@@ -334,7 +344,7 @@ fn out_bound<M>(
     element: ElemType,
     problem: &ReduceRoutineProblem,
     blueprint: &ReduceBlueprint<M>,
-) -> Bound {
+) -> Result<Bound, Decline> {
     bound_at(
         launcher,
         problem,
@@ -348,10 +358,10 @@ fn out_bound<M>(
 /// `buffer`, one a launch of `problem` writes holding `along` in place of the reduced axis, bound
 /// in `element` at `width` ([`ReduceRoutineProblem::labelled`]).
 ///
-/// # Panics
+/// # Errors
 ///
-/// Where the launch the launcher was prepared for cannot bind it, which its routine's prepare
-/// rules out.
+/// [`Decline::Broken`] where the launch the launcher was prepared for cannot bind it, which its
+/// routine's prepare rules out.
 pub(crate) fn bound_at(
     launcher: &Launcher,
     problem: &ReduceRoutineProblem,
@@ -359,14 +369,14 @@ pub(crate) fn bound_at(
     along: Dimension,
     element: ElemType,
     width: usize,
-) -> Bound {
+) -> Result<Bound, Decline> {
     let (buffer, dimensions) = problem.labelled(buffer, along);
     launcher
         .arg(buffer, element)
         .dimensions(&dimensions)
         .vectorize(width)
         .build()
-        .expect(ADMITTED_PLAN_RUNS)
+        .or_broken(ADMITTED_PLAN_RUNS)
 }
 
 #[cfg(test)]

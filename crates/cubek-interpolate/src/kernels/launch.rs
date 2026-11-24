@@ -15,18 +15,22 @@ use cubecl::tile::launch::{Bound, BoundaryPolicy, Decline};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Partitioning};
 use cubek_std::Hardware;
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid, Routine};
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 
 /// A routine of this kind: it prepares a launch of any filter and launches it on tensors, its
 /// kernel compiled for filter `F`.
 pub trait InterpolateRoutine: Routine<Problem = InterpolateRoutineProblem> {
     /// Launch the kernel `blueprint` compiles for `F`, on `grid`, over `tensors`.
+    ///
+    /// # Errors
+    ///
+    /// As [`InterpolateTensors::bind`].
     fn dispatch<F: SeparableFilterFamily>(
         &self,
         tensors: &InterpolateTensors,
         blueprint: Self::Blueprint,
         grid: Grid,
-    );
+    ) -> Result<(), Decline>;
 }
 
 /// `tensors` resampled by `routine` at `settings` on `hw`.
@@ -47,7 +51,6 @@ pub fn launch_interpolate_routine<R: InterpolateRoutine>(
         InterpolateMode::Bicubic => routine.dispatch::<BicubicFilter>(tensors, blueprint, grid),
         InterpolateMode::Lanczos3 => routine.dispatch::<Lanczos3Filter>(tensors, blueprint, grid),
     }
-    Ok(())
 }
 
 /// The NHWC input and output of one interpolation, and the problem they state.
@@ -96,16 +99,20 @@ impl InterpolateTensors {
 
     /// Both operands bound on `grid` at `width`, placed by `partitioning`: the input gathered over
     /// every output position's taps, its reads masked where `checked`.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
     pub fn bind(
         &self,
         partitioning: &Partitioning,
         width: usize,
         checked: bool,
         grid: &Grid,
-    ) -> InterpolateBinding {
+    ) -> Result<InterpolateBinding, Decline> {
         let launcher = grid.launcher(&self.client, || {
             (partitioning.clone(), partitioning.space().clone())
-        });
+        })?;
         let problem = &self.problem;
         let boundary = match checked {
             true => BoundaryPolicy::Every(mode_properties(problem.forward.options.mode).boundary),
@@ -121,18 +128,18 @@ impl InterpolateTensors {
             .boundary(boundary)
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
+            .or_broken(ADMITTED_PLAN_RUNS)?;
         let output = launcher
             .arg(self.output.clone(), problem.element)
             .dimensions(&[BATCH, OUTPUT_H, OUTPUT_W, CHANNEL])
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        InterpolateBinding {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(InterpolateBinding {
             launcher,
             input,
             output,
-        }
+        })
     }
 }
 

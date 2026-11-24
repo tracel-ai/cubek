@@ -61,10 +61,17 @@ impl UnitQueryGradientRoutine {
             (),
         ))
     }
-
-    pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &UnitQueryGradientBlueprint) {
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardTensors::bind`].
+    pub fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        walk: &UnitQueryGradientBlueprint,
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -92,5 +99,6 @@ impl UnitQueryGradientRoutine {
                 AttentionBackwardProblem::SUM,
             );
         }
+        Ok(())
     }
 }

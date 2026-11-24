@@ -101,7 +101,7 @@ impl ReduceRoutine<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         launch_zero(
             client,
             problem,
@@ -110,6 +110,7 @@ impl ReduceRoutine<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
             &binding.launcher,
             grid,
         );
+        Ok(())
     }
 
     /// The output zeroed. The caller's input is never read, so `input` is never called.
@@ -118,19 +119,23 @@ impl ReduceRoutine<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
         blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
         _input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
-    ) {
-        Self::zero_unbound(tensors, blueprint, grid);
+    ) -> Result<(), Decline> {
+        Self::zero_unbound(tensors, blueprint, grid)
     }
 }
 
 impl UnitDirectZeroReduceRoutine {
     /// The output of `tensors`, whose input the caller binds, zeroed on `grid`.
+    ///
+    /// # Errors
+    ///
+    /// As [`ReduceTensors::bind`].
     pub fn zero_unbound(
         tensors: &ReduceTensors<Geometry>,
         blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
-    ) {
-        let binding = tensors.bind(&blueprint, &grid);
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         launch_zero(
             tensors.client(),
             tensors.problem(),
@@ -139,6 +144,7 @@ impl UnitDirectZeroReduceRoutine {
             &binding.launcher,
             grid,
         );
+        Ok(())
     }
 }
 

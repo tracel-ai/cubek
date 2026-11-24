@@ -60,8 +60,7 @@ where
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Decline> {
         let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)?;
-        R::launch_unbound::<I>(tensors, blueprint, grid, input);
-        Ok(())
+        R::launch_unbound::<I>(tensors, blueprint, grid, input)
     }
 }
 
@@ -71,10 +70,9 @@ where
 {
     /// `tensors` reduced at this candidate's setting.
     pub(super) fn run(&self, tensors: ReduceTensors) -> Result<(), String> {
-        let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)
-            .map_err(|decline| decline.to_string())?;
-        R::launch(&tensors, blueprint, grid);
-        Ok(())
+        R::prepare(&self.hw, tensors.problem(), &self.settings)
+            .and_then(|(blueprint, grid)| R::launch(&tensors, blueprint, grid))
+            .map_err(|decline| decline.to_string())
     }
 
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the

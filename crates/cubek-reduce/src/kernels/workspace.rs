@@ -15,6 +15,12 @@ pub const WORKSPACE_TOO_SMALL: Decline = Decline::Unserved {
     why: "the routine needs more scratch than the workspace its caller gave",
 };
 
+/// A launch whose caller's workspace is gone.
+pub(crate) const WORKSPACE_LOST: Decline = Decline::Broken {
+    condition: "prepare declines a launch whose caller gave no workspace",
+    cause: None,
+};
+
 /// The scratch of a reduction whose last cube merges a row split across cubes, which its caller
 /// allocates and owns: each cube's partial, its indices where the carrier keeps any, and one arrival counter a
 /// box of rows. The counters hold zero when the caller first gives them, and every launch leaves
