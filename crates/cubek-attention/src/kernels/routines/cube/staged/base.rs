@@ -207,6 +207,7 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAtte
                 binding.lengths,
                 binding.query_ends.into(),
                 problem.seq_q as u32,
+                problem.seq_kv as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,

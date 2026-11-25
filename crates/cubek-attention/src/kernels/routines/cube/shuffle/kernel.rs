@@ -28,6 +28,7 @@ pub fn cube_shuffle_attention_kernel<
     len: &Tensor<u32>,
     query_ends: ComptimeOption<&Tensor<u32>>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeAttentionMicrokernel,
@@ -46,7 +47,8 @@ pub fn cube_shuffle_attention_kernel<
 
     for sequence in &partitioning {
         for cube in sequence {
-            let visible = VisibleKeys::new(len, &query_ends, &cube, queries, &mask, visibility);
+            let visible =
+                VisibleKeys::new(len, &query_ends, &cube, queries, keys, &mask, visibility);
             let steps = visible.steps(
                 &cube,
                 microkernel.seq_q(),

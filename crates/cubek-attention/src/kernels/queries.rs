@@ -12,7 +12,7 @@ pub const PACKED_QUERIES_UNREAD: Decline = Decline::Unserved {
 /// The queries of an attention's sequences, and each sequence's attended length `lengths`, `u32`
 /// `[b]` on the device, or `[1]` for every sequence: sequence `b` attends its first `lengths[b]`
 /// keys, and its `q_b` queries are the last `q_b` of them, at positions `lengths[b] - q_b ..
-/// lengths[b]`, causal from there.
+/// lengths[b]`, causal from there. A length past the keys attends every key there is.
 ///
 /// A decode step is either kind with one query a sequence.
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ mod tests {
     use cubek_matmul::kernels::tensor::PlainTensor;
     use cubek_std::Hardware;
     use cubek_std::autotune::GroupPriority;
-    use cubek_test_utils::{HostData, HostDataType, TestInput};
+    use cubek_test_utils::{HostData, HostDataType, TestInput, ValidationResult};
 
     const HEADS: usize = 4;
     const KV_HEADS: usize = 2;
@@ -440,5 +440,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A length past the keys attends the keys there are, at the lead of every kernel: the key
+    /// head after another's keys in the buffer is what a read past them would reach.
+    #[test]
+    fn a_length_past_the_keys_attends_the_keys() {
+        const LENGTH_PAST_THE_KEYS: u32 = 3 * KEYS as u32;
+        let client: Client = cubecl::test_device().client();
+        let hw = Hardware::from_client(&client);
+        let random = |shape: [usize; 4], seed| {
+            PlainTensor::of_handle(
+                TestInput::builder(client.clone(), Shape::from(shape))
+                    .dtype(f32::elem_type_native())
+                    .uniform(seed, -1.0, 1.0)
+                    .generate_without_host_data(),
+            )
+        };
+        let cache_shape = [1, KV_HEADS, KEYS, HEAD_DIM];
+        let attend = |kernel: AttentionKernel, length: u32| {
+            AttentionTensors::new(
+                &client,
+                random([1, HEADS, 1, HEAD_DIM], 1),
+                random(cache_shape, 2),
+                random(cache_shape, 3),
+                PlainTensor::of_u32s(&client, &[1], &[length]),
+                AttentionScoring::standard(AttentionVisibility::Attended, HEAD_DIM),
+            )
+            .and_then(|tensors| kernel.launch_lead_on(&hw, tensors))
+            .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+        };
+
+        let wrong: Vec<String> = AttentionKernel::all()
+            .into_iter()
+            .filter_map(|kernel| {
+                let expected = attend(kernel, KEYS as u32).ok()?;
+                let actual = attend(kernel, LENGTH_PAST_THE_KEYS).expect("the length is a value");
+                let compared = cubek_test_utils::assert_equals_approx(&actual, &expected, 1e-4);
+                (!matches!(compared, ValidationResult::Pass))
+                    .then(|| format!("{kernel:?}: {compared:?}"))
+            })
+            .collect();
+
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 }

@@ -16,6 +16,7 @@ pub fn unit_attention_kernel<EA: Float>(
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitAttentionMicrokernel,
@@ -37,6 +38,7 @@ pub fn unit_attention_kernel<EA: Float>(
             &ComptimeOption::new_None(),
             &unit,
             queries,
+            keys,
             &mask,
             visibility,
         );

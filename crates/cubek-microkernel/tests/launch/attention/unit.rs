@@ -143,6 +143,7 @@ impl AttentionLaunch for UnitAttentionLaunch {
                 Option::<TileTensorLaunch>::None.into(),
                 lengths,
                 queries as u32,
+                keys as u32,
                 scale,
                 launcher.partitioning_arg(),
                 self.microkernel,
@@ -165,6 +166,7 @@ fn unit_attention_kernel<EA: Float>(
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: UnitAttentionMicrokernel,
@@ -183,6 +185,7 @@ fn unit_attention_kernel<EA: Float>(
             &ComptimeOption::new_None(),
             &unit,
             queries,
+            keys,
             &mask,
             visibility,
         );

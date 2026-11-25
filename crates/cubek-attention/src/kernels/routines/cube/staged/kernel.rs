@@ -24,6 +24,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float, EV: Float>(
     len: &Tensor<u32>,
     query_ends: ComptimeOption<&Tensor<u32>>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeAttentionMicrokernel,
@@ -42,7 +43,8 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float, EV: Float>(
 
     for sequence in &partitioning {
         for cube in sequence {
-            let visible = VisibleKeys::new(len, &query_ends, &cube, queries, &mask, visibility);
+            let visible =
+                VisibleKeys::new(len, &query_ends, &cube, queries, keys, &mask, visibility);
             let k = key.within(S, 0, visible.attended as usize);
             let v = value.within(S, 0, visible.attended as usize);
             let bias = visible.step_bias::<EA>(&partitioning, &cube);

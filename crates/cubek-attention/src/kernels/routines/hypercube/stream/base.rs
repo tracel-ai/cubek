@@ -258,8 +258,9 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         // than the attended length. A cube writes the output of a box its run holds whole, which
         // no other cube touches, and no slot but its own of a box it shares; the last cube of a
         // box reads the box's slots, acquired after every holder stored its own, and writes its
-        // output. A box's counter, one of the line's boxes, which the arrivals outnumber, holds
-        // zero, and every launch leaves it so.
+        // output. A box's counter, one of the line's boxes, which the arrivals outnumber, starts
+        // at zero, as every launch leaves it; a box whose counter does not is merged early or
+        // never, which costs its answer: no access leaves its buffer.
         unsafe {
             hypercube_stream_fragment_attention_kernel::launch_unchecked(
                 tensors.client(),
@@ -277,6 +278,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
+                problem.seq_kv as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 microkernel,
