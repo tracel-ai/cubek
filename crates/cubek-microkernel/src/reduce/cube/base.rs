@@ -307,7 +307,7 @@ mod tests {
 
     /// One line of rows wide, its levels make the whole cube a plane of the launch.
     #[test]
-    fn one_line_wide_the_launchs_plane_is_the_cube() {
+    fn one_line_wide_the_plane_of_the_launch_is_the_cube() {
         const LANES: usize = 32;
         const PLANES: usize = 4;
         const LANE_SLOTS: usize = 32;
@@ -317,7 +317,7 @@ mod tests {
 
     /// Several lines of rows wide, its levels split its units into its planes.
     #[test]
-    fn several_lines_wide_the_launchs_plane_is_its_planes_lanes() {
+    fn several_lines_wide_the_plane_of_the_launch_is_its_planes_lanes() {
         const LANES: usize = 32;
         const PLANES: usize = 4;
         const LANE_SLOTS: usize = 32;
