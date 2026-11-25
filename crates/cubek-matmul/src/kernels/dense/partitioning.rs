@@ -273,8 +273,8 @@ impl MatmulPartitioning {
     ///
     /// # Errors
     ///
-    /// [`MASKED_WITHOUT_OVERHANG`]: a tiled launch whose output is masked where its tiles do not
-    /// overhang it.
+    /// [`Decline::Broken`]: a tiled launch whose output is masked where its tiles do not overhang
+    /// it.
     pub fn check_masked_where_overhanging(&self, out: &TileSpec) -> Result<(), Decline> {
         let as_claimed =
             self.rows_kind == MatmulRowsKind::Whole || !out.is_checked() || self.overhangs_output();

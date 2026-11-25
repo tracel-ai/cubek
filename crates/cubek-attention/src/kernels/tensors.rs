@@ -1,5 +1,7 @@
 //! The tensors of one attention, and how a launch binds them.
 
+#[cfg(doc)]
+use crate::kernels::CACHE_SEQUENCES_DISAGREE;
 use crate::kernels::conversion::{converted, distinct_elements};
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,

@@ -1,3 +1,7 @@
+#[cfg(doc)]
+use crate::kernels::indexed::m_grouped::{
+    GATED_ROWS_UNREAD, GROUPED_ROWS_UNREAD, ROUTE_SORT_UNREAD,
+};
 use crate::kernels::indexed::m_grouped::{
     GroupedRows, MGroupedChunk, MGroupedFloors, MGroupedMatmulKey, MGroupedRowSource,
     MGroupedSettings, PaddedRows, RouteSort, upload,
@@ -65,9 +69,9 @@ impl MGroupedMatmulTensors {
     /// # Errors
     ///
     /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an
-    /// operand stored in tiles, [`MGroupedRowSource::admit`]'s for the rows,
-    /// [`MATMUL_STACK_NOT_WHOLE_SLABS`], [`GROUP_ENDS_UNREAD`], and
-    /// [`M_GROUPED_SHAPES_DISAGREE`].
+    /// operand stored in tiles, [`GROUPED_ROWS_UNREAD`], [`ROUTE_SORT_UNREAD`] or
+    /// [`GATED_ROWS_UNREAD`] for the rows, [`MATMUL_STACK_NOT_WHOLE_SLABS`],
+    /// [`GROUP_ENDS_UNREAD`], and [`M_GROUPED_SHAPES_DISAGREE`].
     pub fn new(
         client: &Client,
         source: impl Into<MGroupedRowSource>,
