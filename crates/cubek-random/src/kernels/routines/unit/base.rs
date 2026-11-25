@@ -1,5 +1,5 @@
 use super::kernel::unit_random_kernel;
-use crate::kernels::{RandomRoutine, RandomRoutineProblem, RandomTensor, VALUES};
+use crate::kernels::{RandomBinding, RandomRoutine, RandomRoutineProblem, RandomTensor, VALUES};
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, Vectorization};
@@ -121,15 +121,24 @@ impl Routine for UnitRandomRoutine {
 }
 
 impl RandomRoutine for UnitRandomRoutine {
+    fn bind(
+        &self,
+        tensor: &RandomTensor,
+        blueprint: &UnitRandomRoutineBlueprint,
+        grid: &Grid,
+    ) -> Result<RandomBinding, Decline> {
+        tensor.bind(&blueprint.partitioning, blueprint.width, grid)
+    }
+
     fn dispatch<D: Distribution>(
         &self,
         tensor: &RandomTensor,
+        binding: RandomBinding,
         args: <D::Args as LaunchArg>::RuntimeArg,
         seeds: SeedsLaunch,
         blueprint: UnitRandomRoutineBlueprint,
         grid: Grid,
-    ) -> Result<(), Decline> {
-        let binding = tensor.bind(&blueprint.partitioning, blueprint.width, &grid)?;
+    ) {
         // SAFETY: the output is bound through the launcher, which masks the writes of a run the
         // output's end cuts short, and the kernel indexes no buffer but through its tile; it
         // holds no shared memory.
@@ -147,6 +156,5 @@ impl RandomRoutine for UnitRandomRoutine {
                 tensor.problem().element,
             );
         }
-        Ok(())
     }
 }

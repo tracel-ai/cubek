@@ -19,18 +19,33 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 
 /// A routine of this kind: it prepares a launch of any filter and launches it on tensors, its
 /// kernel compiled for filter `F`.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever [`bind`](Self::bind) bound: every refusal of a
+/// launch is met while binding, before anything launches.
 pub trait InterpolateRoutine: Routine<Problem = InterpolateRoutineProblem> {
-    /// Launch the kernel `blueprint` compiles for `F`, on `grid`, over `tensors`.
+    /// `tensors`' operands bound as `blueprint` states them, on `grid`.
     ///
     /// # Errors
     ///
     /// As [`InterpolateTensors::bind`].
+    fn bind(
+        &self,
+        tensors: &InterpolateTensors,
+        blueprint: &Self::Blueprint,
+        grid: &Grid,
+    ) -> Result<InterpolateBinding, Decline>;
+
+    /// Launch the kernel `blueprint` compiles for `F`, on `grid`, over `binding`, `tensors`'
+    /// operands as [`bind`](Self::bind) bound them.
     fn dispatch<F: SeparableFilterFamily>(
         &self,
         tensors: &InterpolateTensors,
+        binding: InterpolateBinding,
         blueprint: Self::Blueprint,
         grid: Grid,
-    ) -> Result<(), Decline>;
+    );
 }
 
 /// `tensors` resampled by `routine` at `settings` on `hw`.
@@ -45,12 +60,22 @@ pub fn launch_interpolate_routine<R: InterpolateRoutine>(
     settings: &R::Settings,
 ) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
+    let binding = routine.bind(tensors, &blueprint, &grid)?;
     match tensors.problem().forward.options.mode {
-        InterpolateMode::Nearest(_) => routine.dispatch::<NearestFilter>(tensors, blueprint, grid),
-        InterpolateMode::Bilinear => routine.dispatch::<BilinearFilter>(tensors, blueprint, grid),
-        InterpolateMode::Bicubic => routine.dispatch::<BicubicFilter>(tensors, blueprint, grid),
-        InterpolateMode::Lanczos3 => routine.dispatch::<Lanczos3Filter>(tensors, blueprint, grid),
+        InterpolateMode::Nearest(_) => {
+            routine.dispatch::<NearestFilter>(tensors, binding, blueprint, grid)
+        }
+        InterpolateMode::Bilinear => {
+            routine.dispatch::<BilinearFilter>(tensors, binding, blueprint, grid)
+        }
+        InterpolateMode::Bicubic => {
+            routine.dispatch::<BicubicFilter>(tensors, binding, blueprint, grid)
+        }
+        InterpolateMode::Lanczos3 => {
+            routine.dispatch::<Lanczos3Filter>(tensors, binding, blueprint, grid)
+        }
     }
+    Ok(())
 }
 
 /// The NHWC input and output of one interpolation, and the problem they state.

@@ -14,21 +14,35 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 
 /// A routine of this kind: it prepares a launch of any distribution and launches it on an output,
 /// its kernel compiled for distribution `D`.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever [`bind`](Self::bind) bound: every refusal of a
+/// launch is met while binding, before anything launches.
 pub trait RandomRoutine: Routine<Problem = RandomRoutineProblem> {
-    /// Launch the kernel `blueprint` compiles for `D`, on `grid`, filling `tensor` with draws of
-    /// `args` off `seeds`.
+    /// `tensor` bound as `blueprint` states it, on `grid`.
     ///
     /// # Errors
     ///
     /// As [`RandomTensor::bind`].
+    fn bind(
+        &self,
+        tensor: &RandomTensor,
+        blueprint: &Self::Blueprint,
+        grid: &Grid,
+    ) -> Result<RandomBinding, Decline>;
+
+    /// Launch the kernel `blueprint` compiles for `D`, on `grid`, filling `binding`, `tensor` as
+    /// [`bind`](Self::bind) bound it, with draws of `args` off `seeds`.
     fn dispatch<D: Distribution>(
         &self,
         tensor: &RandomTensor,
+        binding: RandomBinding,
         args: <D::Args as LaunchArg>::RuntimeArg,
         seeds: SeedsLaunch,
         blueprint: Self::Blueprint,
         grid: Grid,
-    ) -> Result<(), Decline>;
+    );
 }
 
 /// `tensor` filled by `routine` at `settings` on `hw` with draws of `distribution` off `seeds`.
@@ -45,7 +59,9 @@ pub fn launch_random_routine<R: RandomRoutine, D: Distribution>(
     seeds: SeedsLaunch,
 ) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare(hw, tensor.problem(), settings)?;
-    routine.dispatch::<D>(tensor, distribution.args(), seeds, blueprint, grid)
+    let binding = routine.bind(tensor, &blueprint, &grid)?;
+    routine.dispatch::<D>(tensor, binding, distribution.args(), seeds, blueprint, grid);
+    Ok(())
 }
 
 /// The output of one draw, and the problem it states.
