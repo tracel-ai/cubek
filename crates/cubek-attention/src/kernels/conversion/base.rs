@@ -16,6 +16,10 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 /// zero is repeated the same way over the converted buffer. Queries packed end to end and viewed
 /// once per sequence, the batch at stride zero, convert as the packed queries, not once per
 /// sequence.
+///
+/// # Assumptions
+///
+/// A `u32` counts the [`elements_held`] of `tensor`.
 pub(crate) fn converted(client: &Client, tensor: &PlainTensor, element: ElemType) -> PlainTensor {
     let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
     let held = held_once(shape, strides);
@@ -34,7 +38,7 @@ pub(crate) fn converted(client: &Client, tensor: &PlainTensor, element: ElemType
                 cube_dim,
                 source.binding.clone().into_tensor_arg(),
                 converted.binding.clone().into_tensor_arg(),
-                u32::try_from(elements).expect("a converted operand counts its elements in a u32"),
+                elements as u32,
                 [tensor.elem, element],
             );
         }
@@ -48,6 +52,13 @@ pub(crate) fn converted(client: &Client, tensor: &PlainTensor, element: ElemType
         })
         .collect::<Vec<_>>();
     converted.viewed(Metadata::new(shape.clone(), repeated))
+}
+
+/// The values `tensor` holds once, however often it repeats them.
+pub(crate) fn elements_held(tensor: &PlainTensor) -> usize {
+    held_once(&tensor.binding.shape, &tensor.binding.strides)
+        .iter()
+        .product()
 }
 
 /// The shape of what a view at `shape` and `strides` holds once: each dim at stride zero, which

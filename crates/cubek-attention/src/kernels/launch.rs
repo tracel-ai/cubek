@@ -18,13 +18,17 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
 {
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where `binding` is not as the routine prepared it, nothing launched.
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
         binding: AttentionBinding,
         blueprint: AttentionBlueprint<M, SM>,
         grid: Grid,
-    );
+    ) -> Result<(), Decline>;
 }
 
 /// What writes the attention at each of its routine's settings: a routine alone ([`DirectAttention`]),
@@ -95,7 +99,7 @@ where
     ) -> Result<TensorHandle, Decline> {
         let (blueprint, grid) = R::prepare(hw, &tensors.problem(), settings)?;
         let binding = tensors.bind(&blueprint, &grid)?;
-        self.0.dispatch(&tensors, binding, blueprint, grid);
+        self.0.dispatch(&tensors, binding, blueprint, grid)?;
         Ok(tensors.into_out())
     }
 }
@@ -122,6 +126,10 @@ pub trait PartialAttentionRoutine<M: AttentionMicrokernel, SM = ()>:
 
     /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its partials left in
     /// `slots`.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where `binding` is not as the routine prepared it, nothing launched.
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
@@ -129,7 +137,7 @@ pub trait PartialAttentionRoutine<M: AttentionMicrokernel, SM = ()>:
         blueprint: AttentionBlueprint<M, SM>,
         grid: Grid,
         slots: &AttentionSplitSlots,
-    );
+    ) -> Result<(), Decline>;
 }
 
 #[cfg(test)]

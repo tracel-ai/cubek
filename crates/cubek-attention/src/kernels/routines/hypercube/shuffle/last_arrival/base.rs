@@ -8,6 +8,7 @@ use crate::kernels::{
 };
 use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::tile::StageStorage;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_std::routine::Grid;
 
@@ -38,8 +39,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         binding: AttentionBinding,
         blueprint: HypercubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
-    ) {
-        Self::assert_one_width(&binding, &blueprint);
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
         let shape = self.merge_shape(&problem, &blueprint);
         let microkernel = blueprint.microkernel;
@@ -96,7 +96,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                     None => ComptimeOptionArgs::None,
                 };
                 // SAFETY: as the tiles'; a field indexes its codebook, which holds an entry for
-                // every index (`PackedAttentionCache::new`).
+                // every index (`PackedAttentionCache::admit`).
                 unsafe {
                     hypercube_attention_arrival_packed_kernel::launch_unchecked(
                         client,
@@ -125,5 +125,6 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 }
             }
         }
+        Ok(())
     }
 }

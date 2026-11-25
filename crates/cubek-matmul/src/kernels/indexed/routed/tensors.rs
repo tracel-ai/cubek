@@ -1,4 +1,6 @@
 use crate::kernels::indexed::routed::RoutedMatmulKey;
+#[cfg(doc)]
+use crate::kernels::indexed::stack::MATMUL_STACK_NOT_WHOLE_SLABS;
 use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -20,6 +22,17 @@ use cubek_std::Hardware;
 use cubek_std::autotune::Roofline;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_dimensions::{K, N};
+
+/// Operands of a routed product whose shapes are no `[rows, k]` against slabs of `k` rows, each
+/// row routed as many times as the next.
+pub const ROUTED_SHAPES_DISAGREE: Decline = Decline::Unserved {
+    why: "a routed product is [rows, k] against slabs of [k, n], its routes [rows, slots]",
+};
+
+/// Routes of a routed product that are not `u32` indices into the stack.
+pub const ROUTES_NOT_U32: Decline = Decline::Unserved {
+    why: "routes are u32 indices into the stack",
+};
 
 /// The operands of one routed product: the rows, the stack of `experts` slabs laid `along`, and
 /// each row's routes, `out[r, s] = lhs[r] · rhs[routes[r, s]]`.
@@ -63,13 +76,9 @@ impl RoutedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for a
-    /// stack stored in tiles.
-    ///
-    /// # Panics
-    ///
-    /// On an lhs other than `[rows, k]`, a stack other than rank two or not whole slabs, a
-    /// contraction the slabs do not share, or routes other than `u32`.
+    /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for a
+    /// stack stored in tiles, [`MATMUL_STACK_NOT_WHOLE_SLABS`], [`ROUTED_SHAPES_DISAGREE`] and
+    /// [`ROUTES_NOT_U32`].
     pub fn new(
         client: &Client,
         lhs: PlainTensor,
@@ -81,11 +90,23 @@ impl RoutedMatmulTensors {
         if rhs.values().is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
-        assert_eq!(
-            rhs.values().shape().rank(),
-            2,
-            "a routed stack is a rank-two view"
-        );
+        along.admit(&rhs, experts)?;
+        let lhs_shape = lhs.shape();
+        let [k, _] = along.slab_shape(&rhs, experts);
+        if lhs_shape.rank() != 2 || lhs_shape[1] != k {
+            return Err(ROUTED_SHAPES_DISAGREE);
+        }
+        if routes.elem != ElemType::UInt(UIntKind::U32) {
+            return Err(ROUTES_NOT_U32);
+        }
+        let routes_shape = routes.shape();
+        let slots = *routes_shape
+            .as_slice()
+            .last()
+            .ok_or(ROUTED_SHAPES_DISAGREE)?;
+        if routes_shape.num_elements() != lhs_shape[0] * slots {
+            return Err(ROUTED_SHAPES_DISAGREE);
+        }
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),
             StoredTensor::Plain(rhs) => {
@@ -93,26 +114,6 @@ impl RoutedMatmulTensors {
                 StoredTensor::Plain(SlabView::readable(client, rhs))
             }
         };
-        assert_eq!(
-            routes.elem,
-            ElemType::UInt(UIntKind::U32),
-            "routes are `u32` indices into the stack"
-        );
-        let lhs_shape = lhs.shape();
-        assert_eq!(lhs_shape.rank(), 2, "a routed lhs is `[rows, k]`");
-        let [k, _] = along.slab_shape(&rhs, experts);
-        assert_eq!(lhs_shape[1], k, "the rows contract against one slab");
-        let routes_shape = routes.shape();
-        let slots = *routes_shape
-            .as_slice()
-            .last()
-            .expect("routes hold each row's experts along their last dim");
-        assert_eq!(
-            routes_shape.num_elements(),
-            lhs_shape[0] * slots,
-            "every row selects {slots} experts: routes {routes_shape:?} over {} rows",
-            lhs_shape[0]
-        );
         Ok(Self {
             client: client.clone(),
             lhs: lhs.into_contiguous(client),

@@ -1,10 +1,14 @@
-use super::{GroupedRows, PaddedRows, RouteSort, upload};
+use super::{
+    COMBINED_ROUTES_UNREAD, GROUPED_ROWS_UNREAD, GroupedRows, PaddedRows, RouteSort, upload,
+};
 use crate::kernels::tensor::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubek_test_utils::client;
+
+const UNREAD: &str = "the case's operands should be ones the layout reads";
 
 /// `values` uploaded as a `u32` vector.
 fn u32s(client: &Client, values: &[u32]) -> PlainTensor {
@@ -50,7 +54,9 @@ fn starts_name_each_groups_first_tile() {
             Some(*end)
         })
         .collect();
-    let starts = GroupedRows::new(&client, u32s(&client, &ends), rows, align).starts();
+    let starts = GroupedRows::new(&client, u32s(&client, &ends), rows, align)
+        .expect(UNREAD)
+        .starts();
     assert_eq!(read_u32(&client, starts), vec![0, 2, 2, 5, 6]);
 }
 
@@ -68,7 +74,7 @@ fn an_uploaded_layout_is_the_launched_one() {
         (&[5, 100], 10, 4),
     ];
     for (ends, rows, align) in cases {
-        let launched = GroupedRows::new(&client, u32s(&client, ends), rows, align);
+        let launched = GroupedRows::new(&client, u32s(&client, ends), rows, align).expect(UNREAD);
         let uploaded = GroupedRows::uploaded(&client, ends, rows, align);
         // Each row padded by its index, so the padded rows name where each tile read from.
         let indices: Vec<f32> = (0..rows).map(|row| row as f32).collect();
@@ -97,7 +103,7 @@ fn an_uploaded_layout_is_the_launched_one() {
             &values(launched.padded_rows() * 2, 1),
         );
         let gated = |from: GroupedRows| {
-            let gated = launched.gate(&PaddedRows::new(both.clone(), from));
+            let gated = launched.gate(&PaddedRows::new(both.clone(), from).expect(UNREAD));
             read_f32(&client, gated)
         };
         assert_eq!(gated(launched.clone()), gated(uploaded), "gate of {ends:?}");
@@ -204,7 +210,8 @@ fn pad_routes_lays_out_each_routes_token() {
             u32s(&client, &routing.ends),
             routing.routes.len(),
             ALIGN,
-        );
+        )
+        .expect(UNREAD);
         let padded = layout.pad_routes(
             PlainTensor::of_handle(f32s(&client, [routing.tokens, width], &tokens)),
             RouteSort {
@@ -235,7 +242,7 @@ fn gate_moves_the_gated_rows_between_layouts() {
     let ends = u32s(&client, &routing.ends);
     for half in [3usize, 8] {
         let both = values(rows * 2 * half, half);
-        let from = GroupedRows::new(&client, ends.clone(), rows, ALIGN);
+        let from = GroupedRows::new(&client, ends.clone(), rows, ALIGN).expect(UNREAD);
         let padded = PaddedRows::new(
             from.pad(PlainTensor::of_handle(f32s(
                 &client,
@@ -243,7 +250,8 @@ fn gate_moves_the_gated_rows_between_layouts() {
                 &both,
             ))),
             from,
-        );
+        )
+        .expect(UNREAD);
         let want: Vec<f32> = (0..rows)
             .flat_map(|row| {
                 let both = &both[row * 2 * half..(row + 1) * 2 * half];
@@ -256,7 +264,7 @@ fn gate_moves_the_gated_rows_between_layouts() {
             })
             .collect();
         for align in [2usize, 8] {
-            let to = GroupedRows::new(&client, ends.clone(), rows, align);
+            let to = GroupedRows::new(&client, ends.clone(), rows, align).expect(UNREAD);
             let gated = to.gate(&padded);
             let got = read_f32(&client, to.unpad(PlainTensor::of_handle(gated)));
             assert_close(&got, &want, "gate");
@@ -275,7 +283,8 @@ fn combine_routes_sums_each_tokens_routes() {
     for width in [3usize, 8] {
         let grouped = values(rows * width, width);
         let weights = values(rows, 3);
-        let layout = GroupedRows::new(&client, u32s(&client, &routing.ends), rows, ALIGN);
+        let layout =
+            GroupedRows::new(&client, u32s(&client, &routing.ends), rows, ALIGN).expect(UNREAD);
         let padded = PaddedRows::new(
             layout.pad(PlainTensor::of_handle(f32s(
                 &client,
@@ -283,12 +292,15 @@ fn combine_routes_sums_each_tokens_routes() {
                 &grouped,
             ))),
             layout,
-        );
-        let out = padded.combine_routes(
-            u32s(&client, &routing.routes),
-            u32s(&client, &routing.place_of_route),
-            PlainTensor::of_handle(f32s(&client, shape, &weights)),
-        );
+        )
+        .expect(UNREAD);
+        let out = padded
+            .combine_routes(
+                u32s(&client, &routing.routes),
+                u32s(&client, &routing.place_of_route),
+                PlainTensor::of_handle(f32s(&client, shape, &weights)),
+            )
+            .expect(UNREAD);
         let want: Vec<f32> = (0..routing.tokens)
             .flat_map(|token| {
                 (0..width)
@@ -306,4 +318,27 @@ fn combine_routes_sums_each_tokens_routes() {
             .collect();
         assert_close(&read_f32(&client, out), &want, "combine_routes");
     }
+}
+
+#[test]
+fn padded_rows_of_another_count_decline() {
+    let client = client();
+    let layout = GroupedRows::uploaded(&client, &[1, 2], 2, 1);
+
+    let declined = PaddedRows::new(f32s(&client, [3, 1], &[0.0; 3]), layout).err();
+
+    assert_eq!(declined, Some(GROUPED_ROWS_UNREAD));
+}
+
+#[test]
+fn routes_combined_under_weights_of_other_rows_decline() {
+    let client = client();
+    let layout = GroupedRows::uploaded(&client, &[1, 2], 2, 1);
+    let padded = PaddedRows::new(f32s(&client, [2, 1], &[0.0; 2]), layout).expect(UNREAD);
+    let routes = || u32s(&client, &[0, 1]);
+    let weights = PlainTensor::of_handle(f32s(&client, [3, 1], &[0.0; 3]));
+
+    let declined = padded.combine_routes(routes(), routes(), weights).err();
+
+    assert_eq!(declined, Some(COMBINED_ROUTES_UNREAD));
 }

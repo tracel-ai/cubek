@@ -1,6 +1,9 @@
-use super::GroupedRows;
+#[cfg(doc)]
+use super::COMBINED_ROUTES_UNREAD;
+use super::{GATED_ROWS_UNREAD, GROUPED_ROWS_UNREAD, GroupedRows};
 use crate::kernels::tensor::PlainTensor;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Decline;
 
 /// Rows in the padded layout, beside the layout that places them: what a grouped product hands
 /// back, for the next step to read padded or to [`unpad`](Self::unpad).
@@ -14,16 +17,40 @@ pub struct PaddedRows {
 impl PaddedRows {
     /// `rows`, `[tiles · align, width]`, as `layout` places them.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On rows other than the padded rows `layout` lays out.
-    pub fn new(rows: TensorHandle, layout: GroupedRows) -> Self {
-        assert_eq!(
-            rows.shape()[0],
-            layout.padded_rows(),
-            "the padded rows this layout lays out"
-        );
-        Self { rows, layout }
+    /// [`GROUPED_ROWS_UNREAD`] for rows other than the padded rows `layout` lays out.
+    pub fn new(rows: TensorHandle, layout: GroupedRows) -> Result<Self, Decline> {
+        let shape = rows.shape();
+        if shape.rank() != 2 || shape[0] != layout.padded_rows() {
+            return Err(GROUPED_ROWS_UNREAD);
+        }
+        Ok(Self { rows, layout })
+    }
+
+    /// The same rows as `layout` places them.
+    ///
+    /// # Assumptions
+    ///
+    /// `layout` lays out as many padded rows as the one that places them now.
+    pub(crate) fn placed_by(&self, layout: GroupedRows) -> Self {
+        Self {
+            rows: self.rows.clone(),
+            layout,
+        }
+    }
+
+    /// Whether the rows are a `[gate | up]` output over `groups` groups, which another layout of
+    /// those groups gates.
+    ///
+    /// # Errors
+    ///
+    /// [`GATED_ROWS_UNREAD`].
+    pub(crate) fn admit_gated(&self, groups: usize) -> Result<(), Decline> {
+        if self.layout.groups() != groups || !self.rows.shape()[1].is_multiple_of(2) {
+            return Err(GATED_ROWS_UNREAD);
+        }
+        Ok(())
     }
 
     /// The padded rows, `[tiles · align, width]`.
@@ -48,12 +75,16 @@ impl PaddedRows {
 
     /// Every token's routes read back out of these rows and summed under their weights: see
     /// `GroupedRows::combine_routes`.
+    ///
+    /// # Errors
+    ///
+    /// [`COMBINED_ROUTES_UNREAD`].
     pub fn combine_routes(
         &self,
         routes: PlainTensor,
         place_of_route: PlainTensor,
         weights: PlainTensor,
-    ) -> TensorHandle {
+    ) -> Result<TensorHandle, Decline> {
         self.layout
             .combine_routes(&self.rows, routes, place_of_route, weights)
     }

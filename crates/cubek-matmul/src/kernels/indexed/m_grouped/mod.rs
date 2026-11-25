@@ -12,7 +12,10 @@ mod tune;
 #[cfg(test)]
 mod tests;
 
-pub use grouped_rows::{GroupedRows, PaddedRows, RouteSort};
+pub use grouped_rows::{
+    COMBINED_ROUTES_UNREAD, GATED_ROWS_UNREAD, GROUPED_ROWS_UNREAD, GROUPED_TILE_OF_NO_ROW,
+    GroupedRows, PaddedRows, ROUTE_SORT_UNREAD, RouteSort,
+};
 pub use row_source::*;
 pub use settings::*;
 pub use tensors::*;

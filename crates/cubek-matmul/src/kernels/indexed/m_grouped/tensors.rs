@@ -1,7 +1,9 @@
 use crate::kernels::indexed::m_grouped::{
     MGroupedChunk, MGroupedMatmulKey, MGroupedRowSource, MGroupedSettings, PaddedRows,
 };
-use crate::kernels::indexed::stack::{SlabDimension, SlabView};
+#[cfg(doc)]
+use crate::kernels::indexed::stack::{GROUP_ENDS_UNREAD, MATMUL_STACK_NOT_WHOLE_SLABS};
+use crate::kernels::indexed::stack::{SlabDimension, SlabView, admit_ends};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
@@ -17,6 +19,16 @@ use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, 
 use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_dimensions::{K, N};
+
+/// A grouped product whose rows' contraction is not its slabs'.
+pub const M_GROUPED_SHAPES_DISAGREE: Decline = Decline::Unserved {
+    why: "a grouped product is [rows, k] against slabs of [k, n]",
+};
+
+/// A grouped product padded over no row: a layout holds one at least.
+pub const M_GROUPED_NO_ROW: Decline = Decline::Unserved {
+    why: "a padded product has a row at least",
+};
 
 /// The operands of one grouped product, `out[r] = lhs[r] · rhs[group(r)]`: where the rows come
 /// from, sorted by group, the stack of slabs laid `along`, float or packed, and each group's
@@ -46,13 +58,10 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for
-    /// an operand stored in tiles.
-    ///
-    /// # Panics
-    ///
-    /// On rows other than a rank-two tensor, a stack other than a rank-two tensor of whole slabs,
-    /// a contraction the rows and the stack do not share, or no group.
+    /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an
+    /// operand stored in tiles, [`MGroupedRowSource::admit`]'s for the rows,
+    /// [`MATMUL_STACK_NOT_WHOLE_SLABS`], [`GROUP_ENDS_UNREAD`], and
+    /// [`M_GROUPED_SHAPES_DISAGREE`].
     pub fn new(
         client: &Client,
         source: impl Into<MGroupedRowSource>,
@@ -61,13 +70,15 @@ impl MGroupedMatmulTensors {
         along: SlabDimension,
     ) -> Result<Self, Decline> {
         let source = source.into();
+        admit_ends(&ends)?;
+        let groups = ends.shape().num_elements();
+        source.admit(groups)?;
+        along.admit(&rhs, groups)?;
+        let [k, _] = along.slab_shape(&rhs, groups);
+        if source.k() != k {
+            return Err(M_GROUPED_SHAPES_DISAGREE);
+        }
         let rows = source.buffer();
-        let shape = rows.shape();
-        assert_eq!(
-            shape.num_dims(),
-            2,
-            "a grouped product's rows are `[rows, k]`: {shape:?}"
-        );
         if rows.is_tiled() || rhs.values().is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
@@ -81,20 +92,6 @@ impl MGroupedMatmulTensors {
                 StoredTensor::Plain(SlabView::readable(client, rhs.addressable(client)))
             }
         };
-        assert_eq!(
-            rhs.values().shape().num_dims(),
-            2,
-            "a grouped product contracts against a `[k, n]` stack"
-        );
-        let groups = ends.shape().num_elements();
-        assert!(groups > 0, "rows are grouped into one slab at least");
-        let [k, n] = along.slab_shape(&rhs, groups);
-        assert_eq!(
-            source.k(),
-            k,
-            "the rows contract against one slab: {} against slabs of [{k}, {n}]",
-            source.k()
-        );
         Ok(Self {
             client: client.clone(),
             source,
@@ -188,12 +185,8 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// Why `hw` cannot run the product at these settings, or why the routine declines a table or
-    /// the stack as it is stored.
-    ///
-    /// # Panics
-    ///
-    /// On no row: a layout holds one at least.
+    /// [`M_GROUPED_NO_ROW`], why `hw` cannot run the product at these settings, or why the routine
+    /// declines a table or the stack as it is stored.
     pub fn launch<Mk, SM, R>(
         &self,
         hw: &Hardware,
@@ -204,16 +197,15 @@ impl MGroupedMatmulTensors {
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
-        assert!(
-            self.source.rows() > 0,
-            "a padded product has a row at least"
-        );
+        if self.source.rows() == 0 {
+            return Err(M_GROUPED_NO_ROW);
+        }
         let chunk_rows = self.chunk_rows::<Mk, SM, R>(hw, settings)?;
         let stack = self.along.read_slabs(&self.rhs, self.groups())?;
         let (lhs, layout) = self
             .source
             .clone()
-            .pad(&self.client, self.ends.clone(), chunk_rows)
+            .pad(&self.client, self.ends.clone(), chunk_rows)?
             .into_parts();
         let [k, n] = self.slab_shape();
         let (chunks, elem) = (lhs.shape()[0] / chunk_rows, lhs.dtype);
@@ -245,7 +237,7 @@ impl MGroupedMatmulTensors {
             bound,
             &settings.routine,
         )?;
-        Ok(PaddedRows::new(out, layout))
+        PaddedRows::new(out, layout)
     }
 
     /// The rows each group is padded to a whole number of, as `settings` name them, on `hw`.

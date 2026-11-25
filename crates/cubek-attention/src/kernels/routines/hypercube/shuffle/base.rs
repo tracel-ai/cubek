@@ -1,6 +1,6 @@
 use crate::kernels::{
-    AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionPartitioning,
-    AttentionRoutineProblem, HypercubeMerge, PACKED_QUERIES_UNREAD, QueryOrder,
+    AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning, AttentionRoutineProblem,
+    HypercubeMerge, PACKED_QUERIES_UNREAD, QueryOrder,
 };
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
@@ -17,7 +17,7 @@ use cubek_microkernel::attention::plane::PlaneShuffleAttentionMicrokernelSetting
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Breakable, CubeResources, Grid, Routine};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
 /// keys: the hypercube microkernel runs a cube of plane shuffles over a cube's run, its planes
@@ -229,6 +229,12 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
             vectorization,
             storage,
         );
+        // The plane shuffle lines every operand alike, so its tiles share one width; a packed cache
+        // binds no tile.
+        let widths = &blueprint.widths;
+        let packed = matches!(problem.cache, AttentionCacheLayout::Packed(_));
+        let one_width = widths.key == widths.query && widths.value == widths.query;
+        (packed || one_width).or_broken("the plane shuffle's operands should share one width")?;
         Ok((blueprint, grid))
     }
 }
@@ -245,21 +251,6 @@ impl<M: HypercubeShuffleMerge> HypercubeShuffleAttentionRoutine<M> {
             blueprint.partitioning.cubes_along_keys(),
             M::MERGE.seq_q(&blueprint.microkernel),
         )
-    }
-
-    /// Checks what both kernels bind: the plane shuffle lines every operand alike, so its tiles
-    /// share one width.
-    pub(crate) fn assert_one_width(
-        binding: &AttentionBinding,
-        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
-    ) {
-        if let AttentionCacheBinding::Tiles { .. } = binding.cache {
-            assert!(
-                blueprint.widths.key == blueprint.widths.query
-                    && blueprint.widths.value == blueprint.widths.query,
-                "the plane shuffle's operands share one width"
-            );
-        }
     }
 }
 

@@ -11,7 +11,7 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Breakable, CubeResources, Grid, Routine};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
 /// nothing else: each plane of the cube owns its rows of one head and reads its keys and values
@@ -135,6 +135,12 @@ impl Routine for CubeShuffleAttentionRoutine {
             vectorization,
             storage,
         );
+        // The plane shuffle lines every operand alike, and the kernel binds them at one width.
+        let widths = &blueprint.widths;
+        [widths.key, widths.value, widths.out]
+            .iter()
+            .all(|&width| width == widths.query)
+            .or_broken("the plane shuffle's operands should share one width")?;
         Ok((blueprint, grid))
     }
 }
@@ -146,20 +152,9 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
         binding: AttentionBinding,
         blueprint: CubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let (key, value) = binding.cache.into_tiles();
-        // The plane shuffle lines every operand alike, and the kernel binds them at one width.
-        assert!(
-            [
-                blueprint.widths.key,
-                blueprint.widths.value,
-                blueprint.widths.out
-            ]
-            .iter()
-            .all(|&width| width == blueprint.widths.query),
-            "the plane shuffle's operands share one width"
-        );
+        let (key, value) = binding.cache.into_tiles()?;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, the keys and values are read no further than
         // the attended length, and the kernel indexes no buffer but through its tiles and the
@@ -187,6 +182,7 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
                 problem.work_item().operand_elements(),
             );
         }
+        Ok(())
     }
 }
 

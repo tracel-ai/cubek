@@ -131,18 +131,26 @@ impl AttentionTuneInputs {
 
     /// The same attention, each query not seeing the keys `mask` hides
     /// ([`AttentionTensors::with_mask`]).
-    pub fn with_mask(mut self, mask: PlainTensor) -> Self {
-        self.tensors = self.tensors.with_mask(mask.clone());
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionTensors::with_mask`].
+    pub fn with_mask(mut self, mask: PlainTensor) -> Result<Self, Decline> {
+        self.tensors = self.tensors.with_mask(mask.clone())?;
         self.mask = Some(mask);
-        self
+        Ok(self)
     }
 
     /// The same attention, writing beside its output each query's logsumexp
     /// ([`AttentionTensors::with_logsumexp`]): every candidate writes it, so the winner's is the
     /// call's.
-    pub fn with_logsumexp(mut self) -> Self {
-        self.tensors = self.tensors.with_logsumexp();
-        self
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionTensors::with_logsumexp`].
+    pub fn with_logsumexp(mut self) -> Result<Self, Decline> {
+        self.tensors = self.tensors.with_logsumexp()?;
+        Ok(self)
     }
 
     /// Each query's logsumexp, `[b, h, q]`, where the attention writes it.

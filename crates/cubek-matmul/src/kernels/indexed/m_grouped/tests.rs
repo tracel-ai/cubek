@@ -1,6 +1,10 @@
 //! The M-grouped launch against a host reference.
 
-use super::{MGroupedFloors, MGroupedMatmulTensors, MGroupedSettings, launch_tuned};
+use super::{
+    GATED_ROWS_UNREAD, GROUPED_ROWS_UNREAD, GROUPED_TILE_OF_NO_ROW, GroupedRows, M_GROUPED_NO_ROW,
+    M_GROUPED_SHAPES_DISAGREE, MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource,
+    MGroupedSettings, PaddedRows, ROUTE_SORT_UNREAD, RouteSort, launch_tuned, launch_tuned_padded,
+};
 use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabDimension;
@@ -210,4 +214,94 @@ fn the_key_anchors_its_rows_to_a_power_of_two() {
     assert_eq!(key(100), key(128));
     assert_ne!(key(100), key(129));
     assert_ne!(key(5), key(100));
+}
+
+/// What the rows of `source` against two col slabs of `[4, 4]` decline.
+fn declined(source: impl Into<MGroupedRowSource>) -> Option<Decline> {
+    let client = client();
+    MGroupedMatmulTensors::new(
+        &client,
+        source,
+        StoredTensor::Plain(f32s(&client, [4, 8], [8, 1], &[1.0; 32])),
+        u32s(&client, &[1, 2]),
+        SlabDimension::Output,
+    )
+    .err()
+}
+
+/// Two rows of `width`.
+fn two_rows(width: usize) -> PlainTensor {
+    f32s(&client(), [2, width], [width, 1], &vec![1.0; 2 * width])
+}
+
+#[test]
+fn rows_of_another_contraction_decline() {
+    assert_eq!(declined(two_rows(3)), Some(M_GROUPED_SHAPES_DISAGREE));
+}
+
+#[test]
+fn rows_not_of_rank_two_decline() {
+    assert_eq!(declined(u32s(&client(), &[1])), Some(GROUPED_ROWS_UNREAD));
+}
+
+#[test]
+fn a_sort_of_no_slot_declines() {
+    let sort = RouteSort {
+        route_at_place: u32s(&client(), &[0, 1]),
+        slots: 0,
+    };
+    let tokens = two_rows(4);
+
+    let declined = declined(MGroupedRowSource::Routed { tokens, sort });
+
+    assert_eq!(declined, Some(ROUTE_SORT_UNREAD));
+}
+
+/// Two rows of `width` padded a row a tile, grouped by `ends`.
+fn padded(width: usize, ends: &[u32]) -> PaddedRows {
+    let client = client();
+    let layout = GroupedRows::uploaded(&client, ends, 2, 1);
+    let rows = TensorHandle::zeros(&client, [2, width], F32);
+    PaddedRows::new(rows, layout).expect("a tile a row")
+}
+
+#[test]
+fn gated_rows_of_no_two_halves_decline() {
+    let gated = MGroupedRowSource::Gated(padded(7, &[1, 2]));
+
+    assert_eq!(declined(gated), Some(GATED_ROWS_UNREAD));
+}
+
+#[test]
+fn gated_rows_of_other_groups_decline() {
+    let gated = MGroupedRowSource::Gated(padded(8, &[1, 1, 2]));
+
+    assert_eq!(declined(gated), Some(GATED_ROWS_UNREAD));
+}
+
+#[test]
+fn padding_no_row_declines() {
+    let client = client();
+    let tensors = MGroupedMatmulTensors::new(
+        &client,
+        f32s(&client, [0, 4], [4, 1], &[0.0]),
+        StoredTensor::Plain(f32s(&client, [4, 8], [8, 1], &[1.0; 32])),
+        u32s(&client, &[0, 0]),
+        SlabDimension::Output,
+    )
+    .expect("no row is a product still");
+
+    let declined =
+        launch_tuned_padded(&cubecl::test_device(), tensors, GroupPriority::DEFAULT).err();
+
+    assert_eq!(declined, Some(M_GROUPED_NO_ROW));
+}
+
+#[test]
+fn tiles_of_no_row_decline() {
+    let client = client();
+
+    let declined = GroupedRows::new(&client, u32s(&client, &[1, 2]), 2, 0).err();
+
+    assert_eq!(declined, Some(GROUPED_TILE_OF_NO_ROW));
 }

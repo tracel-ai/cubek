@@ -51,7 +51,7 @@ where
     ///
     /// # Errors
     ///
-    /// As [`AttentionTensors::bind`], neither launched.
+    /// As [`AttentionTensors::bind`] and [`PartialAttentionRoutine::dispatch`], neither launched.
     pub fn dispatch(
         &self,
         tensors: &AttentionTensors,
@@ -62,7 +62,7 @@ where
         let slots = tensors.split_slots(merge.merge.slots.splits);
         let binding = tensors.bind(&blueprint, &grid)?;
         self.partial
-            .dispatch(tensors, binding, blueprint, grid, &slots);
+            .dispatch(tensors, binding, blueprint, grid, &slots)?;
         PlaneSplitKeysMergeRoutine.dispatch(tensors, merge, slots);
         Ok(())
     }

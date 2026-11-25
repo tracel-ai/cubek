@@ -8,8 +8,8 @@
 //! [`k_grouped`](crate::kernels::indexed::k_grouped).
 
 use crate::kernels::indexed::m_grouped::{
-    GroupedRows, MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind,
-    MGroupedSettings, PaddedRows, RouteSort, upload,
+    GroupedRows, M_GROUPED_NO_ROW, MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource,
+    MGroupedRowSourceKind, MGroupedSettings, PaddedRows, RouteSort, upload,
 };
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::select::problem::OperandKind;
@@ -86,16 +86,15 @@ pub fn launch_tuned(
 /// # Errors
 ///
 /// A product no floor serves, so no candidate of the autotune is known to: the caller names what
-/// runs instead.
-///
-/// # Panics
-///
-/// On no row.
+/// runs instead. [`M_GROUPED_NO_ROW`] on no row.
 pub fn launch_tuned_padded(
     device: &impl Device,
     tensors: MGroupedMatmulTensors,
     routines: GroupPriority,
 ) -> Result<PaddedRows, Decline> {
+    if tensors.source().rows() == 0 {
+        return Err(M_GROUPED_NO_ROW);
+    }
     let client = tensors.client().clone();
     let hw = Hardware::from_client(&client);
     // A round must reach a floor that answers, and only a floor listed for the stack's kind can.
@@ -227,7 +226,7 @@ fn evenly_spread(
         MGroupedRowSource::Gated(both) => {
             let align = both.layout().align();
             let layout = GroupedRows::uploaded(client, &spread, rows, align);
-            MGroupedRowSource::Gated(PaddedRows::new(both.rows().clone(), layout))
+            MGroupedRowSource::Gated(both.placed_by(layout))
         }
     };
     tensors.with_rows(source, ends)
@@ -285,14 +284,17 @@ mod tests {
                     slots,
                 },
             },
-            MGroupedRowSource::Gated(PaddedRows::new(
-                TensorHandle::zeros(
-                    &client,
-                    [garbage_layout.padded_rows(), 2 * k],
-                    ElemType::Float(FloatKind::F32),
-                ),
-                garbage_layout,
-            )),
+            MGroupedRowSource::Gated(
+                PaddedRows::new(
+                    TensorHandle::zeros(
+                        &client,
+                        [garbage_layout.padded_rows(), 2 * k],
+                        ElemType::Float(FloatKind::F32),
+                    ),
+                    garbage_layout,
+                )
+                .expect("the rows are the layout's"),
+            ),
         ];
         for source in sources {
             let tensors = MGroupedMatmulTensors::new(
@@ -316,7 +318,8 @@ mod tests {
                 }
                 MGroupedRowSource::Gated(both) => {
                     let layout = both.layout();
-                    let launched = GroupedRows::new(&client, spread.ends().clone(), rows, align);
+                    let launched = GroupedRows::new(&client, spread.ends().clone(), rows, align)
+                        .expect("ends are one per expert");
                     let read_handle =
                         |handle: TensorHandle| read(&client, &PlainTensor::of_handle(handle));
                     assert_eq!(read_handle(layout.starts()), read_handle(launched.starts()));

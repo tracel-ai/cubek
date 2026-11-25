@@ -240,10 +240,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         binding: AttentionBinding,
         blueprint: HypercubeStreamFragmentAttentionRoutineBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let microkernel = blueprint.microkernel;
         let problem = tensors.problem();
-        let (key, value) = binding.cache.into_tiles();
+        let (key, value) = binding.cache.into_tiles()?;
         let splits = Self::splits(&problem, &blueprint.partitioning);
         let slots = tensors.split_slots(splits);
         let arrivals = tensors.box_arrivals(microkernel.cube.seq_q());
@@ -286,5 +286,6 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 [sum, out, staged, probabilities],
             );
         }
+        Ok(())
     }
 }
