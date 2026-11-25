@@ -77,6 +77,8 @@ impl MatmulStagingCount {
         ];
         let writes = vec![stream(MatmulOperand::Out, rows * columns)];
         estimate.staging = Some(CubeStaging {
+            shared_reads: 0,
+            shared_writes: 0,
             operations: 2.0 * (rows * columns * depth) as f64,
             reads,
             writes,

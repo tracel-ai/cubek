@@ -440,6 +440,8 @@ fn estimate_in_blocks(
         },
     };
     estimate.staging = Some(CubeStaging {
+        shared_reads: 0,
+        shared_writes: 0,
         operations: 2.0 * (rows * columns * k) as f64,
         reads: vec![
             input(MatmulOperand::Lhs, rows),
@@ -453,6 +455,7 @@ fn estimate_in_blocks(
         stages_in_flight: blueprint.microkernel.ring.stages_in_flight.get() as u32,
         drain_atomics: 0,
     });
+    blueprint.microkernel.count_shared(estimate);
     blueprint
         .microkernel
         .plane

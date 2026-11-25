@@ -179,6 +179,8 @@ impl ConvPartitioning {
             run_bytes: run,
         };
         CubeStaging {
+            shared_reads: 0,
+            shared_writes: 0,
             operations: (2 * rows * columns * contracted) as f64,
             reads: vec![
                 stream(

@@ -57,6 +57,8 @@ impl RmsNormRoutineProblem {
             run_bytes: rows.run * size,
         };
         CubeStaging {
+            shared_reads: 0,
+            shared_writes: 0,
             operations: (4 * rows.rows * self.dim) as f64,
             reads: vec![stream(rows.rows * self.dim), stream(self.dim)],
             writes: vec![stream(rows.rows * self.dim)],

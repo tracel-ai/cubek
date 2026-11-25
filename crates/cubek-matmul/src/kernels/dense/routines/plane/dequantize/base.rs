@@ -168,6 +168,8 @@ impl Routine for PlaneDequantizeMatmulRoutine {
         let read = packing.bytes(problem.k * columns as usize) as u64;
         let element = item.elements.get(MatmulOperand::Lhs).size() as u64;
         estimate.staging = Some(CubeStaging {
+            shared_reads: 0,
+            shared_writes: 0,
             operations: (columns * k) as f64,
             reads: vec![GlobalStream {
                 bytes: read,

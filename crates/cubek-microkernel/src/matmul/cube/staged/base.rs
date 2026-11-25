@@ -900,7 +900,26 @@ impl Microkernel for CubeStagedMicrokernel {
             )
         };
         staging.count(item, &cube_space.space, estimate);
+        self.count_shared(estimate);
         self.plane.estimate(item, &(), planes, estimate);
+    }
+}
+
+impl CubeStagedMicrokernel {
+    /// Set the shared-memory traffic of `estimate`'s staging: the cube writes every stage of its
+    /// box of either input once, and each of its planes reads its own rows of the lhs and columns
+    /// of the rhs, so a box of the lhs is read once for every plane along `N`, and a box of the
+    /// rhs once for every plane along `M`.
+    pub fn count_shared(&self, estimate: &mut KernelEstimate) {
+        let Some(staging) = estimate.staging.as_mut() else {
+            return;
+        };
+        let [lhs, rhs] =
+            [0, 1].map(|operand| staging.reads.get(operand).map_or(0, |stream| stream.bytes));
+        let along_m = self.planes.along_m.get() as u64;
+        let along_n = self.planes.along_n.get() as u64;
+        staging.shared_writes = lhs + rhs;
+        staging.shared_reads = along_n * lhs + along_m * rhs;
     }
 }
 
