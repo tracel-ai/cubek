@@ -10,7 +10,7 @@ use cubecl::tile::{Dimension, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Strides, Tiling};
-use cubek_std::layout::{is_dense, is_nonoverlapping, one_matrix};
+use cubek_std::layout::{fragments, is_dense, is_nonoverlapping, one_matrix};
 
 use cubek_microkernel::matmul::MatmulBlocks;
 
@@ -136,7 +136,12 @@ impl PlainTensor {
     /// Whether this tensor is stored in tiles that each step down a column first: a tile read by
     /// its columns, as the matmul kernels read one, steps along its rows.
     pub fn is_tiled_column_first(&self) -> bool {
-        self.is_tiled() && self.binding.strides.last() != Some(&1)
+        let steps_along_a_row = |meta: &Metadata| {
+            let dims = fragments(meta);
+            let finest = dims.last().and_then(|dim| dim.last());
+            finest.is_some_and(|&(_, stride)| stride == 1)
+        };
+        self.is_tiled() && !steps_along_a_row(&self.meta())
     }
 
     /// The alignment of this view's layout, as a launch binding it reads it: a storage-tiled

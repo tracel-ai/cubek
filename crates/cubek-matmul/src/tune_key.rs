@@ -58,11 +58,11 @@ pub struct MatmulProblemDefinition {
 pub enum StorageTileKey {
     Plain,
     Tiled {
-        /// The matrix dims' pieces under the grid, in the order the tiling lists them (each dim's
-        /// coarsest first, level by level): `[tr, tc]` for one level of `tr x tc` tiles.
+        /// The matrix dims' pieces under the grid, level-major (each dim's coarsest first, level by
+        /// level): `[tr, tc]` for one level of `tr x tc` tiles.
         tile: Vec<usize>,
         /// Every matrix piece, the grid's included, from the one that steps fastest: an index
-        /// into the tiling's list. It is what tells a grid ordered down the rows, or a tile
+        /// into the level-major list. It is what tells a grid ordered down the rows, or a tile
         /// stored a column at a time, from the row-major one.
         order: Vec<u8>,
     },
@@ -75,17 +75,22 @@ impl StorageTileKey {
         if !tiling.is_tiled() {
             return StorageTileKey::Plain;
         }
-        let rank = shape.len();
         let logical_rank = tiling
-            .logical_rank(rank)
+            .logical_rank(shape.len())
             .expect("a binding's tiling describes its own rank");
-        let fragments = tiling.fragments(logical_rank);
-        let matrix_pieces: usize = fragments[logical_rank - 2..].iter().sum();
-        let first = rank - matrix_pieces;
-        // The grid is each matrix dim's coarsest piece, the first two the tiling lists.
-        let tile = shape[first + 2..].to_vec();
-        let mut order: Vec<u8> = (0..matrix_pieces as u8).collect();
-        order.sort_by_key(|&p| strides[first + p as usize]);
+        let dims = tiling.physical_dims(logical_rank);
+        let matrix = &dims[logical_rank - 2..];
+        let deepest = matrix.iter().map(|dim| dim.len()).max().unwrap_or(0);
+        let pieces: Vec<usize> = (0..deepest)
+            .flat_map(|level| matrix.iter().filter_map(move |dim| dim.get(level).copied()))
+            .collect();
+        // The grid is each matrix dim's coarsest piece, the first two.
+        let tile = pieces[2..]
+            .iter()
+            .map(|&physical| shape[physical])
+            .collect();
+        let mut order: Vec<u8> = (0..pieces.len() as u8).collect();
+        order.sort_by_key(|&piece| strides[pieces[piece as usize]]);
         StorageTileKey::Tiled { tile, order }
     }
 }
@@ -390,6 +395,22 @@ mod tests {
             }
         );
         assert_eq!(tiled.definition.lhs_storage, StorageTileKey::Plain);
+    }
+
+    /// The same buffer, its dims listed in memory order or level-major, has one key.
+    #[test]
+    fn a_layout_keys_alike_however_its_dims_are_listed() {
+        let listed = StorageTileKey::of(
+            &Shape::new([4, 8, 2, 16]),
+            &Strides::new(&[256, 32, 16, 1]),
+            Tiling::from_physical_dims(&[[0, 3], [1, 2]]).unwrap(),
+        );
+        let level_major = StorageTileKey::of(
+            &Shape::new([4, 8, 16, 2]),
+            &Strides::new(&[256, 32, 1, 16]),
+            Tiling::new(&[2, 2]).unwrap(),
+        );
+        assert_eq!(listed, level_major);
     }
 
     /// The same tiles with the grid ordered down the rows: the same pieces, another order, so the

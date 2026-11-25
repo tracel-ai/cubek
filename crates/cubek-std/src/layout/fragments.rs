@@ -8,24 +8,17 @@ use cubecl::zspace::{Shape, SmallVec, Strides, Tiling};
 pub type Fragments = SmallVec<[(usize, usize); 4]>;
 
 /// A tiled buffer's physical dims, grouped by the logical dim each is a fragment of, coarsest
-/// first: `(extent, stride)` in values. Physical dims are level-major in logical order: every
-/// dim's coarsest fragment, then every dim still deep enough gives its next.
+/// first: `(extent, stride)` in values.
 pub fn fragments(meta: &Metadata) -> SmallVec<[Fragments; 4]> {
     let rank = meta
         .logical_rank()
         .expect("a buffer's tiling describes its own rank");
-    let counts = meta.tiling.fragments(rank);
-    let mut dims: SmallVec<[Fragments; 4]> = SmallVec::from_elem(Fragments::new(), rank);
-    let mut physical = 0;
-    for level in 0..counts.iter().copied().max().unwrap_or(0) {
-        for (dim, &count) in counts.iter().enumerate() {
-            if level < count {
-                dims[dim].push((meta.shape[physical], meta.strides[physical]));
-                physical += 1;
-            }
-        }
-    }
-    dims
+    let fragment = |&physical: &usize| (meta.shape[physical], meta.strides[physical]);
+    meta.tiling
+        .physical_dims(rank)
+        .iter()
+        .map(|dims| dims.iter().map(fragment).collect())
+        .collect()
 }
 
 /// [`fragments`] of a buffer of `D` logical dims, one entry a dim; `Err` holds the rank it has
@@ -81,7 +74,7 @@ pub fn one_matrix(meta: &Metadata) -> Option<Metadata> {
 
 #[cfg(test)]
 mod tests {
-    use super::one_matrix;
+    use super::{fragments_of, one_matrix};
     use cubecl::zspace::metadata::Metadata;
     use cubecl::zspace::{Shape, Strides, Tiling};
 
@@ -109,5 +102,24 @@ mod tests {
         .with_tiling(Tiling::new(&[2, 2]).expect("two fragments a dim"))
         .expect("the tiling describes the dims");
         assert_eq!(one_matrix(&tiles), Some(tiles.clone()));
+    }
+
+    /// `[m, k]` stored `[m/16, k/16, m%8, k/2%4, k/8%2, m/8%2, k%2]`, as a tensor core takes a tile
+    /// of sixteen by sixteen.
+    #[test]
+    fn fragments_are_grouped_whatever_dims_they_are_listed_as() {
+        let meta = Metadata::new(
+            Shape::from(vec![3, 5, 8, 4, 2, 2, 2]),
+            Strides::from(vec![1280, 256, 32, 8, 4, 2, 1]),
+        )
+        .with_tiling(
+            Tiling::from_physical_dims(&[&[0, 5, 2][..], &[1, 4, 3, 6]])
+                .expect("each dim is one fragment"),
+        )
+        .expect("the tiling describes the dims");
+
+        let [m, k] = fragments_of::<2>(&meta).expect("a matrix");
+        assert_eq!(m.as_slice(), &[(3, 1280), (2, 2), (8, 32)]);
+        assert_eq!(k.as_slice(), &[(5, 256), (2, 4), (4, 8), (2, 1)]);
     }
 }
