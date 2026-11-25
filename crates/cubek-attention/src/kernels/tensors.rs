@@ -1,6 +1,6 @@
 //! The tensors of one attention, and how a launch binds them.
 
-use crate::kernels::conversion::{converted, elements_held};
+use crate::kernels::conversion::{converted, distinct_elements};
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
     AttentionRoutineProblem, AttentionScoring, KvSource, PackedAttentionCache, QueryDimension,
@@ -187,7 +187,7 @@ impl AttentionTensors {
         if query.shape().rank() != 4 {
             return Err(ATTENTION_QUERIES_UNREAD);
         }
-        if u32::try_from(elements_held(&query)).is_err() {
+        if u32::try_from(distinct_elements(&query)).is_err() {
             return Err(ATTENTION_QUERIES_UNCOUNTED);
         }
         let kv = kv.read_as_block_pages(client, scoring.visibility)?;
@@ -420,7 +420,7 @@ impl AttentionTensors {
         }
         match lengths.shape().as_slice() {
             [1] => Ok(lengths.viewed(Metadata::new([sequences], [0]))),
-            [held] if *held == sequences => Ok(lengths),
+            [lengths_count] if *lengths_count == sequences => Ok(lengths),
             _ => Err(ATTENTION_LENGTHS_UNREAD),
         }
     }

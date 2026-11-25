@@ -19,7 +19,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 ///
 /// # Assumptions
 ///
-/// A `u32` counts the [`elements_held`] of `tensor`.
+/// A `u32` counts the [`distinct_elements`] of `tensor`.
 pub(crate) fn converted(client: &Client, tensor: &PlainTensor, element: ElemType) -> PlainTensor {
     let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
     let held = held_once(shape, strides);
@@ -54,8 +54,8 @@ pub(crate) fn converted(client: &Client, tensor: &PlainTensor, element: ElemType
     converted.viewed(Metadata::new(shape.clone(), repeated))
 }
 
-/// The values `tensor` holds once, however often it repeats them.
-pub(crate) fn elements_held(tensor: &PlainTensor) -> usize {
+/// How many elements `tensor` has in memory, each counted once however often its view repeats it.
+pub(crate) fn distinct_elements(tensor: &PlainTensor) -> usize {
     held_once(&tensor.binding.shape, &tensor.binding.strides)
         .iter()
         .product()

@@ -381,7 +381,7 @@ impl MatmulTensors {
     /// [`MATMUL_TABLE_UNFIT`].
     fn admit_stack(rhs: &PlainTensor, index: MatmulIndex) -> Result<(), Decline> {
         match (index, rhs.shape().as_slice()) {
-            (MatmulIndex::Slab { slabs }, [held, _, _]) if *held == slabs => Ok(()),
+            (MatmulIndex::Slab { slabs }, [stacked, _, _]) if *stacked == slabs => Ok(()),
             (MatmulIndex::RunOfK, [_, _]) => Ok(()),
             _ => Err(MATMUL_TABLE_UNFIT),
         }

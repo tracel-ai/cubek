@@ -3,21 +3,21 @@ use cubecl::tile::launch::Decline;
 /// What a launch its routine claims may be refused, where a condition of the routine should have
 /// ruled that out.
 pub trait Breakable {
-    /// What holds once it is not broken.
-    type Held;
+    /// What it gives where it is not broken.
+    type Output;
 
-    /// A refusal made [`Broken`](Decline::Broken), as `condition` should have held, and logged as
+    /// A refusal made [`Broken`](Decline::Broken), as `condition` should be true, and logged as
     /// the bug it is.
     ///
     /// # Errors
     ///
     /// [`Decline::Broken`].
-    fn or_broken(self, condition: &'static str) -> Result<Self::Held, Decline>;
+    fn or_broken(self, condition: &'static str) -> Result<Self::Output, Decline>;
 }
 
 /// Whether the condition holds.
 impl Breakable for bool {
-    type Held = ();
+    type Output = ();
 
     fn or_broken(self, condition: &'static str) -> Result<(), Decline> {
         if self {
@@ -33,7 +33,7 @@ impl Breakable for bool {
 }
 
 impl<T> Breakable for Result<T, Decline> {
-    type Held = T;
+    type Output = T;
 
     fn or_broken(self, condition: &'static str) -> Self {
         self.map_err(|cause| {
