@@ -1,6 +1,6 @@
 //! The reduce routines on the tile stack, against a CPU reference: a rank-3 tensor reduced along
 //! each of its dims, every operation, its values and its rows as they lie; the hypercube's rows
-//! split into parts; and the kernel the rule and the autotune pick.
+//! split into parts; and the kernel the rule picks.
 
 use crate::eval::cpu_reference;
 use crate::eval::workspace::workspace_for;
@@ -8,7 +8,7 @@ use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
     PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceKey,
     ReduceLauncher, ReduceOpStrategy, ReduceTensors, ReduceWorkspace, UnitDirectReduceRoutine,
-    UnitDirectZeroReduceRoutine, launch_kernel, launch_tuned, launch_zeroed_atomic_unbound, select,
+    UnitDirectZeroReduceRoutine, launch_kernel, launch_zeroed_atomic_unbound, select,
 };
 use cubecl::client::Client;
 use cubecl::ir::features::AtomicUsage;
@@ -57,7 +57,7 @@ enum TestedRoutine {
     PlaneShuffle,
     CubeStaged,
     HypercubeLastArrival,
-    /// The kernel a strategy picks: the rule's, the autotune's, or the one it names.
+    /// The kernel a strategy picks: the rule's, or the one it names.
     Picked(ReduceOpStrategy),
 }
 
@@ -186,10 +186,6 @@ impl ScopeUnderTest for RoutineScopeUnderTest {
             }
             TestedRoutine::Picked(ReduceOpStrategy::Specific(kernel)) => {
                 launch_kernel(kernel, &hw, &tensors)?
-            }
-            TestedRoutine::Picked(ReduceOpStrategy::Autotune) => {
-                launch_tuned(tensors, &cubecl::test_device())
-                    .expect("the floor serves every problem")
             }
         }
         let host = match out_elem {
@@ -885,11 +881,6 @@ macro_rules! strategy_reduces_each_problem {
 /// The kernel each strategy picks, or the one it pins.
 mod strategy {
     use super::*;
-
-    /// The autotune's pick.
-    mod autotune {
-        strategy_reduces_each_problem!(ReduceOpStrategy::Autotune);
-    }
 
     /// The rule's pick.
     mod tile_heuristic {

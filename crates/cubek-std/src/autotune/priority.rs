@@ -3,7 +3,6 @@
 //! ([`TuneCandidate`]), and the one rule that takes a candidate out of a round ([`priority_of`]).
 
 use core::fmt::Display;
-use cubecl::CubeCount;
 
 use crate::Hardware;
 use crate::routine::LaunchSettings;
@@ -157,21 +156,10 @@ pub fn priority_of<C: TuneCandidate>(
     (!repeats_an_earlier_candidate).then(|| candidate.priority(key))
 }
 
-/// How far short of filling `hw` this launch's grid falls, in halvings.
-///
-/// The one occupancy statement a key affords: a grid smaller than the device
-/// is wide leaves workers idle whatever the cube does inside, and
-/// [`Hardware::cubes_to_fill`] is where cubek keeps what "wide" means. Zero where the grid reaches it, and zero where the device will not
-/// say how wide it is — a priority may not invent one.
+/// How far short of filling `hw` this launch's grid falls, in halvings
+/// ([`Hardware::halvings_short_of_filling`]).
 pub fn short_of_the_device(hw: &Hardware, settings: &LaunchSettings) -> u32 {
-    let CubeCount::Static(x, y, z) = settings.cube_count else {
-        return 0;
-    };
-    let cubes = x.saturating_mul(y).saturating_mul(z).max(1);
-    let Some(wanted) = hw.cubes_to_fill(settings.units_per_cube()) else {
-        return 0;
-    };
-    (wanted / cubes).max(1).ilog2()
+    hw.halvings_short_of_filling(settings)
 }
 
 #[cfg(test)]

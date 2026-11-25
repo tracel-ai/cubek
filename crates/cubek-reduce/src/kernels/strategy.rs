@@ -1,15 +1,15 @@
 //! What a caller can ask the reduce family for.
 //!
 //! Every variant but `Specific` is a policy; `Specific` is a pin, as in the matmul and attention
-//! families.
+//! families. None measures: a caller that measures the routines races their settings itself
+//! ([`ReduceRoutineSetting`](crate::kernels::ReduceRoutineSetting)).
 
 use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceBlueprint, HypercubeAtomicReduceRoutine,
     HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceLauncher, ReduceTensors,
-    UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine, launch_tuned, select,
+    UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine, select,
 };
-use cubecl::Device;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound};
@@ -17,15 +17,10 @@ use cubek_std::Hardware;
 use cubek_std::routine::{Grid, Routine};
 use serde::{Deserialize, Serialize};
 
-/// How a reduction picks its kernel: measure the routines, pick one by rule, or run one named
-/// kernel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+/// How a reduction picks its kernel: pick one by rule, or run one named kernel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReduceOpStrategy {
-    /// Pick by measurement: every routine at every setting the device lists joins an autotune, and
-    /// the fastest runs, per problem and per device. The default.
-    #[default]
-    Autotune,
-    /// Pick by rule, reaching no further than the named family.
+    /// Pick by rule, reaching no further than the named family. The default, on the tile routines.
     Heuristic(ReduceKernelHeuristic),
     /// Run exactly this kernel, for measuring it or holding it to a reference. A kernel that
     /// cannot run the problem returns its decline, never another kernel's result.
@@ -67,10 +62,7 @@ impl ReduceOpStrategy {
             .into_iter()
             .map(Self::Heuristic);
         let pins = ReduceKernel::all().into_iter().map(Self::Specific);
-        core::iter::once(Self::Autotune)
-            .chain(heuristics)
-            .chain(pins)
-            .collect()
+        heuristics.chain(pins).collect()
     }
 
     /// Whether this strategy lets the caller pick the kernel, rather than naming one.
@@ -81,10 +73,15 @@ impl ReduceOpStrategy {
     /// What a report calls this strategy, in kebab-case.
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Autotune => "autotune",
             Self::Heuristic(heuristic) => heuristic.name(),
             Self::Specific(kernel) => kernel.name(),
         }
+    }
+}
+
+impl Default for ReduceOpStrategy {
+    fn default() -> Self {
+        Self::Heuristic(ReduceKernelHeuristic::Tile)
     }
 }
 
@@ -126,19 +123,17 @@ impl ReduceKernel {
     }
 }
 
-/// `tensors` reduced on `device` by the kernel `strategy` picks.
+/// `tensors` reduced by the kernel `strategy` picks.
 ///
 /// # Errors
 ///
 /// [`ReduceError::Declined`] where the picked kernel cannot run the problem on this device.
 pub(crate) fn launch_by_strategy(
     strategy: ReduceOpStrategy,
-    device: &Device,
     tensors: ReduceTensors,
 ) -> Result<(), ReduceError> {
     let hw = Hardware::from_client(tensors.client());
     match strategy {
-        ReduceOpStrategy::Autotune => launch_tuned(tensors, device),
         ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile) => Ok(select(&hw, &tensors)?),
         ReduceOpStrategy::Specific(kernel) => Ok(launch_kernel(kernel, &hw, &tensors)?),
     }
@@ -224,20 +219,23 @@ fn launch_first_served<R: ReduceLauncher<M>, M>(
 mod tests {
     use super::*;
 
-    /// The autotune is the first strategy.
+    /// The default is the rule.
     #[test]
-    fn the_autotune_comes_first() {
-        assert_eq!(ReduceOpStrategy::all()[0], ReduceOpStrategy::Autotune);
+    fn the_default_is_the_rule() {
+        assert_eq!(
+            ReduceOpStrategy::default(),
+            ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)
+        );
     }
 
-    /// The policies, the autotune and each heuristic, come before the pins.
+    /// The policies, each heuristic, come before the pins.
     #[test]
     fn the_policies_come_before_the_pins() {
         let policies = ReduceOpStrategy::all()
             .iter()
             .take_while(|strategy| strategy.is_policy())
             .count();
-        assert_eq!(policies, 1 + ReduceKernelHeuristic::all().len());
+        assert_eq!(policies, ReduceKernelHeuristic::all().len());
     }
 
     /// Every kernel is pinned once.

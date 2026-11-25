@@ -135,7 +135,6 @@ pub fn strategy_result(
             .with_workspace(workspace)
             .execute(
                 c,
-                &cubecl::test_device(),
                 input_handle.clone().binding(),
                 output_handle.clone().binding(),
                 axis,
@@ -193,7 +192,6 @@ pub fn strategy_result_with_indices(
                 .with_workspace(workspace)
                 .execute_with_indices(
                     c,
-                    &cubecl::test_device(),
                     input_handle.clone().binding(),
                     values_handle.clone().binding(),
                     indices_handle.clone().binding(),

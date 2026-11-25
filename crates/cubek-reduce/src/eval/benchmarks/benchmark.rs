@@ -186,7 +186,6 @@ impl ReduceBenchmark {
             .with_workspace(self.workspace.clone())
             .execute(
                 &self.client,
-                &self.device,
                 input.binding(),
                 out.binding(),
                 self.axis,
@@ -263,7 +262,6 @@ impl Benchmark for ReduceBenchmark {
                 .with_workspace(self.workspace.clone())
                 .execute_with_indices(
                     &self.client,
-                    &self.device,
                     input.binding(),
                     out.binding(),
                     indices.binding(),

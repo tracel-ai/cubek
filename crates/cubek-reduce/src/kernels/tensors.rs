@@ -1,7 +1,9 @@
 //! How a reduce launch reads its operands and binds them.
 
+use crate::ReduceError;
 use crate::kernels::{
     REDUCED, ReduceBlueprint, ReduceElements, ReduceRoutineProblem, ReduceWorkspace, SLOTS,
+    indexed, validate_axis, validate_indices, validate_shape,
 };
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -129,6 +131,70 @@ impl ReduceTensors<TensorBinding> {
         tensors.problem = tensors.problem.writing_indices(index_element, &indices);
         tensors.indices = Some(indices);
         tensors
+    }
+
+    /// [`new`](Self::new), the call first checked to lie in the reduction's Domain: what
+    /// [`Reduce::execute`](crate::kernels::Reduce::execute) launches on, for a caller that picks the
+    /// kernel itself.
+    ///
+    /// # Errors
+    ///
+    /// As [`Reduce::execute`](crate::kernels::Reduce::execute), but for a kernel's decline.
+    pub fn checked(
+        client: &Client,
+        input: TensorBinding,
+        out: TensorBinding,
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+    ) -> Result<Self, ReduceError> {
+        validate_axis(input.shape.len(), axis)?;
+        validate_shape(&input.shape, &out.shape, axis, operation.written_per_row())?;
+        Ok(Self::new(client, input, out, axis, operation, elements))
+    }
+
+    /// [`with_indices`](Self::with_indices), the call first checked to lie in the reduction's
+    /// Domain, `Max`, `Min` and `TopK` writing the same pair as `ArgMax`, `ArgMin` and `ArgTopK`:
+    /// what [`Reduce::execute_with_indices`](crate::kernels::Reduce::execute_with_indices)
+    /// launches on.
+    ///
+    /// # Errors
+    ///
+    /// As [`Reduce::execute_with_indices`](crate::kernels::Reduce::execute_with_indices), but for a
+    /// kernel's decline.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the operands and what the reduction computes, as a caller states them"
+    )]
+    pub fn checked_with_indices(
+        client: &Client,
+        input: TensorBinding,
+        values: TensorBinding,
+        indices: TensorBinding,
+        axis: usize,
+        operation: ReduceOperation,
+        elements: ReduceElements,
+        index_element: ElemType,
+    ) -> Result<Self, ReduceError> {
+        let operation = indexed(operation)?;
+        validate_axis(input.shape.len(), axis)?;
+        validate_shape(
+            &input.shape,
+            &values.shape,
+            axis,
+            operation.written_per_row(),
+        )?;
+        validate_indices(&values.shape, &indices.shape)?;
+        Ok(Self::with_indices(
+            client,
+            input,
+            values,
+            indices,
+            axis,
+            operation,
+            elements,
+            index_element,
+        ))
     }
 }
 

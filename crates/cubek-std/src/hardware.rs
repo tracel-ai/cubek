@@ -4,10 +4,11 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
+use crate::routine::LaunchSettings;
 use cubecl::tile::launch::{Decline, Delivery};
 use cubecl::tile::layout::Stagger;
 use cubecl::{
-    CubeDim,
+    CubeCount, CubeDim,
     client::Client,
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig},
     ir::{DeviceProperties, ElemType, FloatKind, TargetProperties, Type, VectorRegisters},
@@ -210,6 +211,21 @@ impl Hardware {
     /// wide it is. A preference: the grid may exceed it.
     pub fn cubes_to_fill(&self, units_per_cube: u32) -> Option<u32> {
         Some((self.units_to_fill()? / units_per_cube.max(1)).max(1))
+    }
+
+    /// How far short of filling this device a launch's grid falls, in halvings: zero where the
+    /// grid reaches [`cubes_to_fill`](Self::cubes_to_fill), and zero where the device does not say
+    /// how wide it is or the grid is not static. A grid smaller than the device leaves workers
+    /// idle whatever the cube does inside.
+    pub fn halvings_short_of_filling(&self, settings: &LaunchSettings) -> u32 {
+        let CubeCount::Static(x, y, z) = settings.cube_count else {
+            return 0;
+        };
+        let cubes = x.saturating_mul(y).saturating_mul(z).max(1);
+        let Some(wanted) = self.cubes_to_fill(settings.units_per_cube()) else {
+            return 0;
+        };
+        (wanted / cubes).max(1).ilog2()
     }
 
     /// How many values of `elem` one load instruction holds: what a step counts its loads in.
