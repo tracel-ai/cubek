@@ -611,7 +611,7 @@ pub const MATMUL_HYPERCUBE_PACKED_LHS: Decline = Decline::Unserved {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+    use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
     use cubecl::ir::FloatKind;
     use cubecl::zspace::metadata::Metadata;
     use cubek_std::matmul_dimensions::{K, N};

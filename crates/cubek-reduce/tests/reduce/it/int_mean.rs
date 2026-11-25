@@ -22,7 +22,6 @@ fn a_mean_of_i32_keeps_the_digits_an_f32_drops() {
     Reduce::new(UNIT)
         .execute(
             &client,
-            &cubecl::test_device(),
             input.binding(),
             out.clone().binding(),
             1,

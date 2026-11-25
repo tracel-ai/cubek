@@ -446,7 +446,7 @@ impl RowsReading {
 mod tests {
     use super::*;
     use crate::kernels::MatmulIndex;
-    use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+    use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::matmul::{MatmulOperands, MatmulRows};
     use cubek_std::matmul_dimensions::{EXPERT, batch_dimension};

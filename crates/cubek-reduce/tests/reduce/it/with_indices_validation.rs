@@ -40,7 +40,6 @@ fn writes_indices_at_their_own_strides() {
     Reduce::new(UNIT)
         .execute_with_indices(
             &client,
-            &cubecl::test_device(),
             input.binding(),
             values.binding(),
             indices.clone().binding(),

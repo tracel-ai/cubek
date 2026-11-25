@@ -343,7 +343,7 @@ mod tests {
     /// the output is written a value at a time.
     #[test]
     fn a_col_rhs_contracts_with_the_lhs_into_one_value_cells() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let col_weight = MatmulRoutineProblem::from(&MatmulShape {
             m: 256,
             n: 512,
@@ -398,7 +398,7 @@ mod tests {
     /// described, those whose plane width no memory-bound routine can merge across included.
     #[test]
     fn the_default_prepares_every_decode_projection_on_every_device() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let f16 = ElemType::Float(FloatKind::F16);
         let settings = UnitRegistersMatmulRoutineSettings::DEFAULT;
         for hw in fixtures() {
@@ -473,7 +473,7 @@ mod tests {
     /// so `prepare` fits them to 24, and the col rhs stays vectorized along `K`.
     #[test]
     fn the_cpu_settings_fit_their_planes_to_an_n_their_count_overhangs() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let hw = devices::cpu_12();
         let col_weight = MatmulRoutineProblem::from(&MatmulShape {
             m: 2304,

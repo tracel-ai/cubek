@@ -1,6 +1,5 @@
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::Product;
-use crate::kernels::tune::key::{MatmulTuneKey, create_key};
+use crate::kernels::{MatmulTuneKey, Product, create_key};
 use cubecl::CubeTuneId;
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -32,7 +31,7 @@ pub struct MatmulCall {
 }
 
 impl MatmulCall {
-    /// The key an autotune measures the product under: its extents, the element it is written in,
+    /// The key a caller measures the product under: its extents, the element it is written in,
     /// and each input as it lies.
     pub fn key(&self) -> MatmulTuneKey {
         create_key(
@@ -51,7 +50,7 @@ impl MatmulCall {
     /// caller gave none: a float product in its inputs' element, a packed one in the call's. What an
     /// autotune measures on, so every candidate and the winner write the one buffer the call
     /// returns.
-    pub(crate) fn with_destination(mut self) -> Self {
+    pub fn with_destination(mut self) -> Self {
         if self.destination.is_some() {
             return self;
         }

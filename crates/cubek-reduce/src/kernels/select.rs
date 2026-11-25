@@ -9,7 +9,6 @@ use crate::kernels::{
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::ReduceCarrier;
 use cubek_std::Hardware;
-use cubek_std::autotune::short_of_the_device;
 use cubek_std::routine::{Grid, Routine};
 
 /// `tensors` reduced by the routine the rule picks on `hw`, read top to bottom. The rule reads the
@@ -135,7 +134,7 @@ fn filling_the_device<R: ReduceRoutine<M>, M>(
     problem: &ReduceRoutineProblem,
 ) -> Option<(R::Settings, ReduceBlueprint<M>)> {
     first_served::<R, M>(hw, problem)
-        .filter(|(_, _, grid)| short_of_the_device(hw, &grid.launch) == 0)
+        .filter(|(_, _, grid)| hw.halvings_short_of_filling(&grid.launch) == 0)
         .map(|(settings, blueprint, _)| (settings, blueprint))
 }
 

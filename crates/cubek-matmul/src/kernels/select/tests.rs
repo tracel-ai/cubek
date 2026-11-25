@@ -1,9 +1,9 @@
 use super::packed::*;
 use super::problem::{MatmulProblem, OperandKind};
 use super::selector::{BLOCK_SCALED_TENSOR_CORES_UNSERVED, measured_autotune};
-use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
-use crate::kernels::tune::{
-    FLOAT_FEW_ROWS, MatmulAutotune, MatmulAutotuneGroups, QUANTIZED_FEW_ROWS, quantized_few_rows,
+use super::{
+    FLOAT_FEW_ROWS, MatmulAutotune, MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy,
+    QUANTIZED_FEW_ROWS, quantized_few_rows, stub_measured,
 };
 use MatmulKernel as K;
 use MatmulKernelHeuristic as H;
@@ -74,11 +74,11 @@ fn select(
     problem: &MatmulProblem,
     hw: &Hardware,
 ) -> Result<String, Decline> {
-    super::selector::select(strategy, problem, hw, MatmulAutotuneGroups::default())
+    super::selector::select(strategy, problem, hw, &stub_measured)
         .map(|plan| plan.tree().to_string())
 }
 
-/// The fastest candidate of `autotune`.
+/// The caller's measured choice on `autotune`, as the stub names it.
 fn fastest(autotune: MatmulAutotune) -> String {
     format!("fastest({})", autotune.name())
 }
@@ -661,8 +661,8 @@ mod float {
     use super::super::problem::*;
     use super::super::selector::*;
     use super::super::*;
+    use super::super::{FLOAT_FEW_ROWS, MatmulAutotune, float_few_rows};
     use super::{fastest, float_pin, float_rule};
-    use crate::kernels::tune::{FLOAT_FEW_ROWS, MatmulAutotune, float_few_rows};
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;

@@ -5,7 +5,6 @@ use crate::ReduceError;
 use crate::kernels::{
     ReduceElements, ReduceOpStrategy, ReduceTensors, ReduceWorkspace, launch_by_strategy,
 };
-use cubecl::Device;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubek_microkernel::reduce::ReduceOperation;
@@ -37,7 +36,7 @@ impl Reduce {
         }
     }
 
-    /// Reduce dim `axis` of `input` into `output` by `operation`, in `elements`, on `device`.
+    /// Reduce dim `axis` of `input` into `output` by `operation`, in `elements`.
     /// `output` has `input`'s shape with `axis` one wide, `k` wide for a top-k.
     ///
     /// # Errors
@@ -46,8 +45,9 @@ impl Reduce {
     /// [`ReduceError::EmptyTopK`] where a top-k keeps `k = 0` values,
     /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is empty, or shorter than the `k` a
     /// top-k keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one
-    /// above, and [`ReduceError::Declined`] with the kernel's decline where a
-    /// [`Specific`](ReduceOpStrategy::Specific) kernel cannot run the problem on this device.
+    /// above, and [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy
+    /// picks cannot run the problem on the client's device: a
+    /// [`Specific`](ReduceOpStrategy::Specific) one, or the unit kernel the rule falls back to.
     ///
     /// # Panics
     ///
@@ -60,22 +60,15 @@ impl Reduce {
     pub fn execute(
         &self,
         client: &Client,
-        device: &Device,
         input: TensorBinding,
         output: TensorBinding,
         axis: usize,
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Result<(), ReduceError> {
-        validate_axis(input.shape.len(), axis)?;
-        validate_shape(
-            &input.shape,
-            &output.shape,
-            axis,
-            operation.written_per_row(),
-        )?;
-        let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
-        launch_by_strategy(self.strategy, device, self.given(tensors))
+        self.launch(ReduceTensors::checked(
+            client, input, output, axis, operation, elements,
+        )?)
     }
 
     /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
@@ -97,7 +90,6 @@ impl Reduce {
     pub fn execute_with_indices(
         &self,
         client: &Client,
-        device: &Device,
         input: TensorBinding,
         values: TensorBinding,
         indices: TensorBinding,
@@ -106,16 +98,7 @@ impl Reduce {
         elements: ReduceElements,
         index_element: ElemType,
     ) -> Result<(), ReduceError> {
-        let operation = indexed(operation)?;
-        validate_axis(input.shape.len(), axis)?;
-        validate_shape(
-            &input.shape,
-            &values.shape,
-            axis,
-            operation.written_per_row(),
-        )?;
-        validate_indices(&values.shape, &indices.shape)?;
-        let tensors = ReduceTensors::with_indices(
+        let tensors = ReduceTensors::checked_with_indices(
             client,
             input,
             values,
@@ -124,8 +107,24 @@ impl Reduce {
             operation,
             elements,
             index_element,
-        );
-        launch_by_strategy(self.strategy, device, self.given(tensors))
+        )?;
+        self.launch(tensors)
+    }
+
+    /// `tensors`, checked to lie in the reduction's Domain
+    /// ([`ReduceTensors::checked`]), reduced by the kernel the strategy picks, given this
+    /// reduction's workspace where it has one.
+    ///
+    /// # Errors
+    ///
+    /// [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy picks
+    /// cannot run the problem on the client's device.
+    ///
+    /// # Panics
+    ///
+    /// As [`execute`](Self::execute).
+    pub fn launch(&self, tensors: ReduceTensors) -> Result<(), ReduceError> {
+        launch_by_strategy(self.strategy, self.given(tensors))
     }
 }
 
@@ -169,7 +168,7 @@ fn unindexed_operation_named(operation_name: &'static str) -> ReduceError {
 }
 
 /// Whether `axis` is a dim of a tensor of rank `rank`.
-fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
+pub(crate) fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
     if axis >= rank {
         return Err(ReduceError::InvalidAxis { axis, rank });
     }
@@ -178,7 +177,7 @@ fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
 
 /// Whether `output_shape` is `input_shape` with `axis` `written_per_row` wide, and the reduced dim
 /// at least that long.
-fn validate_shape(
+pub(crate) fn validate_shape(
     input_shape: &[usize],
     output_shape: &[usize],
     axis: usize,
@@ -205,7 +204,10 @@ fn validate_shape(
 }
 
 /// Whether the indices' shape is the values': an index for every value.
-fn validate_indices(values_shape: &[usize], indices_shape: &[usize]) -> Result<(), ReduceError> {
+pub(crate) fn validate_indices(
+    values_shape: &[usize],
+    indices_shape: &[usize],
+) -> Result<(), ReduceError> {
     if indices_shape != values_shape {
         return Err(ReduceError::MismatchIndicesShape {
             values_shape: values_shape.to_vec(),

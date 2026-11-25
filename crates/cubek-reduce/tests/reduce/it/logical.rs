@@ -61,15 +61,7 @@ fn reduces_the_mask_like_the_reference(operation: ReduceOperation) {
     let output_binding = output_handle.clone().binding();
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
         Reduce::new(UNIT)
-            .execute(
-                c,
-                &cubecl::test_device(),
-                input_binding,
-                output_binding,
-                1,
-                operation,
-                elements,
-            )
+            .execute(c, input_binding, output_binding, 1, operation, elements)
             .expect("the unit kernel should serve every problem");
         ExecutionOutcome::Executed
     });

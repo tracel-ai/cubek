@@ -8,8 +8,19 @@ use cubecl::tile::{Dimension, Partitioning, Space, StageStorage};
 use cubek_microkernel::matmul::unit::UnitRegistersMicrokernel;
 use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
-use cubek_std::autotune::CandidatePriority;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, StageRing};
+
+/// How a launch's boxes lie over its problem, along the rows, the positions across and the
+/// columns: what a caller measuring the settings judges a setting's waste by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConvCoverage {
+    /// Cells the boxes cover, a box overhanging an edge counted whole.
+    pub covered_cells: usize,
+    /// Cells of the problem the boxes cover.
+    pub problem_cells: usize,
+    /// Cubes the grid spawns: one a box, for every outer position.
+    pub cube_count: usize,
+}
 
 /// How a launch places its contraction over the problem: a cube for every box of rows and
 /// columns, its planes each owning a tile of it, the box walking every contracted cell.
@@ -189,17 +200,9 @@ impl ConvPartitioning {
         }
     }
 
-    /// Where a candidate launching this partitioning in cubes of `units_per_cube` units is tried
-    /// for `problem` on `hw`: the top band unless its boxes cover at least twice the output or its
-    /// grid fills less than half the device, then one band lower. A band is raced whole and a
-    /// lower one only when it measures nothing, so the priority only separates the clearly
-    /// wasteful from the rest.
-    pub fn priority(
-        &self,
-        problem: &ConvProblem,
-        hw: &Hardware,
-        units_per_cube: usize,
-    ) -> CandidatePriority {
+    /// How this partitioning's boxes lie over `problem`, along the rows, the positions across and
+    /// the columns.
+    pub fn coverage(&self, problem: &ConvProblem) -> ConvCoverage {
         let roles = problem.roles();
         let dimensions = roles.dimensions();
         let block = self.block;
@@ -210,18 +213,12 @@ impl ConvPartitioning {
         ];
         let cuts = [block.rows, block.across, block.columns];
         let boxes = [0, 1, 2].map(|dimension| extents[dimension].div_ceil(cuts[dimension]));
-        let covered: usize = (0..3)
-            .map(|dimension| boxes[dimension] * cuts[dimension])
-            .product();
-        let work: usize = extents.iter().product();
-        let wasteful = covered >= 2 * work.max(1);
-        let cubes = boxes.iter().product::<usize>() * problem.outer_extent();
-        let idle = hw
-            .cubes_to_fill(units_per_cube as u32)
-            .is_some_and(|wanted| wanted as usize > 2 * cubes.max(1));
-        match wasteful || idle {
-            true => CandidatePriority::FIRST.lowered(1),
-            false => CandidatePriority::FIRST,
+        ConvCoverage {
+            covered_cells: (0..3)
+                .map(|dimension| boxes[dimension] * cuts[dimension])
+                .product(),
+            problem_cells: extents.iter().product(),
+            cube_count: boxes.iter().product::<usize>() * problem.outer_extent(),
         }
     }
 

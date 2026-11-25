@@ -32,7 +32,6 @@ fn sums_into_column_major_cells(strategy: ReduceOpStrategy) {
     Reduce::new(strategy)
         .execute(
             &client,
-            &cubecl::test_device(),
             input.binding(),
             out.clone().binding(),
             0,

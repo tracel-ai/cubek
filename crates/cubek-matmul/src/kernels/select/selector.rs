@@ -1,13 +1,13 @@
 //! How a [`MatmulOpStrategy`] runs a product on a device ([`select`]): what becomes of its packed
 //! inputs, and the kernel that reads them. Pure, so the rules are unit-tested against
 //! [`Hardware`] fixtures with no GPU. The selector runs first; measuring is one of its answers,
-//! and for it the answer is an autotune, not a kernel.
+//! and for it the answer is a race ([`MatmulAutotune`]), whose plan the caller that measures
+//! builds.
 
 use super::packed::matmul_supported;
 use super::problem::{MatmulProblem, OperandKind};
-use super::{MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
+use super::{MatmulAutotune, MatmulKernel, MatmulKernelHeuristic, MatmulOpStrategy};
 use crate::kernels::plan::{Decoded, FrameworkDequantized, MatmulPlan, RoutinePlan};
-use crate::kernels::tune::{MatmulAutotune, MatmulAutotuneGroups};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings,
@@ -20,10 +20,9 @@ use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_dimensions::K;
 use cubek_std::plan::{InOrder, Then};
 
-/// The autotune `strategy`'s plan for `problem` on `hw` is, where its plan is one autotune alone:
-/// what a caller that launches the autotune's winner itself asks the autotune about
-/// ([`MatmulAutotune::fastest_routine`]). `None` where the plan is anything else, a packed input
-/// the framework dequantizes first among them.
+/// The race `strategy`'s plan for `problem` on `hw` is, where its plan is one measured race alone:
+/// what a caller that launches the race's winner itself asks its measurement about. `None` where
+/// the plan is anything else, a packed input the framework dequantizes first among them.
 pub fn measured_autotune(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
@@ -39,7 +38,7 @@ pub fn measured_autotune(
     }
 }
 
-/// The autotune a product of streamed packed inputs measures on: the block-scaled one past the
+/// The race a product of streamed packed inputs measures on: the block-scaled one past the
 /// few-rows bound where the device's block-scaled instruction reads both inputs as stored
 /// ([`block_scaled_tensor_cores_serve`]), the one its rows go to otherwise
 /// ([`MatmulAutotune::packed`]).
@@ -58,16 +57,16 @@ fn packed_autotune(problem: &MatmulProblem, hw: &Hardware) -> MatmulAutotune {
     }
 }
 
-/// How `problem` runs under `strategy` on `hw`: the plan its launch tries, the autotunes it names
-/// shipping their groups at `groups`.
+/// How `problem` runs under `strategy` on `hw`: the plan its launch tries, a measured race being
+/// the plan `measured` builds for it.
 ///
-/// `Autotune` measures, on the autotune the rows go to. `Heuristic` picks by rule, on the tiled
+/// `Autotune` measures, on the race the rows go to. `Heuristic` picks by rule, on the tiled
 /// routines, and never measures. A `Specific` names its kernel.
 ///
 /// Float inputs are read by the kernel the strategy chooses. Packed inputs under schemes the
 /// kernels stream are read as they are stored by the plane shuffle at one row, by the kernel a
-/// pin names, and by autotune's candidates, past a decode's rows on the block-scaled tensor cores
-/// where those read both inputs (`packed_autotune`); elsewhere they are decoded first
+/// pin names, and by the measured race's candidates, past a decode's rows on the block-scaled
+/// tensor cores where those read both inputs (`packed_autotune`); elsewhere they are decoded first
 /// and read by the kernel the strategy chooses for float inputs. Where a packed input's scheme is
 /// one no kernel here reads, the framework dequantizes the packed inputs first. Which input is
 /// packed never matters.
@@ -81,13 +80,13 @@ pub fn select(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     hw: &Hardware,
-    groups: MatmulAutotuneGroups,
+    measured: &dyn Fn(MatmulAutotune) -> MatmulPlan,
 ) -> Result<MatmulPlan, Decline> {
     match Inputs::of(problem, hw) {
-        Inputs::Float => float_plan(strategy, problem, groups),
-        Inputs::Streamed => packed_plan(strategy, problem, hw, groups),
+        Inputs::Float => float_plan(strategy, problem, measured),
+        Inputs::Streamed => packed_plan(strategy, problem, hw, measured),
         Inputs::Unread => {
-            let plan = float_plan(strategy, problem, groups)?;
+            let plan = float_plan(strategy, problem, measured)?;
             Ok(Box::new(Then::new(FrameworkDequantized, plan)))
         }
     }
@@ -116,8 +115,8 @@ impl Inputs {
     }
 }
 
-/// How `strategy` runs float inputs, or packed ones decoded first: an autotune, a rule's kernel and
-/// then the fixed routines that serve what it declines, or a pin's kernel alone.
+/// How `strategy` runs float inputs, or packed ones decoded first: a measured race, a rule's kernel
+/// and then the fixed routines that serve what it declines, or a pin's kernel alone.
 ///
 /// The rules read the shape, not the strides the caller arrived with, and a rule may not fail a
 /// launch over a question it could not ask: whether the plane shuffle binds the strides. So a rule
@@ -126,13 +125,13 @@ impl Inputs {
 fn float_plan(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
-    groups: MatmulAutotuneGroups,
+    measured: &dyn Fn(MatmulAutotune) -> MatmulPlan,
 ) -> Result<MatmulPlan, Decline> {
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;
     match strategy {
-        Autotune => Ok(MatmulAutotune::new(problem).plan(groups)),
+        Autotune => Ok(measured(MatmulAutotune::new(problem))),
         // Nothing to measure: the tiled float routines are the whole pool, and which of them
         // serves a call is a question about strides, answered at the launch.
         Heuristic(H::Tile) => Ok(Box::new(InOrder::new(vec![
@@ -157,19 +156,19 @@ fn packed_plan(
     strategy: MatmulOpStrategy,
     problem: &MatmulProblem,
     hw: &Hardware,
-    groups: MatmulAutotuneGroups,
+    measured: &dyn Fn(MatmulAutotune) -> MatmulPlan,
 ) -> Result<MatmulPlan, Decline> {
     use MatmulKernel as K;
     use MatmulKernelHeuristic as H;
     use MatmulOpStrategy::*;
     let decoded = || -> Result<MatmulPlan, Decline> {
-        let plan = float_plan(strategy, problem, groups)?;
+        let plan = float_plan(strategy, problem, measured)?;
         Ok(Box::new(Then::new(Decoded, plan)))
     };
     // What every narrow candidate counts, which is not the trailing extent.
     let single_row = problem.streamed_rows == Some(1);
     match strategy {
-        Autotune => Ok(packed_autotune(problem, hw).plan(groups)),
+        Autotune => Ok(measured(packed_autotune(problem, hw))),
         // The packed plane routine with the heuristic's own fallback behind it, since it can still
         // decline a contraction its steps do not close, which no rule here sees.
         Heuristic(H::Tile) if single_row => Ok(Box::new(InOrder::new(vec![
@@ -180,7 +179,7 @@ fn packed_plan(
         Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
         Specific(K::PlaneShuffle) => Ok(packed_plane_shuffle()),
         Specific(K::BlockScaledTensorCores) if block_scaled_tensor_cores_serve(problem, hw) => {
-            Ok(MatmulAutotune::BlockScaled.plan(groups))
+            Ok(measured(MatmulAutotune::BlockScaled))
         }
         Specific(K::BlockScaledTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
     }

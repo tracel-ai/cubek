@@ -347,7 +347,6 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
                 (dtype, output)
             })
             .collect();
-        let device = cubecl::test_device();
         let elements =
             ReduceElements::for_operation(operation, case.input_dtype, Some(outputs[0].0));
         let workspace = workspace_for(
@@ -362,7 +361,6 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
         let launched = match op.with_indices() {
             true => reduce.execute_with_indices(
                 client,
-                &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 outputs[1].1.clone().binding(),
@@ -373,7 +371,6 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
             ),
             false => reduce.execute(
                 client,
-                &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 axis,

@@ -222,7 +222,7 @@ mod base {
     /// tile cut short is where its fragments bounce through a window.
     #[test]
     fn a_setting_settles_alike_at_the_rows_a_key_anchors() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let hw = offering(devices::strix_halo());
         let shape = |m, n, k, rhs| MatmulShape {
             m,
@@ -454,7 +454,7 @@ mod base {
     /// An `f16` product of `m × n × k` whose rhs lies col-major, `K` its rows: what one TMA box
     /// lands whole under a matrix instruction.
     fn col_rhs_of(m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         MatmulRoutineProblem::from(&MatmulShape {
             m,
             n,
