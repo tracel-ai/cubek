@@ -7,6 +7,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Decline, Delivery, Vectorization};
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout};
 
 /// The plane microkernel a cube runs on each of its planes.
@@ -296,6 +297,15 @@ impl CubeAttentionPlane {
         match self {
             Self::Fragment(plane) => plane.cache_order(),
             Self::Shuffle(plane) => plane.cache_order(),
+        }
+    }
+
+    /// Where the scale its values share whole is multiplied in
+    /// ([`AttentionMicrokernel::values_outer_scale`]).
+    pub fn values_outer_scale(&self) -> OuterScale {
+        match self {
+            Self::Fragment(plane) => plane.values_outer_scale(),
+            Self::Shuffle(plane) => plane.values_outer_scale(),
         }
     }
 

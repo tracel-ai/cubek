@@ -18,7 +18,7 @@ use cubecl::tile::{
     Scratch, ShapedInstruction, Space, StageStorage, StepCost,
 };
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::Operand;
+use cubek_std::layout::stored::{Operand, OuterScale};
 use cubek_std::matmul_dimensions::{K, M, N, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork};
 use cubek_std::{Hardware, Instructions, block_scaled_for, manual_mma};
@@ -1431,6 +1431,10 @@ impl MatmulMicrokernel for PlaneFragmentMicrokernel {
 
     fn orders(&self) -> MatmulOperands<BindingOrder> {
         self.orders
+    }
+
+    fn outer_scale(&self) -> OuterScale {
+        OuterScale::of(self.tile_instruction())
     }
 }
 

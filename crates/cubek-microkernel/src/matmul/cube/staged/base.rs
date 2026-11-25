@@ -18,7 +18,7 @@ use cubecl::tile::space::Coverage;
 use cubecl::tile::{BaseRegion, FragmentSource, Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::{BlockScales, Packing};
+use cubek_std::layout::stored::{BlockScales, OuterScale, Packing};
 use cubek_std::matmul_dimensions::{K, KB, M, N};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout, StageRing};
 
@@ -970,6 +970,11 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
             Some(form) if self.plane.instruction.scale_word_is_a_step(form) => BlockScales::Words,
             Some(_) | None => BlockScales::Fields,
         }
+    }
+
+    /// Its planes'.
+    fn outer_scale(&self) -> OuterScale {
+        self.plane.outer_scale()
     }
 
     /// Its walk's ([`CubeStagedWalk::decoded`]).

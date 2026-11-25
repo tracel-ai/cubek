@@ -1048,6 +1048,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                         true => BlockScales::Fields,
                         false => blueprint.microkernel.block_scales(),
                     },
+                    blueprint.microkernel.outer_scale(),
                     blueprint.microkernel.words_delivery(),
                 ),
             };
