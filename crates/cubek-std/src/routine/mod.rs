@@ -17,9 +17,8 @@
 //!
 //! # `prepare` is pure
 //!
-//! No device reads, no allocation, deterministic. Graph capture replays a recorded launch: if
-//! `prepare` could observe device state or vary between calls, a captured step would drift from
-//! the one that was recorded. Everything it needs is host data.
+//! Graph capture replays a recorded launch: if `prepare` could observe device state or vary
+//! between calls, a captured step would drift from the one that was recorded.
 //!
 //! # The grid is stated twice and checked
 //!
