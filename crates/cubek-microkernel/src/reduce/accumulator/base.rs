@@ -5,7 +5,7 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// joins it, and the lines it keeps, which the microkernels write out, store and stage. Which monoid
 /// combines it is its [`Carrier`]'s. It reads and writes no memory: the microkernels do.
 #[cube]
-pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
+pub trait Accumulable<Acc: Numeric, N: Size>:
     Carrier + CubeType<ExpandType: Assign + Copy>
 {
     /// `line` accumulated into `acc`, the line read `line_index` lines into the row, `row_lanes`
@@ -26,7 +26,7 @@ pub trait ReduceAccumulator<Acc: Numeric, N: Size>:
     /// [`Indexed`](cubecl::tile::Indexed), line `slot` of a top-k's `k`, best first.
     fn value_line(acc: &Self, slot: usize) -> Vector<Acc, N>;
 
-    /// The indices beside line `slot` ([`value_line`](ReduceAccumulator::value_line)); zero where
+    /// The indices beside line `slot` ([`value_line`](Accumulable::value_line)); zero where
     /// the carrier keeps none ([`ReduceCarrier::carries_indices`](crate::reduce::ReduceCarrier::carries_indices)).
     fn index_line(acc: &Self, slot: usize) -> Vector<u32, N>;
 

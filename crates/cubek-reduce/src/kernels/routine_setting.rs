@@ -102,8 +102,7 @@ impl ReduceRoutineSetting<HypercubeAtomicReduceRoutine> {
     ///
     /// # Errors
     ///
-    /// Why the routine cannot run the problem at its setting, why the zeroing cannot run it, or
-    /// why it cannot read the caller's input.
+    /// As [`launch_unbound`](Self::launch_unbound), and why the zeroing cannot run the problem.
     pub(crate) fn launch_zeroed_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
@@ -118,10 +117,12 @@ impl ReduceRoutineSetting<HypercubeAtomicReduceRoutine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::testing::{BufferScopeChecker, sum_of_long_rows};
     use crate::kernels::{CubeStagedReduceRoutine, UnitDirectReduceRoutine};
     use cubecl::tile::launch::StoredTileOperand;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
+    use cubek_test_utils::ScopeChecker;
 
     /// The first setting of the cube routine on a device that runs none of it.
     fn declining() -> ReduceRoutineSetting<CubeStagedReduceRoutine> {
@@ -213,5 +214,25 @@ mod tests {
             unreachable!("a declined setting binds no input")
         });
         assert!(launched.is_err());
+    }
+
+    #[test]
+    fn a_setting_that_prepares_the_tensors_reduces_them() {
+        BufferScopeChecker::new(|hw, tensors| {
+            ReduceRoutineSetting::<UnitDirectReduceRoutine>::list(hw)
+                .remove(0)
+                .launch(tensors)
+        })
+        .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn an_atomic_setting_sums_into_an_output_it_zeroes() {
+        BufferScopeChecker::new(|hw, tensors| {
+            ReduceRoutineSetting::<HypercubeAtomicReduceRoutine>::list(hw)
+                .remove(0)
+                .launch_zeroed(tensors)
+        })
+        .check([sum_of_long_rows()]);
     }
 }

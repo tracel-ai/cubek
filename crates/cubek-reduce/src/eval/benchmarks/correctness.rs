@@ -3,17 +3,21 @@ use cubek_test_utils::{HostData, Progress, ValidationResult, assert_equals_appro
 
 use crate::eval::benchmarks::benchmark::two_launch_operations;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
-use crate::eval::cpu_reference::{
-    RAMP_MAX_ELEMS, ReduceInput, ReduceValues, comparison_epsilon, cpu_reference_result,
-    strategy_result, strategy_result_with_indices,
+use crate::eval::benchmarks::results::{
+    RAMP_MAX_ELEM_COUNT, ReduceInput, ReduceValues, cpu_reference_result, strategy_result,
 };
 use crate::kernels::ReduceOpStrategy;
 
-pub struct ReduceCorrectness;
+/// Proves and checks the reductions the catalogue times, against the CPU reference.
+pub(crate) struct ReduceCorrectness;
 
 impl ReduceCorrectness {
     /// Proves `strategy` correct on a small shape before it's timed, so a wrong
     /// kernel can't win a benchmark by being fast.
+    ///
+    /// # Errors
+    ///
+    /// Where its result differs from the reference's, or it does not run the shape.
     pub fn verify(strategy: &ReduceOpStrategy, problem: &ReduceProblem) -> Result<(), String> {
         let client = cubecl::test_device().client();
         let proof = ReduceProblem {
@@ -31,7 +35,7 @@ impl ReduceCorrectness {
         let actual = Self::kernel_output(client.clone(), strategy, &proof, input)?;
         let expected = Self::reference_output(client, &proof, input, None)?;
 
-        match assert_equals_approx(&actual, &expected, comparison_epsilon(proof.operation)) {
+        match assert_equals_approx(&actual, &expected, proof.tolerance()) {
             ValidationResult::Pass | ValidationResult::Skipped(_) => Ok(()),
             ValidationResult::Fail(reason) | ValidationResult::Error(reason) => Err(format!(
                 "{:?} computes the wrong {:?} at {:?}, so its timing would be meaningless: {reason}",
@@ -51,24 +55,15 @@ impl ReduceCorrectness {
         problem: &ReduceProblem,
         input: ReduceInput,
     ) -> Result<HostData, String> {
-        match problem.kind {
-            ReduceBenchKind::Single | ReduceBenchKind::TwoLaunch => strategy_result(
-                client,
-                problem.shape.clone(),
-                problem.axis,
-                *strategy,
-                problem.operation,
-                input,
-            ),
-            ReduceBenchKind::Fused => strategy_result_with_indices(
-                client,
-                problem.shape.clone(),
-                problem.axis,
-                *strategy,
-                problem.operation,
-                input,
-            ),
-        }
+        strategy_result(
+            client,
+            problem.shape.clone(),
+            problem.axis,
+            *strategy,
+            problem.operation,
+            input,
+            problem.kind == ReduceBenchKind::Fused,
+        )
     }
 
     /// What [`kernel_output`](Self::kernel_output) should hold: the values half of a fused launch,
@@ -94,14 +89,14 @@ impl ReduceCorrectness {
     }
 }
 
-/// At most [`RAMP_MAX_ELEMS`] elements, all on the reduced axis so a plane or
+/// At most [`RAMP_MAX_ELEM_COUNT`] elements, all on the reduced axis so a plane or
 /// cube routine has enough to reduce. Padding other axes with 2 keeps the total
 /// a power of two at any rank, instead of the reduced axis underflowing to
-/// zero once rank exceeds `RAMP_MAX_ELEMS`'s bit width. An axis of one in
+/// zero once rank exceeds `RAMP_MAX_ELEM_COUNT`'s bit width. An axis of one in
 /// `shape` stays one, so a whole tensor's one row is proved as one row.
 fn proof_shape(shape: &[usize], axis: usize) -> Vec<usize> {
     let mut proof = vec![1; shape.len()];
-    let mut budget = RAMP_MAX_ELEMS;
+    let mut budget = RAMP_MAX_ELEM_COUNT;
     for (i, dim) in proof.iter_mut().enumerate() {
         if i == axis || budget == 1 || shape[i] == 1 {
             continue;
@@ -144,14 +139,17 @@ fn seeded_input(problem: &ReduceProblem, seeds: &[u64]) -> ReduceInput {
 }
 
 #[cfg(test)]
-mod proof_shape_tests {
-    use super::proof_shape;
-    use crate::eval::cpu_reference::RAMP_MAX_ELEMS;
+mod tests {
+    use super::*;
+    use crate::ReduceOperation;
+    use crate::eval::benchmarks::problem::ReduceBenchPrecision;
+    use crate::kernels::ReduceKernel;
+    use cubek_test_utils::Correctness;
 
     /// A proof shape whose values a ramp permutes: a power of two at most the ramp's longest.
     fn fits_a_ramp(proof: &[usize]) -> bool {
         let elems: usize = proof.iter().product();
-        elems.is_power_of_two() && elems <= RAMP_MAX_ELEMS
+        elems.is_power_of_two() && elems <= RAMP_MAX_ELEM_COUNT
     }
 
     /// The fewest axes keep within a ramp.
@@ -163,15 +161,15 @@ mod proof_shape_tests {
     /// The most axes, reduced along the first, keep within a ramp.
     #[test]
     fn the_most_axes_along_the_first_stay_within_ramp_bounds() {
-        const RANK: usize = 16;
-        assert!(fits_a_ramp(&proof_shape(&[3; RANK], 0)));
+        const AXIS_COUNT: usize = 16;
+        assert!(fits_a_ramp(&proof_shape(&[3; AXIS_COUNT], 0)));
     }
 
     /// The most axes, reduced along the last, keep within a ramp.
     #[test]
     fn the_most_axes_along_the_last_stay_within_ramp_bounds() {
-        const RANK: usize = 16;
-        assert!(fits_a_ramp(&proof_shape(&[3; RANK], RANK - 1)));
+        const AXIS_COUNT: usize = 16;
+        assert!(fits_a_ramp(&proof_shape(&[3; AXIS_COUNT], AXIS_COUNT - 1)));
     }
 
     #[test]
@@ -182,5 +180,39 @@ mod proof_shape_tests {
     #[test]
     fn keeps_a_whole_tensor_one_row() {
         assert_eq!(proof_shape(&[1, 16_777_216], 1), vec![1, 2048]);
+    }
+
+    const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit);
+
+    /// A reduction whose reference is cheap, launched as `kind` says.
+    fn small_problem(kind: ReduceBenchKind) -> ReduceProblem {
+        ReduceProblem {
+            shape: vec![4, 300],
+            axis: 1,
+            operation: ReduceOperation::Max,
+            kind,
+            precision: ReduceBenchPrecision::F32,
+        }
+    }
+
+    #[test]
+    fn a_right_kernel_is_proved() {
+        let proved = ReduceCorrectness::verify(&UNIT, &small_problem(ReduceBenchKind::Single));
+        assert_eq!(proved, Ok(()));
+    }
+
+    /// The kernel and the reference draw one input from the seed.
+    #[test]
+    fn a_fused_kernels_values_are_the_references() {
+        let problem = small_problem(ReduceBenchKind::Fused);
+        let written = ReduceCorrectness
+            .kernel_result(&UNIT, &problem, &[7])
+            .expect("the unit kernel serves every problem");
+        let expected = ReduceCorrectness
+            .reference_result(&problem, &[7], None)
+            .expect("the reference reduces every problem");
+        assert_equals_approx(&written, &expected, problem.tolerance())
+            .as_test_outcome()
+            .enforce();
     }
 }

@@ -8,8 +8,9 @@
 //!
 //! A caller that binds the input itself, as a fused reduction reads it, states its tensors as
 //! [`kernels::ReduceTensors`] and launches a [`kernels::ReduceCandidate`]. cubek measures nothing:
-//! a caller that does races every [`kernels::ReduceRoutineSetting`] the device lists, keyed by
-//! [`kernels::ReduceKey`], and launches the fastest.
+//! a caller that does races every [`kernels::ReduceCandidate`] the device lists, keyed by
+//! [`kernels::ReduceKey`], and launches the fastest. Under the `benchmarks` feature,
+//! `eval::benchmarks::Category` is its entry in the benchmark catalogue.
 
 pub mod kernels;
 

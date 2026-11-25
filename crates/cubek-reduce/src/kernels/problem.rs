@@ -1,6 +1,6 @@
 //! The problem a routine computes.
 
-use crate::kernels::ReduceWorkspaceBytes;
+use crate::kernels::ReduceKey;
 use cubecl::ir::{ElemType, FloatKind, IntKind, UIntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
@@ -85,7 +85,8 @@ fn widened(input: ElemType) -> ElemType {
 /// of `axis`. Each operand's layout maps its axes onto them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReduceRoutineProblem {
-    /// The input's extent along each axis, read by axis (Position Usage).
+    /// The input's extent along each axis, read by axis (Position Usage) and walked in their order
+    /// (Arrival Usage).
     pub shape: Vec<usize>,
     pub axis: usize,
     pub operation: ReduceOperation,
@@ -94,13 +95,12 @@ pub struct ReduceRoutineProblem {
     /// to whole step one element along it. `None` where none does, and a line holds one value.
     pub contiguous: Option<usize>,
     /// The alignment in elements of the input's buffer, then the output's, read by that position
-    /// (Position Usage).
+    /// (Position Usage) and walked in that order (Arrival Usage).
     pub elem_alignments: [ElemAlignment; 2],
     /// The indices written beside the values, to a second output of their shape, where they are.
     pub indices: Option<ReduceIndices>,
-    /// The bytes of scratch the caller gave ([`ReduceWorkspace`](crate::kernels::ReduceWorkspace)):
-    /// none unless it gave a workspace.
-    pub workspace: ReduceWorkspaceBytes,
+    /// The partials a row reduced in parts is written to, where the caller gave buffers for them.
+    pub partials: Option<ReducePartials>,
 }
 
 /// The indices a reduction writes beside its values: their element, and the alignment of the
@@ -109,6 +109,43 @@ pub struct ReduceRoutineProblem {
 pub struct ReduceIndices {
     pub element: ElemType,
     pub elem_alignment: ElemAlignment,
+}
+
+/// The operands a row reduced in parts is written to before its parts merge: what each holds, one
+/// cell after another ([`ReduceWorkspace`](crate::kernels::ReduceWorkspace)).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReducePartials {
+    /// The parts' values, in the accumulator's element.
+    pub value_count: usize,
+    /// The parts' indices, in `u32`, where the operation's carrier keeps any.
+    pub index_count: usize,
+    /// The boxes of rows' counts of their arrived parts, in `u32`, at zero.
+    pub arrival_count: usize,
+}
+
+impl ReducePartials {
+    /// As many cells as any problem's rows are written to.
+    pub(crate) const UNBOUNDED: Self = Self {
+        value_count: usize::MAX,
+        index_count: usize::MAX,
+        arrival_count: usize::MAX,
+    };
+
+    /// Whether each operand holds at least the cells `needs` asks of it.
+    pub(crate) fn holds(&self, needs: &Self) -> bool {
+        self.value_count >= needs.value_count
+            && self.index_count >= needs.index_count
+            && self.arrival_count >= needs.arrival_count
+    }
+
+    /// Each operand the larger of this and `other`.
+    pub(crate) fn max(self, other: Self) -> Self {
+        Self {
+            value_count: self.value_count.max(other.value_count),
+            index_count: self.index_count.max(other.index_count),
+            arrival_count: self.arrival_count.max(other.arrival_count),
+        }
+    }
 }
 
 impl ReduceRoutineProblem {
@@ -152,7 +189,7 @@ impl ReduceRoutineProblem {
             elements,
             contiguous,
             indices: None,
-            workspace: ReduceWorkspaceBytes::default(),
+            partials: None,
         }
     }
 }
@@ -162,7 +199,7 @@ impl ReduceRoutineProblem {
     ///
     /// # Panics
     ///
-    /// As [`stated`](Self::stated).
+    /// Where [`stated`](Self::stated) does, of their geometries.
     pub(crate) fn of_buffers(
         input: &TensorBinding,
         out: &TensorBinding,
@@ -180,14 +217,14 @@ impl ReduceRoutineProblem {
     }
 
     /// The problem `out = operation(input)` along axis `axis` states, the input bound by the caller
-    /// and read at exactly `width`.
+    /// and read at exactly `lane_count`.
     ///
     /// # Panics
     ///
-    /// As [`stated`](Self::stated).
+    /// Where the geometry and `out`'s state no problem ([`stated`](Self::stated)).
     pub(crate) fn of_unbound(
         input: &Geometry,
-        width: usize,
+        lane_count: usize,
         out: &TensorBinding,
         axis: usize,
         operation: ReduceOperation,
@@ -196,7 +233,7 @@ impl ReduceRoutineProblem {
         let stated = Self::stated(input, &Geometry::from(out), axis, operation, elements);
         let [_, out_alignment] = stated.elem_alignments;
         Self {
-            elem_alignments: [ElemAlignment::stored_piece(width), out_alignment],
+            elem_alignments: [ElemAlignment::stored_piece(lane_count), out_alignment],
             ..stated
         }
     }
@@ -216,17 +253,18 @@ impl ReduceRoutineProblem {
     /// This problem with the indices of its values written beside them in `element`, to
     /// `indices`: a line of rows runs along the innermost axis only where that buffer steps one
     /// element along it too.
-    pub(crate) fn writing_indices(mut self, element: ElemType, indices: &TensorBinding) -> Self {
+    pub(crate) fn writing_indices(&self, element: ElemType, indices: &TensorBinding) -> Self {
         let indices = Geometry::from(indices);
-        let axis = self.axis;
-        self.contiguous = self
-            .contiguous
-            .filter(|&inner| inner == axis || steps_one(&indices, inner));
-        self.indices = Some(ReduceIndices {
-            element,
-            elem_alignment: ElemAlignment::new(indices.shape(), indices.strides()),
-        });
-        self
+        Self {
+            contiguous: self
+                .contiguous
+                .filter(|&inner| inner == self.axis || steps_one(&indices, inner)),
+            indices: Some(ReduceIndices {
+                element,
+                elem_alignment: ElemAlignment::new(indices.shape(), indices.strides()),
+            }),
+            ..self.clone()
+        }
     }
 
     /// `binding`, an operand of the input's axes holding `along` in place of the reduced axis
@@ -299,9 +337,9 @@ impl ReduceRoutineProblem {
             .unzip()
     }
 
-    /// The input's shape with the reduced axis `extent` long.
-    pub(crate) fn shape_with_reduced_extent(&self, extent: usize) -> Vec<usize> {
-        with_axis_extent(&self.shape, self.axis, extent)
+    /// The input's shape with the reduced axis `reduced_count` long.
+    pub(crate) fn shape_with_reduced_count(&self, reduced_count: usize) -> Vec<usize> {
+        with_axis_extent(&self.shape, self.axis, reduced_count)
     }
 
     /// How the input is checked where a tile reaches past its edge: a read there returns the
@@ -336,11 +374,11 @@ impl ReduceRoutineProblem {
         self.contiguous.map_or(1, |inner| self.shape[inner])
     }
 
-    /// What one load of the input covers, its lines `width` wide: a run along
+    /// What one load of the input covers, its lines `lane_count` wide: a run along
     /// [`lines_along`](Self::lines_along), the load the input's tile carries on the device
     /// ([`Tile::vector_tile`](cubecl::tile::Tile::vector_tile)).
-    pub(crate) fn input_load_at_width(&self, width: usize) -> VectorTile {
-        VectorTile::run(self.lines_along(), width)
+    pub(crate) fn input_load_at_lane_count(&self, lane_count: usize) -> VectorTile {
+        VectorTile::run(self.lines_along(), lane_count)
     }
 
     /// What every microkernel of this problem is handed.
@@ -359,51 +397,63 @@ impl ReduceRoutineProblem {
         Space::new(&self.extents())
     }
 
-    /// [`space`](Self::space) and a hypercube's partials, `partial_extent` values of each box of
+    /// [`space`](Self::space) and a hypercube's partials, `partial_count` values of each box of
     /// rows'.
-    pub(crate) fn split_space_with_partial_extent(&self, partial_extent: usize) -> Space {
+    pub(crate) fn split_space_with_partial_count(&self, partial_count: usize) -> Space {
         let [rows, reduced, slots] = self.extents();
-        Space::new(&[rows, reduced, slots, (PARTIALS, partial_extent)])
+        Space::new(&[rows, reduced, slots, (PARTIALS, partial_count)])
     }
 
-    /// The values of a row one cube of `units` units reduces when the row is split across cubes,
-    /// each unit `unit_lines` lines of `width` values.
-    pub(crate) fn split_part(&self, units: usize, unit_lines: usize, width: usize) -> usize {
-        units * unit_lines * self.row_values_a_line_at_width(width)
+    /// The values of a row one cube of `unit_count` units reduces when the row is split across
+    /// cubes, each unit `unit_line_count` lines of `lane_count` values.
+    pub(crate) fn split_part(
+        &self,
+        unit_count: usize,
+        unit_line_count: usize,
+        lane_count: usize,
+    ) -> usize {
+        unit_count * unit_line_count * self.row_value_count_at_lane_count(lane_count)
     }
 
-    /// The values of one row a line `width` wide holds: `width` where the lines lie along the
-    /// reduced dim, one where they lie across it.
-    pub(crate) fn row_values_a_line_at_width(&self, width: usize) -> usize {
-        self.input_load_at_width(width).extent_along(REDUCED)
+    /// The values of one row a line `lane_count` wide holds: `lane_count` where the lines lie along
+    /// the reduced dim, one where they lie across it.
+    pub(crate) fn row_value_count_at_lane_count(&self, lane_count: usize) -> usize {
+        self.input_load_at_lane_count(lane_count)
+            .extent_along(REDUCED)
     }
 
-    /// The box a cube owns where a row is split across cubes: the owner's box at `width`, `part`
-    /// values long along [`REDUCED`].
-    pub(crate) fn split_owner_box(&self, width: usize, part: usize) -> [(Dimension, usize); 3] {
-        let [rows, slots] = self.owner_box_at_width(width);
+    /// The box a cube owns where a row is split across cubes: the owner's box at `lane_count`,
+    /// `part` values long along [`REDUCED`].
+    pub(crate) fn split_owner_box(
+        &self,
+        lane_count: usize,
+        part: usize,
+    ) -> [(Dimension, usize); 3] {
+        let [rows, slots] = self.owner_box_at_lane_count(lane_count);
         [rows, slots, (REDUCED, part)]
     }
 
-    /// The box an owner holds: one row, or `width` rows side by side across the reduced axis, and
+    /// The box an owner holds: one row, or `lane_count` rows side by side across the reduced axis, and
     /// the cells it writes. It leaves [`REDUCED`] to the space, so every owner spans its rows
     /// whole.
-    pub(crate) fn owner_box_at_width(&self, width: usize) -> [(Dimension, usize); 2] {
+    pub(crate) fn owner_box_at_lane_count(&self, lane_count: usize) -> [(Dimension, usize); 2] {
         [
-            (BATCH, self.box_rows_at_width(width)),
+            (BATCH, self.box_row_count_at_lane_count(lane_count)),
             (SLOTS, self.operation.written_per_row()),
         ]
     }
 
-    /// How many boxes of rows the owners, `width` rows across the reduced axis, take.
-    pub(crate) fn row_boxes_at_width(&self, width: usize) -> usize {
-        self.row_count().div_ceil(self.box_rows_at_width(width))
+    /// How many boxes of rows the owners, `lane_count` rows across the reduced axis, take.
+    pub(crate) fn row_box_count_at_lane_count(&self, lane_count: usize) -> usize {
+        self.row_count()
+            .div_ceil(self.box_row_count_at_lane_count(lane_count))
     }
 
-    /// Rows an owner holds: those one load reaches along [`BATCH`], `width` side by side across
-    /// the reduced axis, one along it.
-    fn box_rows_at_width(&self, width: usize) -> usize {
-        self.input_load_at_width(width).extent_along(BATCH)
+    /// Rows an owner holds, and the lanes of a line it writes them in: those one load reaches along
+    /// [`BATCH`], `lane_count` side by side across the reduced axis, one along it.
+    pub(crate) fn box_row_count_at_lane_count(&self, lane_count: usize) -> usize {
+        self.input_load_at_lane_count(lane_count)
+            .extent_along(BATCH)
     }
 
     /// Each dimension the problem holds with its extent: the rows, the reduced dim and the cells a
@@ -416,10 +466,22 @@ impl ReduceRoutineProblem {
         ]
     }
 
-    /// The problem this one's Tune Key stands for ([`ReduceKey`](crate::kernels::ReduceKey)): what
-    /// the rule picks a routine from.
+    /// The problem this one's Tune Key stands for ([`ReduceKey`]): what the rule picks a routine
+    /// from.
     pub(crate) fn keyed(&self) -> Self {
-        Self::from(&crate::kernels::ReduceKey::from(self))
+        Self::from(&ReduceKey::from(self))
+    }
+
+    /// The elements a kernel compiles for: the input's, the accumulator's, the output's, and the
+    /// indices', the output's where no launch of this problem writes them.
+    pub(crate) fn compiled_elements(&self) -> [ElemType; 4] {
+        let ReduceElements {
+            input,
+            accumulator,
+            out,
+        } = self.elements;
+        let index = self.indices.map_or(out, |indices| indices.element);
+        [input, accumulator, out, index]
     }
 
     /// A dense row-major input of `shape` reduced along `axis` by `operation` in `elements`, its
@@ -429,7 +491,7 @@ impl ReduceRoutineProblem {
     ///
     /// # Panics
     ///
-    /// As [`stated`](Self::stated).
+    /// Where `axis` is past `shape`'s.
     pub(crate) fn of_shape(
         shape: &[usize],
         axis: usize,
@@ -482,6 +544,10 @@ fn merged_rows(
 impl EstimatedProblem for ReduceRoutineProblem {
     /// Every value read once and accumulated once, every cell written once, and its index beside
     /// it where the problem writes any.
+    ///
+    /// # Panics
+    ///
+    /// Where `axis` is not an axis of `shape`.
     fn demand(&self) -> Work {
         let values: usize = self.shape.iter().product();
         let cells = self.row_count() * self.operation.written_per_row();
@@ -522,7 +588,7 @@ impl ReduceRoutineProblem {
             contiguous: Some(innermost),
             elem_alignments: [ElemAlignment::dense_rows(shape[innermost]); 2],
             indices: None,
-            workspace: ReduceWorkspaceBytes::default(),
+            partials: None,
         }
     }
 }
@@ -658,8 +724,8 @@ mod tests {
     /// Along the reduced axis a line is only read, however its row's cells go out.
     #[test]
     fn a_line_along_the_reduced_axis_reads_whole_beside_a_strided_output() {
-        const ROW_LEN: usize = 8;
-        let input = Geometry::row_major(&[4, ROW_LEN]);
+        const ROW_VALUE_COUNT: usize = 8;
+        let input = Geometry::row_major(&[4, ROW_VALUE_COUNT]);
         let out = Geometry::new(&[(4, 1), (2, 4)]);
         let problem = ReduceRoutineProblem::stated(
             &input,
@@ -668,51 +734,59 @@ mod tests {
             ReduceOperation::TopK { k: 2 },
             ReduceElements::for_operation(ReduceOperation::TopK { k: 2 }, F32, None),
         );
-        assert_eq!(problem.line_stays_in(), ROW_LEN);
+        assert_eq!(problem.line_stays_in(), ROW_VALUE_COUNT);
     }
 
     #[test]
     fn the_demand_counts_the_indices_written() {
-        const ROWS: usize = 4;
-        const ROW_LEN: usize = 300;
+        const ROW_COUNT: usize = 4;
+        const ROW_VALUE_COUNT: usize = 300;
         let problem = ReduceRoutineProblem {
             indices: Some(ReduceIndices {
                 element: U32,
                 elem_alignment: ElemAlignment::ONE,
             }),
-            ..ReduceRoutineProblem::dense(&[ROWS, ROW_LEN], 1, ReduceOperation::ArgMax)
+            ..ReduceRoutineProblem::dense(&[ROW_COUNT, ROW_VALUE_COUNT], 1, ReduceOperation::ArgMax)
         };
-        let read = ROWS * ROW_LEN * problem.elements.input.size();
-        let written = ROWS * (problem.elements.out.size() + U32.size());
+        let read = ROW_COUNT * ROW_VALUE_COUNT * problem.elements.input.size();
+        let written = ROW_COUNT * (problem.elements.out.size() + U32.size());
         assert_eq!(problem.demand().bytes, read + written);
     }
 
     #[test]
     fn an_owner_across_the_axis_holds_a_line_of_rows() {
-        const WIDTH: usize = 4;
-        const K: usize = 3;
-        let across = ReduceRoutineProblem::dense(&[5, 8], 0, ReduceOperation::TopK { k: K });
+        const LANE_COUNT: usize = 4;
+        const KEPT_COUNT: usize = 3;
+        let across =
+            ReduceRoutineProblem::dense(&[5, 8], 0, ReduceOperation::TopK { k: KEPT_COUNT });
         assert_eq!(
-            across.owner_box_at_width(WIDTH),
-            [(BATCH, WIDTH), (SLOTS, K)]
+            across.owner_box_at_lane_count(LANE_COUNT),
+            [(BATCH, LANE_COUNT), (SLOTS, KEPT_COUNT)]
         );
     }
 
     #[test]
     fn an_owner_along_the_axis_holds_one_row() {
-        const WIDTH: usize = 4;
-        const K: usize = 3;
-        let along = ReduceRoutineProblem::dense(&[5, 8], 1, ReduceOperation::TopK { k: K });
-        assert_eq!(along.owner_box_at_width(WIDTH), [(BATCH, 1), (SLOTS, K)]);
+        const LANE_COUNT: usize = 4;
+        const KEPT_COUNT: usize = 3;
+        let along =
+            ReduceRoutineProblem::dense(&[5, 8], 1, ReduceOperation::TopK { k: KEPT_COUNT });
+        assert_eq!(
+            along.owner_box_at_lane_count(LANE_COUNT),
+            [(BATCH, 1), (SLOTS, KEPT_COUNT)]
+        );
     }
 
     /// The boxes of rows are the rows over an owner's, rounded up.
     #[test]
     fn row_boxes_round_up_the_rows_over_an_owner() {
-        const WIDTH: usize = 4;
-        const ROWS: usize = 10;
-        let across = ReduceRoutineProblem::dense(&[3, ROWS], 0, ReduceOperation::Sum);
-        assert_eq!(across.row_boxes_at_width(WIDTH), ROWS.div_ceil(WIDTH));
+        const LANE_COUNT: usize = 4;
+        const ROW_COUNT: usize = 10;
+        let across = ReduceRoutineProblem::dense(&[3, ROW_COUNT], 0, ReduceOperation::Sum);
+        assert_eq!(
+            across.row_box_count_at_lane_count(LANE_COUNT),
+            ROW_COUNT.div_ceil(LANE_COUNT)
+        );
     }
 
     #[test]
@@ -775,46 +849,46 @@ mod tests {
     /// The shape with another reduced extent keeps the rows on either side.
     #[test]
     fn another_reduced_extent_keeps_the_rows() {
-        const EXTENT: usize = 7;
+        const VALUE_COUNT: usize = 7;
         let problem = ReduceRoutineProblem::dense(&[2, 3, 4], 1, ReduceOperation::Sum);
         assert_eq!(
-            problem.shape_with_reduced_extent(EXTENT),
-            vec![2, EXTENT, 4]
+            problem.shape_with_reduced_count(VALUE_COUNT),
+            vec![2, VALUE_COUNT, 4]
         );
     }
 
-    /// Units of a split part, each `unit_lines` lines.
-    const UNITS: usize = 64;
-    const UNIT_LINES: usize = 8;
+    /// Units of a split part, each [`UNIT_LINE_COUNT`] lines.
+    const UNIT_COUNT: usize = 64;
+    const UNIT_LINE_COUNT: usize = 8;
 
-    /// Along the row, a split part's lines hold `width` values each.
+    /// Along the row, a split part's lines hold `LANE_COUNT` values each.
     #[test]
     fn a_split_part_along_the_row_holds_width_values_a_line() {
-        const WIDTH: usize = 4;
+        const LANE_COUNT: usize = 4;
         let along = ReduceRoutineProblem::dense(&[2, 4096], 1, ReduceOperation::Sum);
         assert_eq!(
-            along.split_part(UNITS, UNIT_LINES, WIDTH),
-            UNITS * UNIT_LINES * WIDTH
+            along.split_part(UNIT_COUNT, UNIT_LINE_COUNT, LANE_COUNT),
+            UNIT_COUNT * UNIT_LINE_COUNT * LANE_COUNT
         );
     }
 
     /// Across rows, a split part's lines hold one value of the row each.
     #[test]
     fn a_split_part_across_rows_holds_one_value_a_line() {
-        const WIDTH: usize = 4;
+        const LANE_COUNT: usize = 4;
         let across = ReduceRoutineProblem::dense(&[4096, 2], 0, ReduceOperation::Sum);
         assert_eq!(
-            across.split_part(UNITS, UNIT_LINES, WIDTH),
-            UNITS * UNIT_LINES
+            across.split_part(UNIT_COUNT, UNIT_LINE_COUNT, LANE_COUNT),
+            UNIT_COUNT * UNIT_LINE_COUNT
         );
     }
 
     #[test]
     fn an_unbound_input_is_read_at_exactly_the_callers_width() {
-        const WIDTH: usize = 2;
+        const LANE_COUNT: usize = 2;
         let problem = ReduceRoutineProblem::of_unbound(
             &Geometry::row_major(&[4, 8]),
-            WIDTH,
+            LANE_COUNT,
             &buffer_at_strides(&[4, 1], &[1, 1]),
             1,
             ReduceOperation::Sum,
@@ -822,7 +896,7 @@ mod tests {
         );
         assert_eq!(
             problem.elem_alignments[0],
-            ElemAlignment::stored_piece(WIDTH)
+            ElemAlignment::stored_piece(LANE_COUNT)
         );
     }
 
@@ -862,11 +936,74 @@ mod tests {
     /// Along the reduced axis no index goes out in a line.
     #[test]
     fn a_line_along_the_reduced_axis_reads_whole_beside_strided_indices() {
-        const ROW_LEN: usize = 8;
-        let problem =
-            ReduceRoutineProblem::dense(&[4, ROW_LEN], 1, ReduceOperation::ArgTopK { k: 2 });
+        const ROW_VALUE_COUNT: usize = 8;
+        let problem = ReduceRoutineProblem::dense(
+            &[4, ROW_VALUE_COUNT],
+            1,
+            ReduceOperation::ArgTopK { k: 2 },
+        );
         let written = problem.writing_indices(U32, &buffer_at_strides(&[4, 2], &[4, 2]));
-        assert_eq!(written.line_stays_in(), ROW_LEN);
+        assert_eq!(written.line_stays_in(), ROW_VALUE_COUNT);
+    }
+
+    #[test]
+    fn a_problem_that_writes_no_index_compiles_it_in_the_outputs_element() {
+        let problem = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum);
+        assert_eq!(problem.compiled_elements(), [F32; 4]);
+    }
+
+    const GIVEN: ReducePartials = ReducePartials {
+        value_count: 64,
+        index_count: 32,
+        arrival_count: 8,
+    };
+
+    #[test]
+    fn partials_hold_as_many_cells() {
+        assert!(GIVEN.holds(&GIVEN));
+    }
+
+    #[test]
+    fn fewer_values_than_needed_hold_nothing() {
+        let given = ReducePartials {
+            value_count: GIVEN.value_count - 1,
+            ..ReducePartials::UNBOUNDED
+        };
+        assert!(!given.holds(&GIVEN));
+    }
+
+    #[test]
+    fn fewer_indices_than_needed_hold_nothing() {
+        let given = ReducePartials {
+            index_count: GIVEN.index_count - 1,
+            ..ReducePartials::UNBOUNDED
+        };
+        assert!(!given.holds(&GIVEN));
+    }
+
+    #[test]
+    fn fewer_arrivals_than_needed_hold_nothing() {
+        let given = ReducePartials {
+            arrival_count: GIVEN.arrival_count - 1,
+            ..ReducePartials::UNBOUNDED
+        };
+        assert!(!given.holds(&GIVEN));
+    }
+
+    #[test]
+    fn the_max_takes_the_larger_of_each_operand() {
+        let other = ReducePartials {
+            value_count: GIVEN.value_count * 2,
+            index_count: GIVEN.index_count / 2,
+            arrival_count: GIVEN.arrival_count * 2,
+        };
+        assert_eq!(
+            GIVEN.max(other),
+            ReducePartials {
+                index_count: GIVEN.index_count,
+                ..other
+            }
+        );
     }
 
     #[test]
@@ -891,7 +1028,7 @@ mod tests {
         let problem = ReduceRoutineProblem::dense(&[2, 300], 1, ReduceOperation::Sum);
         let partitioning = Partitioning::new(
             problem.space(),
-            cubecl::tile::Levels::leaf(&problem.owner_box_at_width(1))
+            cubecl::tile::Levels::leaf(&problem.owner_box_at_lane_count(1))
                 .cubes(&[BATCH])
                 .build(),
         );
@@ -899,5 +1036,74 @@ mod tests {
         assert!(space.is_dynamic(REDUCED));
         assert!(space.is_dynamic(BATCH));
         assert!(!space.is_dynamic(SLOTS));
+    }
+
+    #[test]
+    fn buffers_are_read_where_they_lie() {
+        let problem = ReduceRoutineProblem::of_buffers(
+            &buffer_at_strides(&[4, 8], &[16, 1]),
+            &buffer_at_strides(&[4, 1], &[1, 1]),
+            1,
+            ReduceOperation::Sum,
+            sum_elements(),
+        );
+        assert_eq!(
+            problem.elem_alignments[0],
+            ElemAlignment::new(&[4, 8], &[16, 1])
+        );
+    }
+
+    #[test]
+    fn a_labelled_buffer_steps_its_merged_row_axes() {
+        let problem = ReduceRoutineProblem::dense(&[2, 3, 4], 2, ReduceOperation::Sum);
+        let (labelled, _) = problem.labelled(buffer_at_strides(&[2, 3, 4], &[12, 4, 1]), REDUCED);
+        let axes: Vec<(usize, usize)> = labelled
+            .shape
+            .iter()
+            .copied()
+            .zip(labelled.strides.iter().copied())
+            .collect();
+        assert_eq!(axes, vec![(6, 4), (4, 1)]);
+    }
+
+    #[test]
+    fn a_work_item_says_whether_the_indices_are_written() {
+        let problem = ReduceRoutineProblem {
+            indices: Some(ReduceIndices {
+                element: U32,
+                elem_alignment: ElemAlignment::ONE,
+            }),
+            ..ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::ArgMax)
+        };
+        assert!(problem.work_item().with_indices);
+    }
+
+    #[test]
+    fn a_split_space_holds_the_partials() {
+        const PARTIAL_COUNT: usize = 12;
+        let problem = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum);
+        let space = problem.split_space_with_partial_count(PARTIAL_COUNT);
+        assert_eq!(space.extent(PARTIALS), PARTIAL_COUNT);
+    }
+
+    #[test]
+    fn a_split_owner_holds_a_part_of_its_rows() {
+        const PART_VALUE_COUNT: usize = 5;
+        let problem = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum);
+        assert_eq!(
+            problem.split_owner_box(1, PART_VALUE_COUNT),
+            [(BATCH, 1), (SLOTS, 1), (REDUCED, PART_VALUE_COUNT)]
+        );
+    }
+
+    #[test]
+    fn a_shape_alone_states_a_dense_problem() {
+        let problem =
+            ReduceRoutineProblem::of_shape(&[4, 8], 1, ReduceOperation::Sum, sum_elements(), false);
+        let dense = ReduceRoutineProblem {
+            elem_alignments: [8, 4].map(ElemAlignment::dense_rows),
+            ..ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum)
+        };
+        assert_eq!(problem, dense);
     }
 }

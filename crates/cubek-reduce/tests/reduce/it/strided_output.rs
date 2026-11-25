@@ -4,28 +4,38 @@
 
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_reduce::ReduceOperation;
-use cubek_reduce::eval::cpu_reference::reference;
 use cubek_reduce::kernels::{Reduce, ReduceElements, ReduceOpStrategy};
-use cubek_test_utils::{HostData, HostDataType, StridedLayout, TestInput, assert_equals_approx};
+use cubek_test_utils::{HostDataType, StridedLayout, TestInput};
 
-use crate::reduce::it::test_case::{RULE, UNIT};
+use crate::reduce::it::test_case::{RULE, UNIT, is_the_references};
 
 /// A sum along the first dim of `[8, 2, 4]`, its cells column-major.
 fn sums_into_column_major_cells(strategy: ReduceOpStrategy) {
-    const VALUES: usize = 8;
-    const ROWS: usize = 2;
-    const COLS: usize = 4;
+    const VALUE_COUNT: usize = 8;
+    const ROW_COUNT: usize = 2;
+    const COLUMN_COUNT: usize = 4;
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
-    let (input, input_host) = TestInput::builder(client.clone(), Shape::new([VALUES, ROWS, COLS]))
+    let (input, input_host) = TestInput::builder(
+        client.clone(),
+        Shape::new([VALUE_COUNT, ROW_COUNT, COLUMN_COUNT]),
+    )
+    .dtype(dtype)
+    .layout(StridedLayout::Explicit(vec![
+        ROW_COUNT * COLUMN_COUNT,
+        COLUMN_COUNT,
+        1,
+    ]))
+    .arange()
+    .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), Shape::new([1, ROW_COUNT, COLUMN_COUNT]))
         .dtype(dtype)
-        .layout(StridedLayout::Explicit(vec![ROWS * COLS, COLS, 1]))
-        .arange()
-        .generate_with_f32_host_data();
-    let out = TestInput::builder(client.clone(), Shape::new([1, ROWS, COLS]))
-        .dtype(dtype)
-        .layout(StridedLayout::Explicit(vec![ROWS * COLS, 1, ROWS]))
+        .layout(StridedLayout::Explicit(vec![
+            ROW_COUNT * COLUMN_COUNT,
+            1,
+            ROW_COUNT,
+        ]))
         .zeros()
         .generate_without_host_data();
 
@@ -40,11 +50,14 @@ fn sums_into_column_major_cells(strategy: ReduceOpStrategy) {
         )
         .expect("a sum writes its cells at their own strides");
 
-    let written = HostData::from_tensor_handle(&client, out, HostDataType::F32);
-    let expected = reference(&input_host, 0, ReduceOperation::Sum, None);
-    assert_equals_approx(&written, &expected, 0.0)
-        .as_test_outcome()
-        .enforce();
+    is_the_references(
+        &client,
+        out,
+        HostDataType::F32,
+        &input_host,
+        0,
+        ReduceOperation::Sum,
+    );
 }
 
 #[test]

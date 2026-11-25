@@ -3,7 +3,11 @@
 //! The problem, its tensors and their binding, the scratch their caller gives, the blueprint a
 //! routine prepares, the routines, one folder per routine, and how a caller picks one: a strategy
 //! or the rule. A caller that measures the routines races their settings
-//! ([`ReduceRoutineSetting`]), keyed by [`ReduceKey`].
+//! ([`ReduceCandidate`]), keyed by [`ReduceKey`].
+
+#[cfg(test)]
+#[macro_use]
+pub(crate) mod testing;
 
 mod blueprint;
 mod candidate;
@@ -15,8 +19,6 @@ mod routines;
 mod select;
 mod strategy;
 mod tensors;
-#[cfg(test)]
-mod tests;
 mod workspace;
 
 pub use blueprint::*;

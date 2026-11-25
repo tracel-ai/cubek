@@ -1,12 +1,12 @@
-use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
+use super::kernel::unit_direct_reduce_kernel;
 use crate::kernels::{
     ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem, each_microkernel_with,
-    estimate_reduce, microkernel_widths, unit_launch,
+    estimated_work, unit_launch,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
-use cubecl::tile::{Partitioning, TileTensorLaunch};
+use cubecl::tile::TileTensorLaunch;
+use cubecl::tile::launch::{Bound, Decline, TileOperand, Vectorization};
 use cubek_microkernel::reduce::unit::{
     UnitDirectReduceMicrokernel, UnitDirectReduceMicrokernelSettings,
 };
@@ -16,7 +16,7 @@ use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
 
 /// Every owner a unit of the launch, which reduces its rows alone: many short rows, a unit each.
-/// The launch groups its units in cubes of `planes` planes as wide as the device dispatches one.
+/// The launch groups its units in cubes of `plane_count` planes as wide as the device dispatches one.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct UnitDirectReduceRoutine;
 
@@ -24,17 +24,17 @@ pub(crate) struct UnitDirectReduceRoutine;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitDirectReduceSettings {
     pub microkernel: UnitDirectReduceMicrokernelSettings,
-    pub planes: usize,
+    pub plane_count: usize,
 }
 
 impl UnitDirectReduceSettings {
     /// Planes of units a cube holds, each unit its own rows, the likeliest fastest first.
-    pub const PLANES: [usize; 3] = [4, 1, 8];
+    pub const PLANE_COUNTS: [usize; 3] = [4, 1, 8];
 }
 
 impl core::fmt::Display for UnitDirectReduceSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} planes={}", self.microkernel, self.planes)
+        write!(f, "{} planes={}", self.microkernel, self.plane_count)
     }
 }
 
@@ -45,23 +45,23 @@ impl Routine for UnitDirectReduceRoutine {
     type Microkernel = UnitDirectReduceMicrokernel;
     type Settings = UnitDirectReduceSettings;
     type Blueprint = UnitDirectReduceBlueprint;
-    type Partitioning = Partitioning;
+    type Partitioning = ();
 
     /// Four planes of units a cube by default, then one and eight.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
         each_microkernel_with(
             UnitDirectReduceMicrokernel::settings(hw),
-            UnitDirectReduceSettings::PLANES,
-            |microkernel, planes| UnitDirectReduceSettings {
+            UnitDirectReduceSettings::PLANE_COUNTS,
+            |microkernel, plane_count| UnitDirectReduceSettings {
                 microkernel,
-                planes,
+                plane_count,
             },
         )
     }
 
     fn vectorize(
         microkernel: &UnitDirectReduceMicrokernel,
-        _partitioning: &Partitioning,
+        _partitioning: &(),
         vectorization: &mut Vectorization<ReduceOperand>,
     ) {
         microkernel.vectorize(&(), vectorization);
@@ -72,12 +72,15 @@ impl Routine for UnitDirectReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let microkernel =
-            UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line())?;
-        let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
+        let (microkernel, lane_count) =
+            best_microkernel!(UnitDirectReduceMicrokernel, hw, problem, settings);
+        let (partitioning, grid) = unit_launch(hw, problem, lane_count, settings.plane_count)?;
         Ok((
-            ReduceBlueprint::new(microkernel, partitioning, widths),
+            ReduceBlueprint {
+                microkernel,
+                partitioning,
+                lane_count,
+            },
             grid,
         ))
     }
@@ -88,12 +91,19 @@ impl Routine for UnitDirectReduceRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        estimate_reduce(problem, &blueprint.microkernel, grid, estimate);
+        let (item, planes) = estimated_work(problem, grid);
+        blueprint.microkernel.estimate(&item, &(), planes, estimate);
     }
 }
 
 impl ReduceRoutine<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
     const NAME: &'static str = "unit-direct-reduce";
+
+    type Out = TileTensorLaunch;
+
+    fn out_arg(out: Bound) -> TileTensorLaunch {
+        out.arg()
+    }
 
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
@@ -102,45 +112,23 @@ impl ReduceRoutine<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
         blueprint: UnitDirectReduceBlueprint,
         grid: Grid,
     ) {
-        let elements = problem.elements;
-        // SAFETY: both operands are bound through the launcher, which masks the reads and writes
+        // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; it holds no shared memory.
         unsafe {
-            match binding.indices.zip(problem.indices) {
-                Some((indices, index)) => {
-                    unit_direct_reduce_with_indices_kernel::launch_unchecked::<F, I>(
-                        client,
-                        grid.launch.cube_count,
-                        grid.launch.cube_dim,
-                        blueprint.width,
-                        problem.operation.written_per_row(),
-                        binding.input,
-                        binding.out,
-                        indices.arg(),
-                        binding.launcher.partitioning_arg(),
-                        blueprint.microkernel,
-                        [
-                            elements.input,
-                            elements.accumulator,
-                            elements.out,
-                            index.element,
-                        ],
-                    )
-                }
-                None => unit_direct_reduce_kernel::launch_unchecked::<F, I>(
-                    client,
-                    grid.launch.cube_count,
-                    grid.launch.cube_dim,
-                    blueprint.width,
-                    problem.operation.written_per_row(),
-                    binding.input,
-                    binding.out,
-                    binding.launcher.partitioning_arg(),
-                    blueprint.microkernel,
-                    [elements.input, elements.accumulator, elements.out],
-                ),
-            }
+            unit_direct_reduce_kernel::launch_unchecked::<F, I>(
+                client,
+                grid.launch.cube_count,
+                grid.launch.cube_dim,
+                blueprint.lane_count,
+                problem.operation.written_per_row(),
+                binding.input,
+                binding.out,
+                binding.indices.map(Bound::arg).into(),
+                binding.launcher.partitioning_arg(),
+                blueprint.microkernel,
+                problem.compiled_elements(),
+            )
         }
     }
 }
@@ -148,14 +136,32 @@ impl ReduceRoutine<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::launch_first_served;
+    use crate::kernels::testing::{BufferLaunch, UnboundLaunch, launch_unbound, swept_problems};
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// Checks that an argmax of `shape` along `axis` compiles on an M2 Pro the microkernel, width
+    prepares_more_row_axes_than_the_grid_holds!(UnitDirectReduceRoutine);
+    prepares_lacking_every_feature!(UnitDirectReduceRoutine);
+    names_its_setting!(UnitDirectReduceRoutine, "lane_slots=32 planes=4");
+    estimates_its_microkernel!(UnitDirectReduceRoutine, ReduceRoutineProblem::work_item);
+
+    /// Checks that the routine, which runs where every other declines, prepares every problem on
+    /// `hw`.
+    fn prepares_every_problem(hw: &Hardware) {
+        for problem in swept_problems() {
+            let prepared = UnitDirectReduceRoutine::prepare_first_served(hw, &problem);
+            assert!(prepared.is_ok(), "{problem:?}");
+        }
+    }
+
+    on_each_device!(the_unit_routine, prepares_every_problem);
+
+    /// Checks that an argmax of `shape` along `axis` compiles on an M2 Pro the microkernel, lanes
     /// and kernel of `other`, a shape of its rank and layout: the rows and the row length are the
     /// launch's.
     fn compiles_what_another_shape_compiles(shape: &[usize], other: &[usize], axis: usize) {
-        const WIDTH: usize = 4;
+        const LANE_COUNT: usize = 4;
         let hw = devices::m2_pro();
         let [problem, other] = [shape, other]
             .map(|shape| ReduceRoutineProblem::dense(shape, axis, ReduceOperation::ArgMax));
@@ -163,17 +169,17 @@ mod tests {
         let microkernel =
             UnitDirectReduceMicrokernel::best(&hw, &other.work_item(), &settings.microkernel)
                 .expect("the unit microkernel runs everywhere");
-        let (partitioning, _) = unit_launch(&hw, &other, WIDTH, settings.planes)
+        let (partitioning, _) = unit_launch(&hw, &other, LANE_COUNT, settings.plane_count)
             .expect("the unit launch fits an M2 Pro");
         let (blueprint, _) = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings)
             .expect("the unit routine runs everywhere");
         assert_eq!(
             (
                 blueprint.microkernel,
-                blueprint.width,
+                blueprint.lane_count,
                 problem.kernel(&blueprint.partitioning)
             ),
-            (microkernel, WIDTH, other.kernel(&partitioning))
+            (microkernel, LANE_COUNT, other.kernel(&partitioning))
         );
     }
 
@@ -188,23 +194,10 @@ mod tests {
         compiles_what_another_shape_compiles(&[2, 5, 300], &[4, 9, 308], 1);
     }
 
-    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH).
-    #[test]
-    fn prepares_more_row_axes_than_the_grid_holds() {
-        let hw = devices::m2_pro();
-        let problem = ReduceRoutineProblem::dense(&[2, 2, 2, 2, 64], 4, ReduceOperation::ArgMax);
-        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
-        let prepared = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(prepared.is_ok(), "{prepared:?}");
-    }
+    const LAUNCH: BufferLaunch = launch_first_served::<UnitDirectReduceRoutine, _>;
+    const UNBOUND: UnboundLaunch = launch_unbound::<UnitDirectReduceRoutine, _>;
 
-    /// The unit routine reads no Feature.
-    #[test]
-    fn prepares_lacking_every_feature() {
-        let hw = devices::lacking_every_feature(devices::m2_pro());
-        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Sum);
-        let settings = UnitDirectReduceRoutine::settings(&hw)[0];
-        let prepared = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
-        assert!(prepared.is_ok(), "{prepared:?}");
-    }
+    reduces_each_dim!(LAUNCH, UNBOUND);
+    reduces_more_row_axes_than_the_grid_has!(LAUNCH);
+    reduces_with_indices!(LAUNCH);
 }

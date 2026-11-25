@@ -1,4 +1,5 @@
 use cubecl::client::Client;
+use cubecl::tile::Geometry;
 use cubecl::tile::launch::Decline;
 use cubecl::{
     ir::{ElemType, FloatKind},
@@ -11,12 +12,12 @@ use cubek_reduce::kernels::{
 };
 use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{
-    Distribution, ExecutionOutcome, HostData, HostDataType, HostDataVec, ScopeUnderTest,
-    StridedLayout, TestInput, Written,
+    Distribution, HostData, HostDataType, HostDataVec, ScopeChecker, StridedLayout, TestInput,
+    Written, assert_equals_approx, supports_f16_arithmetic,
 };
 
-use cubek_reduce::eval::cpu_reference::{contiguous_strides, reference};
-use cubek_reduce::eval::workspace::workspace_for;
+use cubek_reduce::eval::EvalWorkspace;
+use cubek_reduce::eval::cpu_reference::ReduceReference;
 
 /// The unit kernel: a unit reduces each row.
 pub const UNIT: ReduceOpStrategy = ReduceOpStrategy::Specific(ReduceKernel::Unit);
@@ -30,18 +31,22 @@ pub const HYPERCUBE: ReduceOpStrategy =
 /// The rule, which picks among the kernels by the problem and the device.
 pub const RULE: ReduceOpStrategy = ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile);
 
+/// The input of a reduction, and the kernel that reduces it.
 #[derive(Clone)]
 pub struct TestCase {
+    /// The input's extent along each axis, read by axis (Position Usage).
     pub shape: Shape,
+    /// The input's stride along each axis, read by axis (Position Usage).
     pub stride: Strides,
     pub axis: Option<usize>,
     pub strategy: ReduceOpStrategy,
     pub input_dtype: ElemType,
-    custom_input: Option<Vec<f32>>,
+    /// The input's values in row-major order (Arrival Usage), where they are not drawn.
+    pub custom_input: Option<Vec<f32>>,
 }
 
 impl core::fmt::Debug for TestCase {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TestCase")
             .field("shape", &self.shape)
             .field("stride", &self.stride)
@@ -70,133 +75,114 @@ impl TestCase {
         }
     }
 
-    /// Use explicit regression data. A custom case a kernel accepts must compile, even where the
-    /// default matrix-test policy permits generated configurations to fail compilation.
-    pub fn with_data(mut self, data: Vec<f32>) -> Self {
-        self.custom_input = Some(data);
-        self
+    /// This case holding `data`.
+    pub fn with_data(&self, data: Vec<f32>) -> Self {
+        Self {
+            custom_input: Some(data),
+            ..self.clone()
+        }
     }
 
-    /// This case reduced by `op`, against the host.
-    fn check(&self, op: Op) {
-        ReduceScopeUnderTest.check([Reduction {
+    /// This case reduced by `op`.
+    pub fn reduced_by(&self, op: Op) -> Reduction {
+        Reduction {
             case: self.clone(),
             op,
-        }]);
+        }
     }
+}
 
-    pub fn test_sum(&self) {
-        self.check(Op::Sum);
-    }
+/// Where a value lies: its coordinate along the reduced axis, the row it reduces into, and how many
+/// values that row holds.
+#[derive(Debug, Clone, Copy)]
+pub struct ValuePlace {
+    pub coordinate: usize,
+    pub row: usize,
+    pub row_value_count: usize,
+}
 
-    pub fn test_mean(&self) {
-        self.check(Op::Mean);
-    }
+/// The values `value` states of each place of a row-major `shape` reduced along `axis`.
+pub fn values_by_place(shape: &Shape, axis: usize, value: impl Fn(ValuePlace) -> f32) -> Vec<f32> {
+    let row_value_count = shape[axis];
+    let inner = shape.iter().skip(axis + 1).product::<usize>();
+    (0..shape.iter().product::<usize>())
+        .map(|linear| {
+            let outer = linear / (inner * row_value_count);
+            value(ValuePlace {
+                coordinate: (linear / inner) % row_value_count,
+                row: outer * inner + linear % inner,
+                row_value_count,
+            })
+        })
+        .collect()
+}
 
-    pub fn test_prod(&self) {
-        self.check(Op::Prod);
-    }
+/// Checks that `written` holds on `client` what the reference reduces `input` to along `axis` by
+/// `operation`, read back as `host`.
+pub fn is_the_references(
+    client: &Client,
+    written: TensorHandle,
+    host: HostDataType,
+    input: &HostData,
+    axis: usize,
+    operation: ReduceOperation,
+) {
+    let written = HostData::from_tensor_handle(client, written, host);
+    let reference = ReduceReference::new(input, axis, operation, None);
+    assert_equals_approx(&written, &reference.output, 0.0)
+        .as_test_outcome()
+        .enforce();
+}
 
-    pub fn test_min(&self) {
-        self.check(Op::Min);
-    }
+/// Per-element probability of `1` that yields a genuine mix of 0/1 reduction outputs for `case`'s
+/// reduce axis length.
+fn flag_probability(case: &TestCase) -> f32 {
+    let axis_len = case.shape[case.axis.unwrap()].max(1) as f32;
+    (1.5 / axis_len).clamp(0.0, 1.0)
+}
 
-    pub fn test_max(&self) {
-        self.check(Op::Max);
-    }
+/// The input of `case`, as it states it or seeded from `distribution`: its tensor, and its values
+/// on the host.
+fn input_of(case: &TestCase, distribution: Distribution) -> (TensorHandle, HostData) {
+    let input = TestInput::builder(cubecl::test_device().client(), case.shape.clone())
+        .dtype(case.input_dtype)
+        .layout(StridedLayout::Explicit(
+            case.stride.iter().copied().collect(),
+        ));
+    let input = match &case.custom_input {
+        Some(data) => input.custom(data.clone()),
+        None => input.random(1234, distribution),
+    };
+    input.generate_with_f32_host_data()
+}
 
-    pub fn test_max_abs(&self) {
-        self.check(Op::MaxAbs);
-    }
-
-    pub fn test_any(&self) {
-        self.check(Op::Any);
-    }
-
-    pub fn test_all(&self) {
-        self.check(Op::All);
-    }
-
-    pub fn test_argmax(&self) {
-        self.check(Op::ArgMax);
-    }
-
-    pub fn test_argmin(&self) {
-        self.check(Op::ArgMin);
-    }
-
-    pub fn test_argtopk(&self, k: usize) {
-        self.check(Op::ArgTopK(k));
-    }
-
-    pub fn test_topk(&self, k: usize) {
-        self.check(Op::TopK(k));
-    }
-
-    /// The fused top-k, both outputs against the very references the separate `TopK` and
-    /// `ArgTopK` launches are checked against, so one launch has to agree with what two launches
-    /// produce.
-    pub fn test_topk_with_indices(&self, k: usize) {
-        self.check(Op::TopKWithIndices(k));
-    }
-
-    pub fn test_min_with_indices(&self) {
-        self.check(Op::MinWithIndices);
-    }
-
-    pub fn test_max_with_indices(&self) {
-        self.check(Op::MaxWithIndices);
-    }
-
-    /// Per-element probability of `1` that yields a genuine mix of 0/1 reduction outputs for the
-    /// current reduce axis length.
-    fn flag_probability(&self) -> f32 {
-        let axis_len = self.shape[self.axis.unwrap()].max(1) as f32;
-        (1.5 / axis_len).clamp(0.0, 1.0)
-    }
-
-    /// The input, as the case states it or seeded from `distribution`: its tensor, and its values
-    /// on the host.
-    fn input(&self, distribution: Distribution) -> (TensorHandle, HostData) {
-        let input = TestInput::builder(cubecl::test_device().client(), self.shape.clone())
-            .dtype(self.input_dtype)
-            .layout(StridedLayout::Explicit(
-                self.stride.iter().copied().collect(),
-            ));
-        let input = match &self.custom_input {
-            Some(data) => input.custom(data.clone()),
-            None => input.random(1234, distribution),
-        };
-        input.generate_with_f32_host_data()
-    }
-
-    fn build_output_tensor(
-        &self,
-        client: &cubecl::client::Client,
-        output_dtype: ElemType,
-        output_shape: &Shape,
-        operation: ReduceOperation,
-    ) -> TensorHandle {
-        let axis = self.axis.unwrap();
-        let is_parallel = self.stride[axis] == 1;
-        let strides = match operation {
-            ReduceOperation::ArgTopK { k } | ReduceOperation::TopK { k } if is_parallel => {
-                parallel_multiple_output_strides(self.shape.as_slice(), &self.stride, axis, k)
-            }
-            _ => contiguous_strides(output_shape.as_slice()),
-        };
-        // Poisoned: NaN where the output holds values, an index no row reaches where it holds
-        // indices or flags, so a cell the kernel never writes fails the comparison.
-        let poison = match output_dtype {
-            ElemType::Float(_) => f32::NAN,
-            _ => 77_777.0,
-        };
-        TestInput::builder(client.clone(), output_shape.clone())
-            .dtype(output_dtype)
-            .layout(StridedLayout::Explicit(strides.iter().copied().collect()))
-            .custom(vec![poison; output_shape.num_elements()])
-            .generate_without_host_data()
-    }
+/// The output of `case` reduced by `operation`, of `output_shape` in `output_dtype` on `client`.
+fn output_of(
+    case: &TestCase,
+    client: &Client,
+    output_dtype: ElemType,
+    output_shape: &Shape,
+    operation: ReduceOperation,
+) -> TensorHandle {
+    let axis = case.axis.unwrap();
+    let is_parallel = case.stride[axis] == 1;
+    let strides = match operation {
+        ReduceOperation::ArgTopK { k } | ReduceOperation::TopK { k } if is_parallel => {
+            parallel_multiple_output_strides(case.shape.as_slice(), &case.stride, axis, k)
+        }
+        _ => Strides::new(Geometry::row_major(output_shape.as_slice()).strides()),
+    };
+    // Poisoned: NaN where the output holds values, an index no row reaches where it holds
+    // indices or flags, so a cell the kernel never writes fails the comparison.
+    let poison = match output_dtype {
+        ElemType::Float(_) => f32::NAN,
+        _ => 77_777.0,
+    };
+    TestInput::builder(client.clone(), output_shape.clone())
+        .dtype(output_dtype)
+        .layout(StridedLayout::Explicit(strides.iter().copied().collect()))
+        .custom(vec![poison; output_shape.num_elements()])
+        .generate_without_host_data()
 }
 
 /// A reduction a case is run through: one output, or a value and its index fused in one launch.
@@ -248,19 +234,19 @@ impl Op {
 
     /// The element each output is written in: the input's for values, `u32` for indices and for
     /// the flags of `any` and `all`, the one flag storage every test runtime supports.
-    fn output_dtypes(self, input: ElemType) -> Vec<ElemType> {
+    fn output_dtypes(self, input: ElemType) -> impl Iterator<Item = ElemType> {
         let index = u32::elem_type_native();
-        match self {
-            Op::Any | Op::All | Op::ArgMax | Op::ArgMin | Op::ArgTopK(_) => vec![index],
-            op if op.with_indices() => vec![input, index],
-            _ => vec![input],
-        }
+        let first = match self {
+            Op::Any | Op::All | Op::ArgMax | Op::ArgMin | Op::ArgTopK(_) => index,
+            _ => input,
+        };
+        core::iter::once(first).chain(self.with_indices().then_some(index))
     }
 
     /// The input's values. `any` and `all` read Bernoulli flags at `flag_probability`, so about a
     /// fifth of the reduced slices take each merge outcome rather than the trivial one a uniform
     /// input would give.
-    fn distribution(self, flag_probability: f32) -> Distribution {
+    fn distribution_at_flag_probability(self, flag_probability: f32) -> Distribution {
         match self {
             Op::Any => Distribution::Bernoulli(flag_probability),
             Op::All => Distribution::Bernoulli(1.0 - flag_probability),
@@ -283,7 +269,7 @@ impl Op {
         };
         core::iter::once(operation)
             .chain(picked)
-            .map(|operation| reference(input, axis, operation, None))
+            .map(|operation| ReduceReference::new(input, axis, operation, None).output)
             .collect()
     }
 
@@ -311,6 +297,11 @@ impl Op {
     }
 }
 
+/// Why a case in f16 does not run on a device that computes none.
+const NO_F16_ARITHMETIC: Decline = Decline::Unserved {
+    why: "the device computes no f16",
+};
+
 /// One case reduced by one operation.
 #[derive(Debug, Clone)]
 pub struct Reduction {
@@ -318,45 +309,51 @@ pub struct Reduction {
     pub op: Op,
 }
 
-impl Reduction {
-    fn input(&self) -> (TensorHandle, HostData) {
-        self.case
-            .input(self.op.distribution(self.case.flag_probability()))
-    }
+/// `reduction`'s input: its tensor, and its values on the host.
+fn input_reduced(reduction: &Reduction) -> (TensorHandle, HostData) {
+    let probability = flag_probability(&reduction.case);
+    let distribution = reduction.op.distribution_at_flag_probability(probability);
+    input_of(&reduction.case, distribution)
 }
 
-/// [`Reduce`] at its case's strategy, against the host.
-pub struct ReduceScopeUnderTest;
+/// Checks [`Reduce`] at its case's strategy against the host. A case in f16 is a skip where the device
+/// computes none.
+pub struct ReduceScopeChecker;
 
-impl ScopeUnderTest for ReduceScopeUnderTest {
+impl ScopeChecker for ReduceScopeChecker {
     type Case = Reduction;
 
     /// # Panics
     ///
-    /// Where a case of explicit regression data does not compile.
+    /// Where the case is outside the operation's Domain.
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
         let case = &reduction.case;
+        let runs =
+            case.input_dtype != half::f16::elem_type_native() || supports_f16_arithmetic(client);
+        if !runs {
+            return Err(NO_F16_ARITHMETIC);
+        }
         let (op, axis, operation) = (reduction.op, case.axis.unwrap(), reduction.op.operation());
-        let (input, host) = reduction.input();
+        let (input, host) = input_reduced(reduction);
         let outputs: Vec<(ElemType, TensorHandle)> = op
             .output_dtypes(case.input_dtype)
-            .into_iter()
             .zip(op.references(&host, axis))
             .map(|(dtype, reference)| {
-                let output = case.build_output_tensor(client, dtype, &reference.shape, operation);
+                let output = output_of(case, client, dtype, &reference.shape, operation);
                 (dtype, output)
             })
             .collect();
         let elements =
             ReduceElements::for_operation(operation, case.input_dtype, Some(outputs[0].0));
-        let workspace = workspace_for(
+        let workspace = EvalWorkspace::new(
             client,
             &case.shape,
             axis,
             operation,
             elements,
             op.with_indices(),
-        );
+        )
+        .workspace;
         let reduce = Reduce::new(case.strategy).with_workspace(workspace);
         let launched = match op.with_indices() {
             true => reduce.execute_with_indices(
@@ -385,14 +382,6 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
             Err(ReduceError::Declined(decline)) => return Err(decline),
             Err(why) => panic!("{reduction:?}: {why}"),
         }
-        if case.custom_input.is_some() {
-            let handles: Vec<_> = outputs.iter().map(|(_, tensor)| &tensor.handle).collect();
-            if let ExecutionOutcome::CompileError(why) =
-                ExecutionOutcome::of_outputs(client, &handles)
-            {
-                panic!("{reduction:?}: a case of explicit data must compile: {why}");
-            }
-        }
         let names = match op.with_indices() {
             true => ["values", "indices"].as_slice(),
             false => ["output"].as_slice(),
@@ -413,7 +402,7 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
     /// output.
     fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
         let (op, case) = (reduction.op, &reduction.case);
-        let (_, host) = reduction.input();
+        let (_, host) = input_reduced(reduction);
         op.references(&host, case.axis.unwrap())
             .into_iter()
             .zip(op.output_dtypes(case.input_dtype))
@@ -423,7 +412,8 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
 
     fn tolerance(&self, reduction: &Reduction) -> f32 {
         let case = &reduction.case;
-        let output = reduction.op.output_dtypes(case.input_dtype)[0];
+        let written = reduction.op.output_dtypes(case.input_dtype).next();
+        let output = written.expect("a reduction writes one output at least");
         reduction.op.tolerance(output)
     }
 
@@ -455,10 +445,7 @@ fn parallel_multiple_output_strides(
     let mut out = vec![0usize; rank];
     out[reduce_axis] = size_v;
     out[v] = 1;
-    for d in 0..rank {
-        if d == reduce_axis || d == v {
-            continue;
-        }
+    for d in (0..rank).filter(|&d| d != reduce_axis && d != v) {
         out[d] = input_strides[d] * k / size_r;
     }
     Strides::new(&out)
@@ -467,16 +454,17 @@ fn parallel_multiple_output_strides(
 /// Cast expected values through the GPU output dtype so comparisons account for
 /// the precision loss that occurs when the kernel stores to a narrower type
 /// (e.g. an f32 accumulator overflows once written to an f16 output).
-fn cast_host_through_dtype(mut host: HostData, dtype: ElemType) -> HostData {
-    if let HostDataVec::F32(values) = &host.data {
-        let casted = match dtype {
-            ElemType::Float(FloatKind::F16) => values
-                .iter()
-                .map(|&x| half::f16::from_f32(x).to_f32())
-                .collect(),
-            _ => return host,
-        };
-        host.data = HostDataVec::F32(casted);
-    }
-    host
+fn cast_host_through_dtype(host: HostData, dtype: ElemType) -> HostData {
+    let data = match (host.data, dtype) {
+        (HostDataVec::F32(values), ElemType::Float(FloatKind::F16)) => {
+            HostDataVec::F32(values.into_iter().map(value_through_f16).collect())
+        }
+        (data, _) => data,
+    };
+    HostData { data, ..host }
+}
+
+/// `value` as f16 holds it.
+fn value_through_f16(value: f32) -> f32 {
+    half::f16::from_f32(value).to_f32()
 }

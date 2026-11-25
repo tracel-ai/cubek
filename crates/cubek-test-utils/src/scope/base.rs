@@ -1,5 +1,5 @@
 //! One shape for testing any scope: a kernel, or a microkernel launched alone. A test states its
-//! cases, launches the scope on each, and says what the reference writes; [`ScopeUnderTest::check`]
+//! cases, launches the scope on each, and says what the reference writes; [`ScopeChecker::check`]
 //! compares the two at the case's tolerance and hands the outcome to the active test policy. A
 //! scope that refuses a case on the device is a skip, which the policy decides on, never a pass;
 //! a launch it accepted and the device failed is a failure.
@@ -26,7 +26,7 @@ pub struct Written {
 }
 
 /// A kernel or a microkernel under test, against its own reference.
-pub trait ScopeUnderTest {
+pub trait ScopeChecker {
     /// One problem the scope runs on, named in every failure.
     type Case: Debug;
 

@@ -27,12 +27,13 @@ impl Reduce {
         }
     }
 
-    /// This reduction given `workspace`, the last-arrival hypercube's scratch
-    /// ([`ReduceWorkspace::bytes_for`]), which cubek never allocates.
-    pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
+    /// This reduction given `workspace`, the last-arrival hypercube's scratch, which cubek never
+    /// allocates. The hypercube declines a reduction given fewer bytes than
+    /// [`ReduceWorkspace::bytes_for`] states where its launch needs them.
+    pub fn with_workspace(&self, workspace: ReduceWorkspace) -> Self {
         Self {
             workspace: Some(workspace),
-            ..self
+            ..self.clone()
         }
     }
 
@@ -51,8 +52,7 @@ impl Reduce {
     ///
     /// # Panics
     ///
-    /// Where `input` has 256 axes or more, or a row split across cubes is longer than `u32`
-    /// counts.
+    /// Where `input` has 256 axes or more.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -124,17 +124,15 @@ impl Reduce {
     ///
     /// As [`execute`](Self::execute).
     pub fn launch(&self, tensors: ReduceTensors) -> Result<(), ReduceError> {
-        launch_by_strategy(self.strategy, self.given(tensors))
+        launch_by_strategy(self.strategy, given(self, tensors))
     }
 }
 
-impl Reduce {
-    /// `tensors` given this reduction's workspace, where it has one.
-    fn given(&self, tensors: ReduceTensors) -> ReduceTensors {
-        match &self.workspace {
-            Some(workspace) => tensors.with_workspace(workspace.clone()),
-            None => tensors,
-        }
+/// `tensors` given the workspace `reduction` has, where it has one.
+fn given(reduction: &Reduce, tensors: ReduceTensors) -> ReduceTensors {
+    match &reduction.workspace {
+        Some(workspace) => tensors.with_workspace(workspace.clone()),
+        None => tensors,
     }
 }
 
@@ -220,21 +218,23 @@ pub(crate) fn validate_indices(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::ReduceKernel;
+    use crate::kernels::testing::zeros;
 
-    const ROWS: usize = 4;
-    const ROW_LEN: usize = 8;
+    const ROW_COUNT: usize = 4;
+    const ROW_VALUE_COUNT: usize = 8;
     const AXIS: usize = 1;
 
     #[test]
     fn a_top_k_keeping_nothing_is_outside_the_domain() {
-        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, 0], AXIS, 0);
+        let result = validate_shape(&[ROW_COUNT, ROW_VALUE_COUNT], &[ROW_COUNT, 0], AXIS, 0);
         assert!(matches!(result, Err(ReduceError::EmptyTopK)), "{result:?}");
     }
 
     #[test]
     fn a_top_k_keeping_more_than_a_row_is_outside_the_domain() {
-        let k = ROW_LEN + 1;
-        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, k], AXIS, k);
+        let k = ROW_VALUE_COUNT + 1;
+        let result = validate_shape(&[ROW_COUNT, ROW_VALUE_COUNT], &[ROW_COUNT, k], AXIS, k);
         assert!(
             matches!(result, Err(ReduceError::ReduceAxisTooSmall { .. })),
             "{result:?}"
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn an_output_not_one_wide_along_the_axis_is_outside_the_domain() {
-        let result = validate_shape(&[ROWS, ROW_LEN], &[ROWS, 2], AXIS, 1);
+        let result = validate_shape(&[ROW_COUNT, ROW_VALUE_COUNT], &[ROW_COUNT, 2], AXIS, 1);
         assert!(
             matches!(result, Err(ReduceError::MismatchOutputShape { .. })),
             "{result:?}"
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn indices_of_another_shape_are_outside_the_domain() {
-        let result = validate_indices(&[ROWS, 1], &[1, ROWS]);
+        let result = validate_indices(&[ROW_COUNT, 1], &[1, ROW_COUNT]);
         assert!(
             matches!(result, Err(ReduceError::MismatchIndicesShape { .. })),
             "{result:?}"
@@ -334,6 +334,118 @@ mod tests {
 
     #[test]
     fn a_well_shaped_call_is_inside_the_domain() {
-        assert!(validate_shape(&[ROWS, ROW_LEN], &[ROWS, 1], AXIS, 1).is_ok());
+        assert!(validate_shape(&[ROW_COUNT, ROW_VALUE_COUNT], &[ROW_COUNT, 1], AXIS, 1).is_ok());
+    }
+
+    const UNIT: Reduce = Reduce {
+        strategy: ReduceOpStrategy::Specific(ReduceKernel::Unit),
+        workspace: None,
+    };
+
+    /// The workspace of a reduction no test here launches.
+    fn workspace() -> ReduceWorkspace {
+        let client = cubecl::test_device().client();
+        ReduceWorkspace {
+            partials: client.empty(64),
+            partial_indices: client.empty(32),
+            arrivals: client.empty(8),
+        }
+    }
+
+    #[test]
+    fn a_new_reduction_is_given_no_workspace() {
+        let reduction = Reduce::new(ReduceOpStrategy::default());
+        let tensors =
+            ReduceTensors::zeros(&[ROW_COUNT, ROW_VALUE_COUNT], AXIS, ReduceOperation::Sum);
+        assert_eq!(given(&reduction, tensors).problem().partials, None);
+    }
+
+    #[test]
+    fn a_reductions_workspace_is_given_to_its_tensors() {
+        let reduction = UNIT.with_workspace(workspace());
+        let tensors =
+            ReduceTensors::zeros(&[ROW_COUNT, ROW_VALUE_COUNT], AXIS, ReduceOperation::Sum);
+        assert!(given(&reduction, tensors).problem().partials.is_some());
+    }
+
+    /// Two output buffers of a row a cell, and the zeros they are reduced from.
+    fn zeros_and_outputs() -> [TensorBinding; 3] {
+        let client = cubecl::test_device().client();
+        [
+            zeros(&client, &[ROW_COUNT, ROW_VALUE_COUNT]),
+            zeros(&client, &[ROW_COUNT, 1]),
+            zeros(&client, &[ROW_COUNT, 1]),
+        ]
+    }
+
+    fn elements() -> ReduceElements {
+        let f32 = f32::elem_type_native();
+        ReduceElements::for_operation(ReduceOperation::Max, f32, None)
+    }
+
+    #[test]
+    fn a_call_inside_the_domain_runs() {
+        let [input, output, _] = zeros_and_outputs();
+        let result = UNIT.execute(
+            &cubecl::test_device().client(),
+            input,
+            output,
+            AXIS,
+            ReduceOperation::Max,
+            elements(),
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_call_outside_the_domain_errs() {
+        let [input, output, _] = zeros_and_outputs();
+        let result = UNIT.execute(
+            &cubecl::test_device().client(),
+            input,
+            output,
+            AXIS + 1,
+            ReduceOperation::Max,
+            elements(),
+        );
+        assert!(
+            matches!(result, Err(ReduceError::InvalidAxis { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_call_with_indices_inside_the_domain_runs() {
+        let [input, values, indices] = zeros_and_outputs();
+        let result = UNIT.execute_with_indices(
+            &cubecl::test_device().client(),
+            input,
+            values,
+            indices,
+            AXIS,
+            ReduceOperation::Max,
+            elements(),
+            u32::elem_type_native(),
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_call_with_indices_outside_the_domain_errs() {
+        let [input, values, indices] = zeros_and_outputs();
+        let result = UNIT.execute_with_indices(
+            &cubecl::test_device().client(),
+            input,
+            values,
+            indices,
+            AXIS,
+            ReduceOperation::Sum,
+            elements(),
+            u32::elem_type_native(),
+        );
+        assert!(
+            matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
+            "{result:?}"
+        );
     }
 }

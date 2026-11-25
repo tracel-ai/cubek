@@ -1,23 +1,18 @@
 //! The scratch a reduction's caller gives it ([`ReduceWorkspace`]): cubek allocates none.
 
 use crate::kernels::{
-    HypercubeLastArrivalReduceRoutine, ReduceElements, ReduceRoutineProblem, indexed,
+    HypercubeLastArrivalReduceRoutine, ReduceElements, ReducePartials, ReduceRoutineProblem,
+    indexed,
 };
 use cubecl::client::Client;
+use cubecl::ir::ElemType;
 use cubecl::server::Handle;
-use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::Hardware;
 
-/// Why the last-arrival hypercube declines a call whose caller gave it less scratch than it needs
-/// ([`ReduceWorkspace::bytes_for`]).
-pub const WORKSPACE_TOO_SMALL: Decline = Decline::Unserved {
-    why: "the routine needs more scratch than the workspace its caller gave",
-};
-
 /// The scratch of a reduction whose last cube merges a row split across cubes, which its caller
-/// allocates and owns: each cube's partial, its indices where the carrier keeps any, and one arrival counter a
-/// box of rows. The counters hold zero when the caller first gives them, and every launch leaves
+/// allocates and owns: each cube's partial, its indices where the carrier keeps any, and one arrival
+/// counter a box of rows. The counters hold zero when the caller first gives them, and every launch leaves
 /// them at zero, so one workspace serves every launch that runs after the one before it ends.
 #[derive(Debug, Clone)]
 pub struct ReduceWorkspace {
@@ -29,12 +24,12 @@ pub struct ReduceWorkspace {
     pub arrivals: Handle,
 }
 
-/// The bytes each buffer of a [`ReduceWorkspace`] holds, or must hold.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The bytes each buffer of a [`ReduceWorkspace`] must hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReduceWorkspaceBytes {
-    pub partials: u64,
-    pub partial_indices: u64,
-    pub arrivals: u64,
+    pub partials_bytes: u64,
+    pub partial_indices_bytes: u64,
+    pub arrivals_bytes: u64,
 }
 
 impl ReduceWorkspace {
@@ -45,7 +40,7 @@ impl ReduceWorkspace {
     ///
     /// # Panics
     ///
-    /// Where `axis` is not an axis of `shape`.
+    /// Where `shape` has no axis `axis`.
     pub fn bytes_for(
         client: &Client,
         shape: &[usize],
@@ -61,40 +56,25 @@ impl ReduceWorkspace {
         };
         let problem =
             ReduceRoutineProblem::of_shape(shape, axis, operation, elements, with_indices);
-        HypercubeLastArrivalReduceRoutine::workspace_bound(&Hardware::from_client(client), &problem)
-    }
-
-    /// The bytes each of its buffers holds.
-    pub fn bytes(&self) -> ReduceWorkspaceBytes {
+        let partials = HypercubeLastArrivalReduceRoutine::partials_bound(
+            &Hardware::from_client(client),
+            &problem,
+        );
         ReduceWorkspaceBytes {
-            partials: self.partials.size_in_used(),
-            partial_indices: self.partial_indices.size_in_used(),
-            arrivals: self.arrivals.size_in_used(),
+            partials_bytes: partials.value_count as u64 * elements.accumulator.size() as u64,
+            partial_indices_bytes: partials.index_count as u64 * size_of::<u32>() as u64,
+            arrivals_bytes: partials.arrival_count as u64 * size_of::<u32>() as u64,
         }
     }
 }
 
-impl ReduceWorkspaceBytes {
-    /// Whether each buffer holds at least what `needs` asks of it.
-    pub fn holds(&self, needs: &ReduceWorkspaceBytes) -> bool {
-        self.partials >= needs.partials
-            && self.partial_indices >= needs.partial_indices
-            && self.arrivals >= needs.arrivals
-    }
-
-    /// What a key's representative is given: as much as any of its calls asks.
-    pub const UNBOUNDED: Self = Self {
-        partials: u64::MAX,
-        partial_indices: u64::MAX,
-        arrivals: u64::MAX,
-    };
-
-    /// Each buffer the larger of this and `other`.
-    pub fn max(self, other: Self) -> Self {
-        Self {
-            partials: self.partials.max(other.partials),
-            partial_indices: self.partial_indices.max(other.partial_indices),
-            arrivals: self.arrivals.max(other.arrivals),
+impl ReduceWorkspace {
+    /// The cells its buffers hold, its partials in `accumulator`.
+    pub(crate) fn partials_in(&self, accumulator: ElemType) -> ReducePartials {
+        ReducePartials {
+            value_count: (self.partials.size_in_used() / accumulator.size() as u64) as usize,
+            index_count: (self.partial_indices.size_in_used() / size_of::<u32>() as u64) as usize,
+            arrival_count: (self.arrivals.size_in_used() / size_of::<u32>() as u64) as usize,
         }
     }
 }
@@ -102,29 +82,28 @@ impl ReduceWorkspaceBytes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::ir::FloatKind;
 
     const SHAPE: [usize; 2] = [3, 70001];
     const AXIS: usize = 1;
-
-    const BYTES: ReduceWorkspaceBytes = ReduceWorkspaceBytes {
-        partials: 64,
-        partial_indices: 32,
-        arrivals: 8,
-    };
 
     fn max_elements() -> ReduceElements {
         let f32 = ElemType::Float(FloatKind::F32);
         ReduceElements::for_operation(ReduceOperation::Max, f32, None)
     }
 
-    /// What the last-arrival hypercube takes on the test device to reduce a [`SHAPE`] along
-    /// [`AXIS`] by `operation`.
+    /// The bytes of the cells the last-arrival hypercube writes on the test device, four a cell, to
+    /// reduce a [`SHAPE`] along [`AXIS`] by `operation`.
     fn bound(operation: ReduceOperation, with_indices: bool) -> ReduceWorkspaceBytes {
         let hw = Hardware::from_client(&cubecl::test_device().client());
         let problem =
             ReduceRoutineProblem::of_shape(&SHAPE, AXIS, operation, max_elements(), with_indices);
-        HypercubeLastArrivalReduceRoutine::workspace_bound(&hw, &problem)
+        let partials = HypercubeLastArrivalReduceRoutine::partials_bound(&hw, &problem);
+        ReduceWorkspaceBytes {
+            partials_bytes: 4 * partials.value_count as u64,
+            partial_indices_bytes: 4 * partials.index_count as u64,
+            arrivals_bytes: 4 * partials.arrival_count as u64,
+        }
     }
 
     #[test]
@@ -167,61 +146,20 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_is_as_large_as_its_buffers() {
+    fn a_workspace_holds_as_many_cells_as_its_buffers() {
         let client = cubecl::test_device().client();
         let workspace = ReduceWorkspace {
-            partials: client.empty(BYTES.partials as usize),
-            partial_indices: client.empty(BYTES.partial_indices as usize),
-            arrivals: client.empty(BYTES.arrivals as usize),
+            partials: client.empty(64),
+            partial_indices: client.empty(32),
+            arrivals: client.empty(8),
         };
-        assert_eq!(workspace.bytes(), BYTES);
-    }
-
-    #[test]
-    fn bytes_hold_as_many() {
-        assert!(BYTES.holds(&BYTES));
-    }
-
-    #[test]
-    fn fewer_partials_than_needed_hold_nothing() {
-        let given = ReduceWorkspaceBytes {
-            partials: BYTES.partials - 1,
-            ..ReduceWorkspaceBytes::UNBOUNDED
-        };
-        assert!(!given.holds(&BYTES));
-    }
-
-    #[test]
-    fn fewer_partial_indices_than_needed_hold_nothing() {
-        let given = ReduceWorkspaceBytes {
-            partial_indices: BYTES.partial_indices - 1,
-            ..ReduceWorkspaceBytes::UNBOUNDED
-        };
-        assert!(!given.holds(&BYTES));
-    }
-
-    #[test]
-    fn fewer_arrivals_than_needed_hold_nothing() {
-        let given = ReduceWorkspaceBytes {
-            arrivals: BYTES.arrivals - 1,
-            ..ReduceWorkspaceBytes::UNBOUNDED
-        };
-        assert!(!given.holds(&BYTES));
-    }
-
-    #[test]
-    fn the_max_takes_the_larger_of_each_buffer() {
-        let other = ReduceWorkspaceBytes {
-            partials: BYTES.partials * 2,
-            partial_indices: BYTES.partial_indices / 2,
-            arrivals: BYTES.arrivals * 2,
-        };
+        let partials = workspace.partials_in(ElemType::Float(FloatKind::F64));
         assert_eq!(
-            BYTES.max(other),
-            ReduceWorkspaceBytes {
-                partials: other.partials,
-                partial_indices: BYTES.partial_indices,
-                arrivals: other.arrivals,
+            partials,
+            ReducePartials {
+                value_count: 8,
+                index_count: 8,
+                arrival_count: 2,
             }
         );
     }
