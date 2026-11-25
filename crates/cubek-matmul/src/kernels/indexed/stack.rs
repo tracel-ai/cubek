@@ -73,11 +73,22 @@ impl SlabDimension {
     ///
     /// # Assumptions
     ///
-    /// The view is whole slabs, and `slabs` is not zero.
+    /// The view is whole slabs, at least one.
+    ///
+    /// # Panics
+    ///
+    /// On a view that is not whole slabs, or on no slab.
     pub fn slab_of(self, [k, n]: [usize; 2], slabs: usize) -> [usize; 2] {
+        let whole = |extent: usize| {
+            assert!(
+                extent.is_multiple_of(slabs),
+                "a stack of {slabs} slabs should be whole slabs along its {self:?} dimension, got {extent}"
+            );
+            extent / slabs
+        };
         match self {
-            Self::Output => [k, n / slabs],
-            Self::Contraction => [k / slabs, n],
+            Self::Output => [k, whole(n)],
+            Self::Contraction => [whole(k), n],
         }
     }
 
@@ -150,7 +161,11 @@ impl SlabView {
     ///
     /// # Assumptions
     ///
-    /// The view is whole slabs, and `groups` is not zero.
+    /// The view is whole slabs, at least one.
+    ///
+    /// # Panics
+    ///
+    /// As [`SlabDimension::slab_of`].
     pub fn new(stack: &PlainTensor, groups: usize, along: SlabDimension) -> Self {
         let meta = stack.meta();
         let (shape, strides) = (meta.shape(), meta.strides());

@@ -37,8 +37,10 @@ impl KGroupedMatmulTensors {
     /// `lhs[rows, m]` and `rhs[rows, n]` on `client`'s device, their rows grouped by `ends`, each
     /// group's cumulative end row as a `u32`, one group a slab.
     ///
-    /// The product is defined whatever the ends hold: a group sums the rows from the end before
-    /// its own up to its own, none where they run backwards, and none past `rows`.
+    /// # Guarantees
+    ///
+    /// The product is defined whatever the ends are: a group sums the rows from the end before its
+    /// own up to its own, none where they run backwards, and none past `rows`.
     ///
     /// # Errors
     ///

@@ -74,6 +74,10 @@ impl RoutedMatmulTensors {
     /// The rows and the routes are made dense, and a float stack is copied only where it is
     /// contiguous along neither dimension.
     ///
+    /// # Guarantees
+    ///
+    /// The product is defined whatever the routes are: one past the slabs adds nothing to its row.
+    ///
     /// # Errors
     ///
     /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for a

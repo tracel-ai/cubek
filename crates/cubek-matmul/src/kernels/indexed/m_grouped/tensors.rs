@@ -56,6 +56,11 @@ impl MGroupedMatmulTensors {
     /// stack is read where it lies, and copied only where it overlaps itself or is contiguous
     /// along neither dimension.
     ///
+    /// # Assumptions
+    ///
+    /// The ends never decrease, and the last is the rows' count. The places of a routed source
+    /// name each route once.
+    ///
     /// # Errors
     ///
     /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an

@@ -1670,9 +1670,11 @@ struct TmaLanding {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::kernels::MatmulIndex;
+    use cubecl::ir::FloatKind;
     use cubecl::tile::layout::ElemAlignment;
-    use cubecl::zspace::metadata::Metadata;
-    use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand};
+    use cubek_test_utils::client;
 
     /// A stack's alignment over the order its buffer steps, as a problem derives it from the
     /// stack's layout, is the one a binding stepping that order reads, for every slab view of a
@@ -1724,5 +1726,60 @@ mod tests {
                 "slabs at {strides:?}"
             );
         }
+    }
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+    const U32: ElemType = ElemType::UInt(UIntKind::U32);
+
+    /// Zeros of `shape` and `element`.
+    fn zeros(shape: &[usize], element: ElemType) -> PlainTensor {
+        PlainTensor::of_handle(TensorHandle::zeros(&client(), shape.to_vec(), element))
+    }
+
+    /// What two batches of one row of eight against `rhs` decline, each batch reading its entry of
+    /// `entries` in a stack of four slabs.
+    fn declined_indexed(lhs: &[usize], rhs: &[usize], entries: ElemType) -> Option<Decline> {
+        let table = MatmulIndexTable {
+            index: MatmulIndex::Slab { slabs: 4 },
+            entries: zeros(&[2], entries),
+        };
+        MatmulTensors::indexed(
+            &client(),
+            zeros(lhs, F32),
+            StoredTensor::Plain(zeros(rhs, F32)),
+            table,
+            zeros(&[2, 1, 16], F32),
+            MatmulRowsKind::Whole,
+        )
+        .err()
+    }
+
+    #[test]
+    fn a_float_table_declines() {
+        let declined = declined_indexed(&[2, 1, 8], &[4, 8, 16], F32);
+
+        assert_eq!(declined, Some(MATMUL_TABLE_UNFIT));
+    }
+
+    #[test]
+    fn a_stack_of_other_slabs_than_its_table_declines() {
+        let declined = declined_indexed(&[2, 1, 8], &[3, 8, 16], U32);
+
+        assert_eq!(declined, Some(MATMUL_TABLE_UNFIT));
+    }
+
+    #[test]
+    fn an_indexed_lhs_of_another_contraction_declines() {
+        let declined = declined_indexed(&[2, 1, 6], &[4, 8, 16], U32);
+
+        assert_eq!(declined, Some(MATMUL_CONTRACTIONS_DISAGREE));
+    }
+
+    #[test]
+    fn an_operand_of_another_contraction_beside_a_packed_one_declines() {
+        let declined =
+            MatmulTensors::beside_packed(&client(), zeros(&[2, 6], F32), [M, K], 8).err();
+
+        assert_eq!(declined, Some(MATMUL_CONTRACTIONS_DISAGREE));
     }
 }

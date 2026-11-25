@@ -103,6 +103,11 @@ impl MGroupedRowSource {
     /// The rows padded under `ends` on `client`'s device, each group's cumulative end row as a
     /// `u32`, every group starting on a tile of `align` rows.
     ///
+    /// # Assumptions
+    ///
+    /// The ends never decrease, and the last is the rows' count. The places of a routed source
+    /// name each route once.
+    ///
     /// # Errors
     ///
     /// As [`GroupedRows::new`], and [`GROUPED_ROWS_UNREAD`], [`ROUTE_SORT_UNREAD`] or
