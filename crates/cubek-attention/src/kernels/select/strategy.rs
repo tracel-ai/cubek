@@ -21,9 +21,12 @@ use serde::{Deserialize, Serialize};
 /// that kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum AttentionOpStrategy {
-    /// Pick by measurement. Two autotunes: one for calls of many query positions,
-    /// where the tiled routines race the flash routines ([`forward`](crate::forward)), and one
-    /// for a single position, where they race each other.
+    /// Pick by measurement, measured by the caller: cubek measures nothing, and the
+    /// selector runs the plan the caller builds for a measured choice of the call's
+    /// query positions ([`select`](super::selector::select)). Two measurements: one for
+    /// calls of many query positions, where the tiled routines race the flash routines
+    /// ([`forward`](crate::forward)), and one for a single position, where they race
+    /// each other.
     ///
     /// Every candidate of the single position's autotune launches the same kernel
     /// at every step of a cache, its attended length read on device: the

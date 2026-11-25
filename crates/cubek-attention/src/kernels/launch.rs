@@ -134,7 +134,6 @@ pub trait PartialAttentionRoutine<M: AttentionMicrokernel, SM = ()>:
 
 #[cfg(test)]
 mod tests {
-    use crate::kernels::tune::key::{AttentionKey, AttentionKeyElements};
     use crate::kernels::*;
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};

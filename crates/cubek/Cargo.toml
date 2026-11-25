@@ -74,12 +74,6 @@ rms-norm = ["cubek-rms-norm"]
 swiglu = ["cubek-swiglu"]
 stdlib = ["cubek-std"]
 fft = ["cubek-fft"]
-# Autotune compares every candidate's output against the first's: a debugging instrument.
-autotune-checks = [
-    "cubek-matmul?/autotune-checks",
-    "cubek-rms-norm?/autotune-checks",
-    "cubek-swiglu?/autotune-checks",
-]
 
 
 [dependencies]

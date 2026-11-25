@@ -4,10 +4,11 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
+use crate::routine::LaunchSettings;
 use cubecl::tile::launch::{Decline, Delivery};
 use cubecl::tile::layout::Stagger;
 use cubecl::{
-    CubeDim,
+    CubeCount, CubeDim,
     client::Client,
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig},
     ir::{DeviceProperties, ElemType, FloatKind, TargetProperties, Type, VectorRegisters},
@@ -210,6 +211,21 @@ impl Hardware {
     /// wide it is. A preference: the grid may exceed it.
     pub fn cubes_to_fill(&self, units_per_cube: u32) -> Option<u32> {
         Some((self.units_to_fill()? / units_per_cube.max(1)).max(1))
+    }
+
+    /// How far short of filling this device a launch's grid falls, in halvings: zero where the
+    /// grid reaches [`cubes_to_fill`](Self::cubes_to_fill), and zero where the device does not say
+    /// how wide it is or the grid is not static. A grid smaller than the device leaves workers
+    /// idle whatever the cube does inside.
+    pub fn halvings_short_of_filling(&self, settings: &LaunchSettings) -> u32 {
+        let CubeCount::Static(x, y, z) = settings.cube_count else {
+            return 0;
+        };
+        let cubes = x.saturating_mul(y).saturating_mul(z).max(1);
+        let Some(wanted) = self.cubes_to_fill(settings.units_per_cube()) else {
+            return 0;
+        };
+        (wanted / cubes).max(1).ilog2()
     }
 
     /// How many values of `elem` one load instruction holds: what a step counts its loads in.
@@ -577,7 +593,7 @@ pub const TMA_ALIGNMENT_BYTES: usize = 16;
 /// device's: on the RTX PRO 6000 a stage landed in 32-byte rows copies about 40% slower than the
 /// same stage in 64-byte rows (the NVFP4 product with no contraction, Qwen3-4B's down projection
 /// at 2048 rows, 126 against 89 µs). The step rule cuts a stage the engine fills to it
-/// (`MatmulStep::filled_by_tma` in cubek-matmul).
+/// ([`Operand::tma_row`](crate::layout::stored::Operand::tma_row)).
 pub const TMA_ROW_BYTES: usize = 64;
 
 /// Vector registers assumed of a device that states no count: the sixteen every x86 CPU names,

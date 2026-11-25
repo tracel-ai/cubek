@@ -1,12 +1,13 @@
 use super::kernel::unit_direct_zero_reduce_kernel;
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, ReduceTensors,
-    prepared_from_key, reduce_widths, unit_launch,
+    ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem, ReduceTensors,
+    reduce_widths, unit_launch,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound, Vectorization};
 use cubecl::tile::{Geometry, Launcher, Partitioning, TileTensorLaunch};
+use cubek_microkernel::reduce::ReduceCarrierFamily;
 use cubek_microkernel::zero::ZeroOperand;
 use cubek_microkernel::zero::unit::{UnitDirectZeroMicrokernel, UnitDirectZeroMicrokernelSettings};
 use cubek_std::Hardware;
@@ -66,19 +67,16 @@ impl Routine for UnitDirectZeroReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        // Inside, `problem` is the problem the call's Tune Key stands for.
-        prepared_from_key::<Self, _>(hw, problem, |problem| {
-            let microkernel = UnitDirectZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
-            let mut vectorization = Vectorization::new();
-            vectorization.require(problem.work_item().requirement());
-            // It zeroes a sum's output ahead of the atomic routine, which no top-k bounds.
-            let widths = reduce_widths(hw, problem, vectorization, None);
-            let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
-            Ok((
-                ReduceBlueprint::new(microkernel, partitioning, widths),
-                grid,
-            ))
-        })
+        let microkernel = UnitDirectZeroMicrokernel::best(hw, &(), &settings.microkernel)?;
+        let mut vectorization = Vectorization::new();
+        vectorization.require(problem.work_item().requirement());
+        // It zeroes a sum's output ahead of the atomic routine, which no top-k bounds.
+        let widths = reduce_widths(hw, problem, vectorization, None)?;
+        let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
+        Ok((
+            ReduceBlueprint::new(microkernel, partitioning, widths),
+            grid,
+        ))
     }
 
     fn estimate(
@@ -93,11 +91,11 @@ impl Routine for UnitDirectZeroReduceRoutine {
     }
 }
 
-impl ReduceLauncher<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
+impl ReduceRoutine<UnitDirectZeroMicrokernel> for UnitDirectZeroReduceRoutine {
     const NAME: &'static str = "unit-direct-zero-reduce";
 
     /// The output zeroed; the input is never read.
-    fn dispatch<I: TileOperand>(
+    fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -132,8 +130,7 @@ impl UnitDirectZeroReduceRoutine {
         blueprint: UnitDirectZeroReduceBlueprint,
         grid: Grid,
     ) {
-        let space = Self::space(tensors.problem(), &blueprint);
-        let binding = tensors.bind(&blueprint, &grid, space);
+        let binding = tensors.bind(&blueprint, &grid);
         launch_zero(
             tensors.client(),
             tensors.problem(),
@@ -176,7 +173,7 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// tracel:kernel::routine-tested-without-features: zeroing reads none.
+    /// Zeroing reads no Feature.
     #[test]
     fn prepares_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());

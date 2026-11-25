@@ -3,13 +3,12 @@
 use crate::kernels::{
     BATCH, CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine,
     HypercubeLastArrivalReduceSettings, PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceKernel,
-    ReduceLauncher, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors,
+    ReduceRoutine, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors,
     UnitDirectReduceRoutine, launch_kernel,
 };
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::ReduceCarrier;
 use cubek_std::Hardware;
-use cubek_std::autotune::short_of_the_device;
 use cubek_std::routine::{Grid, Routine};
 
 /// `tensors` reduced by the routine the rule picks on `hw`, read top to bottom. The rule reads the
@@ -70,9 +69,9 @@ fn unit_keeps_up(hw: &Hardware, problem: &ReduceRoutineProblem, width: usize) ->
 }
 
 /// The setting of the hypercube's launch where a box of rows a cube leaves the device idle and
-/// splitting the rows along the reduced dim gives more cubes: the first of its settings, the
-/// longest parts first, whose cubes fill the device, or the one with the most cubes where none
-/// does. A top-k takes the longest parts only: the last cube merges a row's top-k lists one after
+/// splitting the rows along the reduced dim gives more cubes: the first of its settings whose cubes
+/// fill the device, or the one with the most cubes where none does. A top-k takes the settings
+/// whose units read the most lines only: the last cube merges a row's top-k lists one after
 /// another, `k` inserts a part, so shorter parts cost more in the merge than their extra cubes
 /// save. `None` where the device does not say how wide it is, the boxes already fill it, or every
 /// row is one part.
@@ -81,14 +80,14 @@ fn hypercube_filling_the_device(
     problem: &ReduceRoutineProblem,
 ) -> Option<HypercubeLastArrivalReduceSettings> {
     let mut most_cubes = None;
-    let longest_only = matches!(
+    let most_lines_only = matches!(
         problem.operation.carrier(),
         ReduceCarrier::TopK { .. } | ReduceCarrier::TopValues { .. }
     );
     let settings = HypercubeLastArrivalReduceRoutine::settings(hw)
         .into_iter()
         .filter(|settings| {
-            !longest_only
+            !most_lines_only
                 || settings.unit_lines == HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
         });
     for settings in settings {
@@ -118,7 +117,7 @@ fn hypercube_filling_the_device(
 }
 
 /// The first of `R`'s settings that prepares `problem` on `hw`, with the launch it prepares.
-fn first_served<R: ReduceLauncher<M>, M>(
+fn first_served<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
 ) -> Option<(R::Settings, ReduceBlueprint<M>, Grid)> {
@@ -130,17 +129,17 @@ fn first_served<R: ReduceLauncher<M>, M>(
 }
 
 /// [`first_served`]'s setting and Blueprint, where its launch fills the device.
-fn filling_the_device<R: ReduceLauncher<M>, M>(
+fn filling_the_device<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     problem: &ReduceRoutineProblem,
 ) -> Option<(R::Settings, ReduceBlueprint<M>)> {
     first_served::<R, M>(hw, problem)
-        .filter(|(_, _, grid)| short_of_the_device(hw, &grid.launch) == 0)
+        .filter(|(_, _, grid)| hw.halvings_short_of_filling(&grid.launch) == 0)
         .map(|(settings, blueprint, _)| (settings, blueprint))
 }
 
 /// Whether `R` at `settings` launched on `tensors`: `false` where it declines their problem.
-fn launched<R: ReduceLauncher<M>, M>(
+fn launched<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     tensors: &ReduceTensors,
     settings: &R::Settings,
@@ -153,8 +152,10 @@ fn launched<R: ReduceLauncher<M>, M>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::ReduceWorkspaceBytes;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
+    use std::sync::Arc;
 
     /// Across the reduced axis a unit always keeps up: each lane its own row.
     #[test]
@@ -190,5 +191,116 @@ mod tests {
         let hw = devices::lacking_every_feature(devices::m2_pro());
         let long = ReduceRoutineProblem::dense(&[8, 100_000], 1, ReduceOperation::Sum);
         assert!(unit_keeps_up(&hw, &long, 1));
+    }
+
+    /// A sum of `shape` along its last axis, given the scratch the hypercube takes.
+    fn sum_given_scratch(shape: &[usize]) -> ReduceRoutineProblem {
+        ReduceRoutineProblem {
+            workspace: ReduceWorkspaceBytes::UNBOUNDED,
+            ..ReduceRoutineProblem::dense(shape, shape.len() - 1, ReduceOperation::Sum)
+        }
+    }
+
+    /// A row of few enough values that only the hypercube's shorter parts fill an M2 Pro, and of
+    /// enough that its longest parts split it.
+    const SPLIT_ROW: usize = 400_000;
+
+    #[test]
+    fn the_hypercube_takes_its_first_parts_that_fill_the_device() {
+        let hw = devices::m2_pro();
+        let problem = sum_given_scratch(&[1, SPLIT_ROW]);
+        let settings = hypercube_filling_the_device(&hw, &problem).expect("the row splits");
+        assert_eq!(
+            settings.unit_lines,
+            HypercubeLastArrivalReduceSettings::UNIT_LINES[1]
+        );
+    }
+
+    #[test]
+    fn the_hypercube_takes_its_most_cubes_where_none_fills_the_device() {
+        let [_, _, shortest] = HypercubeLastArrivalReduceSettings::UNIT_LINES;
+        let problem = sum_given_scratch(&[1, 8192]);
+        let settings =
+            hypercube_filling_the_device(&devices::m2_pro(), &problem).expect("the row splits");
+        assert_eq!(settings.unit_lines, shortest);
+    }
+
+    #[test]
+    fn a_top_k_takes_the_hypercubes_longest_parts() {
+        let problem = ReduceRoutineProblem {
+            operation: ReduceOperation::TopK { k: 2 },
+            ..sum_given_scratch(&[1, SPLIT_ROW])
+        };
+        let settings =
+            hypercube_filling_the_device(&devices::m2_pro(), &problem).expect("the row splits");
+        assert_eq!(
+            settings.unit_lines,
+            HypercubeLastArrivalReduceSettings::UNIT_LINES[0]
+        );
+    }
+
+    #[test]
+    fn rows_that_fill_the_device_are_not_split() {
+        let problem = sum_given_scratch(&[10_000, SPLIT_ROW]);
+        assert_eq!(
+            hypercube_filling_the_device(&devices::m2_pro(), &problem),
+            None
+        );
+    }
+
+    #[test]
+    fn a_row_of_one_part_is_not_split() {
+        let problem = sum_given_scratch(&[1, 16]);
+        assert_eq!(
+            hypercube_filling_the_device(&devices::m2_pro(), &problem),
+            None
+        );
+    }
+
+    #[test]
+    fn no_row_is_split_on_a_device_of_unstated_width() {
+        let mut hw = devices::m2_pro();
+        Arc::make_mut(&mut hw.properties)
+            .hardware
+            .num_streaming_multiprocessors = None;
+        let problem = sum_given_scratch(&[1, SPLIT_ROW]);
+        assert_eq!(hypercube_filling_the_device(&hw, &problem), None);
+    }
+
+    #[test]
+    fn the_first_setting_that_prepares_is_served() {
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[8, 300], 1, ReduceOperation::Sum);
+        let served = first_served::<UnitDirectReduceRoutine, _>(&hw, &problem);
+        assert_eq!(
+            served.map(|(settings, _, _)| settings),
+            Some(UnitDirectReduceRoutine::settings(&hw)[0])
+        );
+    }
+
+    #[test]
+    fn a_routine_that_declines_every_setting_serves_none() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let problem = ReduceRoutineProblem::dense(&[8, 300], 1, ReduceOperation::Sum);
+        assert!(first_served::<CubeStagedReduceRoutine, _>(&hw, &problem).is_none());
+    }
+
+    #[test]
+    fn a_unit_a_row_fills_the_device_with_many_rows() {
+        let hw = devices::m2_pro();
+        let problem = ReduceRoutineProblem::dense(&[100_000, 8], 1, ReduceOperation::Sum);
+        let filling = filling_the_device::<UnitDirectReduceRoutine, _>(&hw, &problem);
+        assert_eq!(
+            filling.map(|(settings, _)| settings),
+            Some(UnitDirectReduceRoutine::settings(&hw)[0])
+        );
+    }
+
+    #[test]
+    fn a_unit_a_row_leaves_the_device_idle_with_few_rows() {
+        let problem = ReduceRoutineProblem::dense(&[8, 300], 1, ReduceOperation::Sum);
+        let filling =
+            filling_the_device::<UnitDirectReduceRoutine, _>(&devices::m2_pro(), &problem);
+        assert!(filling.is_none());
     }
 }

@@ -1,20 +1,21 @@
 //! Top-k with a row count that is not a multiple of the output's vector width.
 //!
-//! Each k slot of the output is one contiguous run of rows. With 9 rows and `k = 4` the whole
-//! output holds 36 scalars, a multiple of 4, while a run of 9 is not: a vector of 4 rows starting
-//! at row 8 would spill into the next slot's run.
+//! The rows lie side by side across the reduced dim, so a line of the output is a line of rows and
+//! each k slot is one contiguous run of them. With 9 rows and `k = 4` the whole output holds 36
+//! scalars, a multiple of 4, while a run of 9 is not: a vector of 4 rows starting at row 8 would
+//! spill into the next slot's run.
 
 use cubecl::zspace::{Shape, Strides};
 use cubek_reduce::kernels::ReduceOpStrategy;
 
 use super::test_case::{CUBE, PLANE, RULE, TestCase, UNIT};
 
-/// `rows` rows 64 values long, reduced along their contiguous dim by `strategy`.
+/// `rows` rows 64 values long, side by side, reduced by `strategy` across their contiguous dim.
 fn case(strategy: ReduceOpStrategy, rows: usize) -> TestCase {
     TestCase::new::<f32>(
-        Shape::new([rows, 64]),
-        Strides::new(&[64, 1]),
-        Some(1),
+        Shape::new([64, rows]),
+        Strides::new(&[rows, 1]),
+        Some(0),
         strategy,
     )
 }

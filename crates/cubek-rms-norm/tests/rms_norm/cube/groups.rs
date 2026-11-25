@@ -1,4 +1,4 @@
-//! The cube groups routine, the autotune's floor: a row a group of a cube's units.
+//! The cube groups routine, the family's floor: a row a group of a cube's units.
 
 use cubecl::zspace::shape;
 use cubek_matmul::kernels::tensor::PlainTensor;

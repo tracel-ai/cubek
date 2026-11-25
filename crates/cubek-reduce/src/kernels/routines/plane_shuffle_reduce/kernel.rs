@@ -2,6 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::reduce::ReduceCarrierFamily;
 use cubek_microkernel::reduce::plane::PlaneShuffleReduceMicrokernel;
 
 /// Every plane of the launch, reducing its rows into the carrier its operation accumulates into.
@@ -16,6 +17,8 @@ pub(crate) fn plane_shuffle_reduce_kernel<
     Acc: Numeric,
     Out: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -27,17 +30,18 @@ pub(crate) fn plane_shuffle_reduce_kernel<
     let x = I::tile::<In>(input, &partitioning);
     let o = out.tile_mut(&partitioning);
     for plane in &partitioning {
-        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
-            &plane,
-            &x,
-            &o,
-            &ComptimeOption::new_None(),
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &plane,
+                &x,
+                &o,
+                &ComptimeOption::new_None(),
+            );
     }
 }
 
-/// Every plane of the launch, reducing its rows into the carrier its operation accumulates into, and
-/// writing the values to `out` and their indices to `indices`, laid out as `out`.
+/// [`plane_shuffle_reduce_kernel()`] with the rows' indices written beside their values.
 ///
 /// Its operands' leaves:
 /// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
@@ -51,6 +55,8 @@ pub(crate) fn plane_shuffle_reduce_with_indices_kernel<
     Out: Numeric,
     Idx: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -67,6 +73,6 @@ pub(crate) fn plane_shuffle_reduce_with_indices_kernel<
     for plane in &partitioning {
         microkernel
             .runtime()
-            .execute::<In, Acc, Out, Idx, N>(&plane, &x, &o, &indices);
+            .reduce::<In, Acc, Out, Idx, N, F::Carrier<Acc, N, K>>(&plane, &x, &o, &indices);
     }
 }

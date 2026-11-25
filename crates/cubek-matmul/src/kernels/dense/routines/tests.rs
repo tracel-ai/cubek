@@ -1,11 +1,11 @@
 //! Every box a packed routine cuts is a whole number of the rule's step
-//! ([`MatmulStep`]), for each scheme the routines serve, in rows and stored in tiles.
+//! ([`VectorRegion`]), for each scheme the routines serve, in rows and stored in tiles.
 
 use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubecl::tile::{Dimension, Space};
-use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands, MatmulStep};
+use cubecl::tile::{BaseRegion, Dimension, Space, VectorRegion};
+use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands};
 use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
 use cubek_std::matmul_dimensions::{K, M, N, blocked};
@@ -92,15 +92,15 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
     ]
 }
 
-/// `problem`'s step on `hw`, contracted one value at a time.
-fn step(hw: &Hardware, problem: &MatmulRoutineProblem) -> MatmulStep {
+/// `problem`'s vector region on `hw`.
+fn vector_region(hw: &Hardware, problem: &MatmulRoutineProblem) -> VectorRegion {
     let operands = problem.inputs.map(|_, input| input.operand);
-    MatmulStep::new(hw, operands, problem.elements)
+    operands.vector_region(hw, &problem.elements)
 }
 
-/// Whether `space` covers a whole number of `step`s along `M`, `N` and `K`, each over the block
+/// Whether `space` covers a whole number of `region`s along `M`, `N` and `K`, each over the block
 /// dimension and the inside dimension it is split into.
-fn whole_steps(step: &MatmulStep, space: &Space) -> bool {
+fn whole_regions(region: &Space, space: &Space) -> bool {
     [M, N, K].into_iter().all(|dimension| {
         let (blocks, inside) = blocked(dimension);
         let extent = [blocks, inside]
@@ -108,7 +108,7 @@ fn whole_steps(step: &MatmulStep, space: &Space) -> bool {
             .filter(|&part| space.contains(part))
             .map(|part| space.extent(part))
             .product::<usize>();
-        extent.is_multiple_of(step.along(dimension))
+        extent.is_multiple_of(region.along(dimension))
     })
 }
 
@@ -120,7 +120,7 @@ mod plane_shuffle {
 
     /// Every setting's unit box and cube box are whole steps, at one row and at eight.
     #[test]
-    fn every_box_is_whole_steps() {
+    fn every_box_is_whole_regions() {
         let hw = devices::m2_pro();
         for m in [1, 8] {
             for (name, problem) in problems(m) {
@@ -136,7 +136,7 @@ mod plane_shuffle {
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
-                            whole_steps(&step(&hw, &read), &space),
+                            whole_regions(vector_region(&hw, &read).space(), &space),
                             "{name} at {settings}: {space:?}"
                         );
                     }
@@ -156,7 +156,7 @@ mod cube_shuffle {
     /// reads it: as stored, or a scale block at a time. It declines what leaves its planes fewer
     /// than two turns of `K` each, so only some prepare.
     #[test]
-    fn every_box_is_whole_steps() {
+    fn every_box_is_whole_regions() {
         let hw = devices::m2_pro();
         let mut prepared = 0;
         for m in [1, 8] {
@@ -172,7 +172,7 @@ mod cube_shuffle {
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
-                            whole_steps(&step(&hw, &read), &space),
+                            whole_regions(vector_region(&hw, &read).space(), &space),
                             "{name} at {settings}: {space:?}"
                         );
                     }
@@ -256,7 +256,7 @@ mod cube_staged {
     /// blocks of `K`, as many as the step covers. An rhs whose scales do not group `K` is
     /// declined by name, and tile order prepares.
     #[test]
-    fn every_box_is_whole_steps() {
+    fn every_box_is_whole_regions() {
         // The M2 as Metal reports it: its simdgroup matrix, `8 × 8 × 8` over `f16` into `f32`.
         let hw = devices::offering_cmma(
             devices::m2_pro(),
@@ -287,10 +287,13 @@ mod cube_staged {
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
                 let read = problem.read_as(blueprint.microkernel.planned_space());
-                let step = step(&hw, &read).under(Space::new(&[(M, m), (N, n), (K, k)]));
+                let region = BaseRegion::new(
+                    &vector_region(&hw, &read),
+                    Space::new(&[(M, m), (N, n), (K, k)]),
+                );
                 let cube_space = blueprint.partitioning.cube_space();
                 assert!(
-                    whole_steps(&step, &cube_space.space),
+                    whole_regions(&region.space(), &cube_space.space),
                     "{name} at {settings}: {cube_space:?}"
                 );
                 assert_eq!(
@@ -548,7 +551,7 @@ mod hypercube_last_arrival {
                     prepared += 1;
                     let cube_space = blueprint.partitioning.cube_space();
                     assert!(
-                        whole_steps(&step(&hw, &problem), &cube_space.space),
+                        whole_regions(vector_region(&hw, &problem).space(), &cube_space.space),
                         "{name} at {settings}: {cube_space:?}"
                     );
                     assert_eq!(

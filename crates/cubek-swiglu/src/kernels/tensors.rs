@@ -117,14 +117,14 @@ impl SwigluTensors {
     /// # Panics
     ///
     /// On an odd last dim: no fused row of two halves.
-    pub(crate) fn allocate_out(client: &Client, both: &PlainTensor) -> TensorHandle {
+    pub fn allocate_out(client: &Client, both: &PlainTensor) -> TensorHandle {
         let (handle, _) =
             PlainTensor::empty_contiguous(client, gated_shape(both).into(), both.elem);
         handle
     }
 
     /// [`SwigluTensors::new`] into `out`, a contiguous buffer the caller allocated
-    /// ([`allocate_out`](Self::allocate_out)): what an autotune's candidates all write into.
+    /// ([`allocate_out`](Self::allocate_out)): what every candidate of a race writes into.
     ///
     /// # Errors
     ///

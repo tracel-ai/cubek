@@ -120,7 +120,8 @@ mod unit_seed_valued_f32 {
     use super::*;
 
     fn case() -> TestCase {
-        unit_case(Shape::new([2, 64]), Strides::new(&[64, 1]), 1).with_data(vec![f32::MIN; 128])
+        unit_case(Shape::new([2, 64]), Strides::new(&[64, 1]), 1)
+            .with_data(vec![f32::NEG_INFINITY; 128])
     }
 
     #[test]

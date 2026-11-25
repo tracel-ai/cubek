@@ -1,6 +1,7 @@
 use cubecl::client::Client;
 use cubek_test_utils::{HostData, Progress, ValidationResult, assert_equals_approx};
 
+use crate::eval::benchmarks::benchmark::two_launch_operations;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::cpu_reference::{
     RAMP_MAX_ELEMS, ReduceInput, ReduceValues, comparison_epsilon, cpu_reference_result,
@@ -70,17 +71,23 @@ impl ReduceCorrectness {
         }
     }
 
+    /// What [`kernel_output`](Self::kernel_output) should hold: the values half of a fused launch,
+    /// what the operation writes otherwise.
     fn reference_output(
         client: Client,
         problem: &ReduceProblem,
         input: ReduceInput,
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
+        let operation = match problem.kind {
+            ReduceBenchKind::Single | ReduceBenchKind::TwoLaunch => problem.operation,
+            ReduceBenchKind::Fused => two_launch_operations(problem.operation).0,
+        };
         cpu_reference_result(
             client,
             problem.shape.clone(),
             problem.axis,
-            problem.operation,
+            operation,
             input,
             progress,
         )
@@ -91,8 +98,7 @@ impl ReduceCorrectness {
 /// cube routine has enough to reduce. Padding other axes with 2 keeps the total
 /// a power of two at any rank, instead of the reduced axis underflowing to
 /// zero once rank exceeds `RAMP_MAX_ELEMS`'s bit width. An axis of one in
-/// `shape` stays one, so a whole tensor's one row is proved as one row, which
-/// a strategy that sums only a whole tensor accepts.
+/// `shape` stays one, so a whole tensor's one row is proved as one row.
 fn proof_shape(shape: &[usize], axis: usize) -> Vec<usize> {
     let mut proof = vec![1; shape.len()];
     let mut budget = RAMP_MAX_ELEMS;

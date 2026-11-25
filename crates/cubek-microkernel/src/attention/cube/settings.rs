@@ -1,7 +1,8 @@
+use crate::attention::CacheLines;
 use crate::attention::cube::CubeAttentionPlaneSettings;
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernelSettings, PlaneShuffleAttentionMicrokernelSettings,
-    ScoreHolder,
+    QueryHolder, ScoreHolder,
 };
 use crate::matmul::cube::CubeStagedDelivery;
 use core::num::NonZeroUsize;
@@ -84,8 +85,8 @@ impl CubeAttentionMicrokernelSettings {
 
     /// The cube's settings worth trying on `hw` over planes of the kind this lead runs, the lead
     /// first: a cube's own knobs are worth different values over each plane microkernel, so its
-    /// list is one for each. Only the stage layouts its planes lay as named
-    /// ([`laid_as_named`](Self::laid_as_named)).
+    /// list is one for each. Only those whose planes lay their stages and hold their query as named
+    /// ([`laid_as_named`](Self::laid_as_named), [`held_as_named`](Self::held_as_named)).
     pub fn listed(self, hw: &Hardware) -> Vec<Self> {
         let listed = match self.plane {
             CubeAttentionPlaneSettings::Fragment(plane) => Self::fragments_listed(self, plane),
@@ -93,7 +94,7 @@ impl CubeAttentionMicrokernelSettings {
         };
         listed
             .into_iter()
-            .filter(|settings| settings.laid_as_named(hw))
+            .filter(|settings| settings.laid_as_named(hw) && settings.held_as_named(hw))
             .collect()
     }
 
@@ -105,6 +106,12 @@ impl CubeAttentionMicrokernelSettings {
     /// kernel twice.
     pub fn laid_as_named(&self, hw: &Hardware) -> bool {
         self.layout != StageLayout::SwizzledBlocks || manual_mma(hw).next().is_some()
+    }
+
+    /// Whether a plane on `hw` holds its query where these settings name it: in registers it is the
+    /// `A` of the manual `mma`, which a device that offers none declines.
+    pub fn held_as_named(&self, hw: &Hardware) -> bool {
+        !self.plane.holds_query() || manual_mma(hw).next().is_some()
     }
 
     /// A star off `lead`: each larger box of fragments, each count of heads, two and four planes
@@ -120,7 +127,8 @@ impl CubeAttentionMicrokernelSettings {
     /// and rings a long causal prompt runs fastest on; then the one-by-two box of the four-plane
     /// split on two and three slots the copy engine fills; then the lead's box on four planes in
     /// padded rows, two heads by two planes along their queries and one head by four, which a
-    /// device of 64 KiB of shared memory holds at a head dim of 256. The wide steps hold one head because a
+    /// device of 64 KiB of shared memory holds at a head dim of 256; then eight heads by four planes
+    /// holding their query in registers. The wide steps hold one head because a
     /// step's stages and the heads' windows share one budget; one that still does not fit the
     /// device's shared memory declines there.
     fn fragments_listed(lead: Self, plane: PlaneFragmentAttentionMicrokernelSettings) -> Vec<Self> {
@@ -325,6 +333,27 @@ impl CubeAttentionMicrokernelSettings {
             layout: StageLayout::PaddedRows,
             ..lead
         });
+        // A cube sharing each stage with every head of the group, four planes along each head's
+        // queries. Every plane holds its query in registers, so the cube's shared memory holds keys
+        // and values alone, the values along the keys for a fragment to load whole runs of, and the
+        // next stage's loads wait in the registers of the cube's many units. On an R9700 (2048
+        // queries last first, 24/4 heads, head dim 256), against two heads by two planes of the
+        // boxes above: 2.92 against 5.87 ms over 2048 keys and then 4096 in `bf16`, and 1.75 over
+        // an `e4m3` cache.
+        let held_query = Self {
+            heads: count(8),
+            planes_along_queries: count(4),
+            ring: StageRing::SINGLE_THROUGH_REGISTERS,
+            layout: StageLayout::PaddedRows,
+            ..with(
+                PlaneFragmentAttentionMicrokernelSettings {
+                    seq_kv: NonZeroUsize::MIN,
+                    ..plane
+                }
+                .querying(QueryHolder::Registers)
+                .along(CacheLines::AlongKeys),
+            )
+        };
         [lead, fragments(2, 2), fragments(2, 4)]
             .into_iter()
             .chain(wide)
@@ -340,6 +369,7 @@ impl CubeAttentionMicrokernelSettings {
             .chain(eight_warps)
             .chain(pipelined)
             .chain(four_small_planes)
+            .chain([held_query])
             .collect()
     }
 

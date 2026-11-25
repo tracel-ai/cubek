@@ -26,7 +26,7 @@ use crate::kernels::{self, ReduceElements, ReduceOpStrategy, ReduceWorkspace};
 /// # Panics
 ///
 /// Where `problem` compares a values launch with an indices launch for an operation that has no
-/// such pair (a sum, a mean, a product, any or all).
+/// such pair (a sum, a mean, a product, a max of absolute values, any or all).
 pub fn bench(
     strategy: &ReduceOpStrategy,
     problem: &ReduceProblem,
@@ -79,7 +79,9 @@ pub fn bench(
 
 /// The pair of single-output configs a caller runs today to get both halves of
 /// `operation`.
-fn two_launch_operations(operation: ReduceOperation) -> (ReduceOperation, ReduceOperation) {
+pub(super) fn two_launch_operations(
+    operation: ReduceOperation,
+) -> (ReduceOperation, ReduceOperation) {
     match operation {
         ReduceOperation::TopK { k } | ReduceOperation::ArgTopK { k } => {
             (ReduceOperation::TopK { k }, ReduceOperation::ArgTopK { k })
@@ -186,7 +188,6 @@ impl ReduceBenchmark {
             .with_workspace(self.workspace.clone())
             .execute(
                 &self.client,
-                &self.device,
                 input.binding(),
                 out.binding(),
                 self.axis,
@@ -221,7 +222,10 @@ impl Benchmark for ReduceBenchmark {
     fn prepare(&self) -> Self::Input {
         let client = self.device.client();
         let elem = self.value_dtype;
-        let output_elem = output_dtype_for(self.operation, elem);
+        let output_elem = match self.kind {
+            ReduceBenchKind::Single => output_dtype_for(self.operation, elem),
+            ReduceBenchKind::TwoLaunch | ReduceBenchKind::Fused => elem,
+        };
 
         let builder =
             TestInput::builder(client.clone(), Shape::from(self.shape.clone())).dtype(elem);
@@ -263,7 +267,6 @@ impl Benchmark for ReduceBenchmark {
                 .with_workspace(self.workspace.clone())
                 .execute_with_indices(
                     &self.client,
-                    &self.device,
                     input.binding(),
                     out.binding(),
                     indices.binding(),

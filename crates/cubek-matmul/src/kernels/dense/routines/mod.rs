@@ -9,6 +9,8 @@ mod unit;
 #[cfg(test)]
 mod composition;
 #[cfg(test)]
+mod estimates;
+#[cfg(test)]
 mod tests;
 
 pub use cube::*;

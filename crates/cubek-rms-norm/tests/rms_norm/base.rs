@@ -24,7 +24,7 @@ pub(crate) const EPSILON: f32 = 1e-6;
 /// Which declines a routine may answer a case with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Declines {
-    /// None: the autotune's floor, which a decline would leave with nothing to fall back on.
+    /// None: the family's floor, which a decline would leave with nothing to fall back on.
     Never,
     /// Its microkernel's own, where the device runs none at the case.
     AsItsMicrokernelStates,

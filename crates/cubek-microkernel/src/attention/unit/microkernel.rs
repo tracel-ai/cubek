@@ -92,7 +92,7 @@ pub(crate) fn unit_attention_step<EA: Float>(
     }
 
     let correction = softmax.step(&score.scaled(&key_factor), bias, scale);
-    sum.along(DV).mul(&correction);
+    sum.along(DV).rescale(&correction);
 
     // A tile's clone is a handle to the same cells: the shared microkernel adds into the sum
     // through it.

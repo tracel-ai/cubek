@@ -269,7 +269,7 @@ impl RmsNormTensors {
 
 impl RmsNormTensors {
     /// [`RmsNormTensors::new`] into `out`, a contiguous buffer in the input's shape that the
-    /// caller allocated: what an autotune's candidates all write into.
+    /// caller allocated: what every candidate of a race writes into.
     ///
     /// # Errors
     ///
