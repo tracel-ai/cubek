@@ -23,6 +23,7 @@ use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, B, CacheLines, D, DV, G, KV, Q, S,
 };
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
@@ -739,28 +740,31 @@ impl AttentionTensors {
                 };
                 // A pool of pages is placed by its table ([`page_table`]). The side's
                 // scale is stated first, so the table places the values under it.
-                let read_cache =
-                    |tensor: &PlainTensor,
-                     dimensions: &'static [Dimension],
-                     width: usize,
-                     operand: AttentionOperand,
-                     scale: Option<TileTensorLaunch>| {
-                        let arg = read_operand(tensor, dimensions, width, operand)
-                            .delivery(delivery(operand, planned))
-                            .build()
-                            .expect(ADMITTED_PLAN_RUNS)
-                            .arg();
-                        let arg = match scale {
-                            Some(scale) => arg.scales(scale),
-                            None => arg,
-                        };
-                        match &self.kv.pages {
-                            Some(pages) => arg
-                                .indexed_covering(page_table(pages), Indexing::Coordinate(B))
-                                .expect(ADMITTED_PLAN_RUNS),
-                            None => arg,
+                let read_cache = |tensor: &PlainTensor,
+                                  dimensions: &'static [Dimension],
+                                  width: usize,
+                                  operand: AttentionOperand,
+                                  scale: Option<TileTensorLaunch>,
+                                  outer: OuterScale| {
+                    let arg = read_operand(tensor, dimensions, width, operand)
+                        .delivery(delivery(operand, planned))
+                        .build()
+                        .expect(ADMITTED_PLAN_RUNS)
+                        .arg();
+                    let arg = match (scale, outer) {
+                        (Some(scale), OuterScale::Factored) => arg.scales(scale),
+                        (Some(scale), OuterScale::Kept) => {
+                            arg.scales(scale).scales(TileTensorLaunch::one())
                         }
+                        (None, OuterScale::Factored | OuterScale::Kept) => arg,
                     };
+                    match &self.kv.pages {
+                        Some(pages) => arg
+                            .indexed_covering(page_table(pages), Indexing::Coordinate(B))
+                            .expect(ADMITTED_PLAN_RUNS),
+                        None => arg,
+                    }
+                };
                 let order = blueprint.microkernel.cache_order();
                 // A side over the dimensions its buffer steps, or with its keys innermost.
                 let read_side = |tensor: &PlainTensor,
@@ -768,13 +772,13 @@ impl AttentionTensors {
                                  along_keys: &'static [Dimension],
                                  width: usize,
                                  operand: AttentionOperand,
-                                 scale: Option<TileTensorLaunch>| {
-                    match operand.lines(order) {
-                        CacheLines::AsStored => read_cache(tensor, stored, width, operand, scale),
-                        CacheLines::AlongKeys => {
-                            read_cache(&tensor.transposed(), along_keys, width, operand, scale)
-                        }
-                    }
+                                 scale: Option<TileTensorLaunch>,
+                                 outer: OuterScale| {
+                    let (tensor, dimensions) = match operand.lines(order) {
+                        CacheLines::AsStored => (tensor.clone(), stored),
+                        CacheLines::AlongKeys => (tensor.transposed(), along_keys),
+                    };
+                    read_cache(&tensor, dimensions, width, operand, scale, outer)
                 };
                 let scales = &self.kv.scales;
                 let key = read_side(
@@ -784,6 +788,7 @@ impl AttentionTensors {
                     widths.key,
                     AttentionOperand::Key,
                     scales.key.as_ref().map(|scale| per_tensor(scale, D)),
+                    OuterScale::Factored,
                 );
                 let value = read_side(
                     value,
@@ -792,6 +797,7 @@ impl AttentionTensors {
                     widths.value,
                     AttentionOperand::Value,
                     scales.value.as_ref().map(|scale| per_tensor(scale, DV)),
+                    blueprint.microkernel.values_outer_scale(),
                 );
                 AttentionCacheBinding::Tiles { key, value }
             }

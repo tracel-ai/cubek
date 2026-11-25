@@ -104,17 +104,15 @@ impl CubeStagedWalk {
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
     ) -> PlanesSum {
-        let (a, b) = (Self::as_staged(a, walk), Self::as_staged(b, walk));
+        let (a, a_scale) = a.factor();
+        let (b, b_scale) = b.factor();
+        let (a, b) = (Self::as_staged(&a, walk), Self::as_staged(&b, walk));
         let sum = Self::open_sum::<EA>(over, &a, &b, walk);
-        let (a, a_factor) = a.factor(&sum);
-        let (b, b_factor) = b.factor(&sum);
 
         cube_staged_sum_microkernel(run, &sum, &a, &b, walk, storage);
 
         PlanesSum {
-            sum: Self::drain_sum(sum, walk)
-                .scaled(&a_factor)
-                .scaled(&b_factor),
+            sum: Self::drain_sum(sum, walk).mul(&a_scale).mul(&b_scale),
             role: Role::new_Compute(),
         }
     }
@@ -139,10 +137,10 @@ impl CubeStagedWalk {
         #[comptime] walk: CubeStagedWalk,
         #[comptime] storage: StageStorage,
     ) -> PlanesSum {
-        let (a, b) = (Self::as_staged(a, walk), Self::as_staged(b, walk));
+        let (a, a_scale) = a.factor();
+        let (b, b_scale) = b.factor();
+        let (a, b) = (Self::as_staged(&a, walk), Self::as_staged(&b, walk));
         let sum = Self::open_sum::<EA>(over, &a, &b, walk);
-        let (a, a_factor) = a.factor(&sum);
-        let (b, b_factor) = b.factor(&sum);
 
         let depth = walk.ring.stages_in_flight.get();
         let mut stages = Stages::smem(&run, &a, &b, storage, depth, walk.decoded());
@@ -196,7 +194,7 @@ impl CubeStagedWalk {
         Self::free_ring_for_box(&stages, walk);
 
         PlanesSum {
-            sum: sum.scaled(&a_factor).scaled(&b_factor),
+            sum: sum.mul(&a_scale).mul(&b_scale),
             role: stages.role(),
         }
     }
