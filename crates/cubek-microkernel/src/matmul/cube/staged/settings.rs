@@ -206,22 +206,33 @@ impl CubeStagedMicrokernelSettings {
 /// layout or a stage of one step, so the settings that hold them keep their names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let named = |kept: bool, part: String| (!kept).then_some(part);
+        let parts = [
+            named(
+                self.planes_along_k.get() == 1,
+                format!(" planes_along_k={}", self.planes_along_k),
+            ),
+            named(
+                self.scratch == Scratch::OneTile,
+                format!(" scratch={}", self.scratch),
+            ),
+            named(
+                self.staged == StagedOperands::Both,
+                format!(" staged={:?}", self.staged),
+            ),
+            Some(format!("{}", self.ring)),
+            named(
+                self.stage_layout == Self::SWIZZLED,
+                format!("{}", self.stage_layout),
+            ),
+            named(
+                self.stage_steps.get() == 1,
+                format!(" stage_steps={}", self.stage_steps),
+            ),
+        ];
         write!(f, "{} {}", self.plane, self.planes)?;
-        if self.planes_along_k.get() > 1 {
-            write!(f, " planes_along_k={}", self.planes_along_k)?;
-        }
-        if self.scratch != Scratch::OneTile {
-            write!(f, " scratch={}", self.scratch)?;
-        }
-        if self.staged != StagedOperands::Both {
-            write!(f, " staged={:?}", self.staged)?;
-        }
-        write!(f, "{}", self.ring)?;
-        if self.stage_layout != Self::SWIZZLED {
-            write!(f, "{}", self.stage_layout)?;
-        }
-        if self.stage_steps.get() > 1 {
-            write!(f, " stage_steps={}", self.stage_steps)?;
+        for part in parts.into_iter().flatten() {
+            write!(f, "{part}")?;
         }
         Ok(())
     }

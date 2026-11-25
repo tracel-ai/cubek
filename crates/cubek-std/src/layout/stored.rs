@@ -9,7 +9,7 @@ use crate::TMA_ROW_BYTES;
 use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
 use crate::matmul_dimensions::{K, blocked};
 use cubecl::ir::ElemType;
-use cubecl::quant::scheme::{BlockExtent, QuantScheme, QuantStore};
+use cubecl::quant::scheme::{BlockExtent, BlockScale, QuantScheme, QuantStore};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::{Run, VectorTile};
 use cubecl::tile::{Dimension, Instruction, MicroTile, OperandReads, Space, kind::Field};
@@ -95,15 +95,24 @@ impl Operand {
     /// Whether the scales of `scheme`'s coarser level, where it has one, are each over the whole of
     /// dimension `position`, and over one position or all of the other.
     fn outer_constant_along(scheme: &QuantScheme, position: usize) -> bool {
-        let Some(outer) = scheme.levels().nth(1) else {
-            return true;
-        };
-        let extents = outer.size.extents_in::<2>();
-        extents[position] == BlockExtent::WholeAxis
-            && matches!(
-                extents[1 - position],
-                BlockExtent::VALUE | BlockExtent::WholeAxis
-            )
+        scheme
+            .levels()
+            .nth(1)
+            .is_none_or(|outer| Self::constant_along(&outer, position).is_some())
+    }
+
+    /// Where the scales of `level`, over a matrix, are each constant along the whole of its
+    /// dimension `whole` and over one position or all of the other: the position of the other
+    /// where they vary along it, `None` where one scale covers the matrix. `None` outside, a level
+    /// that varies otherwise.
+    pub fn constant_along(level: &BlockScale, whole: usize) -> Option<Option<usize>> {
+        let extents = level.size.extents_in::<2>();
+        let other = 1 - whole;
+        match (extents[whole], extents[other]) {
+            (BlockExtent::WholeAxis, BlockExtent::WholeAxis) => Some(None),
+            (BlockExtent::WholeAxis, BlockExtent::VALUE) => Some(Some(other)),
+            _ => None,
+        }
     }
 
     /// This operand read a scale block at a time: one read the whole block of one row, its scale
@@ -1212,5 +1221,37 @@ mod tests {
         };
         assert_eq!(reads(Run::Transaction), Some(128 / read_bytes));
         assert_eq!(reads(Run::StoredTile), None);
+    }
+
+    /// One scale a row of a `[rows, k]` matrix is constant along `k`, position 1, and varies
+    /// along the rows, position 0.
+    #[test]
+    fn a_scale_a_row_is_constant_along_the_contraction() {
+        let scheme = cubecl::quant::scheme::QuantScheme::fp8_per_row();
+        assert_eq!(Operand::constant_along(&scheme.finest(), 1), Some(Some(0)));
+    }
+
+    #[test]
+    fn one_scale_for_the_matrix_varies_along_nothing() {
+        let scheme = cubecl::quant::scheme::QuantScheme::default()
+            .per_tensor(cubecl::quant::scheme::ScaleDtype::F32);
+        assert_eq!(Operand::constant_along(&scheme.finest(), 1), Some(None));
+    }
+
+    #[test]
+    fn blocks_along_the_contraction_are_not_constant_along_it() {
+        let scheme = cubecl::quant::scheme::QuantScheme::default()
+            .per_block([32], cubecl::quant::scheme::ScaleDtype::UE8M0);
+        assert_eq!(Operand::constant_along(&scheme.finest(), 1), None);
+    }
+
+    /// Values read in an 8-bit float hold no product with an outer scale, so it goes into the sum.
+    #[test]
+    fn an_outer_scale_over_8_bit_values_is_taken_in_the_sum() {
+        let e4m3 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::E4M3);
+        assert_eq!(
+            super::OuterScale::Kept.read_in(e4m3),
+            super::OuterScale::Factored
+        );
     }
 }

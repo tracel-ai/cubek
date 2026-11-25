@@ -942,4 +942,29 @@ mod tests {
             "an e2m1 operand of the 8-bit instruction is one code a byte, not eight a word"
         );
     }
+
+    /// A device whose manual matrix instruction takes 8-bit floats on both sides contracts them in
+    /// registers; one that takes `f16` alone does not.
+    #[test]
+    fn eight_bit_floats_are_contracted_in_registers_where_an_instruction_takes_them() {
+        let e4m3 = ElemType::Float(FloatKind::E4M3);
+        let mut hw = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
+        let config = MmaConfig {
+            a_type: e4m3,
+            b_type: e4m3,
+            ..shape(16, 16, 16)
+        };
+        devices::features(&mut hw).matmul.mma.insert(config);
+        assert!(hw.contracts_fp8_in_registers());
+    }
+
+    #[test]
+    fn half_floats_alone_are_no_8_bit_contraction() {
+        let mut hw = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
+        devices::features(&mut hw)
+            .matmul
+            .mma
+            .insert(shape(16, 16, 16));
+        assert!(!hw.contracts_fp8_in_registers());
+    }
 }

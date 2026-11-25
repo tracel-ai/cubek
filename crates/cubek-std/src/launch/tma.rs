@@ -320,12 +320,7 @@ pub fn merged_contiguous_fragments(binding: TensorBinding) -> TensorBinding {
             Some(dim.remove(at + 1))
         });
         if merged.is_some() {
-            shape[outer] *= shape.remove(inner);
-            strides[outer] = strides.remove(inner);
-            let physical = dims.iter_mut().flatten();
-            physical
-                .filter(|physical| **physical > inner)
-                .for_each(|physical| *physical -= 1);
+            merge_into_outer(&mut shape, &mut strides, &mut dims, inner);
         }
     }
     TensorBinding {
@@ -334,6 +329,23 @@ pub fn merged_contiguous_fragments(binding: TensorBinding) -> TensorBinding {
         tiling: Tiling::from_physical_dims(&dims).expect("a merge only takes fragments away"),
         ..binding
     }
+}
+
+/// Physical dim `inner` of `shape` at `strides` taken into the one before it, which it continues,
+/// and every later physical dim of `dims` numbered one lower.
+fn merge_into_outer(
+    shape: &mut Vec<usize>,
+    strides: &mut Vec<usize>,
+    dims: &mut [Vec<usize>],
+    inner: usize,
+) {
+    let outer = inner - 1;
+    shape[outer] *= shape.remove(inner);
+    strides[outer] = strides.remove(inner);
+    dims.iter_mut()
+        .flatten()
+        .filter(|physical| **physical > inner)
+        .for_each(|physical| *physical -= 1);
 }
 
 /// Bytes one row of a box spans in shared memory under `swizzle`: the swizzle's span, which a

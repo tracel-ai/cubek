@@ -562,3 +562,29 @@ impl From<&PlainTensor> for Placement {
 pub const ELEMENT_NOT_ON_DEVICE: Decline = Decline::Unserved {
     why: "the device's runtime does not compute in this element and store it in a buffer",
 };
+
+#[cfg(test)]
+mod tests {
+    use super::PlainTensor;
+    use cubek_std::layout::Fragments;
+
+    /// `k` of 64 in tiles of 8: eight tiles 128 apart, then eight values.
+    fn tiles_of_8() -> Fragments {
+        Fragments::from_slice(&[(8, 128), (8, 1)])
+    }
+
+    /// Blocks of 32 take the values of a tile and four tiles: the eight tiles split in two.
+    #[test]
+    fn a_piece_holding_a_block_boundary_is_split_in_two() {
+        let (across, within) = PlainTensor::split_pieces(&tiles_of_8(), 32).expect("whole blocks");
+        assert_eq!(
+            (across.to_vec(), within.to_vec()),
+            (vec![(2, 512)], vec![(4, 128), (8, 1)])
+        );
+    }
+
+    #[test]
+    fn blocks_that_cut_a_piece_unevenly_are_none() {
+        assert!(PlainTensor::split_pieces(&tiles_of_8(), 12).is_none());
+    }
+}

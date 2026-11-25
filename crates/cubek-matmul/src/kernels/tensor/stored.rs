@@ -57,7 +57,7 @@ impl StoredTensor {
     pub fn values(&self) -> &PlainTensor {
         match self {
             Self::Plain(tensor) => tensor,
-            Self::Scaled(tensor) => tensor.values(),
+            Self::Scaled(tensor) => &tensor.values,
             Self::Packed(tensor) => tensor.words(),
         }
     }
@@ -66,7 +66,7 @@ impl StoredTensor {
     pub fn kind(&self) -> OperandKind {
         match self {
             Self::Plain(_) => OperandKind::Float,
-            Self::Scaled(tensor) => OperandKind::Quantized(tensor.scheme()),
+            Self::Scaled(tensor) => OperandKind::Quantized(tensor.scheme),
             Self::Packed(tensor) => OperandKind::Quantized(tensor.scheme()),
         }
     }
@@ -123,7 +123,7 @@ impl StoredTensor {
     fn tensors(&self) -> impl Iterator<Item = &PlainTensor> {
         let scales: SmallVec<[&PlainTensor; 2]> = match self {
             Self::Plain(_) => SmallVec::new(),
-            Self::Scaled(tensor) => core::iter::once(tensor.scales()).collect(),
+            Self::Scaled(tensor) => core::iter::once(&tensor.scales).collect(),
             Self::Packed(tensor) => tensor.scales().collect(),
         };
         core::iter::once(self.values()).chain(scales)

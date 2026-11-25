@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, IntKind, UIntKind};
 use cubecl::prelude::{TensorBinding, TensorMapArg, TensorMapSwizzle};
-use cubecl::quant::scheme::{BlockExtent, QuantScheme, QuantStore, QuantValue};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 use cubecl::tile::launch::{Arg, Decline, Delivery, Labelled, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
     Dimension, Launcher, Projection, TileTensorLaunch,
@@ -29,6 +29,9 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 
 /// The element a packed matrix's words and scales are bound in: whole `u32` words.
 const WORD: ElemType = ElemType::UInt(UIntKind::U32);
+
+/// The extents of one scale, and the strides of a column of them.
+const ONE_SCALE: [usize; 2] = [1, 1];
 
 /// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the dimension
 /// its words run along, or with a coarser level of more than one scale.
@@ -1083,13 +1086,16 @@ impl PackedTensor {
     ) -> Option<TileTensorLaunch> {
         let level = self.scheme.levels().nth(1)?;
         let scales = self.outer_scales.as_ref()?;
-        let rows = self.rows_dimension();
-        let (binding, projection) = match self.outer_extent(rows) {
-            BlockExtent::WholeAxis => (
-                scales.bound_as(Metadata::new([1, 1], [1, 1])),
+        let lined = self
+            .dimensions()
+            .iter()
+            .position(|&dimension| dimension == self.operand.lined())?;
+        let (binding, projection) = match Operand::constant_along(&level, lined)? {
+            None => (
+                scales.bound_as(Metadata::new(ONE_SCALE, ONE_SCALE)),
                 Self::over_whole_matrix(words_dimensions, tiled_along),
             ),
-            BlockExtent::Values(_) => self.outer_scales_of_rows(scales),
+            Some(_) => self.outer_scales_of_rows(scales),
         };
         let outer = launcher
             .arg(binding, ElemType::from_scale_dtype(level.dtype))
@@ -1104,7 +1110,7 @@ impl PackedTensor {
     fn outer_scales_of_rows(&self, scales: &PlainTensor) -> (TensorBinding, Projection) {
         // The rows are one block, the position inside it the whole of them.
         let row = PhysicalAxisMap::of(blocked(self.rows_dimension()).1);
-        let binding = scales.bound_as(Metadata::new([self.stored_rows(), 1], [1, 1]));
+        let binding = scales.bound_as(Metadata::new([self.stored_rows(), 1], ONE_SCALE));
         let shared = matches!(self.stack, Some(PackedStack::Slabs { along, .. }) if along == self.operand.lined());
         let (binding, axes) = match shared {
             true => (binding, Projection::axes()),
@@ -1114,20 +1120,6 @@ impl PackedTensor {
             binding,
             axes.axis(row).axis(PhysicalAxisMap::broadcast()).build(),
         )
-    }
-
-    /// What one of its outer scales covers along `dimension` of the matrix.
-    fn outer_extent(&self, dimension: Dimension) -> BlockExtent {
-        self.scheme
-            .levels()
-            .nth(1)
-            .and_then(|level| {
-                self.dimensions()
-                    .into_iter()
-                    .zip(level.size.extents_in::<2>())
-                    .find(|&(own, _)| own == dimension)
-            })
-            .map_or(BlockExtent::WholeAxis, |(_, extent)| extent)
     }
 
     /// `words` packed as the scheme's values, read from a window's start where it has one

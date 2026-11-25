@@ -98,7 +98,7 @@ impl CubeStagedMicrokernel {
     /// What a fill that an engine moves is declined with, its planes reading an input in place: the
     /// engine moves both inputs as they are bound for it.
     pub const IN_PLACE_BY_ENGINE: Decline = Decline::Unserved {
-        why: "an engine fills this staged matmul's stages, so it stages both inputs",
+        why: "a copy engine lands every input it fills in a stage, so it reads none where it lies",
     };
 
     /// The microkernel `settings` ask for, its planes running `plane`, a stage spanning `depth`
@@ -371,33 +371,39 @@ impl CubeStagedMicrokernel {
         })
     }
 
+    /// How many times `operand`, an input, is read from global memory where a stage of it is read
+    /// `staged` times: once by each plane contracting it where it is not staged.
+    fn readers(&self, operand: MatmulOperand, staged: u64) -> u64 {
+        let planes = match operand {
+            MatmulOperand::Lhs => self.planes.along_n.get(),
+            _ => self.planes.along_m.get(),
+        };
+        match self.stages(operand) {
+            true => staged,
+            false => planes as u64,
+        }
+    }
+
     /// Whether it stages `operand`, an input.
     pub fn stages(&self, operand: MatmulOperand) -> bool {
         operand.staged_by(self.staged)
     }
 
-    /// This microkernel staging both inputs of `item` where its planes cannot read the one it does
-    /// not stage where it lies: a packed one, which its fill decodes, and any where the fragment API
-    /// loads its fragments, off a pointer and a stride that an input in global memory, cut short by
-    /// the problem's edge or stored in tiles, does not lie as. A setting then runs as the one it
-    /// resolves to.
-    fn staging_what_it_must(self, item: &MatmulWorkItem) -> Self {
+    /// Whether its planes read the input it does not stage where that input lies: not a packed one,
+    /// which only a fill decodes, nor any where the fragment API loads its fragments, off a pointer
+    /// and a stride that an input in global memory, cut short by the problem's edge or stored in
+    /// tiles, does not lie as. A microkernel staging both always does.
+    fn reads_unstaged_where_it_lies(&self, item: &MatmulWorkItem) -> bool {
         let decoded = |operand| {
             item.blocks
                 .is_some_and(|blocks| blocks.packings.get(operand).is_some())
                 || self.reads.get(operand) != MatmulRead::AsBound
         };
-        let in_place = MatmulOperand::INPUTS
-            .into_iter()
-            .find(|&operand| !self.stages(operand));
         let units_load = matches!(self.plane.instruction, PlaneFragmentInstruction::Mma { .. });
-        match in_place {
-            Some(operand) if decoded(operand) || !units_load => Self {
-                staged: StagedOperands::Both,
-                ..self
-            },
-            Some(_) | None => self,
-        }
+        MatmulOperand::INPUTS
+            .into_iter()
+            .filter(|&operand| !self.stages(operand))
+            .all(|operand| units_load && !decoded(operand))
     }
 
     /// Planes one cube holds that contract: its layout along `m` and `n` times the planes along
@@ -877,7 +883,7 @@ impl Microkernel for CubeStagedMicrokernel {
         candidates
             .into_iter()
             .filter_map(|candidate| candidate.summed(hw, item))
-            .map(|candidate| candidate.staging_what_it_must(item))
+            .filter(|candidate| candidate.reads_unstaged_where_it_lies(item))
             .filter(move |_| !merges || atomic)
     }
     /// Its ring reads both operands out of their tiles a stage at a time, in stretches of the
@@ -951,12 +957,8 @@ impl Microkernel for CubeStagedMicrokernel {
             )
         };
         // An input read where it lies is read by every plane that contracts it.
-        if !self.stages(MatmulOperand::Lhs) {
-            staging.readers.lhs = self.planes.along_n.get() as u64;
-        }
-        if !self.stages(MatmulOperand::Rhs) {
-            staging.readers.rhs = self.planes.along_m.get() as u64;
-        }
+        staging.readers.lhs = self.readers(MatmulOperand::Lhs, staging.readers.lhs);
+        staging.readers.rhs = self.readers(MatmulOperand::Rhs, staging.readers.rhs);
         staging.count(item, &cube_space.space, estimate);
         self.plane.estimate(item, &(), planes, estimate);
     }

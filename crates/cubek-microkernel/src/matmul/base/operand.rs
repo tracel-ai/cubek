@@ -297,3 +297,19 @@ impl MatmulRead {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MatmulOperand;
+    use cubecl::tile::stage::StagedOperands;
+
+    #[test]
+    fn staging_the_rhs_leaves_the_lhs_where_it_lies() {
+        assert!(!MatmulOperand::Lhs.staged_by(StagedOperands::Rhs));
+    }
+
+    #[test]
+    fn the_output_is_never_staged_as_an_input() {
+        assert!(!MatmulOperand::Out.staged_by(StagedOperands::Both));
+    }
+}

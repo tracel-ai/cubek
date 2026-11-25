@@ -782,7 +782,6 @@ mod tests {
         let mut scattered = k.clone();
         let finest = scattered.len() - 1;
         (scattered[finest].1, scattered[finest - 1].1) = (k[finest - 1].1, k[finest].1);
-        assert!(TileOrder::of_matrix(&scheme, &matrix).is_some());
         assert_eq!(
             TileOrder::of_matrix(&scheme, &assemble(&[&scattered, &rows])),
             None

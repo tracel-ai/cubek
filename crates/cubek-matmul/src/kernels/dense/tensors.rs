@@ -1,5 +1,7 @@
 use super::counters::ZeroedCounters;
-use crate::kernels::tensor::{PACKED_STACK_UNREAD, PackedTensor, PlainTensor, StoredTensor};
+use crate::kernels::tensor::{
+    PACKED_STACK_UNREAD, PackedTensor, PlainTensor, ScaledTensor, StoredTensor,
+};
 use crate::kernels::{
     MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulIndex,
     MatmulIndexTable, MatmulInputs, MatmulOutput, MatmulOutputBuffer, MatmulRoutineProblem,
@@ -442,15 +444,31 @@ impl MatmulTensors {
             StoredTensor::Plain(tensor) => {
                 Self::beside_packed(client, tensor, dimensions, k).map(StoredTensor::Plain)
             }
-            StoredTensor::Scaled(tensor) => {
-                let values = tensor.values().clone().readable_in_blocks(client, block);
-                let scaled = StoredTensor::Scaled(tensor.with_values(values));
-                let contracted = scaled.extent(dimensions, K);
-                assert_eq!(contracted, k, "the contraction dims must agree");
-                Ok(scaled)
-            }
+            StoredTensor::Scaled(tensor) => Ok(Self::scaled_beside_packed(
+                client, tensor, dimensions, k, block,
+            )),
             StoredTensor::Packed(_) => Ok(operand),
         }
+    }
+
+    /// `tensor`, along `dimensions` and `k` deep, read in rows or in the tiles it lies in where the
+    /// packed input's `block` of `K` splits them ([`PlainTensor::readable_in_blocks`]).
+    ///
+    /// # Panics
+    ///
+    /// Where its contraction is not `k` deep.
+    fn scaled_beside_packed(
+        client: &Client,
+        tensor: ScaledTensor,
+        dimensions: [Dimension; 2],
+        k: usize,
+        block: Option<usize>,
+    ) -> StoredTensor {
+        let values = tensor.values.readable_in_blocks(client, block);
+        let scaled = StoredTensor::Scaled(ScaledTensor { values, ..tensor });
+        let contracted = scaled.extent(dimensions, K);
+        assert_eq!(contracted, k, "the contraction dims must agree");
+        scaled
     }
 
     /// The rows of `lhs`, `k` deep, its leading dims merged into them.
@@ -879,7 +897,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             .into_iter()
             .find_map(|input| match input {
                 StoredTensor::Plain(tensor) => Some(tensor.elem),
-                StoredTensor::Scaled(tensor) => Some(tensor.values().elem),
+                StoredTensor::Scaled(tensor) => Some(tensor.values.elem),
                 StoredTensor::Packed(_) => None,
             })
             .unwrap_or_else(|| self.problem().elements.out)
@@ -1122,7 +1140,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             StoredTensor::Scaled(tensor) => tensor.under_scales(
                 &launcher,
                 &blocks,
-                values(tensor.values(), dimensions, width),
+                values(&tensor.values, dimensions, width),
             ),
             // A launch the TMA engine fills binds its packed inputs again through descriptors
             // (`tma_packed_operands`), scales and all, so the launcher states their scales as a
@@ -1162,7 +1180,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         [&self.lhs, &self.rhs].map(|operand| match operand {
             StoredTensor::Plain(tensor) => tensor,
             StoredTensor::Scaled(_) | StoredTensor::Packed(_) => {
-                panic!("a packed input is read with every row whole")
+                panic!("an input under scales is read with every row whole")
             }
         })
     }
@@ -1300,7 +1318,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             StoredTensor::Scaled(lhs) => lhs.under_scales(
                 launcher,
                 &self.blocks(),
-                self.tma_float_lhs(lhs.values(), stage, storage, orders, widths.lhs),
+                self.tma_float_lhs(&lhs.values, stage, storage, orders, widths.lhs),
             ),
             StoredTensor::Packed(lhs) => packed(lhs, MatmulOperand::Lhs, M, widths.lhs),
         };
