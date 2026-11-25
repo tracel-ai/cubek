@@ -4,7 +4,9 @@
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::Scalar;
-use cubecl::quant::scheme::{BlockExtent, QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{
+    BlockExtent, BlockSize, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Dimension;
 use cubecl::zspace::Shape;
@@ -18,8 +20,11 @@ use cubek_test_utils::{HostData, HostDataType, InputDataType, TestInput};
 
 use crate::tiled::upload;
 
-/// The per-tensor scale a two-level format is built under.
+/// The scale a format with one for the whole matrix is built under.
 const GLOBAL_SCALE: f32 = 2.;
+
+/// The scales of a format with one for each row, dealt over the rows in turn.
+const ROW_SCALES: [f32; 5] = [2., 0.25, 1., 4., 0.5];
 
 /// Block scales with one or two mantissa bits, which the quantizer and a `ue4m3` byte hold exactly;
 /// a `ue8m0` byte holds only the first.
@@ -32,6 +37,8 @@ pub(crate) enum PackedFormat {
     Q4,
     Nvfp4,
     Mxfp4,
+    /// MXFP4 under one more scale a row, its block scales at most one.
+    Mxfp4RowFactored,
     Mxfp8,
 }
 
@@ -51,6 +58,7 @@ impl PackedFormat {
                 .with_value(QuantValue::E2M1)
                 .per_block([32], ScaleDtype::UE8M0)
                 .with_store(QuantStore::PackedU32(0)),
+            Self::Mxfp4RowFactored => QuantScheme::mxfp4_row_factored(),
             Self::Mxfp8 => QuantScheme::default()
                 .with_value(QuantValue::E4M3)
                 .per_block([32], ScaleDtype::UE8M0)
@@ -110,13 +118,13 @@ impl PackedSlabs {
             quantized.quantization.expect("a quantized tensor").scale,
             (rows, spec.k / block_of(&scheme)),
         );
-        let global =
-            (scheme.levels().count() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
+        let outer_scales =
+            outer_scales(&scheme, rows).map(|scales| upload(client, &[scales.len(), 1], &scales));
         let across = across(spec.operand);
         let tensor = PackedTensor::new(
             PlainTensor::of_handle(quantized.handle),
             PlainTensor::of_handle(scales),
-            global,
+            outer_scales,
             scheme,
             Operand::of_scheme(&scheme, K, [across, K]).expect("one block along k"),
             [(across, rows), (K, spec.k)],
@@ -176,13 +184,20 @@ impl PackedSlabs {
 
 impl PackedSlabsSpec {
     /// The values the matrix holds, dequantized, computed on the host alone: the exact values,
-    /// under the per-tensor scale where the format has one.
+    /// under the outer scales where the format has some.
     pub(crate) fn dequantized(&self) -> HostSlabs {
         let scheme = self.format.scheme();
         let exact = self.exact_values(&scheme);
-        let values = match scheme.levels().count() > 1 {
-            true => exact.into_iter().map(|v| v * GLOBAL_SCALE).collect(),
-            false => exact,
+        let values = match outer_scales(&scheme, self.slabs * self.rows) {
+            Some(scales) => exact
+                .chunks(self.k)
+                .enumerate()
+                .flat_map(|(row, values)| {
+                    let scale = scales[row % scales.len()];
+                    values.iter().map(move |value| value * scale)
+                })
+                .collect(),
+            None => exact,
         };
         HostSlabs {
             rows: self.rows,
@@ -258,6 +273,18 @@ pub(crate) fn block_of(scheme: &QuantScheme) -> usize {
         BlockExtent::Values(values) => values.get() as usize,
         BlockExtent::WholeAxis => panic!("a block-scaled scheme"),
     }
+}
+
+/// The scales of `scheme`'s outer level for a matrix of `rows` rows, where it has one: one over all
+/// of it, or one for each row.
+fn outer_scales(scheme: &QuantScheme, rows: usize) -> Option<Vec<f32>> {
+    let outer = scheme.levels().nth(1)?;
+    Some(match outer.size {
+        BlockSize::TENSOR => vec![GLOBAL_SCALE],
+        _ => (0..rows)
+            .map(|row| ROW_SCALES[row % ROW_SCALES.len()])
+            .collect(),
+    })
 }
 
 /// The dimension of `operand` beside `K`, which a packed matrix's rows run along.

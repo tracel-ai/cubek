@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, IntKind, UIntKind};
 use cubecl::prelude::{TensorBinding, TensorMapArg, TensorMapSwizzle};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
+use cubecl::quant::scheme::{BlockExtent, QuantScheme, QuantStore, QuantValue};
 use cubecl::tile::launch::{Arg, Decline, Delivery, Labelled, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
     Dimension, Launcher, Projection, TileTensorLaunch,
@@ -81,7 +81,7 @@ pub const STORED_TILES_UNREAD: Decline = Decline::Unserved {
 pub struct PackedTensor {
     words: PlainTensor,
     block_scales: PlainTensor,
-    global_scale: Option<PlainTensor>,
+    outer_scales: Option<PlainTensor>,
     scheme: QuantScheme,
     operand: Operand,
     dimensions: [(Dimension, usize); 2],
@@ -133,20 +133,20 @@ impl PackedTensor {
     pub fn new(
         words: PlainTensor,
         block_scales: PlainTensor,
-        global_scale: Option<PlainTensor>,
+        outer_scales: Option<PlainTensor>,
         scheme: QuantScheme,
         operand: Operand,
         dimensions: [(Dimension, usize); 2],
     ) -> Self {
         assert_eq!(
-            global_scale.is_some(),
+            outer_scales.is_some(),
             scheme.levels().count() > 1,
             "a two-level scheme carries a per-tensor scale and a one-level one does not"
         );
         Self {
             words,
             block_scales,
-            global_scale,
+            outer_scales,
             scheme,
             operand,
             dimensions,
@@ -179,7 +179,7 @@ impl PackedTensor {
         values: TensorBinding,
         scheme: QuantScheme,
         block_scales: PlainTensor,
-        global_scale: Option<PlainTensor>,
+        outer_scales: Option<PlainTensor>,
         dimensions: [Dimension; 2],
     ) -> Result<Self, Decline> {
         let operand = Operand::dimension_of(&scheme, dimensions)
@@ -191,7 +191,7 @@ impl PackedTensor {
                 client,
                 words,
                 block_scales,
-                global_scale,
+                outer_scales,
                 scheme,
                 operand,
                 dimensions,
@@ -210,7 +210,7 @@ impl PackedTensor {
         Ok(Self::new(
             words,
             in_rows_of_words(block_scales.in_buffer_order()),
-            global_scale.map(in_rows_of_words),
+            outer_scales.map(in_rows_of_words),
             scheme,
             operand,
             [(dimensions[0], shape[0]), (dimensions[1], shape[1])],
@@ -231,7 +231,7 @@ impl PackedTensor {
         client: &Client,
         words: PlainTensor,
         block_scales: PlainTensor,
-        global_scale: Option<PlainTensor>,
+        outer_scales: Option<PlainTensor>,
         scheme: QuantScheme,
         operand: Operand,
         dimensions: [Dimension; 2],
@@ -253,7 +253,7 @@ impl PackedTensor {
         Ok(Self::new(
             words,
             block_scales,
-            global_scale.map(in_rows_of_words),
+            outer_scales.map(in_rows_of_words),
             scheme,
             operand,
             sized,
@@ -345,7 +345,7 @@ impl PackedTensor {
         let rows_dimension = self.rows_dimension();
         let rows = self.extent(rows_dimension);
         let unread = self.operand.tile_order().is_some()
-            || self.global_scale.is_some()
+            || self.outer_scales.is_some()
             || self.stack.is_some()
             || self.window.is_some()
             || batches == 0
@@ -382,7 +382,7 @@ impl PackedTensor {
         let rows_dimension = self.rows_dimension();
         let stored = self.extent(rows_dimension);
         let unread = self.operand.tile_order().is_some()
-            || self.global_scale.is_some()
+            || self.outer_scales.is_some()
             || matches!(self.stack, Some(PackedStack::Slabs { .. }))
             || self.window.is_some()
             || at + count > stored
@@ -431,7 +431,7 @@ impl PackedTensor {
     /// The tensors holding its scales: the block scales, then the per-tensor scale where its
     /// scheme has one.
     pub fn scales(&self) -> impl Iterator<Item = &PlainTensor> {
-        core::iter::once(&self.block_scales).chain(&self.global_scale)
+        core::iter::once(&self.block_scales).chain(&self.outer_scales)
     }
 
     /// How its values are packed and scaled.
@@ -647,7 +647,8 @@ impl PackedTensor {
             None => self.rows_dim(rows_along),
             Some(_) => PhysicalAxisMap::of(blocked(rows_along).1),
         };
-        let global = self.global_scale(launcher, &words_dimensions, tiled_along);
+        let outer_scales =
+            self.outer_scales(launcher, scale_rows.clone(), &words_dimensions, tiled_along);
         match scales {
             // A read taking its one scale alone ([`Packing::by_block`]): each bound as the element
             // it is, a `ue4m3` the `e4m3` byte with its sign clear, so a unit loads the scale it
@@ -666,7 +667,7 @@ impl PackedTensor {
                     Ok(Self::under_scales(
                         words,
                         self.shifted(block_scales.build()?.arg()),
-                        global,
+                        outer_scales,
                         outer,
                     ))
                 })
@@ -702,7 +703,7 @@ impl PackedTensor {
                 self.shifted_words(words).and_then(|words| {
                     let field = Field::of_scale(self.scheme.finest().dtype);
                     let block_scales = self.shifted(block_scales.packed(field).build()?.arg());
-                    Ok(Self::under_scales(words, block_scales, global, outer))
+                    Ok(Self::under_scales(words, block_scales, outer_scales, outer))
                 })
             }
             BlockScales::Words => {
@@ -719,7 +720,7 @@ impl PackedTensor {
                 self.scale_words(launcher, scale_rows, blocks_dimension, blocks, None)
                     .and_then(|block_scales| {
                         let words = words.packed(self.scheme.value).build()?.arg();
-                        Ok(Self::under_scales(words, block_scales, global, outer))
+                        Ok(Self::under_scales(words, block_scales, outer_scales, outer))
                     })
             }
         }
@@ -777,7 +778,8 @@ impl PackedTensor {
         let (blocks_dimension, inside) = blocked(tiled_along);
         let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
         let scale_rows = PhysicalAxisMap::of(blocked(rows_along).1);
-        let global = self.global_scale(launcher, &words_dimensions, tiled_along);
+        let outer_scales =
+            self.outer_scales(launcher, scale_rows.clone(), &words_dimensions, tiled_along);
         match scales {
             // Each scale read alone, as `bind` binds it, beside the words the engine lands.
             BlockScales::Fields if self.packing().reads_scales_alone() => {
@@ -795,7 +797,7 @@ impl PackedTensor {
                     .build()
                     .expect(ADMITTED_PLAN_RUNS)
                     .arg();
-                Self::under_scales(words, block_scales, global, outer)
+                Self::under_scales(words, block_scales, outer_scales, outer)
             }
             BlockScales::Fields => {
                 // In the tiles tile order stores them in, where it does, stated for the read the
@@ -831,7 +833,7 @@ impl PackedTensor {
                     .build()
                     .expect(ADMITTED_PLAN_RUNS)
                     .arg();
-                Self::under_scales(words, block_scales, global, outer)
+                Self::under_scales(words, block_scales, outer_scales, outer)
             }
             // Words of a step's scales, each one load straight into the instruction's register. In
             // tiles of their own, landed by the engine beside the words it lands, on their
@@ -846,7 +848,7 @@ impl PackedTensor {
                     [blocked(rows_along).1, blocks_dimension],
                     blocks,
                 );
-                Self::under_scales(words, block_scales, global, outer)
+                Self::under_scales(words, block_scales, outer_scales, outer)
             }
             // In rows, handed to the copy engine as the words they are stored in: a stage's row of
             // them is a few bytes, short of the 16 a descriptor's row lands.
@@ -858,7 +860,7 @@ impl PackedTensor {
                     blocks,
                     Some(Delivery::AsyncPerUnit),
                 )
-                .map(|block_scales| Self::under_scales(words, block_scales, global, outer))
+                .map(|block_scales| Self::under_scales(words, block_scales, outer_scales, outer))
                 .expect(ADMITTED_PLAN_RUNS),
         }
     }
@@ -1059,13 +1061,13 @@ impl PackedTensor {
     fn under_scales(
         words: TileTensorLaunch,
         block_scales: TileTensorLaunch,
-        global: Option<TileTensorLaunch>,
+        outer_scales: Option<TileTensorLaunch>,
         outer: OuterScale,
     ) -> TileTensorLaunch {
-        match (outer, global) {
-            (OuterScale::Factored, Some(global)) => words.scales(block_scales).scales(global),
-            (OuterScale::Kept, Some(global)) => words
-                .scales(block_scales.scales(global))
+        match (outer, outer_scales) {
+            (OuterScale::Factored, Some(scales)) => words.scales(block_scales).scales(scales),
+            (OuterScale::Kept, Some(scales)) => words
+                .scales(block_scales.scales(scales))
                 .scales(TileTensorLaunch::one()),
             (OuterScale::Factored | OuterScale::Kept, None) => {
                 words.scales(block_scales).scales(TileTensorLaunch::one())
@@ -1073,23 +1075,66 @@ impl PackedTensor {
         }
     }
 
-    /// Its per-tensor scale under `launcher`, where its scheme has one, packed as the scheme's
-    /// field for it: over the words' dimensions, varying along none.
-    fn global_scale(
+    /// Its outer scales under `launcher`, where its scheme has some, over the dimensions the bound
+    /// words carry: one for each of its rows, gathered over `scale_rows`, or one over all of it.
+    fn outer_scales(
         &self,
         launcher: &Launcher,
+        scale_rows: PhysicalAxisMap,
         words_dimensions: &[Dimension],
         tiled_along: Dimension,
     ) -> Option<TileTensorLaunch> {
-        let field = Field::of_scale(self.scheme.levels().nth(1)?.dtype);
-        let scale = self.global_scale.as_ref()?;
-        let global = launcher
-            .arg(scale.rows(1, 1), WORD)
-            .gathered(Self::over_whole_matrix(words_dimensions, tiled_along))
-            .packed(field)
+        let level = self.scheme.levels().nth(1)?;
+        let scales = self.outer_scales.as_ref()?;
+        let rows = self.rows_dimension();
+        let (binding, projection) = match self.outer_extent(rows) {
+            BlockExtent::WholeAxis => (
+                scales.bound_as(Metadata::new([1, 1], [1, 1])),
+                Self::over_whole_matrix(words_dimensions, tiled_along),
+            ),
+            BlockExtent::Values(_) => self.outer_scales_of_rows(scales, scale_rows),
+        };
+        let outer = launcher
+            .arg(binding, ElemType::from_scale_dtype(level.dtype))
+            .gathered(projection)
             .build()
             .expect(ADMITTED_PLAN_RUNS);
-        Some(global.arg())
+        Some(outer.arg())
+    }
+
+    /// `scales`, one for each row, bound as a dim of them over `scale_rows`, once per slab where
+    /// the slabs lie along the rows; slabs along the other dimension share a row's.
+    fn outer_scales_of_rows(
+        &self,
+        scales: &PlainTensor,
+        scale_rows: PhysicalAxisMap,
+    ) -> (TensorBinding, Projection) {
+        let binding = scales.bound_as(Metadata::new([self.stored_rows(), 1], [1, 1]));
+        let shared = matches!(self.stack, Some(PackedStack::Slabs { along, .. }) if along == self.operand.lined());
+        let (binding, axes) = match shared {
+            true => (binding, Projection::axes()),
+            false => (self.per_slab(binding), self.stack_dim()),
+        };
+        (
+            binding,
+            axes.axis(scale_rows)
+                .axis(PhysicalAxisMap::broadcast())
+                .build(),
+        )
+    }
+
+    /// What one of its outer scales covers along `dimension` of the matrix.
+    fn outer_extent(&self, dimension: Dimension) -> BlockExtent {
+        self.scheme
+            .levels()
+            .nth(1)
+            .and_then(|level| {
+                self.dimensions()
+                    .into_iter()
+                    .zip(level.size.extents_in::<2>())
+                    .find(|&(own, _)| own == dimension)
+            })
+            .map_or(BlockExtent::WholeAxis, |(_, extent)| extent)
     }
 
     /// `words` packed as the scheme's values, read from a window's start where it has one

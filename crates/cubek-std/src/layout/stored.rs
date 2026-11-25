@@ -9,7 +9,7 @@ use crate::TMA_ROW_BYTES;
 use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
 use crate::matmul_dimensions::{K, blocked};
 use cubecl::ir::ElemType;
-use cubecl::quant::scheme::{BlockExtent, BlockSize, QuantScheme, QuantStore};
+use cubecl::quant::scheme::{BlockExtent, QuantScheme, QuantStore};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::{Run, VectorTile};
 use cubecl::tile::{Dimension, Instruction, MicroTile, OperandReads, Space, kind::Field};
@@ -67,8 +67,8 @@ impl Operand {
     /// counts them.
     ///
     /// `None` where the finest block spans both dimensions or a whole one, where a read would
-    /// straddle two scales, or under a coarser level of more than one scale: none is a form this
-    /// kernel streams.
+    /// straddle two scales, or under a coarser level whose scales vary along `dimension`: none is a
+    /// form this kernel streams.
     pub fn of_scheme(
         scheme: &QuantScheme,
         dimension: Dimension,
@@ -77,10 +77,11 @@ impl Operand {
         let finest = scheme.finest();
         let extents = finest.size.extents_in::<2>();
         let position = dimensions.iter().position(|&a| a == dimension)?;
-        let coarser = scheme.levels().nth(1).map(|level| level.size);
-        let (BlockExtent::VALUE, BlockExtent::Values(scale), None | Some(BlockSize::TENSOR)) =
-            (extents[1 - position], extents[position], coarser)
-        else {
+        let (BlockExtent::VALUE, BlockExtent::Values(scale), true) = (
+            extents[1 - position],
+            extents[position],
+            Self::outer_constant_along(scheme, position),
+        ) else {
             return None;
         };
         let scale = scale.get() as usize;
@@ -89,6 +90,20 @@ impl Operand {
         scale
             .is_multiple_of(read)
             .then(|| Operand::packed(dimension, read, dimension, scale, scales_per_word))
+    }
+
+    /// Whether the scales of `scheme`'s coarser level, where it has one, are each over the whole of
+    /// dimension `position`, and over one position or all of the other.
+    fn outer_constant_along(scheme: &QuantScheme, position: usize) -> bool {
+        let Some(outer) = scheme.levels().nth(1) else {
+            return true;
+        };
+        let extents = outer.size.extents_in::<2>();
+        extents[position] == BlockExtent::WholeAxis
+            && matches!(
+                extents[1 - position],
+                BlockExtent::VALUE | BlockExtent::WholeAxis
+            )
     }
 
     /// This operand read a scale block at a time: one read the whole block of one row, its scale
@@ -667,13 +682,15 @@ pub enum BlockScales {
     Words,
 }
 
-/// Where the scale a whole packed operand shares is multiplied in, which the operand is bound for.
+/// Where the outer scales of a packed operand, each over its whole contraction, are multiplied in,
+/// which the operand is bound for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OuterScale {
-    /// Into the sum, once: the kernel factors it out of the operand
+    /// Into the sum, once: the kernel factors them out of the operand
     /// ([`Tile::factor`](cubecl::tile::Tile::factor)).
     Factored,
-    /// Into each value as it is read, beside its block scale.
+    /// Into each value as it is read, beside its block scale, which is lossless where the element
+    /// it is read in holds the product.
     Kept,
 }
 
@@ -685,6 +702,15 @@ impl OuterScale {
         match instruction.scales_its_sum_in_place() {
             true => Self::Factored,
             false => Self::Kept,
+        }
+    }
+
+    /// Where they are multiplied in where this is what the sum prefers and the values are read in
+    /// `element`: into the sum in any case for an 8-bit one, which holds no value under them.
+    pub fn read_in(self, element: ElemType) -> Self {
+        match element.size() {
+            1 => Self::Factored,
+            _ => self,
         }
     }
 }

@@ -10,7 +10,9 @@ use cubecl::tile::{Dimension, Geometry, Projection};
 use cubecl::zspace::metadata::Metadata;
 use cubecl::zspace::striding::row_major_contiguous_strides;
 use cubecl::zspace::{Shape, Strides, Tiling};
-use cubek_std::layout::{fragments, is_dense, is_nonoverlapping, one_matrix};
+use cubek_std::layout::{
+    Fragments, fragments, fragments_of, is_dense, is_nonoverlapping, one_matrix,
+};
 
 use cubek_microkernel::matmul::MatmulBlocks;
 
@@ -237,6 +239,9 @@ impl PlainTensor {
         columns: Dimension,
         batches: &[Dimension],
     ) -> (Self, Vec<Dimension>) {
+        if self.is_tiled() {
+            return self.restated_in_pieces(blocks, [rows, columns]);
+        }
         let (shape, strides) = (&self.binding.shape, &self.binding.strides);
         let kept = batches.len();
         let dense = match kept {
@@ -261,6 +266,100 @@ impl PlainTensor {
             dense.viewed(meta),
             dims.iter().map(|&(axis, _, _)| axis).collect(),
         )
+    }
+
+    /// The logical shape, whatever pieces the buffer is stored in.
+    pub fn logical_shape(&self) -> Vec<usize> {
+        self.meta()
+            .logical_shape()
+            .expect("a tensor's tiling describes its own rank")
+            .to_vec()
+    }
+
+    /// A dim's `pieces`, coarsest first, as those across blocks of `block` values and those within
+    /// one, a piece holding the boundary split in two. `None` where they close no block.
+    fn split_pieces(pieces: &Fragments, block: usize) -> Option<(Fragments, Fragments)> {
+        let mut across = pieces.clone();
+        let mut within = Fragments::new();
+        let mut left = block;
+        while left > 1 {
+            let (extent, stride) = across.pop()?;
+            let taken = extent.min(left);
+            if !extent.is_multiple_of(taken) || !left.is_multiple_of(taken) {
+                return None;
+            }
+            within.insert(0, (taken, stride));
+            if extent > taken {
+                across.push((extent / taken, stride * taken));
+            }
+            left /= taken;
+        }
+        Some((across, within))
+    }
+
+    /// [`restated`](Self::restated) of one matrix stored in tiles, its pieces each a piece of a
+    /// dimension of the space: a piece that holds a block's boundary is two.
+    ///
+    /// # Panics
+    ///
+    /// On a matrix [`readable_in_blocks`](Self::readable_in_blocks) does not return.
+    fn restated_in_pieces(
+        &self,
+        blocks: &MatmulBlocks,
+        dimensions: [Dimension; 2],
+    ) -> (Self, Vec<Dimension>) {
+        let matrix = fragments_of::<2>(&self.meta()).expect("one matrix, stored in tiles");
+        let mut pieces: Vec<(Dimension, Fragments)> = Vec::new();
+        for (dimension, stored) in dimensions.into_iter().zip(matrix) {
+            let [(block, count), (inside, extent)] = blocks.dimensions(dimension);
+            let (across, within) = match count {
+                1 => (Fragments::new(), stored),
+                _ => Self::split_pieces(&stored, extent).expect("tiles a block of K splits"),
+            };
+            if count > 1 {
+                pieces.push((block, across));
+            }
+            pieces.push((inside, within));
+        }
+        let mut axes: Vec<(usize, usize)> = pieces
+            .iter()
+            .flat_map(|(_, pieces)| pieces.iter().copied())
+            .collect();
+        axes.sort_by_key(|&(extent, stride)| core::cmp::Reverse((stride, extent)));
+        let mut listed = vec![false; axes.len()];
+        let mut place = |piece: &(usize, usize)| {
+            let axis = (0..axes.len())
+                .find(|&axis| !listed[axis] && axes[axis] == *piece)
+                .expect("every piece is an axis");
+            listed[axis] = true;
+            axis
+        };
+        let placed: Vec<Vec<usize>> = pieces
+            .iter()
+            .map(|(_, pieces)| pieces.iter().map(&mut place).collect())
+            .collect();
+        let (shape, strides): (Vec<usize>, Vec<usize>) = axes.iter().copied().unzip();
+        let meta = Metadata::new(shape, strides)
+            .with_tiling(Tiling::from_physical_dims(&placed).expect("each axis is one piece"))
+            .expect("the tiling lists the axes");
+        (
+            self.viewed(meta),
+            pieces.iter().map(|&(dimension, _)| dimension).collect(),
+        )
+    }
+
+    /// This operand where it lies, or a copy of it in rows: a matrix stored in tiles is read in
+    /// them where its contraction, its innermost dim, splits into blocks of `block` at its pieces.
+    pub fn readable_in_blocks(self, client: &Client, block: Option<usize>) -> Self {
+        let splits = match (fragments_of::<2>(&self.meta()), block) {
+            (Ok([_, contracted]), Some(block)) => Self::split_pieces(&contracted, block).is_some(),
+            (Ok(_), None) => true,
+            (Err(_), _) => false,
+        };
+        match self.is_tiled() && splits && !self.is_tiled_column_first() {
+            true => self,
+            false => self.into_contiguous(client),
+        }
     }
 
     /// A rank-2 view as its buffer lies: the same buffer, its two dims named in the order they
