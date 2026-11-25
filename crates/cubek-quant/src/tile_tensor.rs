@@ -28,12 +28,7 @@ pub fn quantized_arg_shifted<'a>(
     scales: impl IntoIterator<Item = Arg<'a, Labelled>>,
     offsets: Vec<i32>,
 ) -> Result<TileTensorLaunch, Decline> {
-    let fields = scheme
-        .block_scale()
-        .map(|block| block.dtype)
-        .into_iter()
-        .chain(scheme.tensor_scale())
-        .map(Field::of_scale);
+    let fields = scheme.levels().map(|level| Field::of_scale(level.dtype));
     let shifted = |arg: TileTensorLaunch| match offsets.is_empty() {
         true => arg,
         false => arg.runtime_map(Vec::new(), offsets.clone()),

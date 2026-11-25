@@ -4,7 +4,7 @@
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::prelude::Scalar;
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{BlockExtent, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Dimension;
 use cubecl::zspace::Shape;
@@ -110,7 +110,8 @@ impl PackedSlabs {
             quantized.quantization.expect("a quantized tensor").scale,
             (rows, spec.k / block_of(&scheme)),
         );
-        let global = (scheme.num_levels() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
+        let global =
+            (scheme.levels().count() > 1).then(|| upload(client, &[1, 1], &[GLOBAL_SCALE]));
         let across = across(spec.operand);
         let tensor = PackedTensor::new(
             PlainTensor::of_handle(quantized.handle),
@@ -179,7 +180,7 @@ impl PackedSlabsSpec {
     pub(crate) fn dequantized(&self) -> HostSlabs {
         let scheme = self.format.scheme();
         let exact = self.exact_values(&scheme);
-        let values = match scheme.num_levels() > 1 {
+        let values = match scheme.levels().count() > 1 {
             true => exact.into_iter().map(|v| v * GLOBAL_SCALE).collect(),
             false => exact,
         };
@@ -205,7 +206,7 @@ impl PackedSlabsSpec {
             .map(|i| {
                 let (block_at, within) = (i / block, i % block);
                 let h = hashed(block_at, self.seed);
-                let mantissa = match scheme.scale_dtype() {
+                let mantissa = match scheme.finest().dtype {
                     ScaleDtype::UE8M0 => MANTISSAS[0],
                     _ => MANTISSAS[h % 4],
                 };
@@ -253,10 +254,10 @@ fn mostly_differ(a: &[f32], b: &[f32]) -> bool {
 
 /// The values one of `scheme`'s block scales covers along a row.
 pub(crate) fn block_of(scheme: &QuantScheme) -> usize {
-    scheme
-        .block_size()
-        .expect("a block-scaled scheme")
-        .to_dim_vec(1)[0] as usize
+    match scheme.finest().size.extents[0] {
+        BlockExtent::Values(values) => values.get() as usize,
+        BlockExtent::WholeAxis => panic!("a block-scaled scheme"),
+    }
 }
 
 /// The dimension of `operand` beside `K`, which a packed matrix's rows run along.
@@ -284,7 +285,7 @@ fn stored_scales(
     scales: TensorHandle,
     (rows, blocks): (usize, usize),
 ) -> TensorHandle {
-    let stored = scheme.scale_dtype();
+    let stored = scheme.finest().dtype;
     if stored == ScaleDtype::F32 {
         return scales;
     }

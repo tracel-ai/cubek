@@ -506,13 +506,11 @@ impl BlockScaledMma {
             false => self.form.rhs,
         };
         let register_codes = Self::REGISTER_BYTES * BlockScaledOperands::values_per_element(kind);
-        let scales = scheme
-            .block_scale()
-            .map(|scale| ElemType::from_scale_dtype(scale.dtype));
+        let scales = ElemType::from_scale_dtype(scheme.finest().dtype);
         value_element(scheme.value).is_some_and(|values| self.holds(lhs, values, block))
             && scheme.mode == QuantMode::Symmetric
             && scheme.num_quants() == register_codes
-            && scales == Some(ElemType::Float(self.form.scales))
+            && scales == ElemType::Float(self.form.scales)
     }
 }
 
