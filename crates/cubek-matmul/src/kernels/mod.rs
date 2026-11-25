@@ -30,8 +30,9 @@ mod routine_settings;
 pub use candidate::*;
 pub use dense::*;
 pub use key::*;
-pub use listing::{FLOAT_SETTING_PACKED_INPUT, PACKED_SETTING_FLOAT_INPUTS};
-pub(crate) use listing::{ListedFor, Listing, Product};
+pub use listing::{
+    FLOAT_SETTING_PACKED_INPUT, ListedFor, Listing, PACKED_SETTING_FLOAT_INPUTS, Product,
+};
 pub use packed_candidate::*;
 pub use routine_prepared::*;
 pub use routine_settings::*;

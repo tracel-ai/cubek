@@ -70,7 +70,7 @@ impl SlabDimension {
     /// # Panics
     ///
     /// As [`slab_of`](Self::slab_of).
-    pub(crate) fn slab_shape(self, stack: &StoredTensor, slabs: usize) -> [usize; 2] {
+    pub fn slab_shape(self, stack: &StoredTensor, slabs: usize) -> [usize; 2] {
         self.slab_of(
             [K, N].map(|dimension| stack.extent([K, N], dimension)),
             slabs,
@@ -84,11 +84,7 @@ impl SlabDimension {
     /// # Errors
     ///
     /// What reading a packed stack slab by slab declines.
-    pub(crate) fn read_slabs(
-        self,
-        stack: &StoredTensor,
-        slabs: usize,
-    ) -> Result<StoredTensor, Decline> {
+    pub fn read_slabs(self, stack: &StoredTensor, slabs: usize) -> Result<StoredTensor, Decline> {
         match stack {
             StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
                 packed.clone().stacked(slabs, self.dimension())?,
