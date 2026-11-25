@@ -229,7 +229,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             microkernel.cube.fill.delivery == CubeStagedDelivery::Tma,
         )?;
         if microkernel.cube.walk().decoded().is_some() {
-            view.check_steps(hw)?;
+            view.check_reads(hw)?;
         }
         let target = Self::cubes(hw, settings)?;
         // Against packed inputs each cube contracts them as its microkernel reads them, over the

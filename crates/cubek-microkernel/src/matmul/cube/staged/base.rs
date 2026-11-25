@@ -8,14 +8,14 @@ use crate::matmul::plane::{
 };
 use crate::matmul::{
     MatmulDestination, MatmulDim, MatmulDimensions, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRead, MatmulStage, MatmulStagingCount, MatmulStep, MatmulWorkItem,
+    MatmulOperands, MatmulRead, MatmulStage, MatmulStagingCount, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
-use cubecl::tile::{FragmentSource, Levels, Scratch, Space, StageStorage};
+use cubecl::tile::{BaseRegion, FragmentSource, Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{BlockScales, Packing};
@@ -225,7 +225,7 @@ impl CubeStagedMicrokernel {
     /// whole scale blocks, each a whole number of the instruction's steps. A plane holds the
     /// settings' steps of `M` and `N` and walks the settings' steps of `K` through each stage
     /// ([`CubeStagedMicrokernelSettings::stage_steps`]), block by block, in the instruction's
-    /// calls ([`MatmulStep::calls`]). The units filling each stage decode every packed input into
+    /// calls ([`BaseRegion::instructions`]). The units filling each stage decode every packed input into
     /// [`MatmulWorkItem::decoded_element`].
     fn decoding_candidates(
         hw: &Hardware,
@@ -241,9 +241,11 @@ impl CubeStagedMicrokernel {
         let finest = space.finest();
         let item = &item.with_blocks(finest);
         let (block, read) = (Self::block(item), item.decoded_element());
-        let step = item
-            .blocks
-            .map(|space| MatmulStep::new(hw, space.operands(), MatmulOperands::all(read)));
+        let vectors = item.blocks.map(|space| {
+            space
+                .operands()
+                .vector_region(hw, &MatmulOperands::all(read))
+        });
         block
             .and_then(|block| {
                 PlaneFragmentMicrokernel::decoding_plane(
@@ -256,29 +258,28 @@ impl CubeStagedMicrokernel {
             .into_iter()
             .filter_map(|plane| {
                 let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
-                let step = step.clone()?.under(Space::new(&[(M, m), (N, n), (K, k)]));
-                let block = block?;
-                if !step.along(K).is_multiple_of(block) || !block.is_multiple_of(k) {
-                    return None;
-                }
-                let blocks = step.along(K) / block;
+                let region =
+                    BaseRegion::new(vectors.as_ref()?, Space::new(&[(M, m), (N, n), (K, k)]));
+                let block = Space::new(&[(K, block?)]);
+                let blocks = region.space().count_along(K, &block)?;
+                let depth = block.count_along(K, region.instruction())?;
                 let plane = PlaneFragmentMicrokernel {
                     settings: PlaneFragmentMicrokernelSettings {
                         along_m: settings
                             .plane
                             .along_m
-                            .checked_mul(NonZeroUsize::new(step.calls(M))?)?,
+                            .checked_mul(NonZeroUsize::new(region.instructions(M))?)?,
                         along_n: settings
                             .plane
                             .along_n
-                            .checked_mul(NonZeroUsize::new(step.calls(N))?)?,
-                        depth: NonZeroUsize::new(step.calls(K) / blocks)?,
+                            .checked_mul(NonZeroUsize::new(region.instructions(N))?)?,
+                        depth: NonZeroUsize::new(depth)?,
                         ..plane.settings
                     },
                     ..plane
                 };
                 let stage_blocks = NonZeroUsize::new(blocks)?.checked_mul(settings.stage_steps)?;
-                let window = stage_blocks.get() * block;
+                let window = stage_blocks.get() * block.along(K);
                 Some(Self {
                     planned: Some(space.within(window, window)?),
                     ..Self::new(

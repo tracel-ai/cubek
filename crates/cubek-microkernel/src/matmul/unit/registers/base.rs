@@ -5,8 +5,9 @@ use crate::matmul::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
-use cubecl::tile::{Levels, SoftwareMatmul};
+use cubecl::tile::{Levels, SoftwareMatmul, Space};
 use cubek_std::layout::BindingOrder;
+use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
@@ -101,6 +102,25 @@ impl UnitRegistersMicrokernel {
     /// unit's registers.
     pub fn register_budget() -> SoftwareMatmul {
         SoftwareMatmul::new(UNIT_REGISTERS as usize)
+    }
+
+    /// What it asks of its reads whatever its block: a col rhs is lined with the lhs, any other
+    /// with the output.
+    pub fn lined(&self) -> VectorRequirement<MatmulOperand> {
+        let with = match self.orders.rhs {
+            BindingOrder::InBufferOrder => MatmulOperand::Lhs,
+            BindingOrder::Stated => MatmulOperand::Out,
+        };
+        VectorRequirement::Together {
+            operand: MatmulOperand::Rhs,
+            with,
+        }
+    }
+
+    /// The region of its block: what its registers compute at once.
+    pub fn region(&self) -> Space {
+        let [rows, columns, depth] = self.extents();
+        Space::new(&[(M, rows), (N, columns), (K, depth)])
     }
 
     /// The extent along `dim` of one step of the block.
@@ -199,9 +219,9 @@ impl Microkernel for UnitRegistersMicrokernel {
     /// the output's cells, lined with them, and the output is written the block's columns at a
     /// time.
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<MatmulOperand>) {
-        let (rhs_partner, out) = match self.orders.rhs {
-            BindingOrder::InBufferOrder => (MatmulOperand::Lhs, 1),
-            BindingOrder::Stated => (MatmulOperand::Out, self.extent(MatmulDim::N)),
+        let out = match self.orders.rhs {
+            BindingOrder::InBufferOrder => 1,
+            BindingOrder::Stated => self.extent(MatmulDim::N),
         };
         for (operand, elements) in [
             (MatmulOperand::Lhs, self.extent(MatmulDim::K)),
@@ -213,10 +233,7 @@ impl Microkernel for UnitRegistersMicrokernel {
         ] {
             vectorization.require(VectorRequirement::Access { operand, elements });
         }
-        vectorization.require(VectorRequirement::Together {
-            operand: MatmulOperand::Rhs,
-            with: rhs_partner,
-        });
+        vectorization.require(self.lined());
     }
 
     /// It holds its block in registers and contracts it with the device's vector arithmetic: the
