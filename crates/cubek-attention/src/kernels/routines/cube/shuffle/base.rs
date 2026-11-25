@@ -1,7 +1,8 @@
 use super::kernel::cube_shuffle_attention_kernel;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors, QueryOrder,
+    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+    PLANE_SHUFFLE_WIDTHS_DIFFER, QueryOrder,
 };
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::{Decline, Vectorization};
@@ -11,7 +12,7 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{Breakable, CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
 /// nothing else: each plane of the cube owns its rows of one head and reads its keys and values
@@ -137,10 +138,10 @@ impl Routine for CubeShuffleAttentionRoutine {
         );
         // The plane shuffle lines every operand alike, and the kernel binds them at one width.
         let widths = &blueprint.widths;
-        [widths.key, widths.value, widths.out]
-            .iter()
-            .all(|&width| width == widths.query)
-            .or_broken("the plane shuffle's operands should share one width")?;
+        if [widths.key, widths.value, widths.out] != [widths.query; 3] {
+            log::error!("{PLANE_SHUFFLE_WIDTHS_DIFFER}");
+            return Err(PLANE_SHUFFLE_WIDTHS_DIFFER);
+        }
         Ok((blueprint, grid))
     }
 }

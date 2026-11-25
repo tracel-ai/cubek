@@ -2,7 +2,12 @@ use crate::kernels::PackedCacheBinding;
 use cubecl::prelude::TensorArg;
 use cubecl::tile::launch::{Bound, Decline};
 use cubecl::tile::{Launcher, TileTensorLaunch};
-use cubek_std::routine::Breakable;
+
+/// A QJL fix-up reaching a routine that stages its keys.
+const FIXUP_IN_A_STAGE: Decline = Decline::Broken {
+    condition: "a stage of keys should be one tile, and a fix-up is a second",
+    cause: None,
+};
 
 /// The arguments of one launch, its operands bound under its launcher. Not `Debug`: the tile DSL's
 /// `Launcher` is not.
@@ -48,10 +53,15 @@ impl AttentionCacheBinding {
     pub fn into_tiles(self) -> Result<(TileTensorLaunch, TileTensorLaunch), Decline> {
         match self {
             Self::Tiles { key, value } => Ok((key, value)),
-            Self::Packed(PackedCacheBinding { key, value, fixup }) => fixup
-                .is_none()
-                .or_broken("a stage of keys should hold one tile, and a fix-up is a second")
-                .map(|()| (key, value)),
+            Self::Packed(PackedCacheBinding {
+                key,
+                value,
+                fixup: None,
+            }) => Ok((key, value)),
+            Self::Packed(_) => {
+                log::error!("{FIXUP_IN_A_STAGE}");
+                Err(FIXUP_IN_A_STAGE)
+            }
         }
     }
 }

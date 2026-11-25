@@ -1,6 +1,6 @@
 use crate::kernels::{
     AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning, AttentionRoutineProblem,
-    HypercubeMerge, PACKED_QUERIES_UNREAD, QueryOrder,
+    HypercubeMerge, PACKED_QUERIES_UNREAD, PLANE_SHUFFLE_WIDTHS_DIFFER, QueryOrder,
 };
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
@@ -17,7 +17,7 @@ use cubek_microkernel::attention::plane::PlaneShuffleAttentionMicrokernelSetting
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{Breakable, CubeResources, Grid, Routine};
+use cubek_std::routine::{CubeResources, Grid, Routine};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
 /// keys: the hypercube microkernel runs a cube of plane shuffles over a cube's run, its planes
@@ -233,8 +233,10 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         // binds no tile.
         let widths = &blueprint.widths;
         let packed = matches!(problem.cache, AttentionCacheLayout::Packed(_));
-        let one_width = widths.key == widths.query && widths.value == widths.query;
-        (packed || one_width).or_broken("the plane shuffle's operands should share one width")?;
+        if !packed && [widths.key, widths.value] != [widths.query; 2] {
+            log::error!("{PLANE_SHUFFLE_WIDTHS_DIFFER}");
+            return Err(PLANE_SHUFFLE_WIDTHS_DIFFER);
+        }
         Ok((blueprint, grid))
     }
 }
