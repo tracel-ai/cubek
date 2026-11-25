@@ -163,8 +163,7 @@ fn problems_at(precision: ReduceBenchPrecision) -> Vec<CatalogEntry<ReduceProble
     }
 
     // Large `k`, where the selection network's `O(reduce_len * k)` shape shows.
-    // `k = 32` is the largest that still fits the unroll budget, and 5.8x faster
-    // for it. Fused only: this measures the accumulator, not the launch pattern.
+    // `k = 64` is the largest that still fits the unroll budget. Fused only: this measures the accumulator, not the launch pattern.
     let mut large_k = vec![16, 32, 64];
 
     // A `k = 128` launch costs about a second, and reduce top-k stops being the

@@ -6,7 +6,6 @@ use crate::kernels::{
     PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceKey, ReduceRoutineSetting, ReduceTensors,
     UnitDirectReduceRoutine,
 };
-use cubecl::CubeDim;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound};
@@ -252,46 +251,173 @@ impl ReducePrepared {
 impl ReducePrepared {
     /// The launch of `blueprint` on `grid`, by the routine `routine` tags it with.
     fn new<M>(
-        routine: fn(ReduceBlueprint<M>, CubeDim) -> ReduceCompiled,
+        routine: fn(ReduceBlueprint<M>) -> ReduceCompiled,
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
     ) -> Self {
         Self {
-            compiled: routine(blueprint, grid.launch.cube_dim),
+            compiled: routine(blueprint),
             launch: grid.launch,
         }
     }
 }
 
-/// Two launches compile alike where their routine, blueprint and cube do: two settings preparing
-/// one blueprint can still launch different cubes, and the count of cubes is a runtime value.
+/// Two launches compile alike where their routine and blueprint do: the blueprint's partitioning
+/// settles the cube on the device it was listed for, and the count of cubes is a runtime value.
 impl PartialEq for ReducePrepared {
     fn eq(&self, other: &Self) -> bool {
         self.compiled == other.compiled
     }
 }
 
-/// What a prepared launch compiles: its routine, its blueprint and its cube.
+/// What a prepared launch compiles: its routine and its blueprint.
 #[derive(Clone, PartialEq)]
 enum ReduceCompiled {
-    UnitDirect(
-        ReduceBlueprint<<UnitDirectReduceRoutine as Routine>::Microkernel>,
-        CubeDim,
-    ),
-    PlaneShuffle(
-        ReduceBlueprint<<PlaneShuffleReduceRoutine as Routine>::Microkernel>,
-        CubeDim,
-    ),
-    CubeStaged(
-        ReduceBlueprint<<CubeStagedReduceRoutine as Routine>::Microkernel>,
-        CubeDim,
-    ),
+    UnitDirect(ReduceBlueprint<<UnitDirectReduceRoutine as Routine>::Microkernel>),
+    PlaneShuffle(ReduceBlueprint<<PlaneShuffleReduceRoutine as Routine>::Microkernel>),
+    CubeStaged(ReduceBlueprint<<CubeStagedReduceRoutine as Routine>::Microkernel>),
     HypercubeLastArrival(
         ReduceBlueprint<<HypercubeLastArrivalReduceRoutine as Routine>::Microkernel>,
-        CubeDim,
     ),
-    HypercubeAtomic(
-        ReduceBlueprint<<HypercubeAtomicReduceRoutine as Routine>::Microkernel>,
-        CubeDim,
-    ),
+    HypercubeAtomic(ReduceBlueprint<<HypercubeAtomicReduceRoutine as Routine>::Microkernel>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::tests::{bound_back, zeros};
+    use crate::kernels::{ReduceElements, ReduceRoutine};
+    use cubecl::CubeElement;
+    use cubecl::bytes::Bytes;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::std::tensor::TensorHandle;
+    use cubecl::tile::launch::StoredTileOperand;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_std::devices;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+    const SHAPE: [usize; 2] = [4, 8];
+
+    /// Checks that `setting` made a [`ReduceCandidate`] keeps its name.
+    fn keeps_its_name<R: ReduceRoutine<M> + Routine<Microkernel = M>, M>(
+        setting: &ReduceRoutineSetting<R>,
+    ) where
+        ReduceRoutineSetting<R>: Clone,
+        ReduceCandidate: From<ReduceRoutineSetting<R>>,
+    {
+        let named = ReduceCandidate::from(setting.clone()).to_string();
+        assert_eq!(&named, setting.name());
+    }
+
+    #[test]
+    fn a_unit_candidate_keeps_its_name() {
+        keeps_its_name(
+            &ReduceRoutineSetting::<UnitDirectReduceRoutine>::list(&devices::m2_pro())[0],
+        );
+    }
+
+    #[test]
+    fn a_plane_candidate_keeps_its_name() {
+        keeps_its_name(
+            &ReduceRoutineSetting::<PlaneShuffleReduceRoutine>::list(&devices::m2_pro())[0],
+        );
+    }
+
+    #[test]
+    fn a_cube_candidate_keeps_its_name() {
+        keeps_its_name(
+            &ReduceRoutineSetting::<CubeStagedReduceRoutine>::list(&devices::m2_pro())[0],
+        );
+    }
+
+    #[test]
+    fn a_last_arrival_candidate_keeps_its_name() {
+        keeps_its_name(
+            &ReduceRoutineSetting::<HypercubeLastArrivalReduceRoutine>::list(&devices::m2_pro())[0],
+        );
+    }
+
+    #[test]
+    fn an_atomic_candidate_keeps_its_name() {
+        keeps_its_name(
+            &ReduceRoutineSetting::<HypercubeAtomicReduceRoutine>::list(&devices::m2_pro())[0],
+        );
+    }
+
+    /// Checks that `candidate` declines a sum given no scratch on a device lacking every Feature,
+    /// without asking for its input.
+    fn declines_unbound(candidate: impl Into<ReduceCandidate>) {
+        let tensors = ReduceTensors::unbound_zeros(&SHAPE, 1, ReduceOperation::Sum);
+        let launched = candidate
+            .into()
+            .launch_unbound::<StoredTileOperand>(&tensors, |_| {
+                unreachable!("a declined candidate binds no input")
+            });
+        assert!(launched.is_err());
+    }
+
+    fn lacking_every_feature() -> Hardware {
+        devices::lacking_every_feature(devices::m2_pro())
+    }
+
+    #[test]
+    fn a_plane_candidate_declines_an_unbound_input() {
+        declines_unbound(
+            ReduceRoutineSetting::<PlaneShuffleReduceRoutine>::list(&lacking_every_feature())
+                .remove(0),
+        );
+    }
+
+    #[test]
+    fn a_cube_candidate_declines_an_unbound_input() {
+        declines_unbound(
+            ReduceRoutineSetting::<CubeStagedReduceRoutine>::list(&lacking_every_feature())
+                .remove(0),
+        );
+    }
+
+    #[test]
+    fn a_last_arrival_candidate_declines_an_unbound_input() {
+        declines_unbound(
+            ReduceRoutineSetting::<HypercubeLastArrivalReduceRoutine>::list(
+                &lacking_every_feature(),
+            )
+            .remove(0),
+        );
+    }
+
+    #[test]
+    fn an_atomic_candidate_declines_an_unbound_input() {
+        declines_unbound(
+            ReduceRoutineSetting::<HypercubeAtomicReduceRoutine>::list(&lacking_every_feature())
+                .remove(0),
+        );
+    }
+
+    /// Zeros summed into an output of ones.
+    #[test]
+    fn a_unit_candidate_reduces_the_input_its_caller_binds() {
+        const ROWS: usize = 4;
+        let client = cubecl::test_device().client();
+        let input = zeros(&client, &[ROWS, 8]);
+        let written = client.create(Bytes::from_elems(vec![1.0f32; ROWS]));
+        let tensors = ReduceTensors::unbound(
+            &client,
+            Geometry::from(&input),
+            1,
+            TensorHandle::new_contiguous([ROWS, 1], written.clone(), F32).binding(),
+            1,
+            ReduceOperation::Sum,
+            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
+        );
+        let hw = Hardware::from_client(&client);
+        let candidate = ReduceCandidate::from(
+            ReduceRoutineSetting::<UnitDirectReduceRoutine>::list(&hw).remove(0),
+        );
+        candidate
+            .launch_unbound::<StoredTileOperand>(&tensors, bound_back(input))
+            .expect("the unit routine serves every problem");
+        let sums = client.read_one(written).expect("the output reads back");
+        assert_eq!(f32::from_bytes(&sums), [0.0; ROWS]);
+    }
 }

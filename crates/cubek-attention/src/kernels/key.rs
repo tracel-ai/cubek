@@ -52,14 +52,14 @@ impl AttentionKeyElements {
 ///
 /// **A bucket's representative is the extent a call is rounded up to**, and a
 /// candidate's duplicate proof is taken there rather than at the call in hand, so
-/// the candidates that collapse at some length inside a bucket collapse together.
+/// the candidates that collapse at some length inside a bucket collapse together. The round
+/// itself runs on the call in hand.
 ///
 /// **The queries and the keys are bucketed in powers of two, whatever the autotune level**
 /// ([`positions_bucket`](Self::positions_bucket)). A caller buckets its depth in powers of two and
-/// prefills in chunks of a power of two, so the round measures exactly the extents its calls run.
+/// prefills in chunks of a power of two, so the bucket's extents are the ones its calls run.
 /// cubecl's anchor rounds in powers of 1.5 at the extensive level: a chunk of 512 queries would be
-/// measured as 657, a second box of 145 queries no call runs, which ranks the routines otherwise
-/// than they run.
+/// keyed with calls of 657, a second box of 145 queries it does not run.
 ///
 /// **The keys are the depth the caller states, never a cache's capacity.** How many positions
 /// each sequence attends lives on device, so that every call of one bucket replays the same
@@ -233,8 +233,8 @@ impl TryFrom<&AttentionKey> for AttentionRoutineProblem {
 mod tests {
     use super::*;
 
-    /// A power of two is its own bucket, so a chunk of 512 queries is measured as 512, and any
-    /// extent past it is measured at the next.
+    /// A power of two is its own bucket, so a chunk of 512 queries is keyed at 512, and any
+    /// extent past it at the next.
     #[test]
     fn a_bucket_is_the_power_of_two_at_or_above() {
         let buckets = [1, 300, 512, 513, 2048, 2049].map(AttentionKey::positions_bucket);

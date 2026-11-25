@@ -1,6 +1,5 @@
-//! Every microkernel launched alone on the test device, one work item in one cube, against a
-//! reference written for what it computes alone: a folder per problem, laid out as its source, a
-//! file per microkernel.
+//! Every microkernel launched alone on the test device, against a reference written for what it
+//! computes alone: a folder per problem, laid out as its source, a file per microkernel.
 
 mod launch;
 

@@ -42,6 +42,9 @@ pub(crate) struct AttentionCase {
     /// The one scale each side of the cache is stored under, where it has them: the attention
     /// reads the stored keys and values times their side's scale.
     pub scales: Option<KvScales>,
+    /// The positions a page holds where the cache lies in pools of pages, its sequences' pages in
+    /// another order than their positions. `None` where each sequence lies whole.
+    pub page_size: Option<NonZeroUsize>,
 }
 
 /// The scale over every key, and the one over every value, a cache quantized per tensor is
@@ -74,6 +77,7 @@ pub(crate) const PROMPT: AttentionCase = AttentionCase {
     keys: FloatKind::F16,
     values: FloatKind::F16,
     scales: None,
+    page_size: None,
 };
 
 /// A causal prompt chunk at a head dim of 128, the one a model's prefill runs: four query heads to
@@ -150,6 +154,22 @@ pub(crate) const PROMPTS_WIDE_PER_TENSOR: [AttentionCase; 2] = per_tensor_caches
 
 /// The wide decode step over a cache quantized per tensor.
 pub(crate) const DECODES_WIDE_PER_TENSOR: [AttentionCase; 2] = per_tensor_caches(DECODE_WIDE);
+
+/// `case` over a cache in pages of 64 positions, `f16` and `e4m3`, as serving stores it.
+pub(crate) const fn paged_caches(case: AttentionCase) -> [AttentionCase; 2] {
+    let page_size = NonZeroUsize::new(64);
+    let [_, _, fp8] = fp8_caches(case);
+    [
+        AttentionCase { page_size, ..case },
+        AttentionCase { page_size, ..fp8 },
+    ]
+}
+
+/// The wide prompt over a paged cache.
+pub(crate) const PROMPTS_WIDE_PAGED: [AttentionCase; 2] = paged_caches(PROMPT_WIDE);
+
+/// The prompt of head dim 256 over a paged cache.
+pub(crate) const PROMPTS_HEAD_DIM_256_PAGED: [AttentionCase; 2] = paged_caches(PROMPT_HEAD_DIM_256);
 
 /// A single position of the same heads, which a routine walks the group of as its queries.
 pub(crate) const DECODE: AttentionCase = AttentionCase {
@@ -277,6 +297,37 @@ impl AttentionCase {
         ]
     }
 
+    /// The page of the pool sequence `b` holds its `i`-th page of positions in: the last first.
+    fn page(&self, b: usize, i: usize, page_size: NonZeroUsize) -> usize {
+        let per_sequence = self.seq_kv.div_ceil(page_size.get());
+        self.batch * per_sequence - 1 - (b * per_sequence + i)
+    }
+
+    /// `values`, a side of the cache `[b, kv, s, d]`, as a pool of pages `[pages, kv, page_size,
+    /// d]`, the positions past the sequences' end holding what no attention may read.
+    fn pooled(
+        &self,
+        values: &[f32],
+        [batch, heads, seq, dim]: [usize; 4],
+        page_size: NonZeroUsize,
+    ) -> (Vec<f32>, [usize; 4]) {
+        const UNREAD: f32 = 8.0;
+        let size = page_size.get();
+        let pages = batch * seq.div_ceil(size);
+        let mut pool = vec![UNREAD; pages * heads * size * dim];
+        for b in 0..batch {
+            for h in 0..heads {
+                for s in 0..seq {
+                    let page = self.page(b, s / size, page_size);
+                    let to = ((page * heads + h) * size + s % size) * dim;
+                    let from = ((b * heads + h) * seq + s) * dim;
+                    pool[to..to + dim].copy_from_slice(&values[from..from + dim]);
+                }
+            }
+        }
+        (pool, [pages, heads, size, dim])
+    }
+
     /// The output `[b, q, h, dv]` and the logsumexp `[b, h, q]` on the host, in `f64`, from the
     /// inputs as the device holds them, the keys and values times their side's scale. A query
     /// that sees no key writes zeros.
@@ -371,8 +422,15 @@ impl AttentionCase {
         };
         let [(q, q_shape), (k, k_shape), (v, v_shape)] = self.inputs();
         let query = upload(q, Shape::new(q_shape), query);
-        let key = upload(k, Shape::new(k_shape), keys);
-        let value = upload(v, Shape::new(v_shape), values);
+        let side = |values: Vec<f32>, shape: [usize; 4], element| {
+            let (values, shape) = match self.page_size {
+                Some(page_size) => self.pooled(&values, shape, page_size),
+                None => (values, shape),
+            };
+            upload(values, Shape::new(shape), element)
+        };
+        let key = side(k, k_shape, keys);
+        let value = side(v, v_shape, values);
         let lengths = upload(vec![self.seq_kv as f32], shape![1], u32::elem_type_native());
         let scale = |scale: f32| upload(vec![scale], shape![1], f32::elem_type_native());
         let scales = match self.scales {
@@ -382,10 +440,26 @@ impl AttentionCase {
             },
             None => CacheScales::default(),
         };
+        let source = KvSource::new(AttentionCache::Float { key, value }).scaled(scales);
+        let source = match self.page_size {
+            Some(page_size) => {
+                let per_sequence = self.seq_kv.div_ceil(page_size.get());
+                let table = (0..self.batch)
+                    .flat_map(|b| (0..per_sequence).map(move |i| (b, i)))
+                    .map(|(b, i)| self.page(b, i, page_size) as f32)
+                    .collect();
+                source.paged(upload(
+                    table,
+                    shape![self.batch, per_sequence],
+                    u32::elem_type_native(),
+                ))
+            }
+            None => source,
+        };
         let tensors = AttentionTensors::attention(
             client,
             AttentionQueries::Dense { query, lengths },
-            KvSource::new(AttentionCache::Float { key, value }).scaled(scales),
+            source,
             AttentionScoring {
                 visibility: self.visibility,
                 scale: ScoreScale::Custom(self.scale() as f32),

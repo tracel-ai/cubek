@@ -7,7 +7,7 @@
 use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceBlueprint, HypercubeAtomicReduceRoutine,
-    HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceLauncher, ReduceTensors,
+    HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceRoutine, ReduceTensors,
     UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine, select,
 };
 use cubecl::prelude::LaunchArg;
@@ -190,7 +190,7 @@ pub(crate) fn launch_zeroed_atomic(
 ///
 /// # Errors
 ///
-/// Why the zeroing cannot run the problem here.
+/// As [`launch_zeroed_atomic`].
 pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
     hw: &Hardware,
     tensors: &ReduceTensors<Geometry>,
@@ -206,7 +206,7 @@ pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
 }
 
 /// `tensors` reduced by `R` at the first of its settings `hw` prepares them at.
-fn launch_first_served<R: ReduceLauncher<M>, M>(
+fn launch_first_served<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     tensors: &ReduceTensors,
 ) -> Result<(), Decline> {
@@ -219,7 +219,6 @@ fn launch_first_served<R: ReduceLauncher<M>, M>(
 mod tests {
     use super::*;
 
-    /// The default is the rule.
     #[test]
     fn the_default_is_the_rule() {
         assert_eq!(
@@ -238,7 +237,6 @@ mod tests {
         assert_eq!(policies, ReduceKernelHeuristic::all().len());
     }
 
-    /// Every kernel is pinned once.
     #[test]
     fn every_kernel_is_pinned() {
         let pins = ReduceOpStrategy::all()
@@ -248,7 +246,6 @@ mod tests {
         assert_eq!(pins, ReduceKernel::all().len());
     }
 
-    /// Every name is kebab case.
     #[test]
     fn every_name_is_kebab_case() {
         let kebab = |name: &str| name.chars().all(|c| c.is_ascii_lowercase() || c == '-');
@@ -259,7 +256,6 @@ mod tests {
         );
     }
 
-    /// Every name names one strategy.
     #[test]
     fn every_name_is_its_own() {
         let all = ReduceOpStrategy::all();

@@ -6,14 +6,15 @@ use crate::eval::cpu_reference;
 use crate::eval::workspace::workspace_for;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic, ReduceKey,
-    ReduceLauncher, ReduceOpStrategy, ReduceTensors, ReduceWorkspace, UnitDirectReduceRoutine,
+    PlaneShuffleReduceRoutine, ReduceElements, ReduceKernel, ReduceKernelHeuristic,
+    ReduceOpStrategy, ReduceRoutine, ReduceTensors, ReduceWorkspace, UnitDirectReduceRoutine,
     UnitDirectZeroReduceRoutine, launch_kernel, launch_zeroed_atomic_unbound, select,
 };
 use cubecl::client::Client;
 use cubecl::ir::features::AtomicUsage;
 use cubecl::ir::{ElemType, FloatKind, IntKind, Type};
 use cubecl::prelude::TensorBinding;
+use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::{Decline, StoredTileOperand, Unbound};
 use cubecl::tile::{Geometry, TileTensorLaunch};
 use cubecl::zspace::Shape;
@@ -26,25 +27,26 @@ const F32: ElemType = ElemType::Float(FloatKind::F32);
 const I32: ElemType = ElemType::Int(IntKind::I32);
 
 /// Small whole numbers, so every sum is exact, with ties and zeros; for a product, `±1`, `2` and
-/// `0.5` on a cycle of seven, prime to every extent here so no row repeats one value, with as many
-/// `2` as `0.5` so that a long row's product stays exact and finite. A NaN, an infinity or a row
+/// `0.5` on a cycle of seven, prime to the step between a row's values here so no row repeats one
+/// value, with as many `2` as `0.5` so that a long row's product stays exact and finite. A NaN, an infinity or a row
 /// of ties is a behavior of its own, which the microkernels' Component Tests check.
 fn values(len: usize, product: bool) -> Vec<f32> {
+    const FACTORS: [f32; 7] = [1.0, -1.0, 2.0, 0.5, 1.0, 2.0, 0.5];
     (0..len)
         .map(|i| match product {
-            true => [1.0, -1.0, 2.0, 0.5, 1.0, 2.0, 0.5][i % 7],
-            false => whole_value(i),
+            true => FACTORS[i % FACTORS.len()],
+            false => whole_value_at_index(i),
         })
         .collect()
 }
 
-/// Value `i` of a row that is not a product's: a run of ties, a zero, and between them small whole
-/// numbers on a cycle of eleven.
-fn whole_value(i: usize) -> f32 {
-    match i % 97 {
+/// The value at `index` of a row that is not a product's: a run of ties, a zero, and between them
+/// small whole numbers on a cycle of eleven.
+fn whole_value_at_index(index: usize) -> f32 {
+    match index % 97 {
         29 | 30 => 9.0,
         50 => 0.0,
-        _ => ((i * 7) % 11) as f32 - 5.0,
+        _ => ((index * 7) % 11) as f32 - 5.0,
     }
 }
 
@@ -61,41 +63,39 @@ enum TestedRoutine {
     Picked(ReduceOpStrategy),
 }
 
-impl TestedRoutine {
-    /// `R` at the setting this choice picks, launched on `tensors`.
-    ///
-    /// # Errors
-    ///
-    /// Why `R` prepares no setting for the problem on this device, which the check reports as a
-    /// skip.
-    fn launch_with<R: ReduceLauncher<M>, M>(
-        self,
-        hw: &Hardware,
-        tensors: &ReduceTensors,
-    ) -> Result<(), Decline> {
-        let problem = tensors.problem();
-        let mut settings = R::settings(hw);
-        if let TestedRoutine::HypercubeLastArrival = self {
-            settings.reverse();
-        }
-        let (blueprint, grid) = settings
-            .iter()
-            .map(|settings| R::prepare(hw, problem, settings))
-            .reduce(|first, next| first.or(next))
-            .unwrap_or(Err(ROUTINE_LISTS_NO_SETTING))?;
-        R::launch(tensors, blueprint, grid);
-        Ok(())
+/// `R` launched on `tensors` at the setting `routine` picks.
+///
+/// # Errors
+///
+/// Why `R` prepares no setting for the problem on this device, which the check reports as a
+/// skip.
+fn launch_tested<R: ReduceRoutine<M>, M>(
+    routine: TestedRoutine,
+    hw: &Hardware,
+    tensors: &ReduceTensors,
+) -> Result<(), Decline> {
+    let problem = tensors.problem();
+    let mut settings = R::settings(hw);
+    if let TestedRoutine::HypercubeLastArrival = routine {
+        settings.reverse();
     }
+    let (blueprint, grid) = settings
+        .iter()
+        .map(|settings| R::prepare(hw, problem, settings))
+        .reduce(|first, next| first.or(next))
+        .unwrap_or(Err(ROUTINE_LISTS_NO_SETTING))?;
+    R::launch(tensors, blueprint, grid);
+    Ok(())
 }
 
 /// `shape` reduced along `axis` by `operation`, through the routine `routine` names.
 #[derive(Debug, Clone)]
 struct Reduction {
-    routine: TestedRoutine,
+    pub routine: TestedRoutine,
     /// The tested input's extent along each axis, read by axis (Position Usage).
-    shape: Vec<usize>,
-    axis: usize,
-    operation: ReduceOperation,
+    pub shape: Vec<usize>,
+    pub axis: usize,
+    pub operation: ReduceOperation,
 }
 
 impl Reduction {
@@ -141,6 +141,51 @@ impl Reduction {
     }
 }
 
+/// `reduction`'s input on `client`.
+fn input_tensor(client: &Client, reduction: &Reduction) -> TensorHandle {
+    tensor_of(client, &reduction.shape, F32, reduction.input())
+}
+
+/// `reduction`'s output on `client`, every cell starting away from zero.
+fn unwritten_output(client: &Client, reduction: &Reduction) -> TensorHandle {
+    const UNWRITTEN: f32 = -7.0;
+    let shape = reduction.out_shape();
+    let cells = shape.iter().product();
+    tensor_of(client, &shape, reduction.out_elem(), vec![UNWRITTEN; cells])
+}
+
+/// `out`, written by `reduction`, as the check reads it back.
+fn written_output(out: TensorHandle, reduction: &Reduction) -> Written {
+    let host = match reduction.out_elem() {
+        I32 => HostDataType::I32,
+        _ => HostDataType::F32,
+    };
+    Written {
+        name: "output",
+        tensor: out,
+        host,
+    }
+}
+
+/// A buffer of `shape` in f32 on `client`, holding zeros.
+pub(super) fn zeros(client: &Client, shape: &[usize]) -> TensorBinding {
+    let cells = shape.iter().product();
+    tensor_of(client, shape, F32, vec![0.0; cells]).binding()
+}
+
+/// A tensor of `shape` in `element` on `client`, holding `values` in row-major order.
+fn tensor_of(
+    client: &Client,
+    shape: &[usize],
+    element: ElemType,
+    values: Vec<f32>,
+) -> TensorHandle {
+    TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+        .dtype(element)
+        .custom(values)
+        .generate_without_host_data()
+}
+
 /// A reduce routine of the tile stack against the host, row by row.
 struct RoutineScopeUnderTest;
 
@@ -149,15 +194,8 @@ impl ScopeUnderTest for RoutineScopeUnderTest {
 
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
         let hw = Hardware::from_client(client);
-        let (out_elem, out_shape) = (reduction.out_elem(), reduction.out_shape());
-        let input = TestInput::builder(client.clone(), Shape::from(reduction.shape.clone()))
-            .dtype(F32)
-            .custom(reduction.input())
-            .generate_without_host_data();
-        let out = TestInput::builder(client.clone(), Shape::from(out_shape.clone()))
-            .dtype(out_elem)
-            .custom(vec![-7.0; out_shape.iter().product()])
-            .generate_without_host_data();
+        let input = input_tensor(client, reduction);
+        let out = unwritten_output(client, reduction);
         let tensors = ReduceTensors::new(
             client,
             input.binding(),
@@ -170,16 +208,16 @@ impl ScopeUnderTest for RoutineScopeUnderTest {
         let routine = reduction.routine;
         match routine {
             TestedRoutine::UnitDirect => {
-                routine.launch_with::<UnitDirectReduceRoutine, _>(&hw, &tensors)?
+                launch_tested::<UnitDirectReduceRoutine, _>(routine, &hw, &tensors)?
             }
             TestedRoutine::PlaneShuffle => {
-                routine.launch_with::<PlaneShuffleReduceRoutine, _>(&hw, &tensors)?
+                launch_tested::<PlaneShuffleReduceRoutine, _>(routine, &hw, &tensors)?
             }
             TestedRoutine::CubeStaged => {
-                routine.launch_with::<CubeStagedReduceRoutine, _>(&hw, &tensors)?
+                launch_tested::<CubeStagedReduceRoutine, _>(routine, &hw, &tensors)?
             }
             TestedRoutine::HypercubeLastArrival => {
-                routine.launch_with::<HypercubeLastArrivalReduceRoutine, _>(&hw, &tensors)?
+                launch_tested::<HypercubeLastArrivalReduceRoutine, _>(routine, &hw, &tensors)?
             }
             TestedRoutine::Picked(ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile)) => {
                 select(&hw, &tensors)?
@@ -188,15 +226,7 @@ impl ScopeUnderTest for RoutineScopeUnderTest {
                 launch_kernel(kernel, &hw, &tensors)?
             }
         }
-        let host = match out_elem {
-            I32 => HostDataType::I32,
-            _ => HostDataType::F32,
-        };
-        Ok(vec![Written {
-            name: "output",
-            tensor: out,
-            host,
-        }])
+        Ok(vec![written_output(out, reduction)])
     }
 
     /// What the reduce reference writes for the input.
@@ -226,7 +256,7 @@ struct UnboundRoutineScopeUnderTest;
 
 /// The tensors `R` reduces unbound: `input`'s geometry, stated at the width the routine picks
 /// for it bound, and `out`.
-fn unbound_tensors<R: ReduceLauncher<M>, M>(
+fn unbound_tensors<R: ReduceRoutine<M>, M>(
     client: &Client,
     input: &TensorBinding,
     out: TensorBinding,
@@ -259,7 +289,7 @@ fn unbound_tensors<R: ReduceLauncher<M>, M>(
 
 /// `input` bound back as the plain buffer it is, at the geometry, spec and width the launch
 /// derived: its row axes may be merged into one.
-fn bound_back(mut input: TensorBinding) -> impl FnOnce(Unbound) -> TileTensorLaunch {
+pub(super) fn bound_back(mut input: TensorBinding) -> impl FnOnce(Unbound) -> TileTensorLaunch {
     move |bound| {
         input.shape = bound.geometry.shape().iter().copied().collect();
         input.strides = bound.geometry.strides().iter().copied().collect();
@@ -269,7 +299,7 @@ fn bound_back(mut input: TensorBinding) -> impl FnOnce(Unbound) -> TileTensorLau
 
 /// `reduction`'s routine launched unbound over `input`, bound back as the buffer it is, into
 /// `out`.
-fn launch_unbound<R: ReduceLauncher<M>, M>(
+fn launch_unbound<R: ReduceRoutine<M>, M>(
     client: &Client,
     input: TensorBinding,
     out: TensorBinding,
@@ -301,15 +331,8 @@ impl ScopeUnderTest for UnboundRoutineScopeUnderTest {
     type Case = Reduction;
 
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
-        let (out_elem, out_shape) = (reduction.out_elem(), reduction.out_shape());
-        let input = TestInput::builder(client.clone(), Shape::from(reduction.shape.clone()))
-            .dtype(F32)
-            .custom(reduction.input())
-            .generate_without_host_data();
-        let out = TestInput::builder(client.clone(), Shape::from(out_shape.clone()))
-            .dtype(out_elem)
-            .custom(vec![-7.0; out_shape.iter().product()])
-            .generate_without_host_data();
+        let input = input_tensor(client, reduction);
+        let out = unwritten_output(client, reduction);
         let (input, written) = (input.binding(), out.clone().binding());
         match reduction.routine {
             TestedRoutine::UnitDirect => {
@@ -332,15 +355,7 @@ impl ScopeUnderTest for UnboundRoutineScopeUnderTest {
                 unreachable!("an unbound launch names its routine, not a strategy ({strategy:?})")
             }
         }?;
-        let host = match out_elem {
-            I32 => HostDataType::I32,
-            _ => HostDataType::F32,
-        };
-        Ok(vec![Written {
-            name: "output",
-            tensor: out,
-            host,
-        }])
+        Ok(vec![written_output(out, reduction)])
     }
 
     fn reference(&self, reduction: &Reduction) -> Vec<HostData> {
@@ -362,79 +377,6 @@ fn adds_floats_atomically() -> bool {
             .properties
             .atomic_type_usage(Type::atomic(F32))
             .contains(AtomicUsage::Add)
-}
-
-/// A buffer of `shape` in f32 on the test device, holding zeros.
-fn zeros(client: &Client, shape: &[usize]) -> TensorBinding {
-    TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
-        .dtype(F32)
-        .zeros()
-        .generate_without_host_data()
-        .binding()
-}
-
-/// `ReduceTensors::with_indices` for `operation` along the last axis of a `[4, 8]` input, the
-/// values one wide and the indices `indices_shape`.
-fn tensors_with_indices(operation: ReduceOperation, indices_shape: &[usize]) -> ReduceTensors {
-    let client = cubecl::test_device().client();
-    ReduceTensors::with_indices(
-        &client,
-        zeros(&client, &[4, 8]),
-        zeros(&client, &[4, 1]),
-        zeros(&client, indices_shape),
-        1,
-        operation,
-        ReduceElements {
-            input: F32,
-            accumulator: F32,
-            out: F32,
-        },
-        I32,
-    )
-}
-
-/// A sum's values carry no index: with_indices' documented panic.
-#[test]
-#[should_panic]
-fn indices_beside_a_sum_panic() {
-    tensors_with_indices(ReduceOperation::Sum, &[4, 1]);
-}
-
-/// Indices of another shape than the values: with_indices' documented panic.
-#[test]
-#[should_panic]
-fn indices_of_another_shape_panic() {
-    tensors_with_indices(ReduceOperation::ArgMax, &[1, 4]);
-}
-
-/// A call whose input the caller binds keys as the call binding that input: a fused reduction
-/// finds the candidate its unfused round settled.
-#[test]
-fn an_unbound_call_keys_as_its_bound_call() {
-    let client = cubecl::test_device().client();
-    let reduction = Reduction {
-        routine: TestedRoutine::UnitDirect,
-        shape: vec![8, 300],
-        axis: 1,
-        operation: ReduceOperation::Sum,
-    };
-    let (input, out) = (zeros(&client, &[8, 300]), zeros(&client, &[8, 1]));
-    let elements = ReduceElements {
-        input: F32,
-        accumulator: F32,
-        out: F32,
-    };
-    let bound = ReduceTensors::new(
-        &client,
-        input.clone(),
-        out.clone(),
-        1,
-        ReduceOperation::Sum,
-        elements,
-    );
-    let unbound = unbound_tensors::<UnitDirectReduceRoutine, _>(&client, &input, out, &reduction)
-        .expect("the unit routine serves every problem");
-    assert_eq!(ReduceKey::from(&unbound), ReduceKey::from(&bound));
 }
 
 /// `reduction` launched once and checked against the reduce reference; a routine that declines it
@@ -558,9 +500,8 @@ macro_rules! reduces_each_dim {
         }
 
         /// Launched unbound, as a fused read stands in for, the input bound back as the plain
-        /// buffer it is: along the contiguous dim and across it.
+        /// buffer it is.
         mod unbound {
-            /// Rows 300 long, along the contiguous dim.
             mod along_the_contiguous_dim {
                 use super::super::super::*;
                 reduction_tests!(reduces_unbound_like_the_cpu, $routine, [2, 5, 300], 2, [
@@ -571,7 +512,6 @@ macro_rules! reduces_each_dim {
                 ]);
             }
 
-            /// Rows 5 long, across the contiguous dim.
             mod across_the_middle_dim {
                 use super::super::super::*;
                 reduction_tests!(reduces_unbound_like_the_cpu, $routine, [2, 5, 300], 1, [
@@ -659,9 +599,8 @@ mod hypercube_last_arrival {
         )
         .with_workspace(workspace.clone());
         let hw = Hardware::from_client(&client);
-        if let Err(decline) = reduction
-            .routine
-            .launch_with::<HypercubeLastArrivalReduceRoutine, _>(&hw, &tensors)
+        if let Err(decline) =
+            launch_tested::<HypercubeLastArrivalReduceRoutine, _>(reduction.routine, &hw, &tensors)
         {
             return TestOutcome::Validated(ValidationResult::Skipped(decline.to_string()))
                 .enforce();
@@ -705,6 +644,23 @@ mod hypercube_last_arrival {
         );
     }
 
+    /// Launched unbound, as a fused read stands in for, along the contiguous dim.
+    mod unbound {
+        use super::super::*;
+        reduction_tests!(
+            reduces_unbound_like_the_cpu,
+            TestedRoutine::HypercubeLastArrival,
+            [2, 3, 5000],
+            2,
+            [
+                sum: ReduceOperation::Sum,
+                max: ReduceOperation::Max,
+                mean: ReduceOperation::Mean,
+                arg_max: ReduceOperation::ArgMax,
+            ]
+        );
+    }
+
     reduces_more_row_axes_than_the_grid_has!(TestedRoutine::HypercubeLastArrival);
 }
 
@@ -728,19 +684,16 @@ mod hypercube_atomic {
         }
     }
 
-    /// One row 9000 long.
     #[test]
     fn sums_one_long_row() {
         sums_atomically_like_the_cpu(RoutineScopeUnderTest, sum(&[1, 1, 9000], 2));
     }
 
-    /// Rows along the contiguous dim.
     #[test]
     fn sums_rows_along_the_contiguous_dim() {
         sums_atomically_like_the_cpu(RoutineScopeUnderTest, sum(&[2, 3, 5000], 2));
     }
 
-    /// Rows across the contiguous dim.
     #[test]
     fn sums_rows_across_the_contiguous_dim() {
         sums_atomically_like_the_cpu(RoutineScopeUnderTest, sum(&[3, 2100, 4], 1));
@@ -752,25 +705,21 @@ mod hypercube_atomic {
         sums_atomically_like_the_cpu(RoutineScopeUnderTest, sum(&[4, 9000], 1));
     }
 
-    /// One row 9000 long, unbound.
     #[test]
     fn sums_one_long_row_unbound() {
         sums_atomically_like_the_cpu(UnboundRoutineScopeUnderTest, sum(&[1, 1, 9000], 2));
     }
 
-    /// Rows along the contiguous dim, unbound.
     #[test]
     fn sums_rows_along_the_contiguous_dim_unbound() {
         sums_atomically_like_the_cpu(UnboundRoutineScopeUnderTest, sum(&[2, 3, 5000], 2));
     }
 
-    /// Rows across the contiguous dim, unbound.
     #[test]
     fn sums_rows_across_the_contiguous_dim_unbound() {
         sums_atomically_like_the_cpu(UnboundRoutineScopeUnderTest, sum(&[3, 2100, 4], 1));
     }
 
-    /// Four rows of a matrix, unbound.
     #[test]
     fn sums_the_rows_of_a_matrix_unbound() {
         sums_atomically_like_the_cpu(UnboundRoutineScopeUnderTest, sum(&[4, 9000], 1));
@@ -785,32 +734,20 @@ impl ScopeUnderTest for ZeroScopeUnderTest {
     type Case = Reduction;
 
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
-        let out_shape = reduction.out_shape();
-        let out = TestInput::builder(client.clone(), Shape::from(out_shape.clone()))
-            .dtype(F32)
-            .custom(vec![-7.0; out_shape.iter().product()])
-            .generate_without_host_data();
+        let out = unwritten_output(client, reduction);
         let tensors = ReduceTensors::new(
             client,
             zeros(client, &reduction.shape),
             out.clone().binding(),
             reduction.axis,
             reduction.operation,
-            ReduceElements {
-                input: F32,
-                accumulator: F32,
-                out: F32,
-            },
+            reduction.elements(),
         );
         let hw = Hardware::from_client(client);
         let (blueprint, grid) =
             UnitDirectZeroReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
         UnitDirectZeroReduceRoutine::launch(&tensors, blueprint, grid);
-        Ok(vec![Written {
-            name: "output",
-            tensor: out,
-            host: HostDataType::F32,
-        }])
+        Ok(vec![written_output(out, reduction)])
     }
 
     /// Zeros, the output's shape.

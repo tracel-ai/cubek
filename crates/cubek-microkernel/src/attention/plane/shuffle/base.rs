@@ -1,12 +1,11 @@
 use crate::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, AttentionStagingCount,
-    AttentionWorkItem, G, Q, S,
+    AttentionWorkItem, CacheOrder, G, Q, S,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Levels, Space};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
 };
@@ -194,9 +193,9 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
 }
 
 impl AttentionMicrokernel for PlaneShuffleAttentionMicrokernel {
-    /// A unit reads a key's lines along the head dim, as the keys lie.
-    fn key_order(&self) -> BindingOrder {
-        BindingOrder::InBufferOrder
+    /// A unit reads a key's lines along the head dim and a value's along the value dim.
+    fn cache_order(&self) -> CacheOrder {
+        CacheOrder::AS_STORED
     }
 }
 

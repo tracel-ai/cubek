@@ -4,10 +4,12 @@
 //!
 //! A reduction reduces the values of a row under a monoid, each value mapped as it is read
 //! ([`ReduceOperation`]). The values accumulate into a carrier ([`ReduceAccumulator`]): the values themselves, a
-//! value with its index for an argmax, or the `k` best with their indices for a top-k. An owner
+//! value with its index for an argmax, or the `k` best for a top-k, with their indices where it
+//! writes them. An owner
 //! reads its lines through its window of the input and accumulates each as it lands, never holding the
 //! row, so a row as long as a vocabulary costs registers for one line; what tells the scopes apart
-//! is only where the partials meet. Each ends on one unit writing its carrier ([`write`]).
+//! is only where the partials meet. Each ends on one unit writing its carrier, or one a column where
+//! its units spread across lines of rows ([`write`](mod@write)).
 
 mod accumulator;
 mod columns;
@@ -15,6 +17,7 @@ pub mod cube;
 pub mod hypercube;
 mod operand;
 mod operation;
+mod partial_indices;
 pub mod plane;
 pub mod read;
 pub mod unit;
@@ -25,4 +28,5 @@ pub use accumulator::*;
 pub(crate) use columns::*;
 pub use operand::*;
 pub use operation::*;
+pub(crate) use partial_indices::*;
 pub use work_item::*;

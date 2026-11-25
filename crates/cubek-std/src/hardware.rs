@@ -593,7 +593,7 @@ pub const TMA_ALIGNMENT_BYTES: usize = 16;
 /// device's: on the RTX PRO 6000 a stage landed in 32-byte rows copies about 40% slower than the
 /// same stage in 64-byte rows (the NVFP4 product with no contraction, Qwen3-4B's down projection
 /// at 2048 rows, 126 against 89 µs). The step rule cuts a stage the engine fills to it
-/// (`MatmulStep::filled_by_tma` in cubek-matmul).
+/// ([`Operand::tma_row`](crate::layout::stored::Operand::tma_row)).
 pub const TMA_ROW_BYTES: usize = 64;
 
 /// Vector registers assumed of a device that states no count: the sixteen every x86 CPU names,

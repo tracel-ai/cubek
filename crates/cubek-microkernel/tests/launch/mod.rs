@@ -1,10 +1,10 @@
-//! Microkernels launched on their own, for tests: one work item, one cube, the problem exactly
-//! the work item, so a test checks what a microkernel computes with no routine around it.
+//! Microkernels launched on their own, for tests: the problem exactly the microkernel's, so a test
+//! checks what a microkernel computes with no routine around it.
 //!
-//! What a launch needs that a microkernel does not state (the partitioning, the stages) is set here
-//! to the least that runs it: one plane, one stage at a time. The operands' widths are the
-//! microkernel's to state ([`Lines`]): a launch binds them one element a line, and again as wide
-//! as the microkernel's accesses admit. A routine's choices are its own tests'.
+//! What a launch needs that a microkernel does not state (the partitioning, the stages, the cubes)
+//! is set here to the least that runs it. The operands' widths are the microkernel's to state
+//! ([`Lines`]) or its case's: a launch binds them one element a line, and again as wide as the
+//! microkernel's accesses admit. A routine's choices are its own tests'.
 
 #[cfg(feature = "attention")]
 pub mod attention;

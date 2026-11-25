@@ -3,14 +3,14 @@ use std::borrow::Cow;
 
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::Geometry;
-use cubecl::tile::launch::Decline;
+use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Dimension, Indexing};
 use cubecl::tune::Work;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulBuffers, MatmulDestination, MatmulDim, MatmulLayout, MatmulOperand,
-    MatmulOperands, MatmulStoredTile,
+    MatmulBlocks, MatmulBuffers, MatmulDestination, MatmulDim, MatmulDimensions, MatmulLayout,
+    MatmulOperand, MatmulOperands, MatmulStoredTile,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{BlockScales, Packing, StoredInput};
@@ -440,6 +440,37 @@ impl MatmulRoutineProblem {
         match order {
             BindingOrder::InBufferOrder => self.buffer_alignments.get(operand),
             BindingOrder::Stated => self.elem_alignments.get(operand),
+        }
+    }
+
+    /// What each operand asks of a read of it, bound in the order `orders` says: to lie inside a
+    /// run its layout aligns; a view starting partway into its buffer, to line up with where it
+    /// starts; and an input a table indexes along its innermost dimension — a run of `K` read
+    /// along a row — to bring one value, which an entry places.
+    pub fn require_reads(
+        &self,
+        orders: MatmulOperands<BindingOrder>,
+        vectorization: &mut Vectorization<MatmulOperand>,
+    ) {
+        for operand in MatmulOperand::ALL {
+            vectorization.require(VectorRequirement::Aligned {
+                operand,
+                alignment: self.alignment(operand, orders.get(operand)),
+            });
+            vectorization.require(VectorRequirement::Aligned {
+                operand,
+                alignment: ElemAlignment::at_start(
+                    self.start_bytes.get(operand),
+                    self.elements.get(operand).size(),
+                ),
+            });
+            let innermost = MatmulDimensions::MNK.of(orders.innermost(operand));
+            let indexed_along_a_line = self.index.is_some_and(|index| {
+                index.readers().get(operand) && index.indexing().dimension() == innermost
+            });
+            if indexed_along_a_line {
+                vectorization.require(VectorRequirement::Elementwise { operand });
+            }
         }
     }
 

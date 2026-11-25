@@ -121,7 +121,7 @@ pub fn strategy_result(
         .generate_without_host_data();
 
     let out_shape = output_shape_for(&shape, axis, operation);
-    let output_handle = zeroed(&client, out_shape, output_dtype);
+    let output_handle = unwritten(&client, out_shape, output_dtype);
 
     let elements = ReduceElements {
         input: input_dtype,
@@ -174,8 +174,8 @@ pub fn strategy_result_with_indices(
         .generate_without_host_data();
 
     let out_shape = output_shape_for(&shape, axis, operation);
-    let values_handle = zeroed(&client, out_shape.clone(), input_dtype);
-    let indices_handle = zeroed(&client, out_shape, index_dtype);
+    let values_handle = unwritten(&client, out_shape.clone(), input_dtype);
+    let indices_handle = unwritten(&client, out_shape, index_dtype);
 
     let elements = ReduceElements {
         input: input_dtype,
@@ -207,11 +207,16 @@ pub fn strategy_result_with_indices(
     read_back(&client, outcome, values_handle)
 }
 
-/// A buffer of `shape` in `dtype`, holding zeros.
-fn zeroed(client: &Client, shape: Vec<usize>, dtype: ElemType) -> TensorHandle {
+/// What an output holds before its launch: a value no comparison's result comes near, so a kernel
+/// that writes nothing fails one whose result is zero within its epsilon.
+const UNWRITTEN: f32 = 60_000.0;
+
+/// A buffer of `shape` in `dtype`, every cell [`UNWRITTEN`].
+fn unwritten(client: &Client, shape: Vec<usize>, dtype: ElemType) -> TensorHandle {
+    let cells = shape.iter().product();
     TestInput::builder(client.clone(), shape)
         .dtype(dtype)
-        .zeros()
+        .custom(vec![UNWRITTEN; cells])
         .generate_without_host_data()
 }
 

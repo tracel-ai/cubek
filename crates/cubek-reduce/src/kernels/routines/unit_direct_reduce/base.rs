@@ -1,16 +1,16 @@
 use super::kernel::{unit_direct_reduce_kernel, unit_direct_reduce_with_indices_kernel};
 use crate::kernels::{
-    ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem, each_microkernel_with,
-    estimate_reduce, microkernel_widths, prepared_from_key, unit_launch,
+    ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem, each_microkernel_with,
+    estimate_reduce, microkernel_widths, unit_launch,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::{Partitioning, TileTensorLaunch};
-use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::unit::{
     UnitDirectReduceMicrokernel, UnitDirectReduceMicrokernelSettings,
 };
+use cubek_microkernel::reduce::{ReduceCarrierFamily, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{Grid, Routine};
@@ -72,17 +72,14 @@ impl Routine for UnitDirectReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        // Inside, `problem` is the problem the call's Tune Key stands for.
-        prepared_from_key::<Self, _>(hw, problem, |problem| {
-            let microkernel =
-                UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
-            let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-            let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
-            Ok((
-                ReduceBlueprint::new(microkernel, partitioning, widths),
-                grid,
-            ))
-        })
+        let microkernel =
+            UnitDirectReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line())?;
+        let (partitioning, grid) = unit_launch(hw, problem, widths[0], settings.planes)?;
+        Ok((
+            ReduceBlueprint::new(microkernel, partitioning, widths),
+            grid,
+        ))
     }
 
     fn estimate(
@@ -95,10 +92,10 @@ impl Routine for UnitDirectReduceRoutine {
     }
 }
 
-impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
+impl ReduceRoutine<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
     const NAME: &'static str = "unit-direct-reduce";
 
-    fn dispatch<I: TileOperand>(
+    fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -112,11 +109,12 @@ impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
         unsafe {
             match binding.indices.zip(problem.indices) {
                 Some((indices, index)) => {
-                    unit_direct_reduce_with_indices_kernel::launch_unchecked::<I>(
+                    unit_direct_reduce_with_indices_kernel::launch_unchecked::<F, I>(
                         client,
                         grid.launch.cube_count,
                         grid.launch.cube_dim,
                         blueprint.width,
+                        problem.operation.written_per_row(),
                         binding.input,
                         binding.out,
                         indices.arg(),
@@ -130,11 +128,12 @@ impl ReduceLauncher<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
                         ],
                     )
                 }
-                None => unit_direct_reduce_kernel::launch_unchecked::<I>(
+                None => unit_direct_reduce_kernel::launch_unchecked::<F, I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
+                    problem.operation.written_per_row(),
                     binding.input,
                     binding.out,
                     binding.launcher.partitioning_arg(),
@@ -152,31 +151,41 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// The microkernel, width and kernel `shape` reduced along `axis` compiles to on an M2 Pro.
-    fn compiled(shape: &[usize], axis: usize) -> impl PartialEq + core::fmt::Debug {
+    /// Checks that an argmax of `shape` along `axis` compiles on an M2 Pro the microkernel, width
+    /// and kernel of `other`, a shape of its rank and layout: the rows and the row length are the
+    /// launch's.
+    fn compiles_what_another_shape_compiles(shape: &[usize], other: &[usize], axis: usize) {
+        const WIDTH: usize = 4;
         let hw = devices::m2_pro();
-        let problem = ReduceRoutineProblem::dense(shape, axis, ReduceOperation::ArgMax);
+        let [problem, other] = [shape, other]
+            .map(|shape| ReduceRoutineProblem::dense(shape, axis, ReduceOperation::ArgMax));
         let settings = UnitDirectReduceRoutine::settings(&hw)[0];
+        let microkernel =
+            UnitDirectReduceMicrokernel::best(&hw, &other.work_item(), &settings.microkernel)
+                .expect("the unit microkernel runs everywhere");
+        let (partitioning, _) = unit_launch(&hw, &other, WIDTH, settings.planes)
+            .expect("the unit launch fits an M2 Pro");
         let (blueprint, _) = UnitDirectReduceRoutine::prepare(&hw, &problem, &settings)
             .expect("the unit routine runs everywhere");
-        (
-            blueprint.microkernel,
-            blueprint.width,
-            problem.kernel(&blueprint.partitioning),
-        )
+        assert_eq!(
+            (
+                blueprint.microkernel,
+                blueprint.width,
+                problem.kernel(&blueprint.partitioning)
+            ),
+            (microkernel, WIDTH, other.kernel(&partitioning))
+        );
     }
 
-    /// One kernel serves every shape of a rank, layout and width along the contiguous dim: the rows
-    /// and the row length are the launch's, so a sequence that grows by a token recompiles nothing.
+    /// A sequence that grows by a token recompiles nothing.
     #[test]
     fn rows_along_the_contiguous_dim_compile_one_kernel_for_every_shape() {
-        assert_eq!(compiled(&[2, 5, 300], 2), compiled(&[3, 7, 308], 2));
+        compiles_what_another_shape_compiles(&[2, 5, 300], &[3, 7, 308], 2);
     }
 
-    /// The same across the contiguous dim.
     #[test]
     fn rows_across_the_contiguous_dim_compile_one_kernel_for_every_shape() {
-        assert_eq!(compiled(&[2, 5, 300], 1), compiled(&[4, 9, 308], 1));
+        compiles_what_another_shape_compiles(&[2, 5, 300], &[4, 9, 308], 1);
     }
 
     /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH).
@@ -189,7 +198,7 @@ mod tests {
         assert!(prepared.is_ok(), "{prepared:?}");
     }
 
-    /// tracel:kernel::routine-tested-without-features: the unit routine reads none.
+    /// The unit routine reads no Feature.
     #[test]
     fn prepares_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());

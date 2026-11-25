@@ -82,6 +82,6 @@ fn unit_zero_kernel(
     let o = out.tile_mut(&partitioning);
     for unit in &partitioning {
         let mut cells = o.at(&unit);
-        microkernel.runtime().execute(&mut cells);
+        microkernel.runtime().zero(&mut cells);
     }
 }

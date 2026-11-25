@@ -218,12 +218,23 @@ impl AttentionTuneInputs {
         )
     }
 
-    /// What a decode step costs: one query over the keys `key` holds, each key and value read
-    /// once.
-    pub fn one_query_work(&self, key: &AttentionKey) -> Work {
+    /// The key positions of a sequence the call can read: its depth, or its buffers' positions
+    /// where a caller's rounding takes the depth past them.
+    fn positions_read(&self) -> usize {
+        let positions = self.key.shape()[2];
+        let held = match &self.pages {
+            Some(pages) => pages.shape()[1] * positions,
+            None => positions,
+        };
+        self.depth.min(held)
+    }
+
+    /// What a decode step costs: one query over the positions the call can read, which the round
+    /// runs on, each key and value read once.
+    pub fn one_query_work(&self) -> Work {
         let batch = self.sequences();
         let (heads, head_dim) = self.heads_and_dim();
-        let keys = key.seq_kv();
+        let keys = self.positions_read();
         let kv_bytes =
             2 * batch * self.kv_heads() * keys * self.key.shape()[3] * self.key.elem.size();
         Work {
@@ -442,24 +453,33 @@ mod tests {
         #[test]
         fn a_decode_costs_two_contractions() {
             let (heads, _, head_dim) = HEADS;
-            let decode = inputs(1, 256, 4096, None);
-            let work = decode.one_query_work(&decode.one_query_key());
+            let work = inputs(1, 256, 4096, None).one_query_work();
             let one_contraction = 2 * heads * 256 * head_dim;
             assert_eq!(work.compute_ops, 2 * one_contraction);
         }
 
-        /// A decode round is priced at its key's depth, not at the cache: its cold read and its
-        /// measurement agree about the work.
+        /// A decode over a cache is priced at its depth, not at the cache.
         #[test]
-        fn a_decode_is_priced_at_its_keys_depth() {
+        fn a_decode_is_priced_at_its_depth() {
             let (_, kv_heads, head_dim) = HEADS;
-            let small = inputs(1, 2048, 2048, None);
-            let large = inputs(1, 2048, 65536, None);
-            let price =
-                |inputs: &AttentionTuneInputs| inputs.one_query_work(&inputs.one_query_key());
-            assert_eq!(price(&small).bytes, price(&large).bytes);
+            let small = inputs(1, 2048, 2048, None).one_query_work();
+            let large = inputs(1, 2048, 65536, None).one_query_work();
+            assert_eq!(small.bytes, large.bytes);
             let kv_bytes = 2 * kv_heads * 2048 * head_dim * F16.size();
-            assert!(price(&small).bytes > kv_bytes);
+            assert!(small.bytes > kv_bytes);
+        }
+
+        /// **A decode is priced at no more than the round reads.** A depth of 300 is priced at
+        /// 300 though its key holds 512, and a depth its caller rounded up to 512 at the positions
+        /// its buffers hold, 300 in one buffer or 320 in pages.
+        #[test]
+        fn a_decode_is_priced_within_its_depth_and_its_buffers() {
+            let read = |depth, positions, page_size| {
+                inputs(1, depth, positions, page_size).positions_read()
+            };
+            assert_eq!(read(300, 4096, None), 300);
+            assert_eq!(read(512, 300, None), 300);
+            assert_eq!(read(512, 320, Some(16)), 320);
         }
     }
 }
