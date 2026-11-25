@@ -39,7 +39,8 @@ impl Routine for CubeStagedConvRoutine {
         partitioning.vectorize(vectorization);
     }
 
-    /// The cube's staging, which its partitioning places, and its planes' work.
+    /// The cube's staging, which its partitioning places, staged through shared memory as its
+    /// microkernel reads it, and its planes' work.
     fn estimate(
         problem: &ConvProblem,
         blueprint: &Self::Blueprint,
@@ -51,6 +52,7 @@ impl Routine for CubeStagedConvRoutine {
                 .partitioning
                 .staging(&problem.elements, blueprint.microkernel.ring),
         );
+        blueprint.microkernel.count_shared(estimate);
         blueprint
             .microkernel
             .plane
