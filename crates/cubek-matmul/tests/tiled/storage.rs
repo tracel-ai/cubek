@@ -3,8 +3,12 @@
 
 use cubecl::tile::{Dimension, Geometry, kind::Field, layout::Stagger};
 use cubecl::{
-    bytes::Bytes, ir::ElemType, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle,
-    zspace::Shape,
+    bytes::Bytes,
+    ir::ElemType,
+    prelude::*,
+    quant::scheme::QuantValue,
+    std::tensor::TensorHandle,
+    zspace::{Shape, Tiling, metadata::Metadata},
 };
 use cubek_matmul::{
     definition::MatmulSetupError,
@@ -109,6 +113,44 @@ fn round_trip_as(
                 at.extend([r, c]);
                 assert_eq!(got.get_f32(&at), want, "batch {b} cell ({r}, {c}) untiled");
             }
+        }
+    }
+}
+
+/// A matrix stored `[m/16, k/16, m%8, k/2%4, k/8%2, m/8%2, k%2]`, as a tensor core takes a tile of
+/// sixteen by sixteen, is laid back in rows.
+#[test]
+fn a_tensor_core_layout_is_untiled() {
+    let client = client();
+    let dtype: ElemType = f32::elem_type_native();
+    let (rows, cols) = (48, 80);
+    let mut stored = vec![0f32; rows * cols];
+    for r in 0..rows {
+        for c in 0..cols {
+            let tile = (r / 16 * (cols / 16) + c / 16) * 256;
+            let inside = r % 8 * 32 + c / 2 % 4 * 8 + c / 8 % 2 * 4 + r / 8 % 2 * 2 + c % 2;
+            stored[tile + inside] = (r * cols + c) as f32;
+        }
+    }
+    let metadata = Metadata::new(
+        [rows / 16, cols / 16, 8, 4, 2, 2, 2],
+        [cols / 16 * 256, 256, 32, 8, 4, 2, 1],
+    )
+    .with_tiling(Tiling::from_physical_dims(&[&[0, 5, 2][..], &[1, 4, 3, 6]]).unwrap())
+    .unwrap();
+    let handle = client.create(Bytes::from_elems(stored));
+    let tiled = TensorHandle::from_metadata(handle, metadata, dtype);
+
+    let back = untile(&client, tiled.binding(), dtype).unwrap();
+    assert_eq!(back.shape().as_slice(), &[rows, cols]);
+    let got = HostData::from_tensor_handle(&client, back, HostDataType::F32);
+    for r in 0..rows {
+        for c in 0..cols {
+            assert_eq!(
+                got.get_f32(&[r, c]),
+                (r * cols + c) as f32,
+                "cell ({r}, {c})"
+            );
         }
     }
 }
@@ -324,7 +366,7 @@ fn a_matrix_is_stored_for_the_read_it_is_read_in() {
 /// Where the value at `coords` (one per named dimension) sits in a stored tensor, in values: each
 /// coordinate split over its dimension's dims, finest last, dotted with their strides.
 fn value_offset(stored: &Geometry, dimensions: &[Dimension], coords: &[usize]) -> usize {
-    let labels = stored.labels(dimensions);
+    let labels = stored.labels(dimensions).unwrap();
     let mut rest = coords.to_vec();
     let mut offset = 0;
     for d in (0..labels.len()).rev() {

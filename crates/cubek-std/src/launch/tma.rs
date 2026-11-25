@@ -160,9 +160,9 @@ pub fn tma_operand_typed(
 ///
 /// # Panics
 ///
-/// A binding whose tile is not stored a row at a time: the descriptor takes the innermost dim to
-/// step by one and each row to follow the last, so any other tile would load in silence as the
-/// wrong values. Under [`TmaLanding::Tiles`], a box that is not the binding's tile; under
+/// A binding whose tile is not stored a row at a time, or lists its dims otherwise: the descriptor
+/// takes the innermost dim to step by one and each row to follow the last, so any other tile would
+/// load in silence as the wrong values. Under [`TmaLanding::Tiles`], a box that is not the binding's tile; under
 /// [`TmaLanding::Rows`], a binding with batch dims or a box that is not whole tiles along its
 /// rows, which would land part of a tile's rows, nor whole tiles or a part dividing one along its
 /// columns. The routine's own checks refuse these first.
@@ -199,6 +199,12 @@ pub fn tma_operand_tiled_typed(
     let rank = binding.shape.len();
     let tile = (binding.shape[rank - 2], binding.shape[rank - 1]);
     let inner = (binding.strides[rank - 2], binding.strides[rank - 1]);
+    let one_level = [&vec![1; rank.saturating_sub(4)][..], &[2, 2]].concat();
+    assert!(
+        !binding.tiling.is_tiled() || Tiling::new(&one_level) == Ok(binding.tiling),
+        "tma_operand_tiled: a box is over [.., R/tr, C/tc, tr, tc], which {:?} does not list",
+        binding.tiling
+    );
     assert_eq!(
         inner,
         (tile.1, 1),
@@ -289,10 +295,9 @@ pub fn tma_scale_words_in_tiles(binding: TensorBinding, box_strips: usize) -> Te
 /// contiguous merged into one, its tiling a fragment fewer for each: a level a reader has to find
 /// whole, a vector read inside a storage tile say, that a copy of whole tiles does not need.
 ///
-/// The physical dims are level-major ([`Tiling`]), so two fragments of one logical dim are
-/// adjacent only where no other dim has a fragment between their levels, and merging them keeps
-/// the order level-major. Fragments of different logical dims are never merged, contiguous or
-/// not: the tiles' grid and the tile itself stay apart.
+/// The finer of the two is the next of its logical dim's fragments ([`Tiling`]), listed right
+/// after it. Fragments of different logical dims are never merged, contiguous or not: the tiles'
+/// grid and the tile itself stay apart.
 ///
 /// # Panics
 ///
@@ -302,31 +307,31 @@ pub fn merged_contiguous_fragments(binding: TensorBinding) -> TensorBinding {
     let logical_rank = binding.tiling.logical_rank(rank).unwrap_or_else(|err| {
         panic!("merged_contiguous_fragments: the binding's tiling does not fit it: {err:?}")
     });
-    let mut fragments = binding.tiling.fragments(logical_rank).to_vec();
-    // Each physical dim's logical dim: level by level, every dim still deep enough in order.
-    let deepest = fragments.iter().copied().max().unwrap_or(1);
-    let counts = &fragments;
-    let mut owners: Vec<usize> = (0..deepest)
-        .flat_map(|level| (0..logical_rank).filter(move |&dim| counts[dim] > level))
-        .collect();
+    let dims = binding.tiling.physical_dims(logical_rank);
+    let mut dims: Vec<Vec<usize>> = dims.into_iter().map(|dim| dim.to_vec()).collect();
     let mut shape = binding.shape.to_vec();
     let mut strides = binding.strides.to_vec();
-    let mut dim = shape.len();
-    while dim > 1 {
-        dim -= 1;
-        let (outer, inner) = (dim - 1, dim);
-        if owners[outer] == owners[inner] && strides[outer] == shape[inner] * strides[inner] {
-            shape[outer] *= shape[inner];
-            strides[outer] = strides[inner];
-            shape.remove(inner);
-            strides.remove(inner);
-            fragments[owners.remove(inner)] -= 1;
+    for inner in (1..rank).rev() {
+        let outer = inner - 1;
+        let contiguous = strides[outer] == shape[inner] * strides[inner];
+        // Where in its logical dim's fragments the inner one follows the outer.
+        let merged = dims.iter_mut().filter(|_| contiguous).find_map(|dim| {
+            let at = dim.windows(2).position(|pair| pair == [outer, inner])?;
+            Some(dim.remove(at + 1))
+        });
+        if merged.is_some() {
+            shape[outer] *= shape.remove(inner);
+            strides[outer] = strides.remove(inner);
+            let physical = dims.iter_mut().flatten();
+            physical
+                .filter(|physical| **physical > inner)
+                .for_each(|physical| *physical -= 1);
         }
     }
     TensorBinding {
         shape: Shape::from(shape),
         strides: Strides::new(&strides),
-        tiling: Tiling::new(&fragments).expect("a merge only takes fragments away"),
+        tiling: Tiling::from_physical_dims(&dims).expect("a merge only takes fragments away"),
         ..binding
     }
 }
@@ -477,6 +482,19 @@ mod tests {
         // `n/tc` and `tr` lie contiguous, but are fragments of different dims.
         let merged = merged_contiguous_fragments(tiled());
         assert_eq!(&merged.shape[..], &[8, 8, 32, 64]);
+        assert_eq!(merged.tiling, Tiling::new(&[2, 2]).unwrap());
+    }
+
+    /// `[m, k]` listed `[m/32, k/64, k%64/4, m%32, k%4]`: the two finest pieces of `k` are not
+    /// listed one after the other, and what is listed after `k/64` is its next piece.
+    #[test]
+    fn pieces_listed_apart_stay_and_pieces_listed_together_merge() {
+        let mut binding = tiled();
+        binding.shape = shape![8, 8, 16, 32, 4];
+        binding.strides = strides![64 * 32 * 8, 64 * 32, 32 * 4, 4, 1];
+        binding.tiling = Tiling::from_physical_dims(&[&[0, 3][..], &[1, 2, 4]]).unwrap();
+        let merged = merged_contiguous_fragments(binding);
+        assert_eq!(&merged.shape[..], &[8, 128, 32, 4]);
         assert_eq!(merged.tiling, Tiling::new(&[2, 2]).unwrap());
     }
 
