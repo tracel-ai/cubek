@@ -466,7 +466,8 @@ impl AttentionCase {
             },
         )
         .expect("the case's tensors are verified")
-        .with_logsumexp();
+        .with_logsumexp()
+        .expect("a float cache's attention writes its logsumexp");
         match self.hidden {
             Some(hidden) => {
                 let (batch, heads, queries, keys) =
@@ -481,11 +482,13 @@ impl AttentionCase {
                         }
                     }
                 }
-                tensors.with_mask(upload(
-                    cells,
-                    shape![batch, heads, queries, keys],
-                    u32::elem_type_native(),
-                ))
+                tensors
+                    .with_mask(upload(
+                        cells,
+                        shape![batch, heads, queries, keys],
+                        u32::elem_type_native(),
+                    ))
+                    .expect("the mask is a cell a score")
             }
             None => tensors,
         }

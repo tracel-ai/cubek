@@ -8,6 +8,7 @@ use crate::kernels::{
 };
 use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::tile::StageStorage;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::routine::Grid;
@@ -53,8 +54,7 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         blueprint: HypercubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
         slots: &AttentionSplitSlots,
-    ) {
-        Self::assert_one_width(&binding, &blueprint);
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
         let shape = self.merge_shape(&problem, &blueprint);
         let microkernel = blueprint.microkernel;
@@ -103,7 +103,7 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                     None => ComptimeOptionArgs::None,
                 };
                 // SAFETY: as the tiles'; a field indexes its codebook, which holds an entry for
-                // every index (`PackedAttentionCache::new`).
+                // every index (`PackedAttentionCache::admit`).
                 unsafe {
                     hypercube_attention_partial_packed_kernel::launch_unchecked(
                         client,
@@ -130,5 +130,6 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 }
             }
         }
+        Ok(())
     }
 }

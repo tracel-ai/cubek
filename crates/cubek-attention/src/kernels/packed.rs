@@ -1,7 +1,7 @@
 //! A packed cache as the attention reads it: each operand's codebook indices packed into words,
 //! its per-vector norms and the codebook, and the keys' QJL fix-up where there is one.
 
-use crate::kernels::page_table;
+use crate::kernels::{PACKED_WIDTH_UNREAD, page_table};
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::tile::kind::Field;
 use cubecl::tile::launch::Decline;
@@ -10,6 +10,18 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{B, D, DV, KV, S};
 use cubek_std::routine::Breakable;
+
+/// What a packed launch declines before preparing anything: a packed cache whose buffers are not as
+/// [`PackedAttentionCache`] says.
+pub const PACKED_CACHE_UNREAD: Decline = Decline::Unserved {
+    why: "a packed cache is u32 words whose fields of a row are adjacent, f32 norms of the same \
+          rows, and f32 codebooks with an entry for every index",
+};
+
+/// The element of a packed operand's words.
+const WORD: ElemType = ElemType::UInt(UIntKind::U32);
+/// The element of a packed operand's norms and codebook.
+const TABLE: ElemType = ElemType::Float(FloatKind::F32);
 
 /// A packed cache: both operands at their bit widths, and the keys' fix-up where they carry one.
 ///
@@ -92,52 +104,78 @@ impl KeyFixup {
 impl PackedAttentionCache {
     /// A packed cache of `key` and `value` at `bits`, the keys carrying `fixup` where there is one.
     ///
-    /// # Panics
-    ///
-    /// Words that are not `u32` or whose fields of a row are not adjacent, a norm, codebook or
-    /// fix-up table not in `f32`, or a codebook not one-dim with an entry for every index: what a
-    /// caller converts before handing the cache over.
+    /// [`AttentionTensors::attention`](crate::kernels::AttentionTensors::attention) declines the
+    /// caches [`PACKED_CACHE_UNREAD`] names: what a caller converts before handing one over.
     pub fn new(
         key: PackedAttentionOperand,
         value: PackedAttentionOperand,
         bits: KvBitWidths,
         fixup: Option<QjlFixup>,
     ) -> Self {
-        const WORD: ElemType = ElemType::UInt(UIntKind::U32);
-        const TABLE: ElemType = ElemType::Float(FloatKind::F32);
-        let indexes = |table: &PlainTensor, bits: u32| {
-            let shape = table.shape();
-            assert!(
-                shape.len() == 1 && shape[0] >= 1 << bits,
-                "a codebook is one-dim, an entry for each of the {} indices: got {shape:?}",
-                1u32 << bits
-            );
-        };
-        for (operand, bits) in [(&key, bits.key), (&value, bits.value)] {
-            indexes(&operand.codebook, bits);
-            assert_eq!(operand.words.elem, WORD, "a packed operand's words are u32");
-            assert_eq!(
-                operand.words.binding.strides[3], 1,
-                "a packed operand's fields of a row are adjacent"
-            );
-            assert!(
-                operand.norms.elem == TABLE && operand.codebook.elem == TABLE,
-                "a packed operand's norms and codebook are f32"
-            );
-        }
-        if let Some(fixup) = &fixup {
-            indexes(&fixup.sign_codebook, bits.key);
-            assert!(
-                fixup.errs.elem == TABLE && fixup.sign_codebook.elem == TABLE,
-                "the QJL fix-up's lengths and sign codebook are f32"
-            );
-        }
         Self {
             key,
             value,
             bits,
             fixup,
         }
+    }
+
+    /// Whether the attention reads the cache's buffers as they are: widths it decodes, each
+    /// buffer of rank four and of the same rows as the keys' words, `u32` words whose fields of a
+    /// row are adjacent, `f32` norms, codebooks and fix-up, and a codebook entry for every index.
+    ///
+    /// # Errors
+    ///
+    /// [`PACKED_WIDTH_UNREAD`] and [`PACKED_CACHE_UNREAD`].
+    pub(crate) fn admit(&self) -> Result<(), Decline> {
+        let widths = [self.bits.key, self.bits.value];
+        if !widths.iter().all(|bits| matches!(bits, 2 | 4 | 8)) {
+            return Err(PACKED_WIDTH_UNREAD);
+        }
+        let rows = self.key.words.shape();
+        if rows.rank() != 4 {
+            return Err(PACKED_CACHE_UNREAD);
+        }
+        let norms = [&self.key.norms, &self.value.norms]
+            .into_iter()
+            .chain(self.fixup.as_ref().map(|fixup| &fixup.errs));
+        let words = [&self.key.words, &self.value.words];
+        let of_the_rows = |buffer: &PlainTensor| {
+            let shape = buffer.shape();
+            shape.rank() == 4 && shape[..3] == rows[..3]
+        };
+        if !words
+            .into_iter()
+            .all(|words| of_the_rows(words) && words.elem == WORD && words.binding.strides[3] == 1)
+        {
+            return Err(PACKED_CACHE_UNREAD);
+        }
+        if !norms
+            .into_iter()
+            .all(|norms| of_the_rows(norms) && norms.elem == TABLE)
+        {
+            return Err(PACKED_CACHE_UNREAD);
+        }
+        let mut codebooks = [
+            (&self.key.codebook, self.bits.key),
+            (&self.value.codebook, self.bits.value),
+        ]
+        .into_iter()
+        .chain(
+            self.fixup
+                .as_ref()
+                .map(|fixup| (&fixup.sign_codebook, self.bits.key)),
+        );
+        if !codebooks.all(|(table, bits)| {
+            let shape = table.shape();
+            table.elem == TABLE && shape.rank() == 1 && shape[0] >= 1 << bits
+        }) {
+            return Err(PACKED_CACHE_UNREAD);
+        }
+        if self.value.words.shape()[3] * 32 / (self.bits.value as usize) < self.coords() {
+            return Err(PACKED_CACHE_UNREAD);
+        }
+        Ok(())
     }
 
     /// Coordinates a vector holds: the head dim of the codes.
@@ -166,8 +204,7 @@ impl PackedAttentionCache {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] for buffers other than [`PackedAttentionCache::new`] checks, and for a
-    /// table that does not place the cache's pools, which
+    /// [`Decline::Broken`] for buffers or a table other than
     /// [`AttentionTensors::attention`](crate::kernels::AttentionTensors::attention) checks first.
     pub(crate) fn bind(
         &self,
@@ -203,10 +240,6 @@ pub struct PackedCacheBinding {
 /// The dimension of a codebook's table, its positions: outside every kernel's space.
 const CODEBOOK: Dimension = Dimension(7);
 
-/// What every packed binding rests on, checked by [`PackedAttentionCache::new`].
-const CHECKED_BY_NEW: &str =
-    "a packed cache's buffers are as PackedAttentionCache::new checks them";
-
 impl PackedAttentionOperand {
     /// The operand bound under `launcher` along `[B, KV, S, head]`: its words' `bits`-wide fields
     /// indices into its codebook, each vector under its norm. Bound a word a line, the width a
@@ -219,7 +252,6 @@ impl PackedAttentionOperand {
         head: Dimension,
         pages: Option<&PlainTensor>,
     ) -> Result<TileTensorLaunch, Decline> {
-        const TABLE: ElemType = ElemType::Float(FloatKind::F32);
         let dimensions = [B, KV, S, head];
         // A norm per vector, `[b, kv, s, 1]`, scales the vector along `[b, kv, s]`.
         let binding = &self.norms.binding;
@@ -231,7 +263,7 @@ impl PackedAttentionOperand {
             .arg(rows.binding, TABLE)
             .dimensions(&dimensions[..3])
             .build()
-            .or_broken(CHECKED_BY_NEW)?
+            .or_broken(CHECKED_BY_ATTENTION)?
             .arg();
         let norms = paged(norms, pages)?;
         let codebook = TileTensorLaunch::new(
@@ -259,10 +291,10 @@ impl PackedAttentionOperand {
                 bits: bits as usize,
             })
             .build()
-            .or_broken(CHECKED_BY_NEW)?
+            .or_broken(CHECKED_BY_ATTENTION)?
             .arg()
             .codebook(codebook)
-            .or_broken(CHECKED_BY_NEW)?
+            .or_broken(CHECKED_BY_ATTENTION)?
             .scales(norms);
         paged(words, pages)
     }
@@ -281,10 +313,10 @@ fn paged(
     }
 }
 
-/// What a packed pool's binding rests on, checked by
+/// What every packed binding rests on, checked by
 /// [`AttentionTensors::attention`](crate::kernels::AttentionTensors::attention).
 const CHECKED_BY_ATTENTION: &str =
-    "a packed pool and its table are as AttentionTensors::attention checks them";
+    "a packed cache and its table are as AttentionTensors::attention checks them";
 
 #[cfg(test)]
 mod tests {

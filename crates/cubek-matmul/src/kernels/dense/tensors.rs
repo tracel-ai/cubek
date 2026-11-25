@@ -74,6 +74,17 @@ pub const MATMUL_SLABS_TAKE_NO_STORED_TILES: Decline = Decline::Unserved {
               them untiled",
 };
 
+/// Operands of a product reading a table that the table does not fit: entries other than `u32`, or
+/// a stack of other than its slabs.
+pub const MATMUL_TABLE_UNFIT: Decline = Decline::Unserved {
+    why: "a product reading a table reads u32 entries, over a stack of the table's slabs",
+};
+
+/// Inputs of a product that are no two matrices sharing their contraction.
+pub const MATMUL_CONTRACTIONS_DISAGREE: Decline = Decline::Unserved {
+    why: "a product's inputs are matrices sharing their contraction",
+};
+
 /// An operand stored in tiles that each step down a column first
 /// ([`PlainTensor::is_tiled_column_first`]), which a tile read by its columns cannot walk.
 pub const MATMUL_COLUMN_FIRST_TILES: Decline = Decline::Unserved {
@@ -256,12 +267,8 @@ impl MatmulTensors {
     /// As [`MatmulInputs::new`] for a float rhs; for a packed one, as
     /// [`beside_packed`](Self::beside_packed), and [`PACKED_STACK_UNREAD`] for one read along a
     /// run of `K`, which no packed product reads. [`MATMUL_OUTPUT_UNREAD`] for an output of
-    /// another shape or element, or stored in tiles.
-    ///
-    /// # Panics
-    ///
-    /// On entries other than `u32`, a stack of other than the table's slabs, or inputs whose
-    /// contraction dims do not agree.
+    /// another shape or element, or stored in tiles. [`MATMUL_TABLE_UNFIT`] and
+    /// [`MATMUL_CONTRACTIONS_DISAGREE`].
     pub fn indexed(
         client: &Client,
         lhs: PlainTensor,
@@ -270,11 +277,9 @@ impl MatmulTensors {
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Decline> {
-        assert_eq!(
-            table.entries.elem,
-            ElemType::UInt(UIntKind::U32),
-            "a table's entries are `u32`"
-        );
+        if table.entries.elem != ElemType::UInt(UIntKind::U32) {
+            return Err(MATMUL_TABLE_UNFIT);
+        }
         match rhs {
             StoredTensor::Plain(rhs) => {
                 Self::indexed_float(client, lhs, rhs, table, out, rows_kind)
@@ -295,6 +300,7 @@ impl MatmulTensors {
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?
             .addressable(client)
             .into_parts();
+        Self::admit_stack(&rhs, table.index)?;
         let matrix = Self::matrix_of(&rhs, table.index);
         let matrix_shape = matrix.shape();
         let out = Self::indexed_output(&lhs, matrix_shape[0], matrix_shape[1], &table, out)?;
@@ -320,11 +326,9 @@ impl MatmulTensors {
         let MatmulIndex::Slab { slabs } = table.index else {
             return Err(PACKED_STACK_UNREAD);
         };
-        assert_eq!(
-            rhs.slabs(),
-            Some(slabs),
-            "a packed stack is read as the table's slabs"
-        );
+        if rhs.slabs() != Some(slabs) {
+            return Err(MATMUL_TABLE_UNFIT);
+        }
         let k = rhs.extent(K);
         let lhs = Self::beside_packed(client, lhs, [M, K], k)?;
         let out = Self::indexed_output(&lhs, k, rhs.extent(N), &table, out)?;
@@ -344,11 +348,8 @@ impl MatmulTensors {
     ///
     /// # Errors
     ///
-    /// [`MATMUL_OUTPUT_UNREAD`] for an output of another shape or element, or stored in tiles.
-    ///
-    /// # Panics
-    ///
-    /// On an lhs whose contraction is not `k`.
+    /// [`MATMUL_OUTPUT_UNREAD`] for an output of another shape or element, or stored in tiles, and
+    /// [`MATMUL_CONTRACTIONS_DISAGREE`] for an lhs that is no `[.., rows, k]`.
     fn indexed_output(
         lhs: &PlainTensor,
         k: usize,
@@ -358,7 +359,9 @@ impl MatmulTensors {
     ) -> Result<MatmulOutputBuffer, Decline> {
         let shape = lhs.shape();
         let rank = shape.rank();
-        assert_eq!(shape[rank - 1], k, "the contraction dims must agree");
+        if rank < 2 || shape[rank - 1] != k {
+            return Err(MATMUL_CONTRACTIONS_DISAGREE);
+        }
         let out_shape = [table.entries.shape().as_slice(), &[shape[rank - 2], n]].concat();
         if out.shape().as_slice() != out_shape.as_slice() || out.elem != lhs.elem || out.is_tiled()
         {
@@ -370,21 +373,30 @@ impl MatmulTensors {
         })
     }
 
+    /// Whether `rhs` is the stack `index` reads: `[slabs, k, n]`, or one `[k, n]` every batch
+    /// reads a run of.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_TABLE_UNFIT`].
+    fn admit_stack(rhs: &PlainTensor, index: MatmulIndex) -> Result<(), Decline> {
+        match (index, rhs.shape().as_slice()) {
+            (MatmulIndex::Slab { slabs }, [stacked, _, _]) if *stacked == slabs => Ok(()),
+            (MatmulIndex::RunOfK, [_, _]) => Ok(()),
+            _ => Err(MATMUL_TABLE_UNFIT),
+        }
+    }
+
     /// The one `[k, n]` matrix of `rhs` a batch contracts against: a stacked rhs's first slab,
     /// at the slab's strides, or the rhs itself.
     ///
-    /// # Panics
+    /// # Assumptions
     ///
-    /// On a stack of other than `[slabs, k, n]`.
+    /// The rhs is one [`admit_stack`](Self::admit_stack) takes.
     fn matrix_of(rhs: &PlainTensor, index: MatmulIndex) -> PlainTensor {
         match index {
-            MatmulIndex::Slab { slabs } => {
+            MatmulIndex::Slab { .. } => {
                 let (shape, strides) = (&rhs.binding.shape, &rhs.binding.strides);
-                assert_eq!(
-                    shape.as_slice()[..1],
-                    [slabs],
-                    "a stack is `[slabs, k, n]`: {shape:?}"
-                );
                 rhs.viewed(Metadata::new(shape[1..].to_vec(), strides[1..].to_vec()))
             }
             MatmulIndex::RunOfK => rhs.clone(),
@@ -396,11 +408,8 @@ impl MatmulTensors {
     ///
     /// # Errors
     ///
-    /// [`MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED`].
-    ///
-    /// # Panics
-    ///
-    /// An operand whose contraction dim is not `k`.
+    /// [`MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED`], and [`MATMUL_CONTRACTIONS_DISAGREE`] for an
+    /// operand whose contraction dim is not `k`.
     pub fn beside_packed(
         client: &Client,
         tensor: PlainTensor,
@@ -410,18 +419,15 @@ impl MatmulTensors {
         if !MatmulInputs::FLOATS.contains(&tensor.elem) {
             return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
         }
-        let tensor = tensor.into_contiguous(client);
         let shape = tensor.shape();
         let contracted = dimensions
             .iter()
             .position(|&dimension| dimension == K)
             .expect("a product's input spans its contraction");
-        assert_eq!(
-            shape[shape.rank() - 2 + contracted],
-            k,
-            "the contraction dims must agree"
-        );
-        Ok(tensor)
+        if shape.rank() < 2 || shape[shape.rank() - 2 + contracted] != k {
+            return Err(MATMUL_CONTRACTIONS_DISAGREE);
+        }
+        Ok(tensor.into_contiguous(client))
     }
 
     /// `operand` as a product beside a packed input reads it, along `dimensions` and `k` deep: a

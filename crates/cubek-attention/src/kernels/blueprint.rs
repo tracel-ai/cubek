@@ -2,11 +2,17 @@
 
 use crate::kernels::AttentionPartitioning;
 use crate::kernels::AttentionRoutineProblem;
-use cubecl::tile::launch::{MaskedExtent, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, MaskedExtent, VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, CacheLines, S};
 use cubek_std::Hardware;
+
+/// A plane shuffle whose operands bind at other widths than the query's: it lines every one alike.
+pub(crate) const PLANE_SHUFFLE_WIDTHS_DIFFER: Decline = Decline::Broken {
+    condition: "the plane shuffle's operands should share one width",
+    cause: None,
+};
 
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its work
 /// items, the width each operand binds at, and how the routine lays out shared memory.

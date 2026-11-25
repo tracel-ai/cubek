@@ -171,9 +171,9 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
         binding: AttentionBinding,
         blueprint: UnitAttentionRoutineBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let (key, value) = binding.cache.into_tiles();
+        let (key, value) = binding.cache.into_tiles()?;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, the keys and values are read no further than
         // the attended length, and the kernel indexes no buffer but through its tiles and the
@@ -198,6 +198,7 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 problem.work_item().sum,
             );
         }
+        Ok(())
     }
 }
 

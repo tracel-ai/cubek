@@ -2,14 +2,15 @@
 //! measured on.
 
 use super::{
-    GroupedRows, MGroupedFloors, MGroupedMatmulCandidates, MGroupedMatmulTensors,
-    MGroupedRowSource, MGroupedSettings, PaddedRows, RouteSort,
+    GATED_ROWS_UNREAD, GROUPED_ROWS_UNREAD, GROUPED_TILE_OF_NO_ROW, GroupedRows, M_GROUPED_NO_ROW,
+    M_GROUPED_SHAPES_DISAGREE, MGroupedFloors, MGroupedMatmulCandidates, MGroupedMatmulTensors,
+    MGroupedRowSource, MGroupedSettings, PaddedRows, ROUTE_SORT_UNREAD, RouteSort,
 };
 use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::{Listing, Product};
+use crate::kernels::{Listing, PlaneShuffleMatmulRoutine, Product};
 use crate::tiled::storage::{StorageLevels, tile};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
@@ -17,6 +18,7 @@ use cubecl::prelude::*;
 use cubecl::server::CopyDescriptor;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Dimension;
+use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use cubek_test_utils::client;
 
@@ -251,14 +253,17 @@ fn spread_rows_replace_a_discarded_sorts_garbage() {
                 slots,
             },
         },
-        MGroupedRowSource::Gated(PaddedRows::new(
-            TensorHandle::zeros(
-                &client,
-                [garbage_layout.padded_rows(), 2 * k],
-                ElemType::Float(FloatKind::F32),
-            ),
-            garbage_layout,
-        )),
+        MGroupedRowSource::Gated(
+            PaddedRows::new(
+                TensorHandle::zeros(
+                    &client,
+                    [garbage_layout.padded_rows(), 2 * k],
+                    ElemType::Float(FloatKind::F32),
+                ),
+                garbage_layout,
+            )
+            .expect("the rows are the layout's"),
+        ),
     ];
     for source in sources {
         let tensors = MGroupedMatmulTensors::new(
@@ -282,7 +287,8 @@ fn spread_rows_replace_a_discarded_sorts_garbage() {
             }
             MGroupedRowSource::Gated(both) => {
                 let layout = both.layout();
-                let launched = GroupedRows::new(&client, spread.ends().clone(), rows, align);
+                let launched = GroupedRows::new(&client, spread.ends().clone(), rows, align)
+                    .expect("ends are one per expert");
                 let read_handle =
                     |handle: TensorHandle| read(&client, &PlainTensor::of_handle(handle));
                 assert_eq!(read_handle(layout.starts()), read_handle(launched.starts()));
@@ -290,4 +296,96 @@ fn spread_rows_replace_a_discarded_sorts_garbage() {
             }
         }
     }
+}
+
+/// What the rows of `source` against two col slabs of `[4, 4]` decline.
+fn declined(source: impl Into<MGroupedRowSource>) -> Option<Decline> {
+    let client = client();
+    MGroupedMatmulTensors::new(
+        &client,
+        source,
+        StoredTensor::Plain(f32s(&client, [4, 8], [8, 1], &[1.0; 32])),
+        u32s(&client, &[1, 2]),
+        SlabDimension::Output,
+    )
+    .err()
+}
+
+/// Two rows of `width`.
+fn two_rows(width: usize) -> PlainTensor {
+    f32s(&client(), [2, width], [width, 1], &vec![1.0; 2 * width])
+}
+
+#[test]
+fn rows_of_another_contraction_decline() {
+    assert_eq!(declined(two_rows(3)), Some(M_GROUPED_SHAPES_DISAGREE));
+}
+
+#[test]
+fn rows_not_of_rank_two_decline() {
+    assert_eq!(declined(u32s(&client(), &[1])), Some(GROUPED_ROWS_UNREAD));
+}
+
+#[test]
+fn a_sort_of_no_slot_declines() {
+    let sort = RouteSort {
+        route_at_place: u32s(&client(), &[0, 1]),
+        slots: 0,
+    };
+    let tokens = two_rows(4);
+
+    let declined = declined(MGroupedRowSource::Routed { tokens, sort });
+
+    assert_eq!(declined, Some(ROUTE_SORT_UNREAD));
+}
+
+/// Two rows of `width` padded a row a tile, grouped by `ends`.
+fn padded(width: usize, ends: &[u32]) -> PaddedRows {
+    let client = client();
+    let layout = GroupedRows::uploaded(&client, ends, 2, 1);
+    let rows = TensorHandle::zeros(&client, [2, width], F32);
+    PaddedRows::new(rows, layout).expect("a tile a row")
+}
+
+#[test]
+fn gated_rows_of_no_two_halves_decline() {
+    let gated = MGroupedRowSource::Gated(padded(7, &[1, 2]));
+
+    assert_eq!(declined(gated), Some(GATED_ROWS_UNREAD));
+}
+
+#[test]
+fn gated_rows_of_other_groups_decline() {
+    let gated = MGroupedRowSource::Gated(padded(8, &[1, 1, 2]));
+
+    assert_eq!(declined(gated), Some(GATED_ROWS_UNREAD));
+}
+
+#[test]
+fn padding_no_row_declines() {
+    let client = client();
+    let tensors = MGroupedMatmulTensors::new(
+        &client,
+        f32s(&client, [0, 4], [4, 1], &[0.0]),
+        StoredTensor::Plain(f32s(&client, [4, 8], [8, 1], &[1.0; 32])),
+        u32s(&client, &[0, 0]),
+        SlabDimension::Output,
+    )
+    .expect("no row is a product still");
+
+    let hw = Hardware::from_client(&client);
+    let floor = &MGroupedFloors::LISTED.plane_shuffle[0].settings;
+    let launched = tensors.launch(&hw, &PlaneShuffleMatmulRoutine, floor);
+
+    assert_eq!(launched.err(), Some(M_GROUPED_NO_ROW));
+    assert_eq!(tensors.served_on_floor(&hw), Err(M_GROUPED_NO_ROW));
+}
+
+#[test]
+fn tiles_of_no_row_decline() {
+    let client = client();
+
+    let declined = GroupedRows::new(&client, u32s(&client, &[1, 2]), 2, 0).err();
+
+    assert_eq!(declined, Some(GROUPED_TILE_OF_NO_ROW));
 }

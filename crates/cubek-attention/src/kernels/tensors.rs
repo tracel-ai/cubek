@@ -1,10 +1,10 @@
 //! The tensors of one attention, and how a launch binds them.
 
-use crate::kernels::conversion::converted;
+use crate::kernels::conversion::{converted, distinct_elements};
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
-    AttentionRoutineProblem, AttentionScoring, CacheScales, KvSource, PackedAttentionCache,
-    QueryDimension, SCALED_PACKED_UNREAD, page_table,
+    AttentionRoutineProblem, AttentionScoring, KvSource, PackedAttentionCache, QueryDimension,
+    SCALED_PACKED_UNREAD, page_table,
 };
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
@@ -43,6 +43,37 @@ pub const PACKED_WIDTH_UNREAD: Decline = Decline::Unserved {
 /// the key heads.
 pub const ATTENTION_GROUP_UNEVEN: Decline = Decline::Unserved {
     why: "the microkernel attention's query heads are a whole group per key head",
+};
+
+/// What a launch declines before preparing anything: queries that are no `[b, h, q, d]`, or, lying
+/// end to end, no `[Σ q_b, h, d]` under `u32` ends `[b]`, or whose `d` is not what the cache's keys
+/// are scored over.
+pub const ATTENTION_QUERIES_UNREAD: Decline = Decline::Unserved {
+    why: "queries are [b, h, q, d], or [Σ q_b, h, d] under u32 ends [b], d the keys' head dim, \
+          twice it under a QJL fix-up",
+};
+
+/// What a launch declines before preparing anything: more query elements than a `u32` counts.
+pub const ATTENTION_QUERIES_UNCOUNTED: Decline = Decline::Unserved {
+    why: "a query's elements are counted in a u32",
+};
+
+/// What a launch declines before preparing anything: attended lengths other than one `u32`, or one
+/// a sequence.
+pub const ATTENTION_LENGTHS_UNREAD: Decline = Decline::Unserved {
+    why: "attended lengths are u32 of rank one, one value or one a sequence",
+};
+
+/// What an attention declines of a mask: another shape than the scores', or queries that lie end
+/// to end.
+pub const ATTENTION_MASK_UNREAD: Decline = Decline::Unserved {
+    why: "a mask is [b, h, q, s], one cell a score, over queries [b, h, q, d]",
+};
+
+/// What an attention declines of a logsumexp: one over a packed cache, or of queries that lie end
+/// to end.
+pub const ATTENTION_LOGSUMEXP_UNWRITTEN: Decline = Decline::Unserved {
+    why: "an attention writes its logsumexp over a float cache, for queries [b, h, q, d]",
 };
 
 /// The tensors of one attention on one client: the query, the cache it reads, each sequence's
@@ -117,15 +148,11 @@ impl AttentionTensors {
     ///
     /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`PACKED_WIDTH_UNREAD`] and [`ATTENTION_GROUP_UNEVEN`]:
     /// what the routines decline whatever the device; [`SCALED_PACKED_UNREAD`] and what
-    /// [`KvSource::read_as_block_pages`] declines: sources no routine reads; and
-    /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
-    ///
-    /// # Panics
-    ///
-    /// Operands whose ranks, batch, head or key dims do not agree, a page table that is not `u32`
-    /// of rank two with one row per sequence, pools that disagree on their pages, key heads or
-    /// page size, an empty pool, page or table row, a cache scale that is not one `f32`, or a
-    /// packed cache whose head dim is not the query's: no attention at all.
+    /// [`KvSource::read_as_block_pages`] declines: sources no routine reads;
+    /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run; and
+    /// [`ATTENTION_QUERIES_UNREAD`], [`ATTENTION_QUERIES_UNCOUNTED`],
+    /// [`ATTENTION_LENGTHS_UNREAD`] and [`CACHE_SEQUENCES_DISAGREE`]: operands that state no
+    /// attention.
     pub fn attention(
         client: &Client,
         queries: AttentionQueries,
@@ -144,11 +171,12 @@ impl AttentionTensors {
                 // sequence `ends` counts, `[b, h, Σ q_b, d]`, the batch at stride zero: each
                 // sequence's run of it is placed by its entry of `ends` as the launch binds it.
                 let (shape, strides) = (&query.binding.shape, &query.binding.strides);
-                assert_eq!(shape.len(), 3, "packed queries are [Σ q_b, h, d]");
-                assert!(
-                    ends.elem == Self::COUNTER && ends.shape().rank() == 1,
-                    "the ends of packed queries are u32 [b]"
-                );
+                if shape.len() != 3 {
+                    return Err(ATTENTION_QUERIES_UNREAD);
+                }
+                if ends.elem != Self::COUNTER || ends.shape().rank() != 1 {
+                    return Err(ATTENTION_QUERIES_UNREAD);
+                }
                 let sequences = query.viewed(Metadata::new(
                     [ends.shape()[0], shape[1], shape[0], shape[2]],
                     [0, strides[1], strides[0], strides[2]],
@@ -156,17 +184,21 @@ impl AttentionTensors {
                 (sequences, lengths, Some((ends, longest)))
             }
         };
-        let kv = kv.read_as_block_pages(client, scoring.visibility)?;
-        match (&kv.cache, &kv.pages) {
-            (AttentionCache::Float { key, value }, pages) => {
-                Self::admit_float(client, &query, key, value, pages.as_ref())?;
-                Self::assert_cache_scales(&kv.scales);
-            }
-            (AttentionCache::Packed(_), _) if kv.scales.any() => return Err(SCALED_PACKED_UNREAD),
-            (AttentionCache::Packed(cache), pages) => {
-                Self::admit_packed(client, &query, cache, pages.as_ref())?
-            }
+        if query.shape().rank() != 4 {
+            return Err(ATTENTION_QUERIES_UNREAD);
         }
+        if u32::try_from(distinct_elements(&query)).is_err() {
+            return Err(ATTENTION_QUERIES_UNCOUNTED);
+        }
+        let kv = kv.read_as_block_pages(client, scoring.visibility)?;
+        match &kv.cache {
+            AttentionCache::Float { key, value } => Self::admit_float(client, &query, key, value)?,
+            AttentionCache::Packed(_) if kv.scales.any() => return Err(SCALED_PACKED_UNREAD),
+            AttentionCache::Packed(cache) => Self::admit_packed(client, &query, cache)?,
+        }
+        let sequences = query.shape()[0];
+        kv.admit_sequences(sequences)?;
+        let lengths = Self::one_per_sequence(lengths, sequences)?;
         let group = Self::group(&query, kv.num_kv_heads())?;
         Ok(Self::assemble(
             client, query, group, kv, lengths, scoring, query_runs,
@@ -179,10 +211,6 @@ impl AttentionTensors {
     /// float keys and values laid out as sequences.
     ///
     /// # Errors
-    ///
-    /// As [`attention`](Self::attention).
-    ///
-    /// # Panics
     ///
     /// As [`attention`](Self::attention).
     pub fn new(
@@ -207,10 +235,6 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// As [`attention`](Self::attention).
-    ///
-    /// # Panics
-    ///
-    /// As [`attention`](Self::attention).
     pub fn paged(
         client: &Client,
         query: PlainTensor,
@@ -232,10 +256,6 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// As [`attention`](Self::attention).
-    ///
-    /// # Panics
-    ///
-    /// A cache [`PackedAttentionCache::new`] refuses, or as [`attention`](Self::attention).
     pub fn packed(
         client: &Client,
         query: PlainTensor,
@@ -259,20 +279,6 @@ impl AttentionTensors {
     /// FP8 cache's, which the routines read on the device's FP8 instruction or widen as they
     /// stage it.
     pub const VERIFIED_CACHE: [ElemType; 1] = [ElemType::Float(FloatKind::E4M3)];
-
-    /// Scales of a float cache the routines read: each one `f32` over its whole side.
-    ///
-    /// # Panics
-    ///
-    /// A scale of another element or of more than one value.
-    fn assert_cache_scales(scales: &CacheScales) {
-        for scale in [&scales.key, &scales.value].into_iter().flatten() {
-            assert!(
-                scale.elem == ElemType::Float(FloatKind::F32) && scale.shape().num_elements() == 1,
-                "a cache's scale is one f32 over its whole side"
-            );
-        }
-    }
 
     /// The elements of float operands, where the routines take them and `client`'s device runs
     /// them: the query in an element the device computes in, and the keys and the values each in
@@ -391,7 +397,7 @@ impl AttentionTensors {
             out_view: dimension.view(&out_plain, group, [0, 2, 1, 3]),
             out,
             kv,
-            lengths: Self::one_per_sequence(lengths, batch),
+            lengths,
             query_runs,
             scoring,
             dimension,
@@ -405,21 +411,17 @@ impl AttentionTensors {
     /// tensor serves every sequence as a stride-0 view of its one element rather than a copy, so
     /// the kernel still reads the buffer an advance moves in place.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// If it is not `u32`, or holds neither one value nor one per sequence.
-    fn one_per_sequence(lengths: PlainTensor, sequences: usize) -> PlainTensor {
-        assert_eq!(
-            lengths.elem,
-            Self::COUNTER,
-            "a per-sequence length is u32, got {:?}",
-            lengths.elem
-        );
+    /// [`ATTENTION_LENGTHS_UNREAD`].
+    fn one_per_sequence(lengths: PlainTensor, sequences: usize) -> Result<PlainTensor, Decline> {
+        if lengths.elem != Self::COUNTER {
+            return Err(ATTENTION_LENGTHS_UNREAD);
+        }
         match lengths.shape().as_slice() {
-            [1] => lengths.viewed(Metadata::new([sequences], [0])),
-            [held] if *held == sequences => lengths,
-            [held] => panic!("expected one value, or one per sequence ({sequences}), got {held}"),
-            dims => panic!("a per-sequence length is of rank one, got {dims:?}"),
+            [1] => Ok(lengths.viewed(Metadata::new([sequences], [0]))),
+            [lengths_count] if *lengths_count == sequences => Ok(lengths),
+            _ => Err(ATTENTION_LENGTHS_UNREAD),
         }
     }
 
@@ -429,15 +431,9 @@ impl AttentionTensors {
     /// The same attention, its cubes counting themselves in at `arrivals`, `u32` counters at zero
     /// that the caller keeps from one launch to the next: every launch leaves them at zero, so a
     /// launch that keeps them spends no fill on them. As many as the boxes of the largest problem
-    /// the caller attends, or more; `None` leaves each launch to fill its own.
-    ///
-    /// # Panics
-    ///
-    /// Counters that are not `u32`.
+    /// the caller attends, or more; `None`, or counters that are not `u32` or are fewer than a
+    /// launch's boxes, leaves that launch to fill its own.
     pub fn with_arrivals(mut self, arrivals: Option<PlainTensor>) -> Self {
-        if let Some(kept) = &arrivals {
-            assert_eq!(kept.elem, Self::COUNTER, "arrival counters are u32");
-        }
         self.arrivals = arrivals;
         self
     }
@@ -447,41 +443,34 @@ impl AttentionTensors {
     /// not vary along is read at stride zero, so a mask broadcast over the batch or the heads is
     /// never copied. Its element is any integer, a stored boolean among them.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// A mask of another shape than the scores', `[b, h, q, s]`.
-    pub fn with_mask(mut self, mask: PlainTensor) -> Self {
-        assert!(
-            self.query_runs.is_none(),
-            "queries that lie end to end take no mask"
-        );
+    /// [`ATTENTION_MASK_UNREAD`].
+    pub fn with_mask(mut self, mask: PlainTensor) -> Result<Self, Decline> {
+        if self.query_runs.is_some() {
+            return Err(ATTENTION_MASK_UNREAD);
+        }
         let [batch, queries, heads, _] = self.out.shape().dims::<4>();
-        assert_eq!(
-            mask.shape().as_slice(),
-            [batch, heads, queries, self.kv.seq_kv()],
-            "a mask is [b, h, q, s], one cell a score"
-        );
+        if mask.shape().as_slice() != [batch, heads, queries, self.kv.seq_kv()] {
+            return Err(ATTENTION_MASK_UNREAD);
+        }
         let group = heads / self.kv.num_kv_heads();
         self.mask = Some(self.dimension.view(&mask, group, [0, 1, 2, 3]));
-        self
+        Ok(self)
     }
 
     /// The same attention, writing beside its output each query's logsumexp of its scaled scores,
     /// `[b, h, q]` in the sum's element ([`logsumexp`](Self::logsumexp)): what a backward pass
     /// reads its probabilities back from. A query that sees no key holds the minimum value.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On a packed cache, which is read for inference: no backward pass reads its logsumexp.
-    pub fn with_logsumexp(mut self) -> Self {
-        assert!(
-            !matches!(self.kv.cache, AttentionCache::Packed(_)),
-            "a packed cache's attention writes no logsumexp"
-        );
-        assert!(
-            self.query_runs.is_none(),
-            "queries that lie end to end write no logsumexp"
-        );
+    /// [`ATTENTION_LOGSUMEXP_UNWRITTEN`]. A packed cache is read for inference: no backward pass
+    /// reads its logsumexp.
+    pub fn with_logsumexp(mut self) -> Result<Self, Decline> {
+        if self.query_runs.is_some() || matches!(self.kv.cache, AttentionCache::Packed(_)) {
+            return Err(ATTENTION_LOGSUMEXP_UNWRITTEN);
+        }
         let [batch, queries, heads, _] = self.out.shape().dims::<4>();
         let (handle, rows) = PlainTensor::empty_contiguous(
             &self.client,
@@ -499,7 +488,7 @@ impl AttentionTensors {
         let (shape, strides) = (&view.binding.shape, &view.binding.strides);
         let view = view.viewed(Metadata::new(shape[..4].to_vec(), strides[..4].to_vec()));
         self.logsumexp = Some((handle, view));
-        self
+        Ok(self)
     }
 
     /// Each query's logsumexp, `[b, h, q]`, where the attention writes it
@@ -873,152 +862,69 @@ impl AttentionTensors {
 
     /// A counter for every box of `box_queries` queries, holding zero: where the cubes sharing a
     /// box count themselves in. The caller's ([`with_arrivals`](Self::with_arrivals)) where it
-    /// keeps them, otherwise filled for this launch.
-    ///
-    /// # Panics
-    ///
-    /// Kept counters fewer than the boxes.
+    /// keeps one for every box, otherwise filled for this launch.
     pub fn box_arrivals(&self, box_queries: usize) -> PlainTensor {
         let problem = self.problem();
         let boxes = problem.batch
             * problem.num_kv_heads
             * problem.group
             * problem.seq_q.div_ceil(box_queries);
-        match &self.arrivals {
-            Some(kept) => {
-                let counters = kept.shape().num_elements();
-                assert!(
-                    counters >= boxes,
-                    "the kept arrival counters cover every box: {boxes} boxes, {counters} counters"
-                );
-                kept.clone()
-            }
-            None => {
+        let covers = |kept: &&PlainTensor| {
+            kept.elem == Self::COUNTER && kept.shape().num_elements() >= boxes
+        };
+        self.arrivals
+            .as_ref()
+            .filter(covers)
+            .cloned()
+            .unwrap_or_else(|| {
                 PlainTensor::of_handle(TensorHandle::zeros(&self.client, [boxes], Self::COUNTER))
-            }
-        }
+            })
     }
 }
 
 impl AttentionTensors {
-    /// Float operands of one element the routines take and `client`'s device runs, `key` and
-    /// `value` laid out as sequences, or as pools of pages where `pages` names them.
+    /// Float operands of one element the routines take and `client`'s device runs, the keys' head
+    /// dim the query's.
     ///
     /// # Errors
     ///
-    /// [`ATTENTION_ELEMENT_UNVERIFIED`] and [`ELEMENT_NOT_ON_DEVICE`].
-    ///
-    /// # Panics
-    ///
-    /// As [`attention`](Self::attention), for float keys and values.
+    /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`ELEMENT_NOT_ON_DEVICE`] and
+    /// [`ATTENTION_QUERIES_UNREAD`].
     fn admit_float(
         client: &Client,
         query: &PlainTensor,
         key: &PlainTensor,
         value: &PlainTensor,
-        pages: Option<&PlainTensor>,
     ) -> Result<(), Decline> {
         Self::admit_elements(client, query, key, value)?;
-        let (q_shape, k_shape, v_shape) = (query.shape(), key.shape(), value.shape());
-        assert!(
-            q_shape.num_dims() == 4 && k_shape.num_dims() == 4 && v_shape.num_dims() == 4,
-            "attention's operands are [b, h, q, d], and [b, kv, s, ·] or [pages, kv, page_size, ·]"
-        );
-        assert!(
-            v_shape[0] == k_shape[0] && v_shape[1] == k_shape[1] && v_shape[2] == k_shape[2],
-            "the keys and values agree on their sequences or pages, key heads and positions"
-        );
-        assert_eq!(k_shape[3], q_shape[3], "the keys' head dim is the query's");
-        Self::assert_cache_rows(q_shape[0], [k_shape[0], k_shape[2]], pages);
+        if key.shape()[3] != query.shape()[3] {
+            return Err(ATTENTION_QUERIES_UNREAD);
+        }
         Ok(())
     }
 
-    /// A packed cache the routines read, under `query` of an element they take and `client`'s
-    /// device runs, laid out as sequences, or as pools of pages where `pages` names them.
+    /// `cache`, a packed one under `query` of an element the routines take and `client`'s device
+    /// runs, the query as wide as the keys' lines.
     ///
     /// # Errors
     ///
-    /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`ELEMENT_NOT_ON_DEVICE`] and [`PACKED_WIDTH_UNREAD`].
-    ///
-    /// # Panics
-    ///
-    /// A query whose head dim is not the cache's, twice it with a fix-up; buffers that disagree
-    /// on their sequences or pages, key heads or positions; or as
-    /// [`attention`](Self::attention), for the batch and the page table.
+    /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`ELEMENT_NOT_ON_DEVICE`] and
+    /// [`ATTENTION_QUERIES_UNREAD`].
     fn admit_packed(
         client: &Client,
         query: &PlainTensor,
         cache: &PackedAttentionCache,
-        pages: Option<&PlainTensor>,
     ) -> Result<(), Decline> {
         Self::admit_element(client, query)?;
-        if ![cache.bits.key, cache.bits.value]
-            .iter()
-            .all(|bits| matches!(bits, 2 | 4 | 8))
-        {
-            return Err(PACKED_WIDTH_UNREAD);
-        }
         let coords = cache.coords();
         let widened = match cache.fixup {
             Some(_) => 2 * coords,
             None => coords,
         };
-        assert_eq!(query.shape()[3], widened, "the query spans the keys' lines");
-        let rows = cache.key.words.shape();
-        let buffers = [&cache.key.words, &cache.key.norms, &cache.value.words]
-            .into_iter()
-            .chain([&cache.value.norms])
-            .chain(cache.fixup.as_ref().map(|fixup| &fixup.errs));
-        for buffer in buffers {
-            let shape = buffer.shape();
-            assert!(
-                shape.num_dims() == 4 && shape.as_slice()[..3] == rows.as_slice()[..3],
-                "a packed cache's buffers agree on their sequences or pages, key heads and \
-                 positions"
-            );
+        if query.shape()[3] != widened {
+            return Err(ATTENTION_QUERIES_UNREAD);
         }
-        Self::assert_cache_rows(query.shape()[0], [rows[0], rows[2]], pages);
         Ok(())
-    }
-
-    /// A cache whose buffers hold `rows`, `[sequences or pages, positions]`, under the query's
-    /// `sequences`: one row a sequence, or a pool that `pages` names a row of for each sequence.
-    ///
-    /// # Panics
-    ///
-    /// As [`attention`](Self::attention), for the batch and the page table.
-    fn assert_cache_rows(sequences: usize, rows: [usize; 2], pages: Option<&PlainTensor>) {
-        match pages {
-            Some(pages) => Self::assert_page_table(pages, sequences, rows),
-            None => assert_eq!(rows[0], sequences, "the operands' batch dims agree"),
-        }
-    }
-
-    /// `pages` is a page table of `sequences` over a pool whose buffers hold `rows`,
-    /// `[pages, page_size]`: `u32` `(sequences, pages_per_sequence)`, read by stride, so it is not
-    /// copied, and neither the pool, its pages nor the table's rows empty.
-    ///
-    /// # Panics
-    ///
-    /// If it is not `u32`, not rank 2, holds another count of rows, or the pool, a page or a row
-    /// is empty.
-    fn assert_page_table(pages: &PlainTensor, sequences: usize, rows: [usize; 2]) {
-        assert_eq!(
-            pages.elem,
-            Self::COUNTER,
-            "a page table is u32, got {:?}",
-            pages.elem
-        );
-        let shape = pages.shape();
-        assert_eq!(shape.rank(), 2, "a page table is of rank two");
-        assert_eq!(
-            shape[0], sequences,
-            "a page table holds one row per sequence"
-        );
-        assert!(
-            rows[0] > 0 && rows[1] > 0 && shape[1] > 0,
-            "a paged attention reads a pool, its pages and its table rows non-empty"
-        );
     }
 }
 
@@ -1038,6 +944,7 @@ mod tests {
     use crate::kernels::*;
     use cubecl::client::Client;
     use cubecl::prelude::*;
+    use cubecl::tile::launch::Decline;
     use cubecl::zspace::Shape;
     use cubecl::zspace::metadata::Metadata;
     use cubek_matmul::kernels::tensor::PlainTensor;
@@ -1054,7 +961,7 @@ mod tests {
 
     /// The attention of one sequence's three queries of four heads, of head dim eight, over a
     /// packed cache of four-bit keys and values of `shapes`.
-    fn attend_packed(shapes: PackedShapes) {
+    fn attend_packed(shapes: PackedShapes) -> Option<Decline> {
         let client: Client = cubecl::test_device().client();
         let tensor = |shape: &[usize], element: ElemType| {
             PlainTensor::of_handle(
@@ -1088,54 +995,249 @@ mod tests {
             lengths: tensor(&[1], u32),
         };
         let scoring = AttentionScoring::standard(AttentionVisibility::Attended, 8);
-        let _ = AttentionTensors::attention(&client, queries, kv, scoring);
+        AttentionTensors::attention(&client, queries, kv, scoring).err()
     }
 
     /// Packed buffers that disagree on their positions state no cache.
     #[test]
-    #[should_panic(expected = "a packed cache's buffers agree")]
-    fn packed_buffers_of_other_positions_panic() {
-        attend_packed(PackedShapes {
+    fn packed_buffers_of_other_positions_decline() {
+        let declined = attend_packed(PackedShapes {
             rows: 1,
             value_words: &[1, 2, 8, 1],
             value_norms: &[1, 2, 8, 1],
             pages: None,
         });
+
+        assert_eq!(declined, Some(PACKED_CACHE_UNREAD));
     }
 
     /// A packed operand's norms of another rank than its words' state no cache.
     #[test]
-    #[should_panic(expected = "a packed cache's buffers agree")]
-    fn packed_norms_not_of_rank_four_panic() {
-        attend_packed(PackedShapes {
+    fn packed_norms_not_of_rank_four_decline() {
+        let declined = attend_packed(PackedShapes {
             rows: 1,
             value_words: &[1, 2, 4, 1],
             value_norms: &[1, 2, 4],
             pages: None,
         });
+
+        assert_eq!(declined, Some(PACKED_CACHE_UNREAD));
     }
 
     /// A packed cache laid out as sequences holds one row a sequence of the query.
     #[test]
-    #[should_panic(expected = "the operands' batch dims agree")]
-    fn packed_sequences_of_another_batch_than_the_query_panic() {
-        attend_packed(PackedShapes {
+    fn packed_sequences_of_another_batch_than_the_query_decline() {
+        let declined = attend_packed(PackedShapes {
             rows: 2,
             value_words: &[2, 2, 4, 1],
             value_norms: &[2, 2, 4, 1],
             pages: None,
         });
+
+        assert_eq!(declined, Some(CACHE_SEQUENCES_DISAGREE));
     }
 
     /// A packed cache in pages is read through a table whose rows name pages.
     #[test]
-    #[should_panic(expected = "its table rows non-empty")]
-    fn packed_pages_under_an_empty_table_row_panic() {
-        attend_packed(PackedShapes {
+    fn packed_pages_under_an_empty_table_row_decline() {
+        let declined = attend_packed(PackedShapes {
             rows: 2,
             value_words: &[2, 2, 4, 1],
             value_norms: &[2, 2, 4, 1],
             pages: Some([1, 0]),
         });
+
+        assert_eq!(declined, Some(PAGE_TABLE_UNREAD));
+    }
+
+    /// A tensor of `shape` and `element`, zeros.
+    fn zeros(shape: &[usize], element: ElemType) -> PlainTensor {
+        let client: Client = cubecl::test_device().client();
+        PlainTensor::of_handle(
+            TestInput::builder(client, Shape::from(shape.to_vec()))
+                .dtype(element)
+                .zeros()
+                .generate_without_host_data(),
+        )
+    }
+
+    /// The attention of one sequence's three queries of four heads over four keys of two heads, of
+    /// head dim eight, float, attending `lengths`.
+    fn attend(
+        query: &[usize],
+        value: &[usize],
+        lengths: PlainTensor,
+    ) -> Result<AttentionTensors, Decline> {
+        let client: Client = cubecl::test_device().client();
+        let f32 = f32::elem_type_native();
+        AttentionTensors::new(
+            &client,
+            zeros(query, f32),
+            zeros(&[1, 2, 4, 8], f32),
+            zeros(value, f32),
+            lengths,
+            AttentionScoring::standard(AttentionVisibility::Attended, 8),
+        )
+    }
+
+    const QUERY: [usize; 4] = [1, 4, 3, 8];
+    const VALUE: [usize; 4] = [1, 2, 4, 8];
+
+    fn one_length() -> PlainTensor {
+        zeros(&[1], u32::elem_type_native())
+    }
+
+    #[test]
+    fn a_query_not_of_rank_four_declines() {
+        let declined = attend(&[4, 3, 8], &VALUE, one_length()).err();
+
+        assert_eq!(declined, Some(ATTENTION_QUERIES_UNREAD));
+    }
+
+    #[test]
+    fn a_query_of_another_head_dim_declines() {
+        let declined = attend(&[1, 4, 3, 4], &VALUE, one_length()).err();
+
+        assert_eq!(declined, Some(ATTENTION_QUERIES_UNREAD));
+    }
+
+    #[test]
+    fn values_of_other_positions_than_the_keys_decline() {
+        let declined = attend(&QUERY, &[1, 2, 5, 8], one_length()).err();
+
+        assert_eq!(declined, Some(CACHE_SHAPES_DISAGREE));
+    }
+
+    #[test]
+    fn a_query_of_another_batch_declines() {
+        let declined = attend(&[2, 4, 3, 8], &VALUE, one_length()).err();
+
+        assert_eq!(declined, Some(CACHE_SEQUENCES_DISAGREE));
+    }
+
+    #[test]
+    fn float_lengths_decline() {
+        let lengths = zeros(&[1], f32::elem_type_native());
+
+        let declined = attend(&QUERY, &VALUE, lengths).err();
+
+        assert_eq!(declined, Some(ATTENTION_LENGTHS_UNREAD));
+    }
+
+    #[test]
+    fn lengths_of_other_sequences_decline() {
+        let lengths = zeros(&[3], u32::elem_type_native());
+
+        let declined = attend(&QUERY, &VALUE, lengths).err();
+
+        assert_eq!(declined, Some(ATTENTION_LENGTHS_UNREAD));
+    }
+
+    #[test]
+    fn a_mask_of_another_shape_than_the_scores_declines() {
+        let tensors = attend(&QUERY, &VALUE, one_length()).expect("an attention");
+        let mask = zeros(&[1, 4, 4, 3], u32::elem_type_native());
+
+        let declined = tensors.with_mask(mask).err();
+
+        assert_eq!(declined, Some(ATTENTION_MASK_UNREAD));
+    }
+
+    /// Two sequences' two queries end to end, over their float keys and values.
+    fn attend_packed_queries(ends: PlainTensor) -> Result<AttentionTensors, Decline> {
+        let client: Client = cubecl::test_device().client();
+        let f32 = f32::elem_type_native();
+        let queries = AttentionQueries::Packed {
+            query: zeros(&[2, 4, 8], f32),
+            ends,
+            longest: 1,
+            lengths: one_length(),
+        };
+        let kv = KvSource::new(AttentionCache::Float {
+            key: zeros(&[2, 2, 4, 8], f32),
+            value: zeros(&[2, 2, 4, 8], f32),
+        });
+        let scoring = AttentionScoring::standard(AttentionVisibility::Attended, 8);
+        AttentionTensors::attention(&client, queries, kv, scoring)
+    }
+
+    #[test]
+    fn float_ends_of_packed_queries_decline() {
+        let ends = zeros(&[2], f32::elem_type_native());
+
+        let declined = attend_packed_queries(ends).err();
+
+        assert_eq!(declined, Some(ATTENTION_QUERIES_UNREAD));
+    }
+
+    #[test]
+    fn packed_queries_take_no_mask() {
+        let ends = zeros(&[2], u32::elem_type_native());
+        let tensors = attend_packed_queries(ends).expect("an attention");
+
+        let declined = tensors.with_mask(one_length()).err();
+
+        assert_eq!(declined, Some(ATTENTION_MASK_UNREAD));
+    }
+
+    #[test]
+    fn packed_queries_write_no_logsumexp() {
+        let ends = zeros(&[2], u32::elem_type_native());
+        let tensors = attend_packed_queries(ends).expect("an attention");
+
+        let declined = tensors.with_logsumexp().err();
+
+        assert_eq!(declined, Some(ATTENTION_LOGSUMEXP_UNWRITTEN));
+    }
+
+    /// Kept counters fewer than the launch's twelve boxes, or not counters, are left for counters
+    /// of the launch's own.
+    #[test]
+    fn arrivals_that_do_not_cover_the_boxes_are_left() {
+        let (u32, f32) = (u32::elem_type_native(), f32::elem_type_native());
+        for kept in [zeros(&[11], u32), zeros(&[12], f32)] {
+            let tensors = attend(&QUERY, &VALUE, one_length()).expect("an attention");
+
+            let arrivals = tensors.with_arrivals(Some(kept)).box_arrivals(1);
+
+            assert_eq!((arrivals.shape().num_elements(), arrivals.elem), (12, u32));
+        }
+    }
+
+    /// A cache's scale is one `f32`.
+    #[test]
+    fn a_scale_per_key_head_declines() {
+        let client: Client = cubecl::test_device().client();
+        let f32 = f32::elem_type_native();
+        let kv = KvSource::new(AttentionCache::Float {
+            key: zeros(&[1, 2, 4, 8], f32),
+            value: zeros(&VALUE, f32),
+        })
+        .scaled(CacheScales {
+            key: Some(zeros(&[2], f32)),
+            value: None,
+        });
+        let queries = AttentionQueries::Dense {
+            query: zeros(&QUERY, f32),
+            lengths: one_length(),
+        };
+        let scoring = AttentionScoring::standard(AttentionVisibility::Attended, 8);
+
+        let declined = AttentionTensors::attention(&client, queries, kv, scoring).err();
+
+        assert_eq!(declined, Some(CACHE_SCALE_UNREAD));
+    }
+
+    /// A value of fewer coordinates than a key's leaves the output's last ones unread.
+    #[test]
+    fn packed_values_of_fewer_coordinates_decline() {
+        let declined = attend_packed(PackedShapes {
+            rows: 1,
+            value_words: &[1, 2, 4, 0],
+            value_norms: &[1, 2, 4, 1],
+            pages: None,
+        });
+
+        assert_eq!(declined, Some(PACKED_CACHE_UNREAD));
     }
 }

@@ -1,15 +1,48 @@
 use super::PaddedRows;
 use super::kernel::{combine_routes, gate_rows, group_tiles, pad_rows, unpad_rows};
+#[cfg(doc)]
+use crate::kernels::indexed::stack::GROUP_ENDS_UNREAD;
+use crate::kernels::indexed::stack::admit_ends;
 use crate::kernels::tensor::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubecl::{CubeCount, CubeDim};
 use cubek_std::Hardware;
 
 const U32: ElemType = ElemType::UInt(UIntKind::U32);
+
+/// Rows no layout of grouped rows pads or drops the padding of: other than `[rows, width]`, or
+/// another count of rows than the layout's.
+pub const GROUPED_ROWS_UNREAD: Decline = Decline::Unserved {
+    why: "grouped rows are [rows, width], as many rows as their layout holds",
+};
+
+/// A layout of tiles of no row.
+pub const GROUPED_TILE_OF_NO_ROW: Decline = Decline::Unserved {
+    why: "a tile of grouped rows holds at least one row",
+};
+
+/// A route sort other than a `u32` place per route, at least one route a token.
+pub const ROUTE_SORT_UNREAD: Decline = Decline::Unserved {
+    why: "a route sort is one u32 place per route, at least one route a token",
+};
+
+/// Rows no gated activation reads: not two halves wide, or grouped into other groups than the
+/// product that reads them.
+pub const GATED_ROWS_UNREAD: Decline = Decline::Unserved {
+    why: "gated rows are [gate | up], two halves wide, over the groups of the product they feed",
+};
+
+/// Routes no padded output is combined under: other than `u32` experts and places and weights of
+/// the rows' element, one of each per grouped row.
+pub const COMBINED_ROUTES_UNREAD: Decline = Decline::Unserved {
+    why: "routes and places are u32, one per grouped row, under [tokens, slots] weights of the \
+          rows' element",
+};
 
 /// Rows grouped by slab, laid out for a grouped product: every group padded to
 /// start on a multiple of `align` rows, and the slab of each tile of them.
@@ -32,22 +65,23 @@ impl GroupedRows {
     /// The layout of `rows` rows grouped by `ends` on `client`'s device, each group's cumulative
     /// end row as a `u32`, one group a slab, padded to `align`.
     ///
-    /// The ends are the caller's to get right, since checking them would read
-    /// them back: non-decreasing, the last one `rows`. Wrong ones cost the
-    /// answer and nothing else: a group that runs backwards takes no tile, and
-    /// no row past `rows` is read or written.
+    /// A group that runs backwards takes no tile, and no row past `rows` is read or written.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On ends other than one `u32` per group, at least one group, or a zero
-    /// `align`.
-    pub fn new(client: &Client, ends: PlainTensor, rows: usize, align: usize) -> Self {
-        assert!(align > 0, "a tile holds at least one row");
-        assert_eq!(ends.elem, U32, "the groups' ends are `u32` rows");
-        assert_eq!(ends.shape().rank(), 1, "the groups' ends are one per group");
+    /// [`GROUP_ENDS_UNREAD`], and [`GROUPED_TILE_OF_NO_ROW`].
+    pub fn new(
+        client: &Client,
+        ends: PlainTensor,
+        rows: usize,
+        align: usize,
+    ) -> Result<Self, Decline> {
+        if align == 0 {
+            return Err(GROUPED_TILE_OF_NO_ROW);
+        }
+        admit_ends(&ends)?;
         let ends = ends.into_contiguous(client);
         let groups = ends.shape().num_elements();
-        assert!(groups > 0, "rows are grouped into one slab at least");
         let tiles = Self::tiles(rows, groups, align);
         let table = Self::u32s(client, tiles);
         let sources = Self::u32s(client, tiles);
@@ -63,7 +97,7 @@ impl GroupedRows {
             starts.clone().binding().into_tensor_arg(),
             align as u32,
         );
-        Self {
+        Ok(Self {
             client: client.clone(),
             ends,
             table,
@@ -71,18 +105,16 @@ impl GroupedRows {
             starts,
             rows,
             align,
-        }
+        })
     }
 
     /// [`new`](Self::new) laid out on the host and uploaded, so it holds where launches are
     /// discarded.
     ///
-    /// # Panics
+    /// # Assumptions
     ///
-    /// On no group, or a zero `align`.
-    pub fn uploaded(client: &Client, ends: &[u32], rows: usize, align: usize) -> Self {
-        assert!(align > 0, "a tile holds at least one row");
-        assert!(!ends.is_empty(), "rows are grouped into one slab at least");
+    /// There is a group at least, and `align` is not zero.
+    pub(crate) fn uploaded(client: &Client, ends: &[u32], rows: usize, align: usize) -> Self {
         let groups = ends.len();
         let tiles = Self::tiles(rows, groups, align);
         let last = ends[groups - 1];
@@ -133,31 +165,40 @@ impl GroupedRows {
         &self.client
     }
 
+    /// How many groups the rows are laid out by.
+    pub(super) fn groups(&self) -> usize {
+        self.ends.shape().num_elements()
+    }
+
+    /// Whether `rows` are `[rows, width]`.
+    ///
+    /// # Errors
+    ///
+    /// [`GROUPED_ROWS_UNREAD`].
+    pub(crate) fn admit_rows(rows: &PlainTensor) -> Result<(), Decline> {
+        if rows.shape().rank() != 2 {
+            return Err(GROUPED_ROWS_UNREAD);
+        }
+        Ok(())
+    }
+
     /// `rows[rows, width]` laid out padded: `[tiles · align, width]`, padding
     /// zero.
     ///
-    /// # Panics
+    /// # Assumptions
     ///
-    /// On rows other than the `rows` this layout was built for.
-    pub fn pad(&self, rows: PlainTensor) -> TensorHandle {
-        assert_eq!(rows.shape().rank(), 2, "grouped rows are `[rows, width]`");
-        assert_eq!(rows.shape()[0], self.rows, "the rows this layout groups");
+    /// The rows are `[rows, width]`, as many as this layout was built for.
+    pub(crate) fn pad(&self, rows: PlainTensor) -> TensorHandle {
         self.pad_from(rows, None)
     }
 
     /// `padded[tiles · align, width]` back to the rows as they were grouped,
     /// padding dropped: `[rows, width]`.
     ///
-    /// # Panics
+    /// # Assumptions
     ///
-    /// On padded rows other than this layout's.
-    pub fn unpad(&self, padded: PlainTensor) -> TensorHandle {
-        assert_eq!(padded.shape().rank(), 2, "padded rows are `[rows, width]`");
-        assert_eq!(
-            padded.shape()[0],
-            self.padded_rows(),
-            "the padded rows this layout lays out"
-        );
+    /// The padded rows are `[rows, width]`, as many as this layout lays out.
+    pub(super) fn unpad(&self, padded: PlainTensor) -> TensorHandle {
         let padded = padded.into_contiguous(&self.client);
         let width = padded.shape()[1];
         let rows = self.output([self.rows, width], padded.elem);
@@ -188,18 +229,11 @@ impl GroupedRows {
     /// `tokens`, `[tokens, width]`, so the sorted copy of the tokens never
     /// exists. `[tiles · align, width]`, padding zero.
     ///
-    /// # Panics
+    /// # Assumptions
     ///
-    /// On a `route_at_place` other than one `u32` per row this layout groups.
-    pub fn pad_routes(&self, tokens: PlainTensor, sort: RouteSort) -> TensorHandle {
-        assert_eq!(tokens.shape().rank(), 2, "tokens are `[tokens, width]`");
-        let route_at_place = &sort.route_at_place;
-        assert_eq!(route_at_place.elem, U32, "sorted places are `u32`");
-        assert_eq!(
-            route_at_place.shape().num_elements(),
-            self.rows,
-            "one sorted place per row this layout groups"
-        );
+    /// The tokens are `[tokens, width]`, and the sort is one [`RouteSort::admit`] takes, of as
+    /// many places as this layout groups rows.
+    pub(crate) fn pad_routes(&self, tokens: PlainTensor, sort: RouteSort) -> TensorHandle {
         self.pad_from(tokens, Some(sort))
     }
 
@@ -208,19 +242,14 @@ impl GroupedRows {
     /// activation moves the rows between two products' tiles in the pass it
     /// makes anyway. `[tiles · align, width / 2]`, padding zero.
     ///
-    /// # Panics
+    /// # Assumptions
     ///
-    /// On `both` grouping other rows than this layout, or a width that is not
-    /// two halves.
-    pub fn gate(&self, both: &PaddedRows) -> TensorHandle {
+    /// `both` groups as many rows as this layout, and is rows [`PaddedRows::admit_gated`] takes
+    /// over its groups.
+    pub(crate) fn gate(&self, both: &PaddedRows) -> TensorHandle {
         let from = both.layout();
-        assert_eq!(from.rows, self.rows, "both layouts group the same rows");
         let rows = PlainTensor::of_handle(both.rows().clone()).into_contiguous(&self.client);
         let width = rows.shape()[1];
-        assert!(
-            width.is_multiple_of(2),
-            "`[gate | up]` rows hold two halves"
-        );
         let half = width / 2;
         let gated = self.output([self.padded_rows(), half], rows.elem);
         let flat = FlatLaunch::new(&self.client, rows.elem, [self.padded_rows(), half]);
@@ -251,40 +280,27 @@ impl GroupedRows {
     /// `[tokens, slots]` at the rows' element. `[tokens, width]`, summed in f32
     /// in route order: each output row has one writer.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On routes or places other than one `u32` per grouped row, or weights
-    /// other than `[tokens, slots]` over them at the rows' element.
+    /// [`COMBINED_ROUTES_UNREAD`].
     pub(super) fn combine_routes(
         &self,
         padded: &TensorHandle,
         routes: PlainTensor,
         place_of_route: PlainTensor,
         weights: PlainTensor,
-    ) -> TensorHandle {
+    ) -> Result<TensorHandle, Decline> {
         let shape = weights.shape();
-        assert_eq!(shape.rank(), 2, "weights are `[tokens, slots]`");
+        if shape.rank() != 2 || shape.num_elements() != self.rows || weights.elem != padded.dtype {
+            return Err(COMBINED_ROUTES_UNREAD);
+        }
+        let one_per_row =
+            |route: &PlainTensor| route.elem == U32 && route.shape().num_elements() == self.rows;
+        if !one_per_row(&routes) || !one_per_row(&place_of_route) {
+            return Err(COMBINED_ROUTES_UNREAD);
+        }
         let [tokens, slots] = [shape[0], shape[1]];
-        assert_eq!(tokens * slots, self.rows, "one grouped row per route");
-        assert_eq!(
-            routes.shape().num_elements(),
-            self.rows,
-            "one expert per route"
-        );
-        assert_eq!(
-            place_of_route.shape().num_elements(),
-            self.rows,
-            "one place per route"
-        );
-        assert!(
-            routes.elem == U32 && place_of_route.elem == U32,
-            "routes and places are `u32`"
-        );
         let grouped = PlainTensor::of_handle(padded.clone()).into_contiguous(&self.client);
-        assert_eq!(
-            weights.elem, grouped.elem,
-            "the weights are read at the rows' element"
-        );
         let width = grouped.shape()[1];
         let out = self.output([tokens, width], grouped.elem);
         let flat = FlatLaunch::new(&self.client, grouped.elem, [tokens, width]);
@@ -310,7 +326,7 @@ impl GroupedRows {
             self.align,
             grouped.elem,
         );
-        out
+        Ok(out)
     }
 
     /// Rows once every group is padded to whole tiles: `tiles · align`.
@@ -390,6 +406,20 @@ impl GroupedRows {
 pub struct RouteSort {
     pub route_at_place: PlainTensor,
     pub slots: usize,
+}
+
+impl RouteSort {
+    /// Whether the sort is a `u32` place per route, at least one route a token.
+    ///
+    /// # Errors
+    ///
+    /// [`ROUTE_SORT_UNREAD`].
+    pub(crate) fn admit(&self) -> Result<(), Decline> {
+        if self.route_at_place.elem != U32 || self.slots == 0 {
+            return Err(ROUTE_SORT_UNREAD);
+        }
+        Ok(())
+    }
 }
 
 /// `values` uploaded as a `u32` vector on `client`'s device. An upload is not a launch, so a

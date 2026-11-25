@@ -187,11 +187,11 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         blueprint: HypercubeFragmentPartialAttentionRoutineBlueprint,
         grid: Grid,
         slots: &AttentionSplitSlots,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
         let shape = self.merge_shape(&problem, &blueprint);
         let microkernel = blueprint.microkernel;
-        let (key, value) = binding.cache.into_tiles();
+        let (key, value) = binding.cache.into_tiles()?;
         // Its planes keep their sums in the first, read the query and the keys' stage in the
         // second and cast their probabilities to the values' element in the last; they leave
         // their rows in the slots, and the output is read for its shape alone.
@@ -226,5 +226,6 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 [sum, staged, probabilities],
             );
         }
+        Ok(())
     }
 }

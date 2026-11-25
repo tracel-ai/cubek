@@ -1,15 +1,22 @@
+#[cfg(doc)]
+use crate::kernels::indexed::stack::GROUP_ENDS_UNREAD;
+use crate::kernels::indexed::stack::admit_ends;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
     MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
 };
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
+
+/// Operands of a K-grouped product that are no two rank-two tensors of one row count.
+pub const K_GROUPED_SHAPES_DISAGREE: Decline = Decline::Unserved {
+    why: "a K-grouped product is [rows, m] against [rows, n]",
+};
 
 /// The operands of one K-grouped product, `out[g] = lhs[rows of g]ᵀ · rhs[rows of g]`: the two row
 /// sets and each group's cumulative end row.
@@ -30,19 +37,13 @@ impl KGroupedMatmulTensors {
     /// `lhs[rows, m]` and `rhs[rows, n]` on `client`'s device, their rows grouped by `ends`, each
     /// group's cumulative end row as a `u32`, one group a slab.
     ///
-    /// The ends are the caller's to get right, since checking them would read them back:
-    /// non-decreasing, the last one `rows`. Wrong ones cost the answer and nothing else: a group
-    /// that runs backwards reads no row, and no row past `rows` is read.
+    /// The product is defined whatever the ends hold: a group sums the rows from the end before
+    /// its own up to its own, none where they run backwards, and none past `rows`.
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`], and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an operand stored
-    /// in tiles.
-    ///
-    /// # Panics
-    ///
-    /// On operands other than two rank-two tensors of one row count, or ends other than one `u32`
-    /// per group, at least one.
+    /// As [`MatmulInputs::new`], [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an operand stored in
+    /// tiles, [`K_GROUPED_SHAPES_DISAGREE`], and [`GROUP_ENDS_UNREAD`].
     pub fn new(
         client: &Client,
         lhs: PlainTensor,
@@ -54,25 +55,10 @@ impl KGroupedMatmulTensors {
         }
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?.into_parts();
         let (lhs_shape, rhs_shape) = (lhs.shape(), rhs.shape());
-        assert!(
-            lhs_shape.num_dims() == 2 && rhs_shape.num_dims() == 2,
-            "a K-grouped product is `[rows, m]` against `[rows, n]`: {lhs_shape:?} and \
-             {rhs_shape:?}"
-        );
-        assert_eq!(
-            rhs_shape[0], lhs_shape[0],
-            "both operands hold the grouped rows"
-        );
-        assert_eq!(
-            ends.elem,
-            ElemType::UInt(UIntKind::U32),
-            "the groups' ends are `u32` rows"
-        );
-        assert_eq!(ends.shape().rank(), 1, "the groups' ends are one per group");
-        assert!(
-            ends.shape().num_elements() > 0,
-            "rows are grouped into one slab at least"
-        );
+        if lhs_shape.rank() != 2 || rhs_shape.rank() != 2 || rhs_shape[0] != lhs_shape[0] {
+            return Err(K_GROUPED_SHAPES_DISAGREE);
+        }
+        admit_ends(&ends)?;
         Ok(Self {
             client: client.clone(),
             lhs,

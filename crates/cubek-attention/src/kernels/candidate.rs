@@ -65,8 +65,7 @@ where
             .prepare(&self.hw, &tensors.problem(), &self.settings)
             .and_then(|(blueprint, grid)| {
                 let binding = tensors.bind(&blueprint, &grid)?;
-                self.routine.dispatch(&tensors, binding, blueprint, grid);
-                Ok(())
+                self.routine.dispatch(&tensors, binding, blueprint, grid)
             })
             .map_err(|why| self.declines(why))
     }
