@@ -51,10 +51,9 @@ where
     ///
     /// # Errors
     ///
-    /// Why the routine cannot run the problem its key stands for, or it, at its setting.
+    /// Why the routine cannot run the problem at its setting.
     pub fn run(&self, tensors: ReduceTensors) -> Result<(), String> {
-        let (blueprint, grid) = self
-            .prepared_as_keyed(tensors.problem())
+        let (blueprint, grid) = R::prepare(&self.hw, tensors.problem(), &self.settings)
             .map_err(|decline| decline.to_string())?;
         R::launch(&tensors, blueprint, grid);
         Ok(())
@@ -82,20 +81,6 @@ impl<R, M> ReduceRoutineRunner<R>
 where
     R: ReduceRoutine<M> + Routine<Microkernel = M>,
 {
-    /// The launch this candidate prepares for `problem`, which it prepares only where it prepares the
-    /// problem its key stands for: the winner of a round runs every call of its key.
-    ///
-    /// # Errors
-    ///
-    /// As [`run`](Self::run).
-    fn prepared_as_keyed(
-        &self,
-        problem: &ReduceRoutineProblem,
-    ) -> Result<(ReduceBlueprint<M>, Grid), Decline> {
-        R::prepare(&self.hw, &problem.keyed(), &self.settings)?;
-        R::prepare(&self.hw, problem, &self.settings)
-    }
-
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
     /// routine declines it on this device.
     pub(super) fn prepared(&self, key: &ReduceKey) -> Option<(ReduceBlueprint<M>, Grid)> {
@@ -107,7 +92,7 @@ impl ReduceRoutineRunner<HypercubeAtomicReduceRoutine> {
     /// `tensors` summed at this candidate's setting into their output, which the zeroing, timed
     /// with it, sets first. Both routines prepare before either launches.
     pub(super) fn run_zeroed(&self, tensors: ReduceTensors) -> Result<(), String> {
-        self.prepared_as_keyed(tensors.problem())
+        HypercubeAtomicReduceRoutine::prepare(&self.hw, tensors.problem(), &self.settings)
             .and_then(|prepared| launch_zeroed_atomic(&self.hw, &tensors, prepared))
             .map_err(|decline| decline.to_string())
     }
@@ -257,16 +242,6 @@ mod tests {
     fn a_candidate_that_declines_the_tensors_does_not_run() {
         let tensors = ReduceTensors::zeros(&[4, 8], 1, ReduceOperation::Sum);
         assert!(declining().run(tensors).is_err());
-    }
-
-    /// 40000 rows take as many cubes of an H100, where the bucket's 262144 take more than it launches
-    /// along one axis.
-    #[test]
-    fn a_candidate_that_declines_the_keys_problem_does_not_run() {
-        let runner: ReduceRoutineRunner<HypercubeAtomicReduceRoutine> =
-            ReduceRoutineRunner::list(&devices::h100()).remove(0);
-        let tensors = ReduceTensors::zeros(&[40_000, 8], 1, ReduceOperation::Sum);
-        assert!(runner.run_zeroed(tensors).is_err());
     }
 
     #[test]

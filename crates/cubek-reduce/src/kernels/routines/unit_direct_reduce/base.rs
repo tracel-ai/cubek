@@ -137,7 +137,7 @@ impl ReduceRoutine<UnitDirectReduceMicrokernel> for UnitDirectReduceRoutine {
 mod tests {
     use super::*;
     use crate::kernels::launch_first_served;
-    use crate::kernels::testing::{BufferLaunch, UnboundLaunch, launch_unbound};
+    use crate::kernels::testing::{BufferLaunch, UnboundLaunch, launch_unbound, swept_problems};
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
@@ -145,6 +145,17 @@ mod tests {
     prepares_lacking_every_feature!(UnitDirectReduceRoutine);
     names_its_setting!(UnitDirectReduceRoutine, "lane_slots=32 planes=4");
     estimates_its_microkernel!(UnitDirectReduceRoutine, ReduceRoutineProblem::work_item);
+
+    /// Checks that the routine, which runs where every other declines, prepares every problem on
+    /// `hw`.
+    fn prepares_every_problem(hw: &Hardware) {
+        for problem in swept_problems() {
+            let prepared = UnitDirectReduceRoutine::prepare_first_served(hw, &problem);
+            assert!(prepared.is_ok(), "{problem:?}");
+        }
+    }
+
+    on_each_device!(the_unit_routine, prepares_every_problem);
 
     /// Checks that an argmax of `shape` along `axis` compiles on an M2 Pro the microkernel, lanes
     /// and kernel of `other`, a shape of its rank and layout: the rows and the row length are the

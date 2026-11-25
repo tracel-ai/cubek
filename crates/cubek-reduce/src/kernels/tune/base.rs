@@ -120,8 +120,11 @@ fn candidates(hw: Hardware) -> TunableSet<ReduceKey, ReduceTensors, (), ReduceId
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::testing::BufferLaunch;
+    use crate::kernels::testing::{
+        BufferLaunch, BufferScopeChecker, given_too_little_scratch, sum_of_one_long_row,
+    };
     use cubek_std::devices;
+    use cubek_test_utils::ScopeChecker;
 
     const LAUNCH: BufferLaunch = |_, tensors| {
         launch_tuned(tensors.clone(), &cubecl::test_device())
@@ -130,6 +133,14 @@ mod tests {
     };
 
     strategy_reduces_each_problem!(LAUNCH);
+
+    /// The hypercube declines a call given too little scratch.
+    #[test]
+    fn a_call_given_too_little_scratch_runs_another_routine() {
+        const LAUNCH_SHORT: BufferLaunch =
+            |hw, tensors| LAUNCH(hw, &given_too_little_scratch(tensors));
+        BufferScopeChecker::new(LAUNCH_SHORT).check([sum_of_one_long_row()]);
+    }
 
     /// Every setting of every routine, the floor and the groups' layout.
     #[test]

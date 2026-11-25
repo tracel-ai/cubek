@@ -82,10 +82,8 @@ impl<In> ReduceTensors<In> {
 }
 
 impl<In: Clone> ReduceTensors<In> {
-    /// These tensors with `workspace`, the last-arrival hypercube's scratch, which holds at least
-    /// the bytes [`ReduceWorkspace::bytes_for`] states for this reduction: without one, it declines,
-    /// and a smaller one is outside the reduction's Domain, as
-    /// [`Reduce::with_workspace`](crate::kernels::Reduce::with_workspace) says.
+    /// These tensors with `workspace`, the last-arrival hypercube's scratch, which declines
+    /// them without one.
     pub fn with_workspace(&self, workspace: ReduceWorkspace) -> Self {
         Self {
             problem: ReduceRoutineProblem {

@@ -15,9 +15,6 @@ use serde::{Deserialize, Serialize};
 /// whether its caller gave scratch. How many axes the rows run along is not: every routine places
 /// its owners along one dimension of rows whatever the rank.
 ///
-/// The problem a key stands for is as large as any of the key's, so a routine that prepares it on a
-/// device prepares them all.
-///
 /// **The rows are bucketed in powers of two, whatever the autotune level.** cubecl's anchor scales
 /// its base by the level, so a bucket would be a power of three or five, which no line of a key
 /// divides: the problem a key stands for would be read a value a line, and the candidates ranked
@@ -42,20 +39,20 @@ pub struct ReduceKey {
 }
 
 /// The count a key holds for rows of `row_value_count` values: the power of four at or above it,
-/// sixteen at least.
+/// from 16 to [`LARGEST_BUCKET_COUNT`].
 fn bucket_of_row_value_count(row_value_count: usize) -> usize {
     const FEWEST_COUNT: usize = 16;
-    power_at_or_above(4, row_value_count).max(FEWEST_COUNT)
+    power_at_or_above(4, row_value_count).clamp(FEWEST_COUNT, LARGEST_BUCKET_COUNT)
 }
 
-/// The count a key holds for `row_count` rows: the power of eight at or above it, none apart from
-/// some, which spawn no cube.
+/// The count a key holds for `row_count` rows: the power of eight at or above it, at most
+/// [`LARGEST_BUCKET_COUNT`].
 fn bucket_of_row_count(row_count: usize) -> usize {
-    match row_count {
-        0 => 0,
-        row_count => power_at_or_above(8, row_count),
-    }
+    power_at_or_above(8, row_count).min(LARGEST_BUCKET_COUNT)
 }
+
+/// The count past which every call shares a bucket.
+const LARGEST_BUCKET_COUNT: usize = 1 << 20;
 
 /// The power of `base` at or above `count`, one for none.
 fn power_at_or_above(base: usize, count: usize) -> usize {
@@ -159,16 +156,9 @@ impl From<&ReduceKey> for ReduceRoutineProblem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::testing::swept_problems;
-    use crate::kernels::{
-        BATCH, CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine,
-        HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceRoutine,
-        UnitDirectReduceRoutine,
-    };
+    use crate::kernels::BATCH;
     use cubecl::ir::FloatKind;
     use cubecl::std::tensor::TensorHandle;
-    use cubek_std::Hardware;
-    use cubek_std::routine::Routine;
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
@@ -204,71 +194,14 @@ mod tests {
         assert_eq!(bucket_of_row_count(65), 512);
     }
 
+    /// Past the largest bucket, every row count shares it.
     #[test]
-    fn no_row_is_keyed_apart_from_some() {
-        assert_eq!(bucket_of_row_count(0), 0);
+    fn a_row_count_past_the_largest_bucket_is_keyed_by_it() {
+        assert_eq!(
+            bucket_of_row_count(LARGEST_BUCKET_COUNT + 1),
+            LARGEST_BUCKET_COUNT
+        );
     }
-
-    /// A key stands for problems of that key, so it stands for itself.
-    #[test]
-    fn a_keys_own_problem_has_that_key() {
-        for problem in swept_problems() {
-            let key = ReduceKey::from(&problem);
-            assert_eq!(
-                ReduceKey::from(&ReduceRoutineProblem::from(&key)),
-                key,
-                "{problem:?}"
-            );
-        }
-    }
-
-    /// Checks that each setting of `R` that prepares on `hw` the problem a key stands for prepares the
-    /// problems of that key.
-    fn prepares_every_problem_of_its_keys<R: ReduceRoutine<M>, M>(hw: &Hardware) {
-        for problem in swept_problems() {
-            let keyed = problem.keyed();
-            for settings in R::settings(hw) {
-                let declined = R::prepare(hw, &keyed, &settings).is_ok()
-                    && R::prepare(hw, &problem, &settings).is_err();
-                assert!(!declined, "{settings} of {problem:?}");
-            }
-        }
-    }
-
-    on_each_device!(
-        a_unit_candidate_prepares_every_problem_of_its_keys,
-        prepares_every_problem_of_its_keys::<UnitDirectReduceRoutine, _>
-    );
-    on_each_device!(
-        a_plane_candidate_prepares_every_problem_of_its_keys,
-        prepares_every_problem_of_its_keys::<PlaneShuffleReduceRoutine, _>
-    );
-    on_each_device!(
-        a_cube_candidate_prepares_every_problem_of_its_keys,
-        prepares_every_problem_of_its_keys::<CubeStagedReduceRoutine, _>
-    );
-    on_each_device!(
-        a_last_arrival_candidate_prepares_every_problem_of_its_keys,
-        prepares_every_problem_of_its_keys::<HypercubeLastArrivalReduceRoutine, _>
-    );
-    on_each_device!(
-        an_atomic_candidate_prepares_every_problem_of_its_keys,
-        prepares_every_problem_of_its_keys::<HypercubeAtomicReduceRoutine, _>
-    );
-
-    /// Checks that the unit routine, which runs where every other declines, prepares every problem on
-    /// `hw`.
-    fn prepares_every_problem(hw: &Hardware) {
-        for problem in swept_problems() {
-            let prepared = UnitDirectReduceRoutine::prepare_first_served(hw, &problem);
-            assert!(prepared.is_ok(), "{problem:?}");
-        }
-    }
-
-    on_each_device!(
-        the_unit_routine_prepares_every_problem,
-        prepares_every_problem
-    );
 
     /// Its winner may be one that takes the scratch.
     #[test]

@@ -29,9 +29,8 @@ impl Reduce {
     }
 
     /// This reduction given `workspace`, the last-arrival hypercube's scratch, which cubek never
-    /// allocates. It holds at least the bytes [`ReduceWorkspace::bytes_for`] states for each
-    /// reduction it is given to. A reduction given less is outside the Domain, and may fail whatever
-    /// its strategy: [`execute`](Self::execute) errs or panics as it says.
+    /// allocates. The hypercube declines a reduction given fewer bytes than
+    /// [`ReduceWorkspace::bytes_for`] states where its launch needs them.
     pub fn with_workspace(&self, workspace: ReduceWorkspace) -> Self {
         Self {
             workspace: Some(workspace),
@@ -49,15 +48,11 @@ impl Reduce {
     /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is empty, or shorter than the `k` a
     /// top-k keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one
     /// above, and [`ReduceError::Declined`] with the kernel's decline where a
-    /// [`Specific`](ReduceOpStrategy::Specific) kernel cannot run the problem on this device, or the
-    /// rule picks the last-arrival hypercube and the workspace is smaller than
-    /// [`with_workspace`](Self::with_workspace) asks.
+    /// [`Specific`](ReduceOpStrategy::Specific) kernel cannot run the problem on this device.
     ///
     /// # Panics
     ///
-    /// Where `input` has 256 axes or more, or the autotune found the last-arrival hypercube fastest
-    /// for the call's [`ReduceKey`](crate::kernels::ReduceKey) and the workspace is smaller than
-    /// [`with_workspace`](Self::with_workspace) asks.
+    /// Where `input` has 256 axes or more.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"

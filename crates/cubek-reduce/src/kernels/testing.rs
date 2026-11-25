@@ -20,7 +20,6 @@ use cubek_microkernel::reduce::{ReduceOperation, ReduceWrites};
 use cubek_std::routine::Routine;
 use cubek_std::{Hardware, devices};
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
-use std::sync::Arc;
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 const I32: ElemType = ElemType::Int(IntKind::I32);
@@ -409,14 +408,24 @@ pub(crate) fn sum_of_long_rows() -> Reduction {
     }
 }
 
-/// An M2 Pro that launches as few cubes along each axis of a grid as any device does.
-pub(crate) fn capped_m2_pro() -> Hardware {
-    const FEWEST_CUBE_COUNT: u32 = 65_535;
-    let mut capped = devices::m2_pro();
-    Arc::make_mut(&mut capped.properties)
-        .hardware
-        .max_cube_count = (FEWEST_CUBE_COUNT, FEWEST_CUBE_COUNT, FEWEST_CUBE_COUNT);
-    capped
+/// A sum of one row, which a kernel splits across cubes.
+pub(crate) fn sum_of_one_long_row() -> Reduction {
+    Reduction {
+        shape: vec![1, 70_001],
+        axis: 1,
+        operation: ReduceOperation::Sum,
+    }
+}
+
+/// `tensors` given a workspace whose every buffer holds one cell, fewer than any row split across
+/// cubes is written to.
+pub(crate) fn given_too_little_scratch(tensors: &ReduceTensors) -> ReduceTensors {
+    let one_cell = || tensors.client().empty(size_of::<f32>());
+    tensors.with_workspace(ReduceWorkspace {
+        partials: one_cell(),
+        partial_indices: one_cell(),
+        arrivals: one_cell(),
+    })
 }
 
 /// The problems a host test sweeps: matrices reduced along each axis, from no row to as many values
@@ -484,7 +493,7 @@ fn swept_problem(
     }
 }
 
-/// A test of `$check` on each device a host test sweeps: each kind cubek knows, and a capped one.
+/// A test of `$check` on each device a host test sweeps: each kind cubek knows.
 macro_rules! on_each_device {
     ($name:ident, $check:expr) => {
         on_each_device!(@devices $name, $check, [
@@ -496,7 +505,6 @@ macro_rules! on_each_device {
             h100: cubek_std::devices::h100(),
             rtx_pro_6000: cubek_std::devices::rtx_pro_6000(),
             cpu_12: cubek_std::devices::cpu_12(),
-            capped_m2_pro: $crate::kernels::testing::capped_m2_pro(),
         ]);
     };
     (@devices $name:ident, $check:expr, [$($device:ident: $hw:expr),* $(,)?]) => {

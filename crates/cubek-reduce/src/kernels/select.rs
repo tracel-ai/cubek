@@ -1,10 +1,10 @@
 //! The reduce family's rule: which routine runs a problem when nothing is measured.
 
 use crate::kernels::{
-    BATCH, CubeStagedReduceRoutine, CubeStagedReduceSettings, HypercubeLastArrivalReduceRoutine,
-    HypercubeLastArrivalReduceSettings, PlaneShuffleReduceRoutine, PlaneShuffleReduceSettings,
-    ReduceBlueprint, ReduceKernel, ReduceRoutine, ReduceRoutineProblem, ReduceSplitExtents,
-    ReduceTensors, UnitDirectReduceRoutine, UnitDirectReduceSettings, launch_kernel,
+    BATCH, CubeStagedReduceRoutine, HypercubeLastArrivalReduceRoutine,
+    HypercubeLastArrivalReduceSettings, PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceKernel,
+    ReduceRoutine, ReduceRoutineProblem, ReduceSplitExtents, ReduceTensors,
+    UnitDirectReduceRoutine, launch_kernel,
 };
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::ReduceCarrier;
@@ -12,41 +12,8 @@ use cubek_std::Hardware;
 use cubek_std::autotune::short_of_the_device;
 use cubek_std::routine::{Grid, Routine};
 
-/// `tensors` reduced by the routine [`picked`] on `hw` for the problem the call's Tune Key stands for
-/// ([`ReduceRoutineProblem::keyed`]), so every call of one key runs the same routine at the same
-/// setting; by the unit routine, which serves every problem, where none is picked.
-///
-/// # Errors
-///
-/// Why that routine cannot run the problem here.
-pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
-    match picked(hw, &tensors.problem().keyed()) {
-        Some(ReducePick::UnitDirect(settings)) => {
-            launch_at::<UnitDirectReduceRoutine, _>(hw, tensors, &settings)
-        }
-        Some(ReducePick::PlaneShuffle(settings)) => {
-            launch_at::<PlaneShuffleReduceRoutine, _>(hw, tensors, &settings)
-        }
-        Some(ReducePick::CubeStaged(settings)) => {
-            launch_at::<CubeStagedReduceRoutine, _>(hw, tensors, &settings)
-        }
-        Some(ReducePick::HypercubeLastArrival(settings)) => {
-            launch_at::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors, &settings)
-        }
-        None => launch_kernel(ReduceKernel::Unit, hw, tensors),
-    }
-}
-
-/// A reduce routine at one of its settings, as the rule picks one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReducePick {
-    UnitDirect(UnitDirectReduceSettings),
-    PlaneShuffle(PlaneShuffleReduceSettings),
-    CubeStaged(CubeStagedReduceSettings),
-    HypercubeLastArrival(HypercubeLastArrivalReduceSettings),
-}
-
-/// The routine that runs the calls `keyed` stands for on `hw`, where one prepares it, read top to
+/// `tensors` reduced by the first routine, in the order the rule gives the problem the call's Tune Key
+/// stands for ([`ReduceRoutineProblem::keyed`]) on `hw`, that does not decline the call, read top to
 /// bottom:
 ///
 /// 1. Rows enough that a unit each fills the device, each row short enough that a unit walks it
@@ -56,24 +23,36 @@ enum ReducePick {
 /// 3. Rows a cube each would leave the device idle, and a split that fills it: the hypercube, at
 ///    its first setting whose cubes fill the device, or at the one with the most cubes.
 /// 4. Otherwise the cube routine.
-/// 5. Where the cube declines the problem, the unit routine.
-fn picked(hw: &Hardware, keyed: &ReduceRoutineProblem) -> Option<ReducePick> {
-    if let Some((settings, blueprint)) = filling_the_device::<UnitDirectReduceRoutine, _>(hw, keyed)
-        && unit_keeps_up(hw, keyed, blueprint.lane_count)
+/// 5. Where every one of these declines the call, the unit routine, which serves every problem.
+///
+/// # Errors
+///
+/// Why the unit routine cannot run the problem here, which no device refuses.
+pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
+    let keyed = tensors.problem().keyed();
+    if let Some((settings, blueprint)) =
+        filling_the_device::<UnitDirectReduceRoutine, _>(hw, &keyed)
+        && unit_keeps_up(hw, &keyed, blueprint.lane_count)
+        && launched::<UnitDirectReduceRoutine, _>(hw, tensors, &settings)
     {
-        return Some(ReducePick::UnitDirect(settings));
+        return Ok(());
     }
-    if let Some((settings, _)) = filling_the_device::<PlaneShuffleReduceRoutine, _>(hw, keyed) {
-        return Some(ReducePick::PlaneShuffle(settings));
+    if let Some((settings, _)) = filling_the_device::<PlaneShuffleReduceRoutine, _>(hw, &keyed)
+        && launched::<PlaneShuffleReduceRoutine, _>(hw, tensors, &settings)
+    {
+        return Ok(());
     }
-    if let Some(settings) = hypercube_filling_the_device(hw, keyed) {
-        return Some(ReducePick::HypercubeLastArrival(settings));
+    if let Some(settings) = hypercube_filling_the_device(hw, &keyed)
+        && launched::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors, &settings)
+    {
+        return Ok(());
     }
-    if let Some((settings, _, _)) = first_served::<CubeStagedReduceRoutine, _>(hw, keyed) {
-        return Some(ReducePick::CubeStaged(settings));
+    if let Some((settings, _, _)) = first_served::<CubeStagedReduceRoutine, _>(hw, &keyed)
+        && launched::<CubeStagedReduceRoutine, _>(hw, tensors, &settings)
+    {
+        return Ok(());
     }
-    first_served::<UnitDirectReduceRoutine, _>(hw, keyed)
-        .map(|(settings, _, _)| ReducePick::UnitDirect(settings))
+    launch_kernel(ReduceKernel::Unit, hw, tensors)
 }
 
 /// Whether a unit reading a row alone, `lane_count` values a line, keeps up with a plane reading it
@@ -161,28 +140,27 @@ fn filling_the_device<R: ReduceRoutine<M>, M>(
         .map(|(settings, blueprint, _)| (settings, blueprint))
 }
 
-/// `tensors` reduced by `R` at `settings` on `hw`.
-///
-/// # Errors
-///
-/// As [`select`].
-fn launch_at<R: ReduceRoutine<M>, M>(
+/// Whether `R` at `settings` launched on `tensors`: `false` where it declines their problem.
+fn launched<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     tensors: &ReduceTensors,
     settings: &R::Settings,
-) -> Result<(), Decline> {
-    let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
-    R::launch(tensors, blueprint, grid);
-    Ok(())
+) -> bool {
+    R::prepare(hw, tensors.problem(), settings)
+        .map(|(blueprint, grid)| R::launch(tensors, blueprint, grid))
+        .is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kernels::ReducePartials;
-    use crate::kernels::testing::swept_problems;
+    use crate::kernels::testing::{
+        BufferLaunch, BufferScopeChecker, given_too_little_scratch, sum_of_one_long_row,
+    };
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
+    use cubek_test_utils::ScopeChecker;
     use std::sync::Arc;
 
     /// Across the reduced axis a unit always keeps up: each lane its own row.
@@ -333,34 +311,12 @@ mod tests {
         assert!(filling.is_none());
     }
 
-    /// Whether the routine `pick` names prepares `problem` on `hw`, at its setting.
-    fn prepares(pick: ReducePick, hw: &Hardware, problem: &ReduceRoutineProblem) -> bool {
-        match pick {
-            ReducePick::UnitDirect(settings) => {
-                UnitDirectReduceRoutine::prepare(hw, problem, &settings).is_ok()
-            }
-            ReducePick::PlaneShuffle(settings) => {
-                PlaneShuffleReduceRoutine::prepare(hw, problem, &settings).is_ok()
-            }
-            ReducePick::CubeStaged(settings) => {
-                CubeStagedReduceRoutine::prepare(hw, problem, &settings).is_ok()
-            }
-            ReducePick::HypercubeLastArrival(settings) => {
-                HypercubeLastArrivalReduceRoutine::prepare(hw, problem, &settings).is_ok()
-            }
-        }
+    /// The key gives the hypercube, which declines a call given too little scratch.
+    #[test]
+    fn a_call_given_too_little_scratch_runs_another_routine() {
+        const LAUNCH: BufferLaunch = |hw, tensors| select(hw, &given_too_little_scratch(tensors));
+        BufferScopeChecker::new(LAUNCH).check([sum_of_one_long_row()]);
     }
-
-    /// Checks that the routine the rule picks on `hw` for a key, which it reads alone, prepares the
-    /// problems of that key.
-    fn prepares_every_problem_of_its_key(hw: &Hardware) {
-        for problem in swept_problems() {
-            let pick = picked(hw, &problem.keyed()).expect("the unit routine serves a key");
-            assert!(prepares(pick, hw, &problem), "{pick:?} of {problem:?}");
-        }
-    }
-
-    on_each_device!(the_picked_routine, prepares_every_problem_of_its_key);
 
     /// The rule's routine, launched.
     mod launched {
