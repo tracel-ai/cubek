@@ -1,6 +1,5 @@
 use crate::kernels::Product;
-use crate::kernels::indexed::measured::matmul_ceiling;
-use crate::kernels::indexed::routed::RoutedMatmulKey;
+use crate::kernels::indexed::routed::{RoutedFloors, RoutedMatmulKey};
 use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -18,7 +17,6 @@ use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
-use cubek_std::autotune::Roofline;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_dimensions::{K, N};
 
@@ -232,33 +230,49 @@ impl RoutedMatmulTensors {
         R::prepare(hw, &tensors.problem(), settings).map(|_| ())
     }
 
-    /// The same product with `routes` in place of the call's.
-    pub(crate) fn with_routes(&self, routes: PlainTensor) -> Self {
+    /// Whether some floor listed for the stack's kind prepares the product on `hw`
+    /// ([`RoutedMatmulCandidates::floors`](super::RoutedMatmulCandidates::floors)): where none
+    /// does, no candidate is known to, and a caller names what runs instead.
+    ///
+    /// # Errors
+    ///
+    /// The last floor's decline, where none serves.
+    pub fn served_on_floor(&self, hw: &Hardware) -> Result<(), Decline> {
+        RoutedFloors::LISTED.served(hw, self.product(), self)
+    }
+
+    /// The same product and stack, each row's slots routed round the experts in turn: operands
+    /// whose routes index the stack whatever the call's buffer holds, for a caller that measures
+    /// the product on operands of its own. The rows are the call's own, so the work is the call's.
+    ///
+    /// The routes are uploaded rather than launched, so a process mode that discards launches
+    /// keeps them.
+    pub fn with_spread_routes(&self) -> Self {
+        let (rows, slots, experts) = (self.rows(), self.slots, self.experts);
+        let routes: Vec<u8> = (0..rows * slots)
+            .flat_map(|route| ((route % experts) as u32).to_le_bytes())
+            .collect();
+        let routes = TensorHandle::new(
+            self.client.create_from_slice(&routes),
+            [rows, slots],
+            [slots, 1],
+            ElemType::UInt(UIntKind::U32),
+        );
         Self {
-            routes,
+            routes: PlainTensor::of_handle(routes),
             ..self.clone()
         }
     }
 
-    /// Each row's routes, `u32`.
-    #[cfg(test)]
-    pub(crate) fn routes(&self) -> &PlainTensor {
-        &self.routes
-    }
-
-    /// The roofline a round stops at: the contraction's operations, and the bytes of the rows, the
+    /// What the product costs: the contraction's operations, and the bytes of the rows, the
     /// output and the slabs the routes can reach, one a route at most.
-    pub(crate) fn roofline(&self, hw: &Hardware) -> Roofline {
+    pub fn work(&self) -> Work {
         let [k, n] = self.slab_shape();
         let routed = self.rows() * self.slots;
         let reached = self.rhs.bytes() / self.experts * routed.min(self.experts);
-        Roofline {
-            client: self.client.clone(),
-            ceiling: matmul_ceiling(hw, self.elem()),
-            work: Work {
-                compute_ops: 2 * routed * n * k,
-                bytes: self.lhs.bytes() + reached + routed * n * self.elem().size(),
-            },
+        Work {
+            compute_ops: 2 * routed * n * k,
+            bytes: self.lhs.bytes() + reached + routed * n * self.elem().size(),
         }
     }
 
@@ -271,15 +285,18 @@ impl RoutedMatmulTensors {
     pub fn stack_kind(&self) -> OperandKind {
         self.rhs.kind()
     }
+}
+
+impl RoutedMatmulTensors {
+    /// Each row's routes, `u32`.
+    #[cfg(test)]
+    pub(crate) fn routes(&self) -> &PlainTensor {
+        &self.routes
+    }
 
     /// The product's kind, for the settings listed for it.
     pub(crate) fn product(&self) -> Product {
         Product::of([self.stack_kind()])
-    }
-
-    /// Experts in the stack.
-    pub(crate) fn experts(&self) -> usize {
-        self.experts
     }
 
     /// The product as the dense routines read it: each row's slot a batch of one row, the rows

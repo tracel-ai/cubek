@@ -9,6 +9,10 @@
 //! ([`MatmulRoutineCandidate`]) and packed ([`MatmulPackedCandidate`]), on a call keyed by
 //! [`MatmulTuneKey`], names a winner by its [`MatmulRoutineSettings`], and hands [`select`] the
 //! plan of the race a product goes to ([`MatmulAutotune`](select::MatmulAutotune)).
+//! The routed and M-grouped products list their own candidates
+//! ([`RoutedMatmulCandidates`](indexed::routed::RoutedMatmulCandidates),
+//! [`MGroupedMatmulCandidates`](indexed::m_grouped::MGroupedMatmulCandidates)), each under a key
+//! of its own.
 
 pub mod indexed;
 pub mod plan;

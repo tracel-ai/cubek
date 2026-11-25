@@ -6,12 +6,11 @@ use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
-use cubek_matmul::kernels::indexed::routed::{RoutedMatmulTensors, launch_tuned};
+use cubek_matmul::kernels::indexed::routed::{RoutedMatmulCandidates, RoutedMatmulTensors};
 use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine};
 use cubek_std::Hardware;
-use cubek_std::autotune::GroupPriority;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
 
 use crate::matmul::Declines;
@@ -48,11 +47,11 @@ fn every_packed_plane_shuffle_setting_reads_each_route_s_packed_slab() {
     shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine::packed_settings(), &products));
 }
 
-/// The routed autotune, against a stack laid either way it takes: a col float stack, its buffer
+/// The routed floors, against a stack laid either way they take: a col float stack, its buffer
 /// `[slabs · n, k]` behind the `[k, slabs · n]` view, and a stack packed in each format.
 #[test]
-fn the_routed_autotune_reads_each_route_s_slab() {
-    TunedRouted.check(
+fn the_routed_floors_read_each_route_s_slab() {
+    FlooredRouted.check(
         [
             Stack::Float,
             Stack::Packed(PackedFormat::Q8),
@@ -68,10 +67,10 @@ fn the_routed_autotune_reads_each_route_s_slab() {
 }
 
 /// An NVFP4 stack whose `k` is 2.5 words of scales, which only a rhs read a scale block at a time
-/// closes: the autotune still reaches a setting that serves it.
+/// closes: a floor still serves it.
 #[test]
-fn the_routed_autotune_reads_an_nvfp4_stack_whose_k_is_no_whole_number_of_words() {
-    TunedRouted.check([Routed {
+fn the_routed_floors_read_an_nvfp4_stack_whose_k_is_no_whole_number_of_words() {
+    FlooredRouted.check([Routed {
         k: 160,
         n: 96,
         ..Routed::MOE
@@ -79,10 +78,11 @@ fn the_routed_autotune_reads_an_nvfp4_stack_whose_k_is_no_whole_number_of_words(
     .packed(PackedFormat::Nvfp4)]);
 }
 
-/// The routed product through the routed autotune, which picks the routine and its setting.
-struct TunedRouted;
+/// The routed product through the first of its floors that serves it
+/// ([`RoutedMatmulCandidates::floors`]), what a caller racing the routed candidates falls back on.
+struct FlooredRouted;
 
-impl ScopeUnderTest for TunedRouted {
+impl ScopeUnderTest for FlooredRouted {
     type Case = Routed;
 
     /// A cube larger than the device holds is a skip, the CPU runtime's few units; so is a packed
@@ -90,7 +90,7 @@ impl ScopeUnderTest for TunedRouted {
     ///
     /// # Panics
     ///
-    /// On any other decline: the autotune always reaches a floor that answers.
+    /// On any other decline: a product some floor prepares is served by one.
     fn launch(&self, client: &Client, routed: &Routed) -> Result<Vec<Written>, Decline> {
         let Routed {
             tokens,
@@ -127,16 +127,35 @@ impl ScopeUnderTest for TunedRouted {
         .expect("a stack of whole slabs derives a routed launch");
         let hw = Hardware::from_client(client);
         let no_matrix_instruction = hw.properties.features.matmul.cmma.iter().next().is_none();
-        match launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT) {
-            Ok(out) => Ok(vec![Written {
-                name: "out",
-                tensor: out,
-                host: HostDataType::F32,
-            }]),
-            Err(why @ Decline::CubePastDevice { .. }) => Err(why),
-            Err(why) if stack != Stack::Float && no_matrix_instruction => Err(why),
+        match tensors.served_on_floor(&hw) {
+            Ok(()) => {}
+            Err(why @ Decline::CubePastDevice { .. }) => return Err(why),
+            Err(why) if stack != Stack::Float && no_matrix_instruction => return Err(why),
             Err(why) => panic!("{routed:?} refused: {why:?}"),
         }
+        let floors = RoutedMatmulCandidates::floors();
+        let plane_shuffle = floors
+            .plane_shuffle
+            .iter()
+            .map(|floor| floor.launch(&tensors));
+        let cube_staged = floors
+            .cube_staged
+            .iter()
+            .map(|floor| floor.launch(&tensors));
+        let unit_registers = floors
+            .unit_registers
+            .iter()
+            .map(|floor| floor.launch(&tensors));
+        let out = plane_shuffle
+            .chain(cube_staged)
+            .chain(unit_registers)
+            .find_map(Result::ok)
+            .unwrap_or_else(|| panic!("{routed:?}: a floor prepares it and none launches it"));
+        Ok(vec![Written {
+            name: "out",
+            tensor: out,
+            host: HostDataType::F32,
+        }])
     }
 
     fn reference(&self, routed: &Routed) -> Vec<HostData> {

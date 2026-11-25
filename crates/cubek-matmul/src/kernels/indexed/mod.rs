@@ -7,5 +7,3 @@ pub mod k_grouped;
 pub mod m_grouped;
 pub mod routed;
 pub mod stack;
-
-pub(crate) mod measured;

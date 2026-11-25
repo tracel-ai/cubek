@@ -58,17 +58,3 @@ impl PaddedRows {
             .combine_routes(&self.rows, routes, place_of_route, weights)
     }
 }
-
-/// What lets padded rows be an autotune candidate's output. Two candidates may pad to different
-/// tiles, so they are compared as the rows they place.
-impl cubecl::tune::AutotuneOutput for PaddedRows {
-    #[cfg(feature = "autotune-checks")]
-    fn check_equivalence(&self, other: Self) {
-        let client = self.layout.client().clone();
-        crate::kernels::indexed::measured::assert_equivalent(
-            &client,
-            self.clone().unpad(),
-            other.unpad(),
-        );
-    }
-}

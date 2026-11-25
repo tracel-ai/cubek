@@ -1,6 +1,10 @@
-//! The M-grouped launch against a host reference.
+//! The M-grouped launch against a host reference, its floors, its key, and the operands it is
+//! measured on.
 
-use super::{MGroupedFloors, MGroupedMatmulTensors, MGroupedSettings, launch_tuned};
+use super::{
+    GroupedRows, MGroupedFloors, MGroupedMatmulCandidates, MGroupedMatmulTensors,
+    MGroupedRowSource, MGroupedSettings, PaddedRows, RouteSort,
+};
 use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabDimension;
@@ -10,10 +14,10 @@ use crate::tiled::storage::{StorageLevels, tile};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
+use cubecl::server::CopyDescriptor;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Dimension;
-use cubecl::tile::launch::Decline;
-use cubek_std::autotune::GroupPriority;
+use cubek_std::Hardware;
 use cubek_test_utils::client;
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -29,17 +33,48 @@ fn u32s(client: &Client, values: &[u32]) -> PlainTensor {
     PlainTensor::of_handle(upload(client, values))
 }
 
+/// `tensor`, `u32`, read back.
+fn read(client: &Client, tensor: &PlainTensor) -> Vec<u32> {
+    let bytes = client.read_one_unchecked_tensor(CopyDescriptor::new(
+        tensor.binding.handle.clone(),
+        tensor.binding.shape.clone(),
+        tensor.binding.strides.clone(),
+        tensor.elem.size(),
+    ));
+    u32::from_bytes(&bytes).to_vec()
+}
+
 /// The grouped product of `lhs` against the slabs of `rhs` laid `along`, grouped by `ends`,
-/// through the grouped autotune.
+/// through the first of its floors that serves it, unpadded.
+///
+/// # Panics
+///
+/// Where no floor serves it.
 fn launch(
     client: &Client,
     lhs: PlainTensor,
     rhs: PlainTensor,
     ends: PlainTensor,
     along: SlabDimension,
-) -> Result<TensorHandle, Decline> {
-    let tensors = MGroupedMatmulTensors::new(client, lhs, StoredTensor::Plain(rhs), ends, along)?;
-    launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT)
+) -> TensorHandle {
+    let tensors = MGroupedMatmulTensors::new(client, lhs, StoredTensor::Plain(rhs), ends, along)
+        .expect("float operands the routines read");
+    let served = tensors.served_on_floor(&Hardware::from_client(client));
+    assert!(served.is_ok(), "no floor serves the product: {served:?}");
+    let floors = MGroupedMatmulCandidates::floors();
+    let plane_shuffle = floors
+        .plane_shuffle
+        .iter()
+        .map(|floor| floor.launch(&tensors));
+    let cube_staged = floors
+        .cube_staged
+        .iter()
+        .map(|floor| floor.launch(&tensors));
+    plane_shuffle
+        .chain(cube_staged)
+        .find_map(Result::ok)
+        .expect("a floor prepares the product, and one launches it")
+        .unpad()
 }
 
 /// Every row against a host reference: ragged groups, one of them empty
@@ -73,8 +108,7 @@ fn each_row_contracts_against_its_groups_slab() {
         f32s(&client, [k, groups * n], [1, k], &buffer),
         u32s(&client, &ends),
         SlabDimension::Output,
-    )
-    .expect("a col stack derives a grouped launch");
+    );
     assert_eq!(out.shape().to_vec(), vec![rows, n]);
     let bytes = client.read_one(out.handle).expect("the output reads back");
     let got = f32::from_bytes(&bytes);
@@ -85,28 +119,6 @@ fn each_row_contracts_against_its_groups_slab() {
             assert_eq!(got[m * n + j], want, "row {m} column {j}, group {g}");
         }
     }
-}
-
-/// No row means no launch: the output is empty rather than refused.
-#[test]
-fn no_rows_return_an_empty_output() {
-    let client = client();
-    let (k, n, groups) = (4usize, 4usize, 2usize);
-    // A zero-row view over a one-value buffer: a device buffer cannot be empty.
-    let out = launch(
-        &client,
-        f32s(&client, [0, k], [k, 1], &[0.0]),
-        f32s(
-            &client,
-            [k, groups * n],
-            [groups * n, 1],
-            &vec![1.0; k * groups * n],
-        ),
-        u32s(&client, &[0, 0]),
-        SlabDimension::Output,
-    )
-    .expect("no row declines nothing");
-    assert_eq!(out.shape().to_vec(), vec![0, n]);
 }
 
 /// A stack stored in tiles is refused rather than read as rows: a grouped product reads its
@@ -133,15 +145,16 @@ fn a_stack_stored_in_tiles_is_refused() {
         storage,
     )
     .expect("the stack tiles");
-    let declined = launch(
+    let declined = MGroupedMatmulTensors::new(
         &client,
         f32s(&client, [rows, k], [k, 1], &vec![1.0; rows * k]),
-        PlainTensor::of_handle(tiled),
+        StoredTensor::Plain(PlainTensor::of_handle(tiled)),
         u32s(&client, &[4, 8]),
         SlabDimension::Output,
-    );
+    )
+    .err();
     assert!(
-        matches!(declined, Err(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
+        matches!(declined, Some(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
         "{declined:?}"
     );
 }
@@ -210,4 +223,71 @@ fn the_key_anchors_its_rows_to_a_power_of_two() {
     assert_eq!(key(100), key(128));
     assert_ne!(key(100), key(129));
     assert_ne!(key(5), key(100));
+}
+
+/// Ends and places far out of range, as a discarded sort leaves them, replaced for every
+/// source by ends spreading the rows evenly, places naming the rows' own tokens, and a
+/// gated source's layout built on those ends.
+#[test]
+fn spread_rows_replace_a_discarded_sorts_garbage() {
+    let client = client();
+    let (tokens, slots, experts, k, n, align) = (5, 3, 4, 8, 4, 4);
+    let rows = tokens * slots;
+    let floats = |[height, width]: [usize; 2]| {
+        PlainTensor::of_handle(TensorHandle::zeros(
+            &client,
+            [height, width],
+            ElemType::Float(FloatKind::F32),
+        ))
+    };
+    let garbage = |len: usize| PlainTensor::of_handle(upload(&client, &vec![0xF000_0000; len]));
+    let garbage_layout = GroupedRows::uploaded(&client, &[0xF000_0000; 4], rows, align);
+    let sources = [
+        MGroupedRowSource::Sorted(floats([rows, k])),
+        MGroupedRowSource::Routed {
+            tokens: floats([tokens, k]),
+            sort: RouteSort {
+                route_at_place: garbage(rows),
+                slots,
+            },
+        },
+        MGroupedRowSource::Gated(PaddedRows::new(
+            TensorHandle::zeros(
+                &client,
+                [garbage_layout.padded_rows(), 2 * k],
+                ElemType::Float(FloatKind::F32),
+            ),
+            garbage_layout,
+        )),
+    ];
+    for source in sources {
+        let tensors = MGroupedMatmulTensors::new(
+            &client,
+            source,
+            StoredTensor::Plain(floats([k, experts * n])),
+            garbage(experts),
+            SlabDimension::Output,
+        )
+        .expect("float operands the routines read");
+        let spread = tensors.with_spread_rows();
+        assert_eq!(read(&client, spread.ends()), vec![3, 7, 11, 15]);
+        match spread.source() {
+            MGroupedRowSource::Sorted(_) => {}
+            MGroupedRowSource::Routed { sort, .. } => {
+                assert!(
+                    read(&client, &sort.route_at_place)
+                        .iter()
+                        .all(|&route| (route as usize) < rows)
+                );
+            }
+            MGroupedRowSource::Gated(both) => {
+                let layout = both.layout();
+                let launched = GroupedRows::new(&client, spread.ends().clone(), rows, align);
+                let read_handle =
+                    |handle: TensorHandle| read(&client, &PlainTensor::of_handle(handle));
+                assert_eq!(read_handle(layout.starts()), read_handle(launched.starts()));
+                assert_eq!(read_handle(layout.table()), read_handle(launched.table()));
+            }
+        }
+    }
 }

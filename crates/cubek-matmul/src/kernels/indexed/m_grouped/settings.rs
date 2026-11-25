@@ -1,14 +1,16 @@
+use crate::kernels::indexed::m_grouped::{MGroupedMatmulCandidate, MGroupedMatmulTensors};
 use crate::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedAsyncCopyMatmulRoutineSettings,
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings,
 };
-use crate::kernels::{ListedFor, Listing};
+use crate::kernels::{ListedFor, Listing, Product};
 use core::fmt::Display;
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_std::Hardware;
-use cubek_std::routine::Routine;
+use cubek_std::routine::{Routine, first_served_on_floor};
 
 /// A dense routine's setting a grouped launch runs at, and the chunks of rows it pads each group
 /// to: the launch is the dense product of those chunks, one a batch.
@@ -42,6 +44,24 @@ pub(crate) struct MGroupedFloors {
 }
 
 impl MGroupedFloors {
+    /// Whether some floor listed for the stack's kind prepares `tensors` on `hw`.
+    ///
+    /// # Errors
+    ///
+    /// The last floor's decline, where none serves. The first that serves ends the walk.
+    pub(crate) fn served(
+        &self,
+        hw: &Hardware,
+        tensors: &MGroupedMatmulTensors,
+    ) -> Result<(), Decline> {
+        let stack = Product::of([tensors.stack_kind()]);
+        let plane_shuffle = Listing::admitted(&self.plane_shuffle, stack)
+            .map(|floor| tensors.served_by::<_, _, PlaneShuffleMatmulRoutine>(hw, &floor.settings));
+        let cube_staged = Listing::admitted(&self.cube_staged, stack)
+            .map(|floor| tensors.served_by::<_, _, CubeStagedMatmulRoutine>(hw, &floor.settings));
+        first_served_on_floor(plane_shuffle.chain(cube_staged))
+    }
+
     pub(crate) const LISTED: Self = Self {
         plane_shuffle: [
             Listing {
@@ -68,6 +88,57 @@ impl MGroupedFloors {
             },
         ],
     };
+}
+
+/// The candidates of a grouped product, each routine's list for the stacks each is listed for:
+/// those worth racing ([`raced`](Self::raced)), or those every round must be able to fall back on
+/// ([`floors`](Self::floors)).
+#[derive(Debug, Clone)]
+pub struct MGroupedMatmulCandidates {
+    /// The plane shuffle's.
+    pub plane_shuffle: Vec<MGroupedMatmulCandidate<PlaneShuffleMatmulRoutine>>,
+    /// The cube staged routine's.
+    pub cube_staged: Vec<MGroupedMatmulCandidate<CubeStagedMatmulRoutine>>,
+    /// The copy engine's cube staged routine's, each listed for either kind of stack.
+    pub cube_staged_async_copy: Vec<MGroupedMatmulCandidate<CubeStagedAsyncCopyMatmulRoutine>>,
+}
+
+impl MGroupedMatmulCandidates {
+    /// The settings worth racing on `hw`.
+    pub fn raced(hw: &Hardware) -> Self {
+        Self {
+            plane_shuffle: MGroupedMatmulCandidate::listed(
+                PlaneShuffleMatmulRoutine,
+                MGroupedSettings::<PlaneShuffleMatmulRoutineSettings>::listed(hw),
+            ),
+            cube_staged: MGroupedMatmulCandidate::listed(
+                CubeStagedMatmulRoutine,
+                MGroupedSettings::<CubeStagedMatmulRoutineSettings>::listed(hw),
+            ),
+            cube_staged_async_copy: MGroupedMatmulCandidate::listed_for_either(
+                CubeStagedAsyncCopyMatmulRoutine,
+                MGroupedSettings::cube_staged_async_copy(hw),
+            ),
+        }
+    }
+
+    /// The settings every round must be able to fall back on, each for the kind of stack it
+    /// serves, none of the copy engine's: a device none of them prepares a product on is refused
+    /// before racing ([`MGroupedMatmulTensors::served_on_floor`]).
+    pub fn floors() -> Self {
+        let floors = MGroupedFloors::LISTED;
+        Self {
+            plane_shuffle: MGroupedMatmulCandidate::listed(
+                PlaneShuffleMatmulRoutine,
+                floors.plane_shuffle,
+            ),
+            cube_staged: MGroupedMatmulCandidate::listed(
+                CubeStagedMatmulRoutine,
+                floors.cube_staged,
+            ),
+            cube_staged_async_copy: Vec::new(),
+        }
+    }
 }
 
 impl MGroupedSettings<PlaneShuffleMatmulRoutineSettings> {
