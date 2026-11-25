@@ -1,25 +1,22 @@
-//! The operands of one float attention as autotune measures them: the key a call is tuned under,
-//! and what a round on the call's own buffers costs.
+//! The operands of one float attention as a caller that measures the routines races them: the key
+//! a call is tuned under, and what a decode step costs.
 
-use crate::kernels::tune::key::{AttentionKey, AttentionKeyElements};
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionCache, AttentionQueries, AttentionScoring, AttentionTensors,
-    KvSource,
+    ATTENTION_PACKED_UNREAD, AttentionCache, AttentionKey, AttentionKeyElements, AttentionQueries,
+    AttentionScoring, AttentionTensors, KvSource,
 };
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::throughput::MemoryAccess;
 use cubecl::tile::launch::Decline;
 use cubecl::tune::Work;
 use cubek_matmul::kernels::tensor::PlainTensor;
-use cubek_std::autotune::{Ceiling, Roofline};
 
-/// The operands of one float attention, as autotune measures them, and the tensors every
-/// candidate launches on, the output among them: a candidate writes the output these inputs hold
-/// rather than handing one back, so the call's output is the one the winner wrote.
+/// The operands of one float attention, as a caller that measures the routines races them, and the
+/// tensors every candidate launches on, the output among them: a candidate writes the output these
+/// inputs hold rather than handing one back, so the call's output is the one the winner wrote.
 #[derive(Clone)]
 pub struct AttentionTuneInputs {
-    pub(super) client: Client,
+    client: Client,
     /// `[b, h, q, d]`, or every sequence's queries end to end, `[Σ q_b, h, d]`, where
     /// `query_runs` says so.
     query: PlainTensor,
@@ -38,7 +35,7 @@ pub struct AttentionTuneInputs {
     mask: Option<PlainTensor>,
     /// How deep the call attends, as its caller buckets it: the keys its key holds.
     depth: usize,
-    pub(super) tensors: AttentionTensors,
+    pub(crate) tensors: AttentionTensors,
 }
 
 impl AttentionTuneInputs {
@@ -124,6 +121,11 @@ impl AttentionTuneInputs {
         })
     }
 
+    /// The client the tensors live on.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
     /// The tensors every candidate launches on, the output among them.
     pub fn tensors(&self) -> &AttentionTensors {
         &self.tensors
@@ -181,14 +183,14 @@ impl AttentionTuneInputs {
     }
 
     /// The key many query positions are tuned under: the call's queries over its depth.
-    pub(super) fn many_queries_key(&self) -> AttentionKey {
+    pub fn many_queries_key(&self) -> AttentionKey {
         self.key_of(self.queries(), self.depth)
     }
 
     /// The key a decode step is tuned under: one query over the call's depth. The single position
     /// sees the whole attended prefix, or its window's end of it, so a causal mask is no part of
     /// the key.
-    pub(super) fn one_query_key(&self) -> AttentionKey {
+    pub fn one_query_key(&self) -> AttentionKey {
         self.key_of(1, self.depth)
     }
 
@@ -216,9 +218,9 @@ impl AttentionTuneInputs {
         )
     }
 
-    /// What a decode round's step costs: one query over the keys `key` holds, each key and
-    /// value read once.
-    fn one_query_work(&self, key: &AttentionKey) -> Work {
+    /// What a decode step costs: one query over the keys `key` holds, each key and value read
+    /// once.
+    pub fn one_query_work(&self, key: &AttentionKey) -> Work {
         let batch = self.sequences();
         let (heads, head_dim) = self.heads_and_dim();
         let keys = key.seq_kv();
@@ -232,17 +234,6 @@ impl AttentionTuneInputs {
             // attends.
             compute_ops: 4 * batch * heads * keys * head_dim,
             bytes: self.query.binding.handle.size() as usize * 2 + kv_bytes,
-        }
-    }
-
-    /// The one-position roofline: the bus, in the direction the traffic goes. One query against
-    /// the whole cache reuses nothing — every key and value byte is read once and the write is a
-    /// single row — so the ceiling is the **read** bandwidth.
-    pub(super) fn one_query_roofline(key: &AttentionKey, inputs: &Self) -> Roofline {
-        Roofline {
-            client: inputs.client.clone(),
-            ceiling: Ceiling::Memory(MemoryAccess::Read),
-            work: inputs.one_query_work(key),
         }
     }
 }

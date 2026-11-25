@@ -1,5 +1,5 @@
-//! How a backward pass is told apart from another, for autotune and for the candidates it
-//! measures.
+//! How a backward pass is told apart from another, for a caller that measures the strategies and
+//! for the candidates it measures.
 
 use crate::kernels::AttentionBackwardProblem;
 use cubecl::ir::ElemType;

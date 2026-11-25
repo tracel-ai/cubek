@@ -161,19 +161,8 @@ impl AttentionBackwardTensors {
         })
     }
 
-    /// `tensor`'s heads, its second dim, split into `group` heads a key head over the same buffer:
-    /// `[b, h, ·]` viewed as `[b, h / group, group, ·]`.
-    fn grouped(tensor: &PlainTensor, group: usize) -> PlainTensor {
-        let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
-        let mut view_shape = vec![shape[0], shape[1] / group, group];
-        let mut view_strides = vec![strides[0], strides[1] * group, strides[1]];
-        view_shape.extend(shape.iter().skip(2));
-        view_strides.extend(strides.iter().skip(2));
-        tensor.viewed(Metadata::new(view_shape, view_strides))
-    }
-
     /// The problem the tensors state.
-    pub(crate) fn problem(&self) -> AttentionBackwardProblem {
+    pub fn problem(&self) -> AttentionBackwardProblem {
         let views = &self.views;
         let [batch, kv_heads, group, queries, head] = views.query.shape().dims::<5>();
         let [_, _, keys, value] = views.value.shape().dims::<4>();
@@ -193,18 +182,31 @@ impl AttentionBackwardTensors {
     }
 
     /// The client the operands live on, which a launch submits to.
-    pub(crate) fn client(&self) -> &Client {
+    pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// The gradients, once both walks are launched.
+    pub fn into_gradients(self) -> AttentionBackwardGradients {
+        self.gradients
+    }
+}
+
+impl AttentionBackwardTensors {
+    /// `tensor`'s heads, its second dim, split into `group` heads a key head over the same buffer:
+    /// `[b, h, ·]` viewed as `[b, h / group, group, ·]`.
+    fn grouped(tensor: &PlainTensor, group: usize) -> PlainTensor {
+        let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
+        let mut view_shape = vec![shape[0], shape[1] / group, group];
+        let mut view_strides = vec![strides[0], strides[1] * group, strides[1]];
+        view_shape.extend(shape.iter().skip(2));
+        view_strides.extend(strides.iter().skip(2));
+        tensor.viewed(Metadata::new(view_shape, view_strides))
     }
 
     /// The scale each dot product takes before the softmax.
     pub(crate) fn scale(&self) -> f32 {
         self.scale
-    }
-
-    /// The gradients, once both walks are launched.
-    pub(crate) fn into_gradients(self) -> AttentionBackwardGradients {
-        self.gradients
     }
 
     /// Every operand bound as `walk` states it: under its partitioning, at its widths, on its

@@ -7,7 +7,8 @@
 //! A line reads:
 //! - `name@lead`: a routine at its lead, the first setting it lists.
 //! - `name@lead(packed cache)`: the routine reading the packed cache as it lies.
-//! - `fastest(autotune)`: the fastest candidate of an autotune.
+//! - `fastest(autotune)`: the caller's measured choice, as the selector's tests stub it: the
+//!   fastest candidate of an autotune named for the call's query positions.
 //! - `rebuilt(..)`: the packed cache rebuilt as floats first, by the caller.
 //! - `in-order[..]`: the first that serves runs; a list held in a list is written flat, and a
 //!   list of one as its piece.
@@ -16,7 +17,7 @@
 use super::AttentionOpStrategy;
 use super::problem::{KvKind, QueryPositions};
 use super::selector::select;
-use crate::kernels::tune::AttentionAutotuneGroups;
+use super::stub_measured;
 use cubek_std::plan::Plan;
 
 /// Every strategy's plan for every kind of call is the one `plans.txt` records.
@@ -65,7 +66,7 @@ fn render_all() -> String {
     ] {
         out.push_str(&format!("# {name}\n"));
         for strategy in AttentionOpStrategy::all() {
-            let plan = select(strategy, queries, cache, AttentionAutotuneGroups::default())
+            let plan = select(strategy, queries, cache, &stub_measured)
                 .map(|plan| plan.tree().to_string())
                 .unwrap_or_else(|decline| format!("refused: {decline}"));
             out.push_str(&format!("{}: {plan}\n", strategy.name()));

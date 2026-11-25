@@ -1,10 +1,9 @@
-//! How an attention is told apart from another, for autotune and for the
-//! candidates it measures.
+//! How an attention is told apart from another, for a caller that measures the
+//! routines and for the candidates it measures.
 //!
 //! A key describes the *problem* — the head shape, the extents, which keys a
 //! query sees and the scale its scores take — so it lives beside the plans
-//! rather than beside the autotune that consumes it, the way
-//! [`cubek_matmul::kernels::tune::key`] does. A caller builds the autotune; it is
+//! rather than beside the autotune that consumes it. A caller builds the autotune; it is
 //! this crate that knows what makes two attentions the same attention.
 //!
 //! One key for a prompt, a chunk of one and a decode step: the microkernel
@@ -68,7 +67,7 @@ impl AttentionKeyElements {
 /// own bucket ([`AttentionTuneInputs::new`]), and the key anchors it. A prompt into an empty cache
 /// and a chunk deep into a long one are keyed apart, and a cache's buffers may be any size.
 ///
-/// [`AttentionTuneInputs::new`]: crate::kernels::tune::AttentionTuneInputs::new
+/// [`AttentionTuneInputs::new`]: crate::kernels::AttentionTuneInputs::new
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct AttentionKey {
     /// The element each operand is read in: a cache's keys and values may each be stored in

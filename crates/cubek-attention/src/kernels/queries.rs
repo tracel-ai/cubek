@@ -40,8 +40,6 @@ pub enum AttentionQueries {
 
 #[cfg(test)]
 mod tests {
-    use crate::kernels::select::problem::QueryPositions;
-    use crate::kernels::tune::{AttentionTuneInputs, launch_tuned};
     use crate::kernels::*;
     use core::num::NonZeroUsize;
     use cubecl::client::Client;
@@ -51,7 +49,6 @@ mod tests {
     use cubecl::zspace::Shape;
     use cubek_matmul::kernels::tensor::PlainTensor;
     use cubek_std::Hardware;
-    use cubek_std::autotune::GroupPriority;
     use cubek_test_utils::{HostData, HostDataType, TestInput};
 
     const HEADS: usize = 4;
@@ -120,12 +117,12 @@ mod tests {
     type Launch<'a> =
         &'a dyn Fn(&Client, AttentionQueries, KvSource, AttentionScoring) -> Option<TensorHandle>;
 
-    /// The cube routines and the autotune of many query positions write each sequence's queries
+    /// The cube routines, the only ones that read packed queries, write each sequence's queries
     /// as one launch of that sequence alone does, under the causal mask placed at the sequence's
     /// own length, in every case.
     #[test]
     fn packed_queries_match_a_launch_per_sequence() {
-        let launches: [(&str, Launch); 3] = [
+        let launches: [(&str, Launch); 2] = [
             ("cube staged", &|client, queries, kv, scoring| {
                 lead(
                     DirectAttention(CubeStagedAttentionRoutine),
@@ -143,25 +140,6 @@ mod tests {
                     kv,
                     scoring,
                 )
-            }),
-            ("autotune", &|client, queries, kv, scoring| {
-                // Every routine that reads packed queries runs on planes of one committed width:
-                // where the device has none (a CPU runner), the plan has no candidate to run.
-                if let Err(decline) = Hardware::from_client(client).plane_dim() {
-                    eprintln!("declined on this device: {decline:?}");
-                    return None;
-                }
-                // Every case attends within its cache, so its depth is the cache's bucket.
-                let inputs =
-                    AttentionTuneInputs::attention(client, queries, kv, KEYS, None, scoring)
-                        .expect("the case's tensors are verified");
-                let device = cubecl::test_device();
-                Some(launch_tuned(
-                    QueryPositions::Many,
-                    &device,
-                    inputs,
-                    GroupPriority::DEFAULT,
-                ))
             }),
         ];
         let failures: Vec<String> = CASES

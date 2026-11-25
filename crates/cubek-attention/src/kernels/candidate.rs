@@ -1,26 +1,20 @@
-//! The tune candidates attention's autotunes race, the prompt's and the single position's.
+//! A routine of the attention family at one of its settings ([`AttentionRoutineCandidate`]), as a
+//! caller that measures the routines lists, launches and identifies it.
 
-use crate::kernels::tune::AttentionTuneInputs;
-use crate::kernels::tune::key::AttentionKey;
 use crate::kernels::{
-    AttentionBlueprint, AttentionRoutine, AttentionRoutineProblem, PartialAttentionRoutine,
-    SplitKeysAttention,
+    AttentionBlueprint, AttentionKey, AttentionRoutine, AttentionRoutinePrepared,
+    AttentionRoutineProblem, AttentionTuneInputs, PartialAttentionRoutine, SplitKeysAttention,
 };
-use cubecl::CubeDim;
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_std::Hardware;
-use cubek_std::autotune::short_of_the_device;
-use cubek_std::autotune::{CandidatePriority, TuneCandidate};
-use cubek_std::routine::{Grid, PreparedLaunches, Routine};
+use cubek_std::routine::{PreparedLaunches, Routine};
 use std::sync::Arc;
 
-/// One candidate of an attention autotune: a routine of this kind at one of its
-/// settings, prepared for the device the autotune is built for. A partial routine's candidate
-/// launches it merged by a second launch ([`launch_split_keys`](Self::launch_split_keys)).
-///
-/// Its priority is the attention family's one term, how far the prepared launch's grid falls
-/// short of filling the device ([`short_of_the_device`]).
+/// A routine of the attention family at one of its settings, prepared for the device it was listed
+/// for: what a caller that measures the routines races, each problem prepared once by every clone.
+/// A partial routine's candidate launches it merged by a second launch
+/// ([`launch_split_keys`](Self::launch_split_keys)).
 #[derive(Debug, Clone)]
 pub struct AttentionRoutineCandidate<R: Routine> {
     routine: R,
@@ -32,7 +26,7 @@ pub struct AttentionRoutineCandidate<R: Routine> {
 }
 
 impl<R: Routine + Copy> AttentionRoutineCandidate<R> {
-    /// Every setting `routine` lists on `hw`, as autotune candidates, its default first.
+    /// Every setting `routine` lists on `hw`, as candidates, its default first.
     pub fn list(routine: R, hw: &Hardware) -> Vec<Self> {
         R::settings(hw)
             .into_iter()
@@ -48,6 +42,13 @@ impl<R: Routine + Copy> AttentionRoutineCandidate<R> {
     /// The routine this candidate launches.
     pub fn routine(&self) -> R {
         self.routine
+    }
+}
+
+impl<R: Routine> AttentionRoutineCandidate<R> {
+    /// The setting this candidate launches its routine at, which names it.
+    pub fn settings(&self) -> &R::Settings {
+        &self.settings
     }
 }
 
@@ -106,21 +107,17 @@ where
             Blueprint = AttentionBlueprint<M, SM>,
         >,
 {
-    /// What a launch reports where the routine declines its problem.
-    fn declines(&self, why: Decline) -> String {
-        let settings = &self.settings;
-        format!("{settings} does not serve this problem: {why:?}")
-    }
-
     /// The launch this candidate prepares for the problem `key` describes, or `None` where the
-    /// routine declines it on this device.
-    fn prepared(&self, key: &AttentionKey) -> Option<(AttentionBlueprint<M, SM>, Grid)> {
+    /// routine declines it on the device it was listed for.
+    pub fn prepared(&self, key: &AttentionKey) -> Option<AttentionRoutinePrepared<M, SM>> {
         let problem = AttentionRoutineProblem::try_from(key).ok()?;
-        R::prepare(&self.hw, &problem, &self.settings).ok()
+        R::prepare(&self.hw, &problem, &self.settings)
+            .ok()
+            .map(|(blueprint, grid)| AttentionRoutinePrepared::new(blueprint, grid))
     }
 }
 
-impl<R, M: AttentionMicrokernel, SM: PartialEq> TuneCandidate for AttentionRoutineCandidate<R>
+impl<R, M: AttentionMicrokernel, SM> AttentionRoutineCandidate<R>
 where
     R: Routine<
             Problem = AttentionRoutineProblem,
@@ -128,31 +125,10 @@ where
             Blueprint = AttentionBlueprint<M, SM>,
         >,
 {
-    type Strategy = R::Settings;
-    type Key = AttentionKey;
-    /// The blueprint and the cube: the cube is kept out of a blueprint, and two settings preparing
-    /// one blueprint can still launch different cubes.
-    type Blueprint = (AttentionBlueprint<M, SM>, CubeDim);
-
-    fn strategy(&self) -> &R::Settings {
-        &self.settings
-    }
-
-    /// First, lowered a level for each halving the prepared grid falls short of filling the
-    /// device; last where the routine declines the problem, which it then does at launch before
-    /// compiling anything.
-    fn priority(&self, key: &AttentionKey) -> CandidatePriority {
-        match self.prepared(key) {
-            Some((_, grid)) => {
-                CandidatePriority::FIRST.lowered(short_of_the_device(&self.hw, &grid.launch))
-            }
-            None => CandidatePriority::LAST,
-        }
-    }
-
-    fn blueprint(&self, key: &AttentionKey) -> Option<Self::Blueprint> {
-        self.prepared(key)
-            .map(|(blueprint, grid)| (blueprint, grid.launch.cube_dim))
+    /// What a launch reports where the routine declines its problem.
+    fn declines(&self, why: Decline) -> String {
+        let settings = &self.settings;
+        format!("{settings} does not serve this problem: {why:?}")
     }
 }
 
@@ -161,8 +137,7 @@ mod tests {
     use super::*;
     use crate::kernels::CubeStagedAttentionRoutine;
     use crate::kernels::UnitAttentionRoutine;
-    use crate::kernels::tune::key::AttentionKeyElements;
-    use crate::kernels::{AttentionVisibility, QueryPlacement, ScoreScale};
+    use crate::kernels::{AttentionKeyElements, AttentionVisibility, QueryPlacement, ScoreScale};
     use cubecl::features::MmaConfig;
     use cubecl::ir::{ElemType, FloatKind};
 
@@ -210,35 +185,20 @@ mod tests {
         let hw = devices::m2_pro();
         let listed: Vec<_> = AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, &hw)
             .iter()
-            .map(|candidate| *candidate.strategy())
+            .map(|candidate| *candidate.settings())
             .collect();
         assert_eq!(listed, CubeStagedAttentionRoutine::settings(&hw));
     }
 
-    /// A key whose query heads do not split over its key heads is declined by every candidate:
-    /// tried after every candidate that runs, and claiming no launch.
+    /// A key whose query heads do not split over its key heads is declined by every candidate,
+    /// which prepares no launch for it.
     #[test]
-    fn an_uneven_group_is_tried_last_and_claims_no_launch() {
+    fn an_uneven_group_prepares_no_launch() {
         let uneven = key(6, 4, 2048);
         for candidate in AttentionRoutineCandidate::list(UnitAttentionRoutine, &devices::m2_pro()) {
-            let settings = candidate.strategy();
-            assert_eq!(
-                candidate.priority(&uneven),
-                CandidatePriority::LAST,
-                "{settings}"
-            );
-            assert_eq!(candidate.blueprint(&uneven), None, "{settings}");
+            let settings = candidate.settings();
+            assert!(candidate.prepared(&uneven).is_none(), "{settings}");
         }
-    }
-
-    /// The priority reads how far the grid falls short of the device: first where a prompt's
-    /// queries fill it, lower where a handful of them leave cubes idle.
-    #[test]
-    fn the_priority_reads_how_far_the_grid_falls_short() {
-        let lead = AttentionRoutineCandidate::list(UnitAttentionRoutine, &devices::m2_pro())
-            .swap_remove(0);
-        assert_eq!(lead.priority(&key(32, 8, 4096)), CandidatePriority::FIRST);
-        assert!(lead.priority(&key(32, 8, 1)) < CandidatePriority::FIRST);
     }
 
     /// A key states the problem dense tensors of its bucket's shape do, so a candidate is placed
@@ -256,10 +216,10 @@ mod tests {
         assert_eq!(keyed, dense);
     }
 
-    /// On devices a dev machine cannot show: the unit routine, this kind's floor, prepares
-    /// everywhere, and a cube routine's setting is tried last exactly where it claims no launch.
+    /// On devices a dev machine cannot show: the unit routine, the family's floor, prepares
+    /// everywhere, and the staged cube's lead prepares where the device offers its instruction.
     #[test]
-    fn every_device_keeps_the_floor_and_a_decline_claims_nothing() {
+    fn every_device_keeps_the_floor() {
         let key = key(32, 8, 2048);
         for hw in [
             offering(devices::rdna_range()),
@@ -269,17 +229,12 @@ mod tests {
             devices::cpu_12(),
         ] {
             for unit in AttentionRoutineCandidate::list(UnitAttentionRoutine, &hw) {
-                assert!(unit.blueprint(&key).is_some(), "{}", unit.strategy());
-            }
-            for cube in AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, &hw) {
-                let declined = cube.blueprint(&key).is_none();
-                let last = cube.priority(&key) == CandidatePriority::LAST;
-                assert_eq!(declined, last, "{}", cube.strategy());
+                assert!(unit.prepared(&key).is_some(), "{}", unit.settings());
             }
         }
         let h100 = offering(devices::h100());
         let lead =
             AttentionRoutineCandidate::list(CubeStagedAttentionRoutine, &h100).swap_remove(0);
-        assert!(lead.blueprint(&key).is_some());
+        assert!(lead.prepared(&key).is_some());
     }
 }
