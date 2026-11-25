@@ -3,7 +3,7 @@ use cubecl::tile::launch::Decline;
 /// What a launch its routine claims may be refused, where a condition of the routine should have
 /// ruled that out.
 pub trait Breakable {
-    /// A decline made [`Broken`](Decline::Broken), as `condition` should have held, and logged as
+    /// A decline made [`Broken`](Decline::Broken), as `condition` should be true, and logged as
     /// the bug it is.
     fn or_broken(self, condition: &'static str) -> Self;
 }
