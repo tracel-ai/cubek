@@ -76,6 +76,10 @@ impl PaddedRows {
     /// Every token's routes read back out of these rows and summed under their weights: see
     /// `GroupedRows::combine_routes`.
     ///
+    /// # Assumptions
+    ///
+    /// Every route that names a group names the one its place lies in.
+    ///
     /// # Errors
     ///
     /// [`COMBINED_ROUTES_UNREAD`].

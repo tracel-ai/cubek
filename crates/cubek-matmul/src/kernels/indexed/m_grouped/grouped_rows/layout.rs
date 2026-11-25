@@ -65,7 +65,14 @@ impl GroupedRows {
     /// The layout of `rows` rows grouped by `ends` on `client`'s device, each group's cumulative
     /// end row as a `u32`, one group a slab, padded to `align`.
     ///
-    /// A group that runs backwards takes no tile, and no row past `rows` is read or written.
+    /// # Assumptions
+    ///
+    /// The ends never decrease, and the last is `rows`.
+    ///
+    /// # Guarantees
+    ///
+    /// Whatever the ends are, a group that runs backwards takes no tile, and no row past `rows` is
+    /// read or written.
     ///
     /// # Errors
     ///

@@ -342,3 +342,15 @@ fn routes_combined_under_weights_of_other_rows_decline() {
 
     assert_eq!(declined, Some(COMBINED_ROUTES_UNREAD));
 }
+
+#[test]
+fn routes_combined_that_are_not_u32_decline() {
+    let client = client();
+    let layout = GroupedRows::uploaded(&client, &[1, 2], 2, 1);
+    let padded = PaddedRows::new(f32s(&client, [2, 1], &[0.0; 2]), layout).expect(UNREAD);
+    let floats = || PlainTensor::of_handle(f32s(&client, [2, 1], &[0.0; 2]));
+
+    let declined = padded.combine_routes(floats(), floats(), floats()).err();
+
+    assert_eq!(declined, Some(COMBINED_ROUTES_UNREAD));
+}

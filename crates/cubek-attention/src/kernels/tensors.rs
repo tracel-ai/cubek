@@ -144,6 +144,11 @@ impl AttentionTensors {
     /// projection, `d` twice the cache's head dim: the keys' lines run as far, their second half
     /// the fix-up ([`PackedStepReads`](cubek_microkernel::attention::plane::PackedStepReads)).
     ///
+    /// # Assumptions
+    ///
+    /// Each entry of a page or block table names a page or block there is, and the ends of queries
+    /// lying end to end never decrease, the last their count and no run longer than `longest`.
+    ///
     /// # Errors
     ///
     /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`PACKED_WIDTH_UNREAD`] and [`ATTENTION_GROUP_UNEVEN`]:
@@ -431,8 +436,16 @@ impl AttentionTensors {
     /// The same attention, its cubes counting themselves in at `arrivals`, `u32` counters at zero
     /// that the caller keeps from one launch to the next: every launch leaves them at zero, so a
     /// launch that keeps them spends no fill on them. As many as the boxes of the largest problem
-    /// the caller attends, or more; `None`, or counters that are not `u32` or are fewer than a
-    /// launch's boxes, leaves that launch to fill its own.
+    /// the caller attends, or more.
+    ///
+    /// # Assumptions
+    ///
+    /// The counters are zero when a launch starts, and no other launch counts at them meanwhile.
+    ///
+    /// # Guarantees
+    ///
+    /// A launch fills counters of its own where it is given `None`, or counters that are not `u32`
+    /// or are fewer than its boxes.
     pub fn with_arrivals(mut self, arrivals: Option<PlainTensor>) -> Self {
         self.arrivals = arrivals;
         self
@@ -942,6 +955,7 @@ pub struct AttentionSplitSlots {
 #[cfg(test)]
 mod tests {
     use crate::kernels::*;
+    use core::num::NonZeroUsize;
     use cubecl::client::Client;
     use cubecl::prelude::*;
     use cubecl::tile::launch::Decline;
@@ -1239,5 +1253,168 @@ mod tests {
         });
 
         assert_eq!(declined, Some(PACKED_CACHE_UNREAD));
+    }
+
+    /// A four-bit packed cache of one sequence's four keys of two heads, its value's words and norms
+    /// as `break_value` leaves them.
+    fn packed_cache(break_value: impl FnOnce(&mut PackedAttentionOperand)) -> PackedAttentionCache {
+        let (f32, u32) = (f32::elem_type_native(), u32::elem_type_native());
+        let operand = || PackedAttentionOperand {
+            words: zeros(&[1, 2, 4, 1], u32),
+            norms: zeros(&[1, 2, 4, 1], f32),
+            codebook: zeros(&[16], f32),
+        };
+        let mut value = operand();
+        break_value(&mut value);
+        let bits = KvBitWidths { key: 4, value: 4 };
+        PackedAttentionCache::new(operand(), value, bits, None)
+    }
+
+    /// The attention of one sequence's queries over `kv`.
+    fn attend_over(kv: KvSource) -> Result<AttentionTensors, Decline> {
+        let client: Client = cubecl::test_device().client();
+        let queries = AttentionQueries::Dense {
+            query: zeros(&QUERY, f32::elem_type_native()),
+            lengths: one_length(),
+        };
+        let scoring = AttentionScoring::standard(AttentionVisibility::Attended, 8);
+        AttentionTensors::attention(&client, queries, kv, scoring)
+    }
+
+    fn declined_packed(cache: PackedAttentionCache) -> Option<Decline> {
+        attend_over(KvSource::new(AttentionCache::Packed(cache))).err()
+    }
+
+    fn float_kv() -> KvSource {
+        let f32 = f32::elem_type_native();
+        KvSource::new(AttentionCache::Float {
+            key: zeros(&VALUE, f32),
+            value: zeros(&VALUE, f32),
+        })
+    }
+
+    #[test]
+    fn packed_words_not_u32_decline() {
+        let cache =
+            packed_cache(|value| value.words = zeros(&[1, 2, 4, 1], f32::elem_type_native()));
+
+        assert_eq!(declined_packed(cache), Some(PACKED_CACHE_UNREAD));
+    }
+
+    #[test]
+    fn packed_fields_of_a_row_apart_decline() {
+        let cache = packed_cache(|value| {
+            let shape = [1, 2, 4, 1];
+            value.words =
+                zeros(&shape, u32::elem_type_native()).viewed(Metadata::new(shape, [8, 4, 1, 2]));
+        });
+
+        assert_eq!(declined_packed(cache), Some(PACKED_CACHE_UNREAD));
+    }
+
+    #[test]
+    fn packed_norms_not_f32_decline() {
+        let cache =
+            packed_cache(|value| value.norms = zeros(&[1, 2, 4, 1], u32::elem_type_native()));
+
+        assert_eq!(declined_packed(cache), Some(PACKED_CACHE_UNREAD));
+    }
+
+    #[test]
+    fn a_codebook_short_of_its_indices_declines() {
+        let cache = packed_cache(|value| value.codebook = zeros(&[15], f32::elem_type_native()));
+
+        assert_eq!(declined_packed(cache), Some(PACKED_CACHE_UNREAD));
+    }
+
+    #[test]
+    fn a_packed_width_of_three_bits_declines() {
+        let cache = PackedAttentionCache {
+            bits: KvBitWidths { key: 3, value: 4 },
+            ..packed_cache(|_| {})
+        };
+
+        assert_eq!(declined_packed(cache), Some(PACKED_WIDTH_UNREAD));
+    }
+
+    #[test]
+    fn packed_queries_of_another_head_dim_decline() {
+        let client: Client = cubecl::test_device().client();
+        let queries = AttentionQueries::Dense {
+            query: zeros(&[1, 4, 3, 16], f32::elem_type_native()),
+            lengths: one_length(),
+        };
+        let kv = KvSource::new(AttentionCache::Packed(packed_cache(|_| {})));
+        let scoring = AttentionScoring::standard(AttentionVisibility::Attended, 16);
+
+        let declined = AttentionTensors::attention(&client, queries, kv, scoring).err();
+
+        assert_eq!(declined, Some(ATTENTION_QUERIES_UNREAD));
+    }
+
+    #[test]
+    fn a_packed_caches_logsumexp_declines() {
+        let kv = KvSource::new(AttentionCache::Packed(packed_cache(|_| {})));
+        let tensors = attend_over(kv).expect("an attention");
+
+        let declined = tensors.with_logsumexp().err();
+
+        assert_eq!(declined, Some(ATTENTION_LOGSUMEXP_UNWRITTEN));
+    }
+
+    /// Queries of `2^32` elements, views of one: a head dim at stride zero counts each.
+    #[test]
+    fn queries_past_a_u32_decline() {
+        let query = zeros(&[1], f32::elem_type_native())
+            .viewed(Metadata::new([1, 4, 1 << 27, 8], [1, 1, 1, 1]));
+        let client: Client = cubecl::test_device().client();
+        let queries = AttentionQueries::Dense {
+            query,
+            lengths: one_length(),
+        };
+        let scoring = AttentionScoring::standard(AttentionVisibility::Attended, 8);
+
+        let declined = AttentionTensors::attention(&client, queries, float_kv(), scoring).err();
+
+        assert_eq!(declined, Some(ATTENTION_QUERIES_UNCOUNTED));
+    }
+
+    #[test]
+    fn a_float_page_table_declines() {
+        let kv = float_kv().paged(zeros(&[1, 1], f32::elem_type_native()));
+
+        assert_eq!(attend_over(kv).err(), Some(PAGE_TABLE_UNREAD));
+    }
+
+    #[test]
+    fn a_page_table_of_other_sequences_declines() {
+        let kv = float_kv().paged(zeros(&[2, 1], u32::elem_type_native()));
+
+        assert_eq!(attend_over(kv).err(), Some(PAGE_TABLE_UNREAD));
+    }
+
+    #[test]
+    fn a_block_table_of_other_sequences_declines() {
+        let blocks = zeros(&[2, 1], u32::elem_type_native());
+        let kv = float_kv().indexed(blocks, NonZeroUsize::MIN);
+
+        assert_eq!(attend_over(kv).err(), Some(PAGE_TABLE_UNREAD));
+    }
+
+    /// A key head's positions at stride zero have no block to step.
+    #[test]
+    fn listed_blocks_of_repeated_positions_decline() {
+        let f32 = f32::elem_type_native();
+        let repeated = || {
+            let strides = [16, 8, 0, 1];
+            zeros(&[1, 2, 1, 8], f32).viewed(Metadata::new(VALUE, strides))
+        };
+        let kv = KvSource::new(AttentionCache::Float {
+            key: repeated(),
+            value: repeated(),
+        })
+        .indexed(zeros(&[1, 1], u32::elem_type_native()), NonZeroUsize::MIN);
+
+        assert_eq!(attend_over(kv).err(), Some(KEY_BLOCK_SPLITS_A_PAGE));
     }
 }
