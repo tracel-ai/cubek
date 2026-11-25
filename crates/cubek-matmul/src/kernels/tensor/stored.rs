@@ -1,7 +1,11 @@
 use super::{PackedTensor, PlainTensor, ScaledTensor};
 use crate::kernels::select::problem::OperandKind;
+use cubecl::client::Client;
+use cubecl::prelude::TensorBinding;
+use cubecl::quant::scheme::QuantScheme;
 use cubecl::server::BufferBinding;
 use cubecl::tile::Dimension;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::SmallVec;
 use cubecl::zspace::metadata::Metadata;
 
@@ -22,6 +26,33 @@ pub enum StoredTensor {
 }
 
 impl StoredTensor {
+    /// A quantized matrix over `dimensions`, in the order its shape states them, as a framework
+    /// stores one: `values`, its buffer bound under its logical shape and strides, stored as
+    /// `scheme` says, under its `scales` and, where `scheme` has a second level, its
+    /// `outer_scales`. 8-bit floats under scales constant along the contraction
+    /// ([`ScaledTensor::reads`]), or packed ([`PackedTensor::of_quantized`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`ScaledTensor::of_quantized`] and [`PackedTensor::of_quantized`].
+    pub fn of_quantized(
+        client: &Client,
+        values: TensorBinding,
+        scheme: QuantScheme,
+        scales: PlainTensor,
+        outer_scales: Option<PlainTensor>,
+        dimensions: [Dimension; 2],
+    ) -> Result<Self, Decline> {
+        match ScaledTensor::reads(&scheme, dimensions) {
+            true => ScaledTensor::of_quantized(client, values, scheme, scales, dimensions)
+                .map(Self::Scaled),
+            false => {
+                PackedTensor::of_quantized(client, values, scheme, scales, outer_scales, dimensions)
+                    .map(Self::Packed)
+            }
+        }
+    }
+
     /// The tensor holding its values: itself, or a packed one's words.
     pub fn values(&self) -> &PlainTensor {
         match self {

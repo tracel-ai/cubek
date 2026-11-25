@@ -647,8 +647,7 @@ impl PackedTensor {
             None => self.rows_dim(rows_along),
             Some(_) => PhysicalAxisMap::of(blocked(rows_along).1),
         };
-        let outer_scales =
-            self.outer_scales(launcher, scale_rows.clone(), &words_dimensions, tiled_along);
+        let outer_scales = self.outer_scales(launcher, &words_dimensions, tiled_along);
         match scales {
             // A read taking its one scale alone ([`Packing::by_block`]): each bound as the element
             // it is, a `ue4m3` the `e4m3` byte with its sign clear, so a unit loads the scale it
@@ -778,8 +777,7 @@ impl PackedTensor {
         let (blocks_dimension, inside) = blocked(tiled_along);
         let blocks = self.extent(tiled_along) / launcher.space().extent(inside);
         let scale_rows = PhysicalAxisMap::of(blocked(rows_along).1);
-        let outer_scales =
-            self.outer_scales(launcher, scale_rows.clone(), &words_dimensions, tiled_along);
+        let outer_scales = self.outer_scales(launcher, &words_dimensions, tiled_along);
         match scales {
             // Each scale read alone, as `bind` binds it, beside the words the engine lands.
             BlockScales::Fields if self.packing().reads_scales_alone() => {
@@ -1076,11 +1074,10 @@ impl PackedTensor {
     }
 
     /// Its outer scales under `launcher`, where its scheme has some, over the dimensions the bound
-    /// words carry: one for each of its rows, gathered over `scale_rows`, or one over all of it.
+    /// words carry: one for each of its rows, gathered over the rows, or one over all of it.
     fn outer_scales(
         &self,
         launcher: &Launcher,
-        scale_rows: PhysicalAxisMap,
         words_dimensions: &[Dimension],
         tiled_along: Dimension,
     ) -> Option<TileTensorLaunch> {
@@ -1092,7 +1089,7 @@ impl PackedTensor {
                 scales.bound_as(Metadata::new([1, 1], [1, 1])),
                 Self::over_whole_matrix(words_dimensions, tiled_along),
             ),
-            BlockExtent::Values(_) => self.outer_scales_of_rows(scales, scale_rows),
+            BlockExtent::Values(_) => self.outer_scales_of_rows(scales),
         };
         let outer = launcher
             .arg(binding, ElemType::from_scale_dtype(level.dtype))
@@ -1102,13 +1099,11 @@ impl PackedTensor {
         Some(outer.arg())
     }
 
-    /// `scales`, one for each row, bound as a dim of them over `scale_rows`, once per slab where
+    /// `scales`, one for each row, bound as a dim of them, once per slab where
     /// the slabs lie along the rows; slabs along the other dimension share a row's.
-    fn outer_scales_of_rows(
-        &self,
-        scales: &PlainTensor,
-        scale_rows: PhysicalAxisMap,
-    ) -> (TensorBinding, Projection) {
+    fn outer_scales_of_rows(&self, scales: &PlainTensor) -> (TensorBinding, Projection) {
+        // The rows are one block, the position inside it the whole of them.
+        let row = PhysicalAxisMap::of(blocked(self.rows_dimension()).1);
         let binding = scales.bound_as(Metadata::new([self.stored_rows(), 1], [1, 1]));
         let shared = matches!(self.stack, Some(PackedStack::Slabs { along, .. }) if along == self.operand.lined());
         let (binding, axes) = match shared {
@@ -1117,9 +1112,7 @@ impl PackedTensor {
         };
         (
             binding,
-            axes.axis(scale_rows)
-                .axis(PhysicalAxisMap::broadcast())
-                .build(),
+            axes.axis(row).axis(PhysicalAxisMap::broadcast()).build(),
         )
     }
 
