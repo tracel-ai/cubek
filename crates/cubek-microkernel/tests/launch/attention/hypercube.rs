@@ -307,6 +307,7 @@ impl HypercubeAttentionLaunch {
                 arrivals.clone().into_arg().into_buffer_arg(),
                 lengths,
                 queries as u32,
+                keys as u32,
                 scale,
                 launcher.partitioning_arg(),
                 microkernel,
@@ -333,6 +334,7 @@ fn hypercube_attention_kernel<EA: Float, E: Float, N: Size>(
     arrivals: &[Atomic<u32>],
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
@@ -351,6 +353,7 @@ fn hypercube_attention_kernel<EA: Float, E: Float, N: Size>(
         &ComptimeOption::new_None(),
         &first_step,
         queries,
+        keys,
         &ComptimeOption::new_None(),
         visibility,
     );

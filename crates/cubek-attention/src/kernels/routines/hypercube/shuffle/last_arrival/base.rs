@@ -51,7 +51,8 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
             grid.launch.cube_dim,
         );
         let partitioning = binding.launcher.partitioning_arg();
-        let (queries, scale) = (problem.seq_q as u32, tensors.scale());
+        let (queries, keys) = (problem.seq_q as u32, problem.seq_kv as u32);
+        let scale = tensors.scale();
         let work_item = problem.work_item();
         let arrivals = tensors.box_arrivals(microkernel.cube.seq_q());
         match binding.cache {
@@ -61,8 +62,9 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 // read no further than the attended length. A cube writes no slot but its own, for
                 // the queries of its box the problem holds; the last cube of a box writes the
                 // box's queries of the output, at its own strides, and reads no slot but its
-                // box's, acquired after every cube of the box stored its own. The counters hold
-                // zero, and every launch leaves them so.
+                // box's, acquired after every cube of the box stored its own where the counters
+                // start at zero, as every launch leaves them. A box whose counter does not is
+                // merged early or never, which costs its answer: no access leaves its buffer.
                 unsafe {
                     hypercube_attention_arrival_kernel::launch_unchecked(
                         client,
@@ -81,6 +83,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                         binding.mask.map(|mask| mask.arg()).into(),
                         binding.lengths,
                         queries,
+                        keys,
                         scale,
                         partitioning,
                         microkernel,
@@ -115,6 +118,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                         binding.mask.map(|mask| mask.arg()).into(),
                         binding.lengths,
                         queries,
+                        keys,
                         scale,
                         partitioning,
                         microkernel,

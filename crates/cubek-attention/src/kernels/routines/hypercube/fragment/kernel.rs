@@ -26,6 +26,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
@@ -45,6 +46,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
         &ComptimeOption::new_None(),
         &first_step,
         queries,
+        keys,
         &mask,
         visibility,
     );

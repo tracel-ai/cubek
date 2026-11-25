@@ -35,6 +35,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
@@ -59,7 +60,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     let mut longest = 1usize;
 
     for b in 0..len.shape(0) {
-        longest = longest.max((len[b * len.stride(0)] as usize).div_ceil(keys_per_step));
+        longest = longest.max((len[b * len.stride(0)].min(keys) as usize).div_ceil(keys_per_step));
     }
 
     let portion = partitioning.walk().portion_of(longest);
@@ -74,6 +75,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
             &ComptimeOption::new_None(),
             &cube,
             queries,
+            keys,
             &mask,
             visibility,
         );

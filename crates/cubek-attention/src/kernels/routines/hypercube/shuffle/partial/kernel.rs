@@ -32,6 +32,7 @@ pub fn hypercube_attention_partial_kernel<
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
@@ -53,6 +54,7 @@ pub fn hypercube_attention_partial_kernel<
         &ComptimeOption::new_None(),
         &first_step,
         queries,
+        keys,
         &mask,
         visibility,
     );
@@ -101,6 +103,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
@@ -128,6 +131,7 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
         &ComptimeOption::new_None(),
         &first_step,
         queries,
+        keys,
         &mask,
         visibility,
     );

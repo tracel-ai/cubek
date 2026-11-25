@@ -65,7 +65,8 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
             grid.launch.cube_dim,
         );
         let partitioning = binding.launcher.partitioning_arg();
-        let (queries, scale) = (problem.seq_q as u32, tensors.scale());
+        let (queries, keys) = (problem.seq_q as u32, problem.seq_kv as u32);
+        let scale = tensors.scale();
         let work_item = problem.work_item();
         match binding.cache {
             AttentionCacheBinding::Tiles { key, value } => {
@@ -88,6 +89,7 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                         binding.mask.map(|mask| mask.arg()).into(),
                         binding.lengths,
                         queries,
+                        keys,
                         scale,
                         partitioning,
                         microkernel,
@@ -120,6 +122,7 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                         binding.mask.map(|mask| mask.arg()).into(),
                         binding.lengths,
                         queries,
+                        keys,
                         scale,
                         partitioning,
                         microkernel,

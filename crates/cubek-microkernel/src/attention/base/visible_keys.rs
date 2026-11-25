@@ -31,7 +31,8 @@ pub struct VisibleKeys {
 #[cube]
 impl VisibleKeys {
     /// What the queries of `owner`'s sequence and key head see: its sequence's entry of `len`,
-    /// read by stride, so a single length bound at stride zero is every sequence's; `queries` of
+    /// read by stride, so a single length bound at stride zero is every sequence's, and no more
+    /// than the `keys` there are, so an entry past them reads no key past its buffer; `queries` of
     /// them, or, where every sequence's queries lie end to end, the count of its run of
     /// `query_ends`, their cumulative counts; and the cells of `mask`, over `[B, KV, G, Q, S]`,
     /// where there is one.
@@ -44,11 +45,12 @@ impl VisibleKeys {
         query_ends: &ComptimeOption<&Tensor<u32>>,
         owner: &Region,
         queries: u32,
+        keys: u32,
         mask: &ComptimeOption<Tile>,
         #[comptime] visibility: AttentionVisibility,
     ) -> VisibleKeys {
         let sequence = owner.origin(B);
-        let attended = len[sequence * len.stride(0)];
+        let attended = len[sequence * len.stride(0)].min(keys);
         let queries = query_ends
             .clone()
             .map::<u32, _>(|ends| {

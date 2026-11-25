@@ -217,6 +217,7 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 binding.mask.map(|mask| mask.arg()).into(),
                 binding.lengths,
                 problem.seq_q as u32,
+                problem.seq_kv as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 microkernel,
