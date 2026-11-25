@@ -1,16 +1,14 @@
-//! How a product is told apart from another, for the autotunes — and what an autotune
-//! reads off it when it prioritizes its candidates.
+//! How a product is told apart from another, for a caller that measures the routines — and what
+//! the key states of a product that a caller's candidate list is ordered against.
 //!
 //! The key is a description of the *problem* — what the operands are, how big they are, how they
 //! are laid out — so it lives beside the plans rather than beside the autotunes that consume it. A
 //! caller builds the autotunes; it is the kernels that know what makes two products the same
-//! product, and the fused matmul asks the many-rows autotune's tuner for its election under this
-//! key too.
+//! product, and the fused matmul reads the unfused autotune's election under this key too.
 //!
-//! [`MatmulShape`] is the second half: the key read as extents, which is what a
-//! candidate list is prioritized against. Both arms prioritize against it, and
-//! it reads the key alone because the key is the whole of what cubecl hands a priority
-//! function.
+//! [`MatmulShape`] is the second half: the key read as extents, and how a cube's output block
+//! covers them ([`GridCoverage`]). It reads the key alone because the key is the whole of what
+//! cubecl hands a priority function.
 
 use crate::kernels::MatmulRoutineProblem;
 use crate::kernels::select::problem::{MatmulProblem, OperandKind};
@@ -18,7 +16,6 @@ use cubecl::ir::ElemType;
 use cubecl::tile::Dimension;
 use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand, MatmulOperands};
-use cubek_std::autotune::CandidatePriority;
 use serde::{Deserialize, Serialize};
 
 use cubecl::zspace::metadata::Metadata;
@@ -60,9 +57,8 @@ pub struct OperandKey {
 /// **The family anchors, not the derive.** cubecl's anchor attribute scales
 /// its base by the autotune level, and that level is set for how close to
 /// the roofline a round may stop;
-/// under it a 64-row product would key as 87. A candidate list prioritizes its
-/// candidates and proves its duplicates from the key's `m`
-/// ([`TuneCandidate::blueprint`](cubek_std::autotune::TuneCandidate::blueprint)), so
+/// under it a 64-row product would key as 87. A caller's candidate list prioritizes its
+/// candidates and proves its duplicates from the launch each prepares for the key's `m`, so
 /// the bucket's representative has to be a shape the derivation tiles the way
 /// it tiles the shapes inside the bucket — a power of two, at every level.
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
@@ -283,27 +279,6 @@ impl MatmulShape {
         self.cubes(block) * block.m.max(1) * block.n.max(1)
     }
 
-    /// Where a candidate whose cube covers `block` is tried on this problem —
-    /// the priority both arms are written in.
-    ///
-    /// [`Tiled`](GridCoverage::Tiled) candidates go first. A
-    /// [`Masked`](GridCoverage::Masked) candidate falls one priority level per doubling of
-    /// what its grid covers against what the problem asks for, where those cells cost
-    /// ([`MaskedCells::Cost`]); where they are free it goes first with the tiled ones. A
-    /// [`Whole`](GridCoverage::Whole) candidate goes last: a grid that cannot
-    /// spread is the one claim about a launch that needs no clock — and even
-    /// that says only where to try it, since how much it costs is still a
-    /// measurement.
-    pub fn priority(&self, block: CubeBlock, masked: MaskedCells) -> CandidatePriority {
-        match self.coverage(block) {
-            GridCoverage::Tiled => CandidatePriority::FIRST,
-            GridCoverage::Masked if masked == MaskedCells::Free => CandidatePriority::FIRST,
-            GridCoverage::Masked => CandidatePriority::FIRST
-                .lowered((self.covered(block) / self.work().max(1)).max(1).ilog2()),
-            GridCoverage::Whole => CandidatePriority::LAST,
-        }
-    }
-
     /// How a grid of `block` cubes covers this product. The arms are
     /// ordered by how much they take away and the first that holds is the coverage:
     /// a block covering the product has no second cube to be masked against.
@@ -317,22 +292,6 @@ impl MatmulShape {
             false => GridCoverage::Masked,
         }
     }
-}
-
-/// What the cells a masked grid covers past the problem's edge cost its candidate: the
-/// arithmetic a cube spends on them, and nothing else, since a masked cell reads and writes
-/// nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MaskedCells {
-    /// They take arithmetic from an instruction the problem's bytes leave idle: a product whose
-    /// element the device multiplies on a tensor core, whose rate is hundreds of operations per
-    /// byte the bus brings. A decode's eight rows padded to a tile of sixty-four cost the bus
-    /// nothing, and a staged candidate reads the weight at its rate.
-    Free,
-    /// They take arithmetic from the instruction the product is bound by, or near enough: a
-    /// product on the units' own arithmetic, an integer one among them, whose rate is a few
-    /// dozen operations per byte.
-    Cost,
 }
 
 /// The problem a tuning **key** describes: dense operands of the key's element, the batch held by

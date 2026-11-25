@@ -7,6 +7,7 @@
 //! Its gradient for the stack is the K-grouped product,
 //! [`k_grouped`](crate::kernels::indexed::k_grouped).
 
+use crate::kernels::OperandLayout;
 use crate::kernels::indexed::m_grouped::{
     GroupedRows, MGroupedFloors, MGroupedMatmulTensors, MGroupedRowSource, MGroupedRowSourceKind,
     MGroupedSettings, PaddedRows, RouteSort, upload,
@@ -14,12 +15,11 @@ use crate::kernels::indexed::m_grouped::{
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
-use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::tune::{ListedFor, Listing, Product};
 use crate::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings,
     MatmulRoutine, PlaneShuffleMatmulRoutine, PlaneShuffleMatmulRoutineSettings,
 };
+use crate::kernels::{ListedFor, Listing, Product};
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;

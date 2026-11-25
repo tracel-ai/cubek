@@ -65,6 +65,10 @@ impl cubecl::tune::AutotuneOutput for PaddedRows {
     #[cfg(feature = "autotune-checks")]
     fn check_equivalence(&self, other: Self) {
         let client = self.layout.client().clone();
-        crate::kernels::tune::assert_equivalent(&client, self.clone().unpad(), other.unpad());
+        crate::kernels::indexed::measured::assert_equivalent(
+            &client,
+            self.clone().unpad(),
+            other.unpad(),
+        );
     }
 }

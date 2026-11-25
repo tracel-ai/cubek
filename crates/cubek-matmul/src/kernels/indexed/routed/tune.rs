@@ -14,15 +14,16 @@ use cubek_std::Hardware;
 use cubek_std::autotune::{Autotune, GroupPriority};
 use serde::{Deserialize, Serialize};
 
+use crate::kernels::OperandLayout;
+use crate::kernels::indexed::measured::MatmulProduct;
 use crate::kernels::indexed::routed::{RoutedCandidates, RoutedFloors, RoutedMatmulTensors};
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::PlainTensor;
-use crate::kernels::tune::key::OperandLayout;
-use crate::kernels::tune::{ListedFor, Listing, MatmulProduct};
 use crate::kernels::{
     CubeStagedMatmulRoutine, MatmulRoutine, PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
 };
+use crate::kernels::{ListedFor, Listing};
 
 /// What makes two routed products want the same launch: the stack's shape and layout, the rows,
 /// and the slots each row selects.

@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 /// that kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum MatmulOpStrategy {
-    /// Pick by measurement: every kernel that can serve the problem joins an
-    /// autotune and the fastest runs, per problem and per device.
+    /// Pick by measurement: every kernel that can serve the problem joins the race
+    /// its rows go to ([`MatmulAutotune`](super::MatmulAutotune)) and the fastest runs, per
+    /// problem and per device. The caller measures: cubek states the race, and the caller
+    /// hands the selection the plan of its measured choice.
     ///
     /// The default. The rules cannot know where the
     /// crossover between a streaming kernel and a staged one falls on a device
@@ -28,7 +30,7 @@ pub enum MatmulOpStrategy {
     /// a wrapper. The routines are named and launched directly instead, which
     /// is what makes every candidate a kernel.
     ///
-    /// Which kernels join, and in what order, is the autotune's own answer,
+    /// Which kernels join, and in what order, is the measuring caller's own answer,
     /// because its candidate set is built once per process and no
     /// strategy passed per call could change it.
     #[default]

@@ -4,11 +4,11 @@ use crate::kernels::indexed::m_grouped::{
 use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::{
     MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
     MatmulRoutineProblem,
 };
+use crate::kernels::{MatmulTuneKey, OperandLayout};
 use cubecl::client::Client;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;

@@ -5,7 +5,7 @@ use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::{Listing, Product};
+use crate::kernels::{Listing, Product};
 use crate::tiled::storage::{StorageLevels, tile};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};

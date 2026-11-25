@@ -1,3 +1,6 @@
+//! Which kind of product a routine's setting is listed for ([`ListedFor`]): a statement of the
+//! routine's own, which a setting listed for the other kind declines before compiling anything.
+
 use crate::kernels::select::problem::OperandKind;
 use cubecl::tile::launch::Decline;
 

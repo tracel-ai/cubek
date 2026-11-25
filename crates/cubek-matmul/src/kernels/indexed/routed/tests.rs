@@ -13,11 +13,11 @@ use super::tune::spread_routes;
 use super::{RoutedFloors, RoutedMatmulTensors, launch_tuned};
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::{Listing, Product};
 use crate::kernels::{
     CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutineSettings,
     UnitRegistersMatmulRoutineSettings,
 };
+use crate::kernels::{Listing, Product};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 

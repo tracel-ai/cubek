@@ -1,9 +1,9 @@
-use crate::kernels::tune::{ListedFor, Listing};
 use crate::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedAsyncCopyMatmulRoutineSettings,
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings,
 };
+use crate::kernels::{ListedFor, Listing};
 use core::fmt::Display;
 use core::num::NonZeroUsize;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;

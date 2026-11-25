@@ -1,13 +1,14 @@
+use crate::kernels::Product;
+use crate::kernels::indexed::measured::matmul_ceiling;
 use crate::kernels::indexed::routed::RoutedMatmulKey;
 use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
-use crate::kernels::tune::{Product, matmul_ceiling};
 use crate::kernels::{
     MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
     MatmulTensors,
 };
+use crate::kernels::{MatmulTuneKey, OperandLayout};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
