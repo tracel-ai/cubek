@@ -10,7 +10,7 @@ use cubecl::tile::launch::{Decline, Delivery, Vectorization};
 use cubecl::tile::{Levels, Scratch};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::BlockScales;
+use cubek_std::layout::stored::{BlockScales, OuterScale};
 use cubek_std::matmul_dimensions::{M, N};
 use cubek_std::microkernel::{
     CubePlanes, GlobalStream, KernelEstimate, Microkernel, StageLayout, StageRing,
@@ -236,6 +236,11 @@ impl MatmulMicrokernel for HypercubeStagedMicrokernel {
     /// Its cubes': how they read a packed input's block scales.
     fn block_scales(&self) -> BlockScales {
         self.cube.block_scales()
+    }
+
+    /// Its cubes': where the scale a whole packed input shares is multiplied in.
+    fn outer_scale(&self) -> OuterScale {
+        self.cube.outer_scale()
     }
 
     /// Its cubes': the element their fill decodes their inputs into.

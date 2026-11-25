@@ -12,7 +12,7 @@ use cubecl::ir::ElemType;
 use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::{Run, VectorTile};
-use cubecl::tile::{Dimension, MicroTile, OperandReads, Space, kind::Field};
+use cubecl::tile::{Dimension, Instruction, MicroTile, OperandReads, Space, kind::Field};
 
 /// How an operand is read and how it is scaled, as tiles of its own dimensions.
 ///
@@ -660,6 +660,28 @@ pub enum BlockScales {
     /// The words they are stored in, read whole: the block-scaled instruction takes a word of four
     /// `e4m3` scales, the first block's in the low byte, as its scale register.
     Words,
+}
+
+/// Where the scale a whole packed operand shares is multiplied in, which the operand is bound for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OuterScale {
+    /// Into the sum, once: the kernel factors it out of the operand
+    /// ([`Tile::factor`](cubecl::tile::Tile::factor)).
+    Factored,
+    /// Into each value as it is read, beside its block scale.
+    Kept,
+}
+
+impl OuterScale {
+    /// Where it is multiplied in for a sum `instruction` contracts: into the sum where each unit
+    /// holds its cells, and into the values where a sum would reach its scale only through shared
+    /// memory.
+    pub fn of(instruction: Instruction) -> Self {
+        match instruction.scales_its_sum_in_place() {
+            true => Self::Factored,
+            false => Self::Kept,
+        }
+    }
 }
 
 /// A matmul input's values as they lie: elements of one type, or codes packed under a

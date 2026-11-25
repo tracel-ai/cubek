@@ -11,6 +11,7 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Dimension, Levels, Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageRing, StagedOperand};
 
 /// A box of queries of some heads of the group a cube owns: its planes each take the rows of one
@@ -335,6 +336,11 @@ impl AttentionMicrokernel for CubeAttentionMicrokernel {
     /// Its planes' microkernel's.
     fn cache_order(&self) -> CacheOrder {
         self.plane.cache_order()
+    }
+
+    /// Its planes' microkernel's.
+    fn values_outer_scale(&self) -> OuterScale {
+        self.plane.values_outer_scale()
     }
 
     /// Its planes' microkernel's.
