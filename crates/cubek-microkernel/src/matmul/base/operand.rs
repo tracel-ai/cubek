@@ -3,7 +3,7 @@ use crate::matmul::{
 };
 use cubecl::ir::FloatKind;
 use cubecl::tile::launch::Decline;
-use cubecl::tile::{Dimension, MacroRegion, MicroRegion, Space, Tile};
+use cubecl::tile::{BaseRegion, Dimension, Space, Tile, VectorRegion};
 use cubecl::{self as cubecl, cube, ir::ElemType, prelude::*};
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Operand;
@@ -54,7 +54,7 @@ impl MatmulOperand {
     /// The region a load stores this input in on `hw`: the input read as `operand`, its values
     /// `values`, against the other input at `contracted`, the element the product is contracted
     /// at, under the largest instruction `hw` offers to contract it, its stages filled by the TMA
-    /// engine where `hw` has one. The decode routines take no instruction, and their micro region
+    /// engine where `hw` has one. The decode routines take no instruction, and their vector region
     /// divides this one, so one stored tile serves both.
     ///
     /// Packed codes on a device that contracts them as stored, under a block-scaled instruction
@@ -68,7 +68,7 @@ impl MatmulOperand {
         operand: Operand,
         values: ElemType,
         contracted: ElemType,
-    ) -> Option<MacroRegion> {
+    ) -> Option<BaseRegion> {
         let f32 = ElemType::Float(FloatKind::F32);
         let block_scaled = operand.scale(K).and_then(|block| {
             block_scaled_mma(hw)
@@ -93,8 +93,8 @@ impl MatmulOperand {
         }?;
         let operands = MatmulOperands::all(Operand::plain()).with(self, operand);
         let elements = MatmulOperands::all(contracted).with(self, values);
-        let region = MacroRegion::new(
-            &operands.micro_region(hw, &elements),
+        let region = BaseRegion::new(
+            &operands.vector_region(hw, &elements),
             Space::new(&[
                 (M, shape.m as usize),
                 (N, shape.n as usize),
@@ -157,7 +157,7 @@ impl<T: Copy> MatmulOperands<T> {
 }
 
 impl MatmulOperands<Operand> {
-    /// The micro region of a product of inputs read so and loaded at `elements` on `hw`: each
+    /// The vector region of a product of inputs read so and loaded at `elements` on `hw`: each
     /// packed input's read and its scales' as its operand states them, and each float input one
     /// of the device's loads along the dimension the other input's reads run along where it has
     /// that dimension, one value where it does not and each of its values meets a whole line of
@@ -166,25 +166,29 @@ impl MatmulOperands<Operand> {
     /// NVFP4 in tile order against an `f16` input on a device of 128-bit loads: the `f16` input
     /// loaded eight of `k` at a time, a word of four scales covering sixty-four of `k`, and the
     /// values two words, one block, down `k` a read: one column by sixty-four of `k`.
-    pub fn micro_region(&self, hw: &Hardware, elements: &MatmulOperands<ElemType>) -> MicroRegion {
+    pub fn vector_region(
+        &self,
+        hw: &Hardware,
+        elements: &MatmulOperands<ElemType>,
+    ) -> VectorRegion {
         let [first, second] = MatmulOperand::INPUTS;
-        let mut micro_tiles = Vec::new();
+        let mut vector_tiles = Vec::new();
         for (input, other) in [(first, second), (second, first)] {
             let operand = self.get(input);
             let lined = self.get(other).lined();
             match operand.scaled_along() {
-                Some(_) => micro_tiles.extend(
+                Some(_) => vector_tiles.extend(
                     [operand.read_space()]
                         .into_iter()
                         .chain(operand.scale_read_space()),
                 ),
                 None if input.dimensions().contains(&lined) => {
-                    micro_tiles.push(Space::new(&[(lined, hw.load_values(elements.get(input)))]))
+                    vector_tiles.push(Space::new(&[(lined, hw.load_values(elements.get(input)))]))
                 }
                 None => {}
             }
         }
-        MicroRegion::new(micro_tiles)
+        VectorRegion::new(vector_tiles)
     }
 
     /// Whether a product of `n` columns and `k` deep, its inputs read so and loaded at `elements`,
@@ -208,8 +212,8 @@ impl MatmulOperands<Operand> {
                 .scale(lined)
                 .is_some_and(|tile| !tile.is_multiple_of(operand.read(lined)))
         });
-        let micro = self.micro_region(hw, elements);
-        let closes = n.is_multiple_of(micro.along(N)) && k.is_multiple_of(micro.along(K));
+        let vectors = self.vector_region(hw, elements);
+        let closes = n.is_multiple_of(vectors.along(N)) && k.is_multiple_of(vectors.along(K));
         if !closes || straddles {
             return Err(MATMUL_READS_UNCLOSED);
         }

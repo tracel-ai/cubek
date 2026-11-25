@@ -15,7 +15,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
-use cubecl::tile::{FragmentSource, Levels, MacroRegion, Scratch, Space, StageStorage};
+use cubecl::tile::{BaseRegion, FragmentSource, Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{BlockScales, Packing};
@@ -225,7 +225,7 @@ impl CubeStagedMicrokernel {
     /// whole scale blocks, each a whole number of the instruction's steps. A plane holds the
     /// settings' steps of `M` and `N` and walks the settings' steps of `K` through each stage
     /// ([`CubeStagedMicrokernelSettings::stage_steps`]), block by block, in the instruction's
-    /// calls ([`MacroRegion::instructions`]). The units filling each stage decode every packed input into
+    /// calls ([`BaseRegion::instructions`]). The units filling each stage decode every packed input into
     /// [`MatmulWorkItem::decoded_element`].
     fn decoding_candidates(
         hw: &Hardware,
@@ -241,10 +241,10 @@ impl CubeStagedMicrokernel {
         let finest = space.finest();
         let item = &item.with_blocks(finest);
         let (block, read) = (Self::block(item), item.decoded_element());
-        let micro = item.blocks.map(|space| {
+        let vectors = item.blocks.map(|space| {
             space
                 .operands()
-                .micro_region(hw, &MatmulOperands::all(read))
+                .vector_region(hw, &MatmulOperands::all(read))
         });
         block
             .and_then(|block| {
@@ -259,7 +259,7 @@ impl CubeStagedMicrokernel {
             .filter_map(|plane| {
                 let [(_, m), (_, n), (_, k)] = plane.instruction.shape();
                 let region =
-                    MacroRegion::new(micro.as_ref()?, Space::new(&[(M, m), (N, n), (K, k)]));
+                    BaseRegion::new(vectors.as_ref()?, Space::new(&[(M, m), (N, n), (K, k)]));
                 let block = Space::new(&[(K, block?)]);
                 let blocks = region.space().count_along(K, &block)?;
                 let depth = block.count_along(K, region.instruction())?;

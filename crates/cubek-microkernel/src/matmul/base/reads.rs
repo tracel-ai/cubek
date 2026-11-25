@@ -1,7 +1,7 @@
 use cubecl::tile::launch::Decline;
 
 /// What a launch of this kind declines whatever the routine: a packed input a read of which
-/// straddles two scale tiles, or an `n` or a `k` that the [micro region](cubecl::tile::MicroRegion)
+/// straddles two scale tiles, or an `n` or a `k` that the [vector region](cubecl::tile::VectorRegion)
 /// does not divide.
 pub const MATMUL_READS_UNCLOSED: Decline = Decline::Unserved {
     why: "the packed routines read packed inputs whose reads sit inside one scale tile, and whose n and k are whole reads: the least box every load of the inputs' values and of their scales fills whole",
@@ -21,7 +21,7 @@ mod tests {
     use cubecl::ir::ElemType;
     use cubecl::ir::{FloatKind, OpaqueType, UIntKind};
     use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-    use cubecl::tile::{Dimension, MacroRegion, MicroRegion, Space};
+    use cubecl::tile::{BaseRegion, Dimension, Space, VectorRegion};
     use cubek_std::Hardware;
     use cubek_std::devices;
     use cubek_std::layout::stored::Operand;
@@ -39,10 +39,10 @@ mod tests {
         }
     }
 
-    /// The micro region of a float `[m, k]` input of `element` against a `[k, n]` input read as
+    /// The vector region of a float `[m, k]` input of `element` against a `[k, n]` input read as
     /// `packed`.
-    fn micro_against(hw: &Hardware, packed: &Operand, element: ElemType) -> MicroRegion {
-        against(packed).micro_region(hw, &MatmulOperands::all(element))
+    fn vector_region_against(hw: &Hardware, packed: &Operand, element: ElemType) -> VectorRegion {
+        against(packed).vector_region(hw, &MatmulOperands::all(element))
     }
 
     /// How many reads a region takes of a float input of `element`, and of `packed`'s values and
@@ -101,12 +101,12 @@ mod tests {
     #[test]
     fn an_nvfp4_step_is_one_word_of_scales_deep() {
         let hw = devices::m2_pro();
-        let micro = micro_against(&hw, &tile_order(), F16);
+        let vectors = vector_region_against(&hw, &tile_order(), F16);
         assert_eq!(
-            [M, N, K].map(|dimension| micro.along(dimension)),
+            [M, N, K].map(|dimension| vectors.along(dimension)),
             [1, 1, 64]
         );
-        let along = |dimension| micro.along(dimension);
+        let along = |dimension| vectors.along(dimension);
         assert_eq!(reads(&hw, along, &tile_order(), F16), [8, 4, 1]);
     }
 
@@ -115,8 +115,8 @@ mod tests {
     #[test]
     fn an_mxfp4_step_is_twice_as_deep() {
         let hw = devices::m2_pro();
-        let nvfp4 = micro_against(&hw, &Operand::packed(K, 8, K, 16, 4), F16);
-        let mxfp4 = micro_against(&hw, &Operand::packed(K, 8, K, 32, 4), F16);
+        let nvfp4 = vector_region_against(&hw, &Operand::packed(K, 8, K, 16, 4), F16);
+        let mxfp4 = vector_region_against(&hw, &Operand::packed(K, 8, K, 32, 4), F16);
         assert_eq!((nvfp4.along(K), mxfp4.along(K)), (64, 128));
         let along = |dimension| mxfp4.along(dimension);
         let packed = Operand::packed(K, 8, K, 32, 4);
@@ -127,8 +127,8 @@ mod tests {
     /// takes the instruction's rows and columns.
     #[test]
     fn an_instruction_joins_the_region_where_the_reads_leave_it() {
-        let region = MacroRegion::new(
-            &micro_against(&devices::m2_pro(), &tile_order(), F16),
+        let region = BaseRegion::new(
+            &vector_region_against(&devices::m2_pro(), &tile_order(), F16),
             Space::new(&[(M, 8), (N, 8), (K, 8)]),
         );
         assert_eq!(
@@ -150,12 +150,12 @@ mod tests {
         let hw = devices::m2_pro();
         let one_block = Operand::packed(K, 8, K, 16, 1);
         let value = Space::new(&[(K, 1)]);
-        let shallow = MacroRegion::new(&micro_against(&hw, &one_block, F16), value.clone());
+        let shallow = BaseRegion::new(&vector_region_against(&hw, &one_block, F16), value.clone());
         let filled = shallow.divided_by(one_block.tma_row(e2m1));
         assert_eq!((shallow.along(K), filled.along(K)), (16, 128));
         assert_eq!(filled.along(N), shallow.along(N));
 
-        let deep = MacroRegion::new(&micro_against(&hw, &tile_order(), F16), value);
+        let deep = BaseRegion::new(&vector_region_against(&hw, &tile_order(), F16), value);
         let filled = deep.divided_by(tile_order().tma_row(e2m1));
         assert_eq!((deep.along(K), filled.along(K)), (64, 128));
     }
@@ -168,17 +168,17 @@ mod tests {
         let hw = devices::m2_pro();
         let nvfp4 = Operand::packed(K, 8, K, 16, 4);
         let float = MatmulOperands::all(F16);
-        let packed_rhs = against(&nvfp4).micro_region(&hw, &float);
+        let packed_rhs = against(&nvfp4).vector_region(&hw, &float);
         let packed_lhs = MatmulOperands {
             lhs: nvfp4,
             ..MatmulOperands::all(Operand::plain())
         }
-        .micro_region(&hw, &float);
+        .vector_region(&hw, &float);
         let both = MatmulOperands {
             lhs: nvfp4,
             ..against(&nvfp4)
         }
-        .micro_region(&hw, &float);
+        .vector_region(&hw, &float);
         assert_eq!(packed_lhs.along(K), packed_rhs.along(K));
         assert_eq!(both.along(K), packed_rhs.along(K));
     }
@@ -212,13 +212,13 @@ mod tests {
     #[test]
     fn an_rhs_in_rows_steps_a_word_of_scales_along_its_words() {
         let hw = devices::m2_pro();
-        let along_k = micro_against(&hw, &in_rows(QuantValue::Q4S, K), F16);
+        let along_k = vector_region_against(&hw, &in_rows(QuantValue::Q4S, K), F16);
         assert_eq!((along_k.along(K), along_k.along(N)), (64, 1));
-        let along_n = micro_against(&hw, &in_rows(QuantValue::Q4S, N), F16);
+        let along_n = vector_region_against(&hw, &in_rows(QuantValue::Q4S, N), F16);
         assert_eq!((along_n.along(K), along_n.along(N)), (1, 64));
     }
 
-    /// An rhs is served where the micro region divides `n` and `k`, though the block-scaled
+    /// An rhs is served where the vector region divides `n` and `k`, though the block-scaled
     /// instruction's region overhangs `n`.
     #[test]
     fn an_rhs_whole_reads_wide_is_served() {
@@ -302,8 +302,9 @@ mod tests {
                 )
                 .expect("tile order is read at every load");
             for rhs in [in_rows, stored] {
-                let region = MacroRegion::new(&micro_against(&hw, &rhs, e2m1), block_scaled())
-                    .divided_by(rhs.tma_row(e2m1));
+                let region =
+                    BaseRegion::new(&vector_region_against(&hw, &rhs, e2m1), block_scaled())
+                        .divided_by(rhs.tma_row(e2m1));
                 assert_eq!(
                     (region.along(K), region.along(N)),
                     (128, 8),

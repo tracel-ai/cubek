@@ -70,7 +70,7 @@ impl CubeStagedMicrokernelSettings {
     };
 
     /// A box against a packed input, counted in steps of the packed product
-    /// ([`MacroRegion`](cubecl::tile::MacroRegion)): `steps` of `M` and `N` on each
+    /// ([`BaseRegion`](cubecl::tile::BaseRegion)): `steps` of `M` and `N` on each
     /// plane, on `planes` (along `m` by along `n`), holding its stages in `ring`. A step's box is
     /// whole loads of the packed input's words and scales, so every load filling a stage is
     /// whole; the stage holds the step's scale blocks, decoded by the units that fill it, and each

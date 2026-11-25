@@ -14,7 +14,7 @@ use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{
-    Dimension, FragmentSource, Instruction, LaneMap, Levels, MacroRegion, MmaOperands, ProductStep,
+    BaseRegion, Dimension, FragmentSource, Instruction, LaneMap, Levels, MmaOperands, ProductStep,
     Scratch, ShapedInstruction, Space, StageStorage, StepCost,
 };
 use cubek_std::layout::BindingOrder;
@@ -63,7 +63,7 @@ pub struct PlaneFragmentMicrokernel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlaneUnit {
     /// The device's matrix unit for the product's elements, `m × n × k` along the caller's
-    /// dimensions, and the calls of it every load fills whole along each ([`MacroRegion`]): the
+    /// dimensions, and the calls of it every load fills whole along each ([`BaseRegion`]): the
     /// plane states its tile as a grid of them, each one unit deep, and the tile cuts it into the
     /// calls of the instruction it picks.
     Matrix { unit: [usize; 3], calls: [usize; 3] },
@@ -294,7 +294,7 @@ impl PlaneFragmentMicrokernel {
 
     /// The planes against a float rhs. A plane's settings count the device's
     /// [`matrix_unit`](Self::matrix_unit) for the elements, the fewest of its calls every load
-    /// fills whole ([`MacroRegion`]), so the instruction never changes what a setting means. With
+    /// fills whole ([`BaseRegion`]), so the instruction never changes what a setting means. With
     /// fragments one instruction deep, held by a plane, the one plane holding that tile, which the
     /// tile cuts into the calls of the instruction it picks for it
     /// ([`Instruction::for_accumulator`]); otherwise the planes that state their fragments
@@ -429,23 +429,23 @@ impl PlaneFragmentMicrokernel {
             PlaneFragmentRowsAlong::M => (m, n),
             PlaneFragmentRowsAlong::N => (n, m),
         };
-        let region = Self::macro_region(hw, &item.elements, [m, n, k]);
+        let region = Self::base_region(hw, &item.elements, [m, n, k]);
         Some((
             [m, n, k],
             [M, N, K].map(|dimension| region.instructions(dimension)),
         ))
     }
 
-    /// The macro region of a product of float inputs of `elements` under an instruction of
+    /// The base region of a product of float inputs of `elements` under an instruction of
     /// `[m, n, k]` along the caller's dimensions.
-    fn macro_region(
+    fn base_region(
         hw: &Hardware,
         elements: &MatmulOperands<ElemType>,
         [m, n, k]: [usize; 3],
-    ) -> MacroRegion {
+    ) -> BaseRegion {
         let float = MatmulOperands::all(Operand::plain());
-        MacroRegion::new(
-            &float.micro_region(hw, elements),
+        BaseRegion::new(
+            &float.vector_region(hw, elements),
             Space::new(&[(M, m), (N, n), (K, k)]),
         )
     }
@@ -760,7 +760,7 @@ impl PlaneFragmentMicrokernel {
 
     /// This plane stating its fragments, a grid of its instruction's calls, where its settings
     /// count the device's matrix unit ([`stated_candidates`](Self::stated_candidates)). `None`
-    /// where the instruction does not cut the plane's tile in whole [`MacroRegion`]s.
+    /// where the instruction does not cut the plane's tile in whole [`BaseRegion`]s.
     fn stated(self, hw: &Hardware, elements: MatmulOperands<ElemType>) -> Option<Self> {
         let PlaneUnit::Matrix {
             unit: [unit_m, unit_n, unit_k],
@@ -771,7 +771,7 @@ impl PlaneFragmentMicrokernel {
         };
         let settings = self.settings;
         let [(_, m), (_, n), (_, k)] = self.shape();
-        let region = Self::macro_region(hw, &elements, [m, n, k]);
+        let region = Self::base_region(hw, &elements, [m, n, k]);
         Some(Self {
             settings: PlaneFragmentMicrokernelSettings {
                 along_m: Self::calls_cutting(
@@ -796,7 +796,7 @@ impl PlaneFragmentMicrokernel {
     /// whole regions do.
     fn calls_cutting(
         edge: usize,
-        region: &MacroRegion,
+        region: &BaseRegion,
         dimension: Dimension,
     ) -> Option<NonZeroUsize> {
         let regions = Space::new(&[(dimension, edge)]).count_along(dimension, &region.space())?;

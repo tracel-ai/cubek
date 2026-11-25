@@ -306,7 +306,7 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// Whether the [micro region](cubecl::tile::MicroRegion) of the product on `hw` divides it,
+    /// Whether the [vector region](cubecl::tile::VectorRegion) of the product on `hw` divides it,
     /// each read of a packed input inside one scale tile, and two packed inputs whole words of
     /// each other in each read along `K`, the runs the two are contracted in. Float inputs have no
     /// packed read to close.

@@ -41,7 +41,7 @@ use crate::kernels::{
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubecl::tile::{BlockScaledOperands, MacroRegion, Space};
+use cubecl::tile::{BaseRegion, BlockScaledOperands, Space};
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
@@ -121,7 +121,7 @@ where
 }
 
 impl CubeStagedMatmulRoutine {
-    /// The region of a product of `inputs` on `hw` read as stored ([`MacroRegion`]): the least box
+    /// The region of a product of `inputs` on `hw` read as stored ([`BaseRegion`]): the least box
     /// every load of both inputs fills whole — a row of the TMA engine's box, a word of scales —
     /// under the device's largest block-scaled instruction over them. `None` on a device that
     /// offers none. An input in rows and one in [tile order](cubek_std::layout::tile_order) step
@@ -129,7 +129,7 @@ impl CubeStagedMatmulRoutine {
     pub fn block_scaled_step(
         hw: &Hardware,
         inputs: &MatmulOperands<Option<Packing>>,
-    ) -> Option<MacroRegion> {
+    ) -> Option<BaseRegion> {
         let (lhs, rhs) = (inputs.lhs?, inputs.rhs?);
         let instruction = block_scaled_for(
             hw,
@@ -149,7 +149,7 @@ impl CubeStagedMatmulRoutine {
             (K, instruction.shape.k as usize),
         ]);
         Some(
-            MacroRegion::new(&operands.micro_region(hw, &elements), shape)
+            BaseRegion::new(&operands.vector_region(hw, &elements), shape)
                 .divided_by(operands.rhs.tma_row(elements.rhs)),
         )
     }
@@ -217,7 +217,7 @@ fn block_scaled_problem(
 
 /// A setting of `shape`, its planes reaching their stages through the tile DSL's transport, which
 /// reads the rows a box lands swizzled.
-fn in_steps(region: &MacroRegion, shape: StagedShape) -> CubeStagedMicrokernelSettings {
+fn in_steps(region: &BaseRegion, shape: StagedShape) -> CubeStagedMicrokernelSettings {
     let calls = |count: usize, dimension| {
         NonZeroUsize::new(count * region.instructions(dimension))
             .expect("a step is at least one call")
@@ -240,7 +240,7 @@ fn in_steps(region: &MacroRegion, shape: StagedShape) -> CubeStagedMicrokernelSe
 /// Whether `microkernel`'s settings, prepared by `prepare`, prepare a product of their own box,
 /// two stages deep, and a unit's share of their planes fits its registers.
 fn fits(
-    region: &MacroRegion,
+    region: &BaseRegion,
     inputs: &MatmulOperands<Option<Packing>>,
     microkernel: &CubeStagedMicrokernelSettings,
     prepare: impl FnOnce(&MatmulRoutineProblem) -> Option<(CubeStagedMatmulRoutineBlueprint, Grid)>,

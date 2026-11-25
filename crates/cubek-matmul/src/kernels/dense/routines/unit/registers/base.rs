@@ -6,7 +6,7 @@ use crate::kernels::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, DestinationLaunch, VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{MacroRegion, MicroRegion, Space, TileTensorLaunch};
+use cubecl::tile::{BaseRegion, Space, TileTensorLaunch, VectorRegion};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
@@ -51,16 +51,16 @@ impl UnitRegistersMatmulRoutine {
             .max(1)
     }
 
-    /// The micro region of `problem`, over `space`, on `hw` read as `microkernel` reads it: each
+    /// The vector region of `problem`, over `space`, on `hw` read as `microkernel` reads it: each
     /// input a register at once, or the widest read below it that its buffer admits and that
     /// divides the problem, along the dimension it is bound innermost along. The output is written
     /// as its rhs is lined, or a value at a time.
-    fn micro_region(
+    fn vector_region(
         hw: &Hardware,
         problem: &MatmulRoutineProblem,
         space: &Space,
         microkernel: &UnitRegistersMicrokernel,
-    ) -> MicroRegion {
+    ) -> VectorRegion {
         let orders = microkernel.orders();
         let mut vectorization = Vectorization::new();
         problem.require_reads(orders, &mut vectorization);
@@ -72,7 +72,7 @@ impl UnitRegistersMatmulRoutine {
                 MatmulDimensions::MNK.of(orders.innermost(operand)),
             ));
         }
-        MicroRegion::new(MatmulOperand::INPUTS.map(|input| {
+        VectorRegion::new(MatmulOperand::INPUTS.map(|input| {
             let read = vectorization.width(input, |operand| {
                 hw.register_values(problem.elements.get(operand))
             });
@@ -114,7 +114,7 @@ impl UnitRegistersMatmulRoutineSettings {
     };
 
     /// These settings, each unit's block one `region`.
-    fn counting(&self, region: &MacroRegion) -> Self {
+    fn counting(&self, region: &BaseRegion) -> Self {
         let along = |dimension| {
             NonZeroUsize::new(region.along(dimension)).expect("a region should reach a value")
         };
@@ -276,8 +276,8 @@ impl Routine for UnitRegistersMatmulRoutine {
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         let microkernel = UnitRegistersMicrokernel::best(hw, &item, &settings.microkernel)?;
-        let settings = settings.counting(&MacroRegion::new(
-            &Self::micro_region(hw, problem, &view.space(), &microkernel),
+        let settings = settings.counting(&BaseRegion::new(
+            &Self::vector_region(hw, problem, &view.space(), &microkernel),
             microkernel.region(),
         ));
         let microkernel = UnitRegistersMicrokernel::best(hw, &item, &settings.microkernel)?;

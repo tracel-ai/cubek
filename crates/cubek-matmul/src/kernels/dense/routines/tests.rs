@@ -1,10 +1,10 @@
 //! Every box a packed routine cuts is a whole number of the rule's step
-//! ([`MicroRegion`]), for each scheme the routines serve, in rows and stored in tiles.
+//! ([`VectorRegion`]), for each scheme the routines serve, in rows and stored in tiles.
 
 use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
-use cubecl::tile::{Dimension, MacroRegion, MicroRegion, Space};
+use cubecl::tile::{BaseRegion, Dimension, Space, VectorRegion};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands};
 use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
@@ -92,10 +92,10 @@ fn problems(m: usize) -> Vec<(&'static str, MatmulRoutineProblem)> {
     ]
 }
 
-/// `problem`'s micro region on `hw`.
-fn micro_region(hw: &Hardware, problem: &MatmulRoutineProblem) -> MicroRegion {
+/// `problem`'s vector region on `hw`.
+fn vector_region(hw: &Hardware, problem: &MatmulRoutineProblem) -> VectorRegion {
     let operands = problem.inputs.map(|_, input| input.operand);
-    operands.micro_region(hw, &problem.elements)
+    operands.vector_region(hw, &problem.elements)
 }
 
 /// Whether `space` covers a whole number of `region`s along `M`, `N` and `K`, each over the block
@@ -136,7 +136,7 @@ mod plane_shuffle {
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
-                            whole_regions(micro_region(&hw, &read).space(), &space),
+                            whole_regions(vector_region(&hw, &read).space(), &space),
                             "{name} at {settings}: {space:?}"
                         );
                     }
@@ -172,7 +172,7 @@ mod cube_shuffle {
                     let partitioning = &blueprint.partitioning;
                     for space in [partitioning.leaf(), partitioning.cube_space().space] {
                         assert!(
-                            whole_regions(micro_region(&hw, &read).space(), &space),
+                            whole_regions(vector_region(&hw, &read).space(), &space),
                             "{name} at {settings}: {space:?}"
                         );
                     }
@@ -287,8 +287,8 @@ mod cube_staged {
                 }
                 let [(_, m), (_, n), (_, k)] = blueprint.microkernel.plane.instruction.shape();
                 let read = problem.read_as(blueprint.microkernel.planned_space());
-                let region = MacroRegion::new(
-                    &micro_region(&hw, &read),
+                let region = BaseRegion::new(
+                    &vector_region(&hw, &read),
                     Space::new(&[(M, m), (N, n), (K, k)]),
                 );
                 let cube_space = blueprint.partitioning.cube_space();
@@ -551,7 +551,7 @@ mod hypercube_last_arrival {
                     prepared += 1;
                     let cube_space = blueprint.partitioning.cube_space();
                     assert!(
-                        whole_regions(micro_region(&hw, &problem).space(), &cube_space.space),
+                        whole_regions(vector_region(&hw, &problem).space(), &cube_space.space),
                         "{name} at {settings}: {cube_space:?}"
                     );
                     assert_eq!(
