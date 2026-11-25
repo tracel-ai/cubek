@@ -12,9 +12,9 @@ use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Test
 /// An output of `rows` rows of `cells` cells in `element`, holding sevens before the launch.
 #[derive(Debug, Clone, Copy)]
 struct ZeroCase {
-    rows: usize,
-    cells: usize,
-    element: ElemType,
+    pub rows: usize,
+    pub cells: usize,
+    pub element: ElemType,
 }
 
 struct UnitZeroScopeUnderTest {
@@ -62,16 +62,22 @@ impl ScopeUnderTest for UnitZeroScopeUnderTest {
     }
 }
 
-/// A unit alone zeroes its row, in a float and an integer, at a row length that is not a power of
-/// two.
-#[test]
-fn a_unit_zeroes_its_row() {
+/// A unit alone zeroes its row in `element`, at a row length that is not a power of two.
+fn a_unit_zeroes_its_row(element: ElemType) {
     let hw = Hardware::from_client(&cubecl::test_device().client());
-    let cases =
-        [ElemType::Float(FloatKind::F32), ElemType::Int(IntKind::I32)].map(|element| ZeroCase {
-            rows: 5,
-            cells: 37,
-            element,
-        });
-    UnitZeroScopeUnderTest { hw }.check(cases);
+    UnitZeroScopeUnderTest { hw }.check([ZeroCase {
+        rows: 5,
+        cells: 37,
+        element,
+    }]);
+}
+
+#[test]
+fn a_unit_zeroes_a_row_of_floats() {
+    a_unit_zeroes_its_row(ElemType::Float(FloatKind::F32));
+}
+
+#[test]
+fn a_unit_zeroes_a_row_of_integers() {
+    a_unit_zeroes_its_row(ElemType::Int(IntKind::I32));
 }

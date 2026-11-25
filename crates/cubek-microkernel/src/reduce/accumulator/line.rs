@@ -68,9 +68,31 @@ fn consecutive_indices_of_line<N: Size>(line_index: usize) -> Vector<u32, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reduce::ReduceOperation;
     use cubecl::TestRuntime;
 
-    /// A negative, a zero and a fraction: read as they are.
+    /// `line` read into a sum of magnitudes' carrier that holds one.
+    #[cube(harness)]
+    fn accumulated<N: Size>(line: Vector<i32, N>) -> Vector<f32, N> {
+        let row_lanes = N::value();
+        let mut acc = Vector::<f32, N>::new(1.0);
+        accumulate_read::<i32, f32, N, Vector<f32, N>>(
+            &mut acc,
+            line,
+            0,
+            row_lanes,
+            comptime!(ReduceWorkItem::along_f32(ReduceOperation::MaxAbs)),
+        );
+        acc
+    }
+
+    /// Read in its own element, mapped, and combined under the operation's monoid.
+    #[test]
+    fn a_line_read_is_cast_mapped_and_accumulated() {
+        let acc = accumulated::harness::<TestRuntime, Const<4>>(&[-3, 0, 2, -1]);
+        assert_eq!(acc, [3.0, 1.0, 2.0, 1.0]);
+    }
+
     #[test]
     fn as_read_keeps_every_value() {
         let read = read_mapped::harness::<TestRuntime, f32, Const<4>>(
@@ -80,7 +102,7 @@ mod tests {
         assert_eq!(read, [-2.0, 0.0, 0.5, 3.0]);
     }
 
-    /// A negative, a zero and a fraction: each read as its magnitude.
+    /// The negative zero too.
     #[test]
     fn abs_reads_each_magnitude() {
         let read = read_mapped::harness::<TestRuntime, f32, Const<4>>(

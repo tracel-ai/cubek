@@ -1,8 +1,8 @@
 use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    PlaneShuffleReduceRoutine, ReduceKernel, ReduceLauncher, ReduceTensors,
-    UnitDirectReduceRoutine, launch_kernel, tune::*,
+    PlaneShuffleReduceRoutine, ReduceKernel, ReduceRoutine, ReduceTensors, UnitDirectReduceRoutine,
+    launch_kernel, tune::*,
 };
 use cubecl::client::Client;
 use cubecl::throughput::MemoryAccess;
@@ -73,7 +73,7 @@ fn racing<R, M>(
     hw: &Hardware,
 ) -> ReduceAutotune
 where
-    R: ReduceLauncher<M> + Routine<Microkernel = M>,
+    R: ReduceRoutine<M> + Routine<Microkernel = M>,
     ReduceRoutineRunner<R>: TuneCandidate<Key = ReduceKey> + Clone + Send + Sync + 'static,
     ReduceCandidate: From<ReduceRoutineRunner<R>>,
 {

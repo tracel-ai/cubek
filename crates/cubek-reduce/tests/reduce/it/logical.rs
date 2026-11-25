@@ -1,6 +1,6 @@
 //! The `Any` / `All` logical reductions over a mask whose rows hold none, every and one of their
-//! values set, so each writes both a `0` and a `1`, which random inputs (`reduce_dim.rs`) seldom
-//! do. The reference's answers on these rows are pinned by its own Small Tests.
+//! values set, so each writes both a `0` and a `1`, which random inputs (`reduce_dim.rs`) leave to
+//! chance. The reference's answers on these rows are pinned by its own Small Tests.
 
 use crate::reduce::it::test_case::UNIT;
 use cubecl::{
@@ -70,7 +70,8 @@ fn reduces_the_mask_like_the_reference(operation: ReduceOperation) {
                 operation,
                 elements,
             )
-            .into()
+            .expect("the unit kernel should serve every problem");
+        ExecutionOutcome::Executed
     });
 
     match outcome {

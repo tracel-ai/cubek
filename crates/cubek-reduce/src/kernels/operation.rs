@@ -11,7 +11,7 @@ use cubecl::prelude::*;
 use cubek_microkernel::reduce::ReduceOperation;
 
 /// A reduction of one tensor along one axis, run by the kernel its strategy picks, with the
-/// scratch its caller gives the kernels that split a row across cubes.
+/// scratch its caller gives the kernel whose last cube merges a row split across cubes.
 #[derive(Debug, Clone)]
 pub struct Reduce {
     strategy: ReduceOpStrategy,
@@ -19,8 +19,8 @@ pub struct Reduce {
 }
 
 impl Reduce {
-    /// The reduction whose kernel `strategy` picks, given no scratch: the kernels that split a
-    /// row across cubes decline it.
+    /// The reduction whose kernel `strategy` picks, given no scratch: the last-arrival hypercube
+    /// declines it.
     pub fn new(strategy: ReduceOpStrategy) -> Self {
         Self {
             strategy,
@@ -28,7 +28,7 @@ impl Reduce {
         }
     }
 
-    /// This reduction given `workspace`, the scratch of the kernels that split a row across cubes
+    /// This reduction given `workspace`, the last-arrival hypercube's scratch
     /// ([`ReduceWorkspace::bytes_for`]), which cubek never allocates.
     pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
         Self {
@@ -44,11 +44,10 @@ impl Reduce {
     ///
     /// [`ReduceError::InvalidAxis`] where `axis` is not a dim of `input`,
     /// [`ReduceError::EmptyTopK`] where a top-k keeps `k = 0` values,
-    /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is shorter than the `k` a top-k
-    /// keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one above,
-    /// and [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy picks
-    /// cannot run the problem on this device: a [`Specific`](ReduceOpStrategy::Specific) one, or
-    /// the unit kernel the rule falls back to.
+    /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is empty, or shorter than the `k` a
+    /// top-k keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one
+    /// above, and [`ReduceError::Declined`] with the kernel's decline where a
+    /// [`Specific`](ReduceOpStrategy::Specific) kernel cannot run the problem on this device.
     ///
     /// # Panics
     ///
@@ -86,9 +85,7 @@ impl Reduce {
     ///
     /// # Errors
     ///
-    /// As [`execute`](Self::execute); [`ReduceError::IndicesUnsupported`] for an operation whose
-    /// values carry no index; and [`ReduceError::MismatchIndicesShape`] where `indices` differs
-    /// from `values` in shape.
+    /// Every [`ReduceError`].
     ///
     /// # Panics
     ///
@@ -270,13 +267,43 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_sum_has_no_index_to_write() {
-        let result = indexed(ReduceOperation::Sum);
+    /// Checks that `operation` is refused under its own `name`.
+    fn has_no_index_to_write(operation: ReduceOperation, name: &str) {
+        let result = indexed(operation);
         assert!(
-            matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
+            matches!(result, Err(ReduceError::IndicesUnsupported { operation }) if operation == name),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_sum_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Sum, "Sum");
+    }
+
+    #[test]
+    fn a_prod_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Prod, "Prod");
+    }
+
+    #[test]
+    fn a_mean_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Mean, "Mean");
+    }
+
+    #[test]
+    fn a_max_abs_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::MaxAbs, "MaxAbs");
+    }
+
+    #[test]
+    fn an_any_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Any, "Any");
+    }
+
+    #[test]
+    fn an_all_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::All, "All");
     }
 
     #[test]
@@ -284,6 +311,22 @@ mod tests {
         assert!(matches!(
             indexed(ReduceOperation::Max),
             Ok(ReduceOperation::ArgMax)
+        ));
+    }
+
+    #[test]
+    fn a_min_with_indices_writes_an_argmin() {
+        assert!(matches!(
+            indexed(ReduceOperation::Min),
+            Ok(ReduceOperation::ArgMin)
+        ));
+    }
+
+    #[test]
+    fn a_top_k_with_indices_writes_an_arg_top_k() {
+        assert!(matches!(
+            indexed(ReduceOperation::TopK { k: 3 }),
+            Ok(ReduceOperation::ArgTopK { k: 3 })
         ));
     }
 

@@ -1,4 +1,5 @@
 use cubecl::benchmark::TimingMethod;
+use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
 use super::{ReduceBenchKind, ReduceCorrectness, ReduceProblem, bench, problems, strategies};
@@ -50,25 +51,28 @@ impl cubek_test_utils::Category for Category {
         Some(&ReduceCorrectness)
     }
 
-    /// Every value read once and accumulated once, every cell written once, scaled by the passes
-    /// the harness makes: a two-launch reduction reads and writes twice, which is the harness's
-    /// doing.
+    /// Every value read once and accumulated once and every cell written once a launch, and the
+    /// index beside it where the problem writes both halves: a two-launch reduction reads and
+    /// accumulates twice, which is the harness's doing.
     fn work(&self, problem: &ReduceProblem) -> Option<CategoryWork> {
         let value_dtype = problem.precision.to_dtype();
         let values: usize = problem.shape.iter().product();
         let cells = values / problem.shape[problem.axis] * problem.operation.written_per_row();
-        let out_dtype = output_dtype_for(problem.operation, value_dtype);
-
-        let (read_passes, write_passes) = match problem.kind {
-            ReduceBenchKind::Single => (1, 1),
-            ReduceBenchKind::TwoLaunch => (2, 2),
-            ReduceBenchKind::Fused => (1, 2),
+        let launches = match problem.kind {
+            ReduceBenchKind::Single | ReduceBenchKind::Fused => 1,
+            ReduceBenchKind::TwoLaunch => 2,
+        };
+        let cell_bytes = match problem.kind {
+            ReduceBenchKind::Single => output_dtype_for(problem.operation, value_dtype).size(),
+            ReduceBenchKind::TwoLaunch | ReduceBenchKind::Fused => {
+                value_dtype.size() + u32::elem_type_native().size()
+            }
         };
 
         Some(CategoryWork {
-            compute: Some(ComputeWork::direct(values, accumulation_dtype())),
-            bytes_read: read_passes * values * value_dtype.size(),
-            bytes_written: write_passes * cells * out_dtype.size(),
+            compute: Some(ComputeWork::direct(launches * values, accumulation_dtype())),
+            bytes_read: launches * values * value_dtype.size(),
+            bytes_written: cells * cell_bytes,
         })
     }
 }

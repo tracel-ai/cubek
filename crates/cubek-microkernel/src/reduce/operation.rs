@@ -67,6 +67,15 @@ impl ReduceCarrier {
         !matches!(self, Self::Values | Self::TopValues { .. })
     }
 
+    /// The lines it holds: one of values a slot and, where it carries indices, one of them beside
+    /// each.
+    pub const fn lines(self) -> usize {
+        match self.carries_indices() {
+            true => 2 * self.slots(),
+            false => self.slots(),
+        }
+    }
+
     /// Bytes one carrier of `width` lanes holds, its values `value_bytes` each and, where it
     /// carries indices, a `u32` beside each.
     pub const fn bytes(self, width: usize, value_bytes: usize) -> usize {
@@ -74,11 +83,17 @@ impl ReduceCarrier {
             true => value_bytes + size_of::<u32>(),
             false => value_bytes,
         };
-        let slots = match self {
+        self.slots() * width * lane
+    }
+}
+
+impl ReduceCarrier {
+    /// The values it keeps of a row.
+    const fn slots(self) -> usize {
+        match self {
             Self::TopK { k } | Self::TopValues { k } => k,
             Self::Values | Self::Indexed => 1,
-        };
-        slots * width * lane
+        }
     }
 }
 
@@ -152,8 +167,8 @@ impl ReduceOperation {
     }
 
     /// The widest line its accumulator keeps apart, where the carrier bounds it, for a thread
-    /// keeping `lane_slots` top-k slots across a line's lanes. A top-k keeps `k` values and their
-    /// indices for every lane of a line: past `lane_slots` they spill out of registers, so the line
+    /// keeping `lane_slots` top-k slots across a line's lanes. A top-k keeps `k` values, and their
+    /// indices where it writes them, for every lane of a line: past `lane_slots` they spill out of registers, so the line
     /// narrows, down to one value for a list longer than `lane_slots`.
     ///
     /// # Panics
@@ -182,7 +197,7 @@ impl ReduceOperation {
     /// The cells it writes for `row`, computed on the host: one value, or `k` best first for a
     /// top-k, and an index written as a number. A NaN ranks ahead of every number and the lower
     /// index wins a tie, so a max or a min keeps a NaN. Past a row shorter than `k`, a top-k
-    /// writes the lowest `f32` for a value and `u32::MAX` for an index.
+    /// writes what an empty slot holds: `-inf` for a value and `u32::MAX` for an index.
     ///
     /// # Panics
     ///
@@ -200,7 +215,7 @@ impl ReduceOperation {
             Self::All => vec![flag(row.iter().all(|value| *value != 0.0))],
             Self::ArgMax => vec![ranked(row, Rank::Largest)[0].1 as f32],
             Self::ArgMin => vec![ranked(row, Rank::Smallest)[0].1 as f32],
-            Self::TopK { k } => best_k(row, k, |(value, _)| value, f32::MIN),
+            Self::TopK { k } => best_k(row, k, |(value, _)| value, f32::NEG_INFINITY),
             Self::ArgTopK { k } => best_k(row, k, |(_, index)| index as f32, u32::MAX as f32),
         }
     }
@@ -269,6 +284,20 @@ const fn lines_at_least_one(lines: usize) -> usize {
 mod tests {
     use super::*;
 
+    /// A carrier of values and indices holds a line of each a slot.
+    #[test]
+    fn a_carrier_of_indices_holds_two_lines_a_slot() {
+        const K: usize = 3;
+        assert_eq!(ReduceCarrier::TopK { k: K }.lines(), 2 * K);
+    }
+
+    /// A carrier of values alone holds one.
+    #[test]
+    fn a_carrier_of_values_holds_one_line_a_slot() {
+        const K: usize = 3;
+        assert_eq!(ReduceCarrier::TopValues { k: K }.lines(), K);
+    }
+
     /// A test of each property of `$operation` its table row states: its monoid, its read map
     /// and its carrier.
     macro_rules! table_row {
@@ -327,14 +356,12 @@ mod tests {
     writes!(a_top_k_writes_values: ReduceOperation::TopK { k: 2 } => ReduceWrites::Values);
     writes!(an_any_writes_values: ReduceOperation::Any => ReduceWrites::Values);
 
-    /// A top-k writes `k` cells a row.
     #[test]
     fn a_top_k_writes_k_cells() {
         const K: usize = 7;
         assert_eq!(ReduceOperation::TopK { k: K }.written_per_row(), K);
     }
 
-    /// An arg top-k writes `k` cells a row.
     #[test]
     fn an_arg_top_k_writes_k_cells() {
         const K: usize = 7;
@@ -375,7 +402,6 @@ mod tests {
     const WIDTH: usize = 2;
     const F32_BYTES: usize = 4;
 
-    /// A values carrier holds a line of values.
     #[test]
     fn a_values_carrier_holds_a_line() {
         assert_eq!(
@@ -413,13 +439,11 @@ mod tests {
         );
     }
 
-    /// A mean divides by the count.
     #[test]
     fn a_mean_divides_by_the_count() {
         assert!(ReduceOperation::Mean.divides_by_count());
     }
 
-    /// A sum does not divide by the count.
     #[test]
     fn a_sum_does_not_divide_by_the_count() {
         assert!(!ReduceOperation::Sum.divides_by_count());
@@ -446,7 +470,6 @@ mod tests {
         );
     }
 
-    /// A top-k whose list is longer than its lane slots reads one value a line.
     #[test]
     fn a_top_k_longer_than_its_lane_slots_reads_one_value_a_line() {
         const LANE_SLOTS: usize = 32;
@@ -463,6 +486,60 @@ mod tests {
     fn a_top_k_keeping_nothing_panics() {
         const LANE_SLOTS: usize = 32;
         ReduceOperation::TopK { k: 0 }.widest_line_at_lane_slots(LANE_SLOTS);
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_sum_adds_the_row() {
+        assert_eq!(
+            ReduceOperation::Sum.reference_cells(&[1.0, 2.0, 4.0]),
+            vec![7.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_product_multiplies_the_row() {
+        assert_eq!(
+            ReduceOperation::Prod.reference_cells(&[2.0, 3.0, 4.0]),
+            vec![24.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_mean_divides_the_sum_by_the_rows_length() {
+        assert_eq!(
+            ReduceOperation::Mean.reference_cells(&[1.0, 2.0, 6.0]),
+            vec![3.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_min_is_the_smallest_value() {
+        assert_eq!(
+            ReduceOperation::Min.reference_cells(&[2.0, -1.0, 3.0]),
+            vec![-1.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn a_max_abs_is_the_largest_magnitude() {
+        assert_eq!(
+            ReduceOperation::MaxAbs.reference_cells(&[2.0, -5.0, 3.0]),
+            vec![5.0]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cpu-reference")]
+    fn an_arg_min_tie_is_its_lower_index() {
+        assert_eq!(
+            ReduceOperation::ArgMin.reference_cells(&[3.0, 1.0, 1.0]),
+            vec![1.0]
+        );
     }
 
     /// A row with a value that is not zero holds any.
@@ -523,7 +600,6 @@ mod tests {
         );
     }
 
-    /// A top-k keeps its `k` largest values, largest first.
     #[test]
     #[cfg(feature = "cpu-reference")]
     fn a_top_k_keeps_the_largest_first() {
@@ -533,13 +609,13 @@ mod tests {
         );
     }
 
-    /// Past a row shorter than `k`, a top-k writes the lowest `f32`.
+    /// Past a row shorter than `k`, a top-k writes `-inf`.
     #[test]
     #[cfg(feature = "cpu-reference")]
     fn a_top_k_past_a_short_row_writes_the_lowest_value() {
         assert_eq!(
             ReduceOperation::TopK { k: 3 }.reference_cells(&[2.0]),
-            vec![2.0, f32::MIN, f32::MIN]
+            vec![2.0, f32::NEG_INFINITY, f32::NEG_INFINITY]
         );
     }
 

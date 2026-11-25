@@ -2,6 +2,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
 use cubecl::tile::{Partitioning, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
+use cubek_microkernel::reduce::ReduceCarrierFamily;
 use cubek_microkernel::reduce::unit::UnitDirectReduceMicrokernel;
 
 /// Every unit of the launch, reducing its rows into the carrier its operation accumulates into.
@@ -16,6 +17,8 @@ pub(crate) fn unit_direct_reduce_kernel<
     Acc: Numeric,
     Out: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -29,16 +32,17 @@ pub(crate) fn unit_direct_reduce_kernel<
     for unit in &partitioning {
         let mut rows_out = o.at(&unit);
         let rows = x.at(&unit);
-        microkernel.runtime().execute::<In, Acc, Out, Out, N>(
-            &rows,
-            &mut rows_out,
-            &ComptimeOption::new_None(),
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
+                &rows,
+                &mut rows_out,
+                &ComptimeOption::new_None(),
+            );
     }
 }
 
-/// Every unit of the launch, reducing its rows into the carrier its operation accumulates into, and
-/// writing the values to `out` and their indices to `indices`, laid out as `out`.
+/// [`unit_direct_reduce_kernel()`] with the rows' indices written beside their values.
 ///
 /// Its operands' leaves:
 /// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
@@ -52,6 +56,8 @@ pub(crate) fn unit_direct_reduce_with_indices_kernel<
     Out: Numeric,
     Idx: Numeric,
     N: Size,
+    K: Size,
+    F: ReduceCarrierFamily,
     I: TileOperand,
 >(
     input: &I::Arg,
@@ -67,10 +73,12 @@ pub(crate) fn unit_direct_reduce_with_indices_kernel<
     for unit in &partitioning {
         let mut rows_out = o.at(&unit);
         let rows = x.at(&unit);
-        microkernel.runtime().execute::<In, Acc, Out, Idx, N>(
-            &rows,
-            &mut rows_out,
-            &ComptimeOption::new_Some(i.at(&unit)),
-        );
+        microkernel
+            .runtime()
+            .reduce::<In, Acc, Out, Idx, N, F::Carrier<Acc, N, K>>(
+                &rows,
+                &mut rows_out,
+                &ComptimeOption::new_Some(i.at(&unit)),
+            );
     }
 }
