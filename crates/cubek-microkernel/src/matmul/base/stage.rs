@@ -1,13 +1,14 @@
 use crate::matmul::{MatmulDim, MatmulDimensions, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::stage::StagedOperands;
 use cubecl::tile::{Dimension, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::Packing;
 use cubek_std::microkernel::StagedOperand;
 
-/// The box one step of a walk through `K` stages of both operands: a cube's, or a plane's own.
+/// The box one step of a walk through `K` stages of its operands: a cube's, or a plane's own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulStage {
     space: Space,
@@ -51,15 +52,16 @@ impl MatmulStage {
         self.extent(self.dimensions.of(orders.innermost(operand)))
     }
 
-    /// Require of `vectorization` the reads a ring makes of both operands' tiles a stage at a
-    /// time, bound in the order `orders` says: stretches of the stage's extent along each one's
+    /// Require of `vectorization` the reads a ring makes of the tiles of the operands it stages,
+    /// `staged`, a stage at a time, bound in the order `orders` says: stretches of the stage's extent along each one's
     /// contiguous dimension.
     pub fn require_runs(
         &self,
+        staged: StagedOperands,
         orders: MatmulOperands<BindingOrder>,
         vectorization: &mut Vectorization<MatmulOperand>,
     ) {
-        for operand in MatmulOperand::INPUTS {
+        for operand in MatmulOperand::staged(staged) {
             vectorization.require(VectorRequirement::Access {
                 operand,
                 elements: self.run(operand, orders),
@@ -83,7 +85,7 @@ impl MatmulStage {
         }
     }
 
-    /// Both operands' boxes of one stage, each stored in its own element of `elements` and bound
+    /// The boxes of one stage of the operands `staged` names, each stored in its own element of `elements` and bound
     /// in the order `orders` says, for a fill that reads them as `reads` say. An operand it reads
     /// at another element is decoded on its way into the stage where `packings` says it is a
     /// packed input whose block scales are bound as words; one whose block scales are bound a
@@ -91,12 +93,13 @@ impl MatmulStage {
     /// read at another float), is converted.
     pub fn operands(
         &self,
+        staged: StagedOperands,
         elements: MatmulOperands<ElemType>,
         orders: MatmulOperands<BindingOrder>,
         reads: MatmulOperands<MatmulRead>,
         packings: MatmulOperands<Option<Packing>>,
-    ) -> [StagedOperand; 2] {
-        MatmulOperand::INPUTS.map(|operand| {
+    ) -> Vec<StagedOperand> {
+        let held = MatmulOperand::staged(staged).map(|operand| {
             let staged = StagedOperand::new(
                 elements.get(operand),
                 self.space
@@ -110,21 +113,24 @@ impl MatmulStage {
                 (Some(_), _) => staged.converted_by_fill(),
                 (None, _) => staged,
             }
-        })
+        });
+        held.collect()
     }
 
-    /// Bytes one stage holds of both operands on `hw`, each stored in its own element of
+    /// Bytes one stage holds of the operands `staged` names on `hw`, each stored in its own element of
     /// `elements`, laid out as `storage` and bound in the order `orders` says: every block it
     /// holds, each laid out alike over the dimensions inside one.
     pub fn bytes(
         &self,
         hw: &Hardware,
+        staged: StagedOperands,
         elements: MatmulOperands<ElemType>,
         storage: &StageStorage,
         orders: MatmulOperands<BindingOrder>,
     ) -> usize {
         let block: usize = self
             .operands(
+                staged,
                 elements,
                 orders,
                 MatmulOperands::all(MatmulRead::AsBound),

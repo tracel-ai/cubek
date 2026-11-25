@@ -337,6 +337,21 @@ impl Hardware {
         Delivery::Tma.runs_on(&self.properties).is_ok()
     }
 
+    /// Whether the device contracts 8-bit floats through its manual matrix instruction, whose units
+    /// load the values they hold.
+    pub fn contracts_fp8_in_registers(&self) -> bool {
+        let fp8 = |element| {
+            matches!(
+                element,
+                ElemType::Float(FloatKind::E4M3) | ElemType::Float(FloatKind::E5M2)
+            )
+        };
+        let calls = &self.properties.features.matmul.mma;
+        calls
+            .iter()
+            .any(|call| fp8(call.a_type) && fp8(call.b_type))
+    }
+
     /// Whether a stage may be filled by the units' async copies: the copy engine, and the
     /// barriers its copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn unit_async_copy(&self) -> bool {

@@ -5,7 +5,7 @@ use crate::matmul::{MatmulOperands, MatmulRead};
 use cubecl::tile::launch::{
     OpenedDestination, OpenedDestinationExpand, ServedDestination, ServedDestinationExpand,
 };
-use cubecl::tile::stage::{AsyncStage, AsyncStageExpand, OperandPair, Role};
+use cubecl::tile::stage::{AsyncStage, AsyncStageExpand, OperandPair, Role, StagedOperands};
 use cubecl::tile::{Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
@@ -18,6 +18,8 @@ pub struct CubeStagedWalk {
     pub filling_planes: usize,
     pub ring: StageRing,
     pub scratch: Scratch,
+    /// The inputs its stages hold, the other read where it lies.
+    pub staged: StagedOperands,
     pub store: CubeStagedStore,
     /// How the planes read each operand: as bound, or dequantized at the element they contract,
     /// which a stage the fill decodes holds too.
@@ -143,7 +145,8 @@ impl CubeStagedWalk {
         let sum = Self::open_sum::<EA>(over, &a, &b, walk);
 
         let depth = walk.ring.stages_in_flight.get();
-        let mut stages = Stages::smem(&run, &a, &b, storage, depth, walk.decoded());
+        let mut stages =
+            Stages::smem_staging(&run, &a, &b, walk.staged, storage, depth, walk.decoded());
 
         // Both sets drive the same ring, so both count its laps alike: `depth` stages a lap, the
         // last lap short wherever the walk ends.
@@ -179,7 +182,7 @@ impl CubeStagedWalk {
                             if index < total {
                                 let stage = run.region(index);
                                 let sum_stage = sum.at(&stage);
-                                stages.consume(slot, |a_stage, b_stage| {
+                                stages.consume(slot, &stage, |a_stage, b_stage| {
                                     Self::contract_stage(
                                         &stage, &sum_stage, a_stage, b_stage, walk,
                                     );
@@ -282,8 +285,8 @@ impl CubeStagedWalk {
     }
 }
 
-/// One cube's box of the output, `c = a · b` over `run`, its run of `K`: the cube stages both
-/// operands a step of `K` at a time and every plane contracts its tile out of each stage with the
+/// One cube's box of the output, `c = a · b` over `run`, its run of `K`: the cube stages the
+/// operands its walk does a step of `K` at a time and every plane contracts its tile out of each stage with the
 /// plane microkernel. `storage` is how the stages hold their cells. The operands' scales ride `a`
 /// and `b`, the stages keeping words of block scales beside the values; the ones above such words,
 /// which the instruction cannot take, leave for the sum and are applied once, as it is written
@@ -341,7 +344,8 @@ pub fn cube_staged_sum_microkernel(
     #[comptime] storage: StageStorage,
 ) {
     let in_flight = walk.ring.stages_in_flight.get();
-    let mut stages = Stages::smem(&run, a, b, storage, in_flight, walk.decoded());
+    let mut stages =
+        Stages::smem_staging(&run, a, b, walk.staged, storage, in_flight, walk.decoded());
 
     stages.walk(run, walk.ring.prefetch, |slot, stage| {
         let sum_stage = sum.at(stage);
