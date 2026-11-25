@@ -10,6 +10,7 @@ use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound};
 use cubek_std::Hardware;
+use cubek_std::microkernel::KernelEstimate;
 use cubek_std::routine::{Grid, LaunchSettings, Routine};
 
 /// A routine at one of its settings, whichever routine it is: what a caller that measures the
@@ -62,6 +63,13 @@ impl ReduceCandidate {
     /// routine declines it on the device it was listed for.
     pub fn prepared(&self, key: &ReduceKey) -> Option<ReducePrepared> {
         self.launcher.prepared(key)
+    }
+
+    /// The estimate of the launch this candidate prepares for the problem `key` describes, its
+    /// demand the problem's, or `None` where its routine declines it on the device it was listed
+    /// for: what a caller that measures the routines places the candidate by before timing it.
+    pub fn estimate(&self, key: &ReduceKey) -> Option<KernelEstimate> {
+        self.launcher.estimate(key)
     }
 
     /// `tensors`, whose input the caller binds, reduced at this candidate's setting.
@@ -160,6 +168,19 @@ impl ReduceCandidateLauncher {
                     ReducePrepared::new(ReduceCompiled::HypercubeAtomic, blueprint, grid)
                 })
             }
+        }
+    }
+
+    /// The estimate of the launch the candidate prepares for `key`.
+    fn estimate(&self, key: &ReduceKey) -> Option<KernelEstimate> {
+        match &self.dispatch {
+            ReduceCandidateLauncherDispatch::UnitDirect(candidate) => candidate.estimate(key),
+            ReduceCandidateLauncherDispatch::PlaneShuffle(candidate) => candidate.estimate(key),
+            ReduceCandidateLauncherDispatch::CubeStaged(candidate) => candidate.estimate(key),
+            ReduceCandidateLauncherDispatch::HypercubeLastArrival(candidate) => {
+                candidate.estimate(key)
+            }
+            ReduceCandidateLauncherDispatch::HypercubeAtomic(candidate) => candidate.estimate(key),
         }
     }
 

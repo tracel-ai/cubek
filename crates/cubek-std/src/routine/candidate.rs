@@ -1,5 +1,6 @@
 use crate::Hardware;
-use crate::routine::{Grid, PreparedLaunches, Routine};
+use crate::microkernel::KernelEstimate;
+use crate::routine::{EstimatedProblem, Grid, PreparedLaunches, Routine};
 use cubecl::CubeDim;
 use cubecl::tile::launch::Decline;
 use std::sync::Arc;
@@ -72,5 +73,16 @@ where
     pub fn launch_of(&self, problem: &R::Problem) -> Option<(R::Blueprint, CubeDim)> {
         let (blueprint, grid) = self.prepare(problem).ok()?;
         Some((blueprint, grid.launch.cube_dim))
+    }
+
+    /// The estimate of the launch the routine prepares for `problem` at this setting, its demand
+    /// the problem's, or `None` where the routine declines it: what a caller that measures the
+    /// routines places the candidate by before timing it.
+    pub fn estimate(&self, problem: &R::Problem) -> Option<KernelEstimate> {
+        let (blueprint, grid) = self.prepare(problem).ok()?;
+        let mut estimate = KernelEstimate::from(&grid);
+        R::estimate(problem, &blueprint, &grid, &mut estimate);
+        estimate.demand = Some(problem.demand());
+        Some(estimate)
     }
 }
