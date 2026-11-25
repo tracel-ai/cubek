@@ -6,7 +6,7 @@ use cubecl::tile::{
 use cubecl::{
     ir::ElemType,
     prelude::*,
-    quant::scheme::{QuantScheme, QuantStore, ScaleDtype},
+    quant::scheme::{BlockSize, QuantScheme, QuantStore, ScaleDtype},
 };
 use cubek_std::matmul_dimensions::{M, N};
 
@@ -30,11 +30,11 @@ pub fn launch_ref(
         "only native quantization is supported for now."
     );
     assert!(
-        scheme.num_levels() == 1 && scheme.block_size().is_none(),
+        scheme.levels().count() == 1 && scheme.finest().size == BlockSize::TENSOR,
         "only per tensor quantization is supported for now."
     );
     assert!(
-        scheme.scale_dtype() == ScaleDtype::F32,
+        scheme.finest().dtype == ScaleDtype::F32,
         "only f32 scales are supported for now."
     );
     assert!(

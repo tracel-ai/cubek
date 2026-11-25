@@ -1,6 +1,6 @@
 use cubecl::features::Plane;
 use cubecl::ir::ElemType;
-use cubecl::quant::scheme::QuantScheme;
+use cubecl::quant::scheme::{BlockExtent, BlockSize, QuantScheme};
 use cubecl::tile::kind::Field;
 use cubecl::tile::launch::{Decline, MaskedExtent, VectorRequirement};
 use cubecl::tile::{Dimension, Partitioning, Space};
@@ -85,20 +85,21 @@ impl RowStore {
     ///
     /// [`PACKED_STORE_UNSERVED`].
     pub fn packed(scheme: &QuantScheme, width: usize) -> Result<Self, Decline> {
-        let size = scheme
-            .block_size()
-            .filter(|_| scheme.num_levels() == 1 && scheme.packing_dim() == Some(0))
-            .ok_or(PACKED_STORE_UNSERVED)?;
-        let block = match size.as_slice() {
-            [leading @ .., block] if leading.iter().all(|&extent| extent == 1) => *block as usize,
+        let finest = scheme.finest();
+        let block = match (finest.size.extents[0], scheme.packing_dim()) {
+            (BlockExtent::VALUE, _) => return Err(PACKED_STORE_UNSERVED),
+            (BlockExtent::Values(block), Some(0))
+                if finest.size == BlockSize::new([block.get()]) && scheme.levels().count() == 1 =>
+            {
+                block.get() as usize
+            }
             _ => return Err(PACKED_STORE_UNSERVED),
         };
-        let scale = scheme.block_scale().ok_or(PACKED_STORE_UNSERVED)?;
         let store = Self::Packed {
             block,
-            scales_per_word: Field::of_scale(scale.dtype).per_word(),
+            scales_per_word: Field::of_scale(finest.dtype).per_word(),
         };
-        match block > 0 && store.holds_cube_run(width) {
+        match store.holds_cube_run(width) {
             true => Ok(store),
             false => Err(PACKED_STORE_UNSERVED),
         }

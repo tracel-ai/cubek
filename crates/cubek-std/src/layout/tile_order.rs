@@ -32,7 +32,9 @@ use crate::layout::stored::Operand;
 use crate::layout::{Fragments, assemble, fragments_of};
 use crate::matmul_dimensions::{K, KB, KI, blocked};
 use cubecl::ir::ElemType;
-use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{
+    BlockExtent, BlockSize, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+};
 use cubecl::tile::Dimension;
 use cubecl::tile::layout::{Stagger, StorageLevels, StoragePartitioning};
 use cubecl::zspace::metadata::Metadata;
@@ -220,13 +222,19 @@ impl TileOrder {
         let QuantStore::PackedU32(1) = scheme.store else {
             return None;
         };
-        let dims = scheme.block_size()?.to_dim_vec(2);
-        let byte_scales = ElemType::from_scale_dtype(scheme.block_scale()?.dtype).size_bits() == 8;
+        let finest = scheme.finest();
+        let coarser = scheme.levels().nth(1).map(|level| level.size);
+        let ([BlockExtent::Values(block), BlockExtent::VALUE], None | Some(BlockSize::TENSOR)) =
+            (finest.size.extents_in(), coarser)
+        else {
+            return None;
+        };
+        let byte_scales = ElemType::from_scale_dtype(finest.dtype).size_bits() == 8;
         let symmetric = scheme.mode == QuantMode::Symmetric;
-        if !(symmetric && byte_scales && dims[1] == 1) {
+        if !(symmetric && byte_scales) {
             return None;
         }
-        Self::in_whole_words(dims[0] as usize, scheme.num_quants())
+        Self::in_whole_words(block.get() as usize, scheme.num_quants())
     }
 
     /// A scale every `block` values, `values_per_word` to a word: `None` unless the words pack

@@ -16,12 +16,7 @@ pub fn quantized_arg<'a>(
     values: Arg<'a, Labelled>,
     scales: impl IntoIterator<Item = Arg<'a, Labelled>>,
 ) -> Result<TileTensorLaunch, Decline> {
-    let fields = scheme
-        .block_scale()
-        .map(|block| block.dtype)
-        .into_iter()
-        .chain(scheme.tensor_scale())
-        .map(Field::of_scale);
+    let fields = scheme.levels().map(|level| Field::of_scale(level.dtype));
     let mut tile = values.packed(scheme.value).build()?.arg();
     for (scale, field) in scales.into_iter().zip(fields) {
         tile = tile.scales(scale.packed(field).build()?.arg());

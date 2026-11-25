@@ -7,7 +7,7 @@ use cubecl::{
     server::LaunchError,
     zspace::Shape,
 };
-use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
+use cubecl_common::quant::scheme::{BlockSize, QuantScheme, QuantStore, QuantValue};
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -66,7 +66,7 @@ impl InputBinding {
                 data_dtype: _,
                 scale_dtype: _,
             } => {
-                if scheme.num_levels() > 1 {
+                if scheme.levels().count() > 1 {
                     unimplemented!("two-level quantization is not supported here, got {scheme:?}");
                 }
 
@@ -76,7 +76,7 @@ impl InputBinding {
                 data.strides.swap(dim0, dim1);
 
                 // Swap dims for scale and block size if block scaled quant is used
-                if scheme.block_size().is_some() {
+                if scheme.finest().size != BlockSize::TENSOR {
                     scale.shape.swap(dim0, dim1);
                     scale.strides.swap(dim0, dim1);
                     scheme.swap_block_dims(rank, dim0, dim1);

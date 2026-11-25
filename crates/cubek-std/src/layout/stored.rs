@@ -9,7 +9,7 @@ use crate::TMA_ROW_BYTES;
 use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
 use crate::matmul_dimensions::{K, blocked};
 use cubecl::ir::ElemType;
-use cubecl::quant::scheme::{QuantScheme, QuantStore};
+use cubecl::quant::scheme::{BlockExtent, BlockSize, QuantScheme, QuantStore};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::{Run, VectorTile};
 use cubecl::tile::{Dimension, Instruction, MicroTile, OperandReads, Space, kind::Field};
@@ -66,21 +66,26 @@ impl Operand {
     /// `dimensions` names the tensor's dims in the order the scheme's block shape
     /// counts them.
     ///
-    /// `None` where the block spans both dimensions, or where a read would straddle
-    /// two scales: neither is a form this kernel streams.
+    /// `None` where the finest block spans both dimensions or a whole one, where a read would
+    /// straddle two scales, or under a coarser level of more than one scale: none is a form this
+    /// kernel streams.
     pub fn of_scheme(
         scheme: &QuantScheme,
         dimension: Dimension,
         dimensions: [Dimension; 2],
     ) -> Option<Self> {
-        let dims = scheme.block_size()?.to_dim_vec(2);
+        let finest = scheme.finest();
+        let extents = finest.size.extents_in::<2>();
         let position = dimensions.iter().position(|&a| a == dimension)?;
-        if dims[1 - position] != 1 {
+        let coarser = scheme.levels().nth(1).map(|level| level.size);
+        let (BlockExtent::VALUE, BlockExtent::Values(scale), None | Some(BlockSize::TENSOR)) =
+            (extents[1 - position], extents[position], coarser)
+        else {
             return None;
-        }
-        let scale = dims[position] as usize;
+        };
+        let scale = scale.get() as usize;
         let read = scheme.num_quants();
-        let scales_per_word = Field::of_scale(scheme.block_scale()?.dtype).per_word();
+        let scales_per_word = Field::of_scale(finest.dtype).per_word();
         scale
             .is_multiple_of(read)
             .then(|| Operand::packed(dimension, read, dimension, scale, scales_per_word))
@@ -835,11 +840,9 @@ impl Packing {
     /// Whether each of its block scales is whole bytes, which a unit loads alone: every scale type
     /// a scheme states, `ue4m3` and `ue8m0` a byte, `f16` two, `f32` four.
     fn scales_read_alone(&self) -> bool {
-        self.scheme.block_scale().is_some_and(|block| {
-            ElemType::from_scale_dtype(block.dtype)
-                .size_bits()
-                .is_multiple_of(u8::BITS as usize)
-        })
+        ElemType::from_scale_dtype(self.scheme.finest().dtype)
+            .size_bits()
+            .is_multiple_of(u8::BITS as usize)
     }
 
     /// Bits one value holds, packed.
@@ -855,13 +858,11 @@ impl Packing {
     /// Bytes a matrix of `values` values holds: its words and its block scales. The per-tensor
     /// scale is one word and left out.
     pub fn bytes(&self, values: usize) -> usize {
-        let scales = match (self.operand.scaled_along(), self.scheme.block_scale()) {
-            (Some(dimension), Some(block)) => {
-                let covered = self.operand.scale(dimension).unwrap_or(1);
-                (values / covered) * 4 / Field::of_scale(block.dtype).per_word()
-            }
-            _ => 0,
-        };
+        let scales_per_word = Field::of_scale(self.scheme.finest().dtype).per_word();
+        let scales = self.operand.scaled_along().map_or(0, |dimension| {
+            let covered = self.operand.scale(dimension).unwrap_or(1);
+            (values / covered) * 4 / scales_per_word
+        });
         self.values_bytes(values) + scales
     }
 }

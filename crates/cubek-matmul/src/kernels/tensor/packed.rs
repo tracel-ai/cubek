@@ -31,9 +31,10 @@ use cubek_std::routine::ADMITTED_PLAN_RUNS;
 const WORD: ElemType = ElemType::UInt(UIntKind::U32);
 
 /// What [`PackedTensor::of_quantized`] declines: a scheme with no block scales along the dimension
-/// its words run along.
+/// its words run along, or with a coarser level of more than one scale.
 pub const SCALES_NOT_ALONG_WORDS: Decline = Decline::Unserved {
-    why: "the packed routines read block scales along the dimension the words run along",
+    why: "the packed routines read block scales along the dimension the words run along, under \
+          at most one scale for the whole tensor",
 };
 
 /// What [`PackedTensor::of_quantized`] declines: a batch of matrices, or values stored other than
@@ -139,7 +140,7 @@ impl PackedTensor {
     ) -> Self {
         assert_eq!(
             global_scale.is_some(),
-            scheme.num_levels() > 1,
+            scheme.levels().count() > 1,
             "a two-level scheme carries a per-tensor scale and a one-level one does not"
         );
         Self {
@@ -699,7 +700,7 @@ impl PackedTensor {
                 // A whole read of the scales at once: the scales of every row a read spans.
                 .vectorize(operand.scale_read_values());
                 self.shifted_words(words).and_then(|words| {
-                    let field = Field::of_scale(self.scheme.scale_dtype());
+                    let field = Field::of_scale(self.scheme.finest().dtype);
                     let block_scales = self.shifted(block_scales.packed(field).build()?.arg());
                     Ok(Self::under_scales(words, block_scales, global, outer))
                 })
@@ -824,7 +825,7 @@ impl PackedTensor {
                 }
                 .vectorize(operand.scale_read_values())
                 .delivery(Delivery::AsyncPerUnit);
-                let field = Field::of_scale(self.scheme.scale_dtype());
+                let field = Field::of_scale(self.scheme.finest().dtype);
                 let block_scales = block_scales
                     .packed(field)
                     .build()
@@ -1080,7 +1081,7 @@ impl PackedTensor {
         words_dimensions: &[Dimension],
         tiled_along: Dimension,
     ) -> Option<TileTensorLaunch> {
-        let field = Field::of_scale(self.scheme.tensor_scale()?);
+        let field = Field::of_scale(self.scheme.levels().nth(1)?.dtype);
         let scale = self.global_scale.as_ref()?;
         let global = launcher
             .arg(scale.rows(1, 1), WORD)
@@ -1120,7 +1121,7 @@ impl PackedTensor {
         blocks_dimension: Dimension,
         scales_dimensions: &'l [Dimension],
     ) -> Arg<'l, Labelled> {
-        let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype());
+        let scale = ElemType::from_scale_dtype(self.scheme.finest().dtype);
         let across = self.other_dimension(K);
         let lined = self.operand.lined();
         let in_tiles = self.operand.tile_order().and_then(|order| {
@@ -1147,7 +1148,7 @@ impl PackedTensor {
     /// scales: a buffer holding them in wider elements steps its rows in those.
     fn block_scale_bytes(&self, rows: usize, blocks: usize) -> TensorBinding {
         // Counted in scales: a row's run of stored elements, each so many scales.
-        let scale = ElemType::from_scale_dtype(self.scheme.scale_dtype()).size();
+        let scale = ElemType::from_scale_dtype(self.scheme.finest().dtype).size();
         let per_element = self.block_scales.elem.size();
         let step = self
             .block_scales
@@ -1199,11 +1200,7 @@ impl PackedTensor {
 
     /// The field a word of block scales holds, the scheme's block-scale type.
     fn block_scale_field(&self) -> Field {
-        let block = self
-            .scheme
-            .block_scale()
-            .expect("block scales bound as words are a block-scaled scheme's");
-        Field::of_scale(block.dtype)
+        Field::of_scale(self.scheme.finest().dtype)
     }
 
     /// The dims a binding of words or scales starts with: the slabs, where this tensor is a stack.
