@@ -25,9 +25,10 @@
 //! gradient may differ from one run to the next in its last bits; the key's and the value's do
 //! not. A device without `f32` atomic adds declines it.
 //!
-//! The routines, one folder per scope, and the strategies are in [`kernels`];
-//! [`attention_backward`] runs the strategy and setting autotune measures fastest, the hypercube
-//! strategy among them: no setting leaves it out.
+//! The routines, one folder per scope, and the strategies are in [`kernels`]. cubek measures
+//! nothing: a caller that does races every setting of the strategies
+//! ([`kernels::AttentionBackwardCandidate`]), keyed by [`kernels::AttentionBackwardKey`], the
+//! hypercube strategy among them: no setting leaves it out.
 
 #[cfg(feature = "benchmarks")]
 pub mod eval;
@@ -35,5 +36,5 @@ pub mod kernels;
 
 pub use kernels::{
     ATTENTION_BACKWARD_ELEMENT_UNVERIFIED, ATTENTION_BACKWARD_GROUP_UNEVEN,
-    AttentionBackwardGradients, AttentionBackwardTensors, attention_backward,
+    AttentionBackwardGradients, AttentionBackwardTensors,
 };

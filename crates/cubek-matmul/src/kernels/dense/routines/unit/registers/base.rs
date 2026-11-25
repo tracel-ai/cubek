@@ -4,14 +4,16 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::{BaseRegion, Space, TileTensorLaunch, VectorRegion};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
+use cubek_microkernel::matmul::{
+    MatmulDimensions, MatmulOperand, MatmulOperands, MatmulStagingCount,
+};
 use cubek_std::Hardware;
 use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -41,28 +43,41 @@ impl UnitRegistersMatmulRoutine {
             .expect("the unit routine distributes its blocks to a plane's units")
     }
 
-    /// Blocks along `n` per plane. A one-unit plane (CPU runtime) takes the largest divisor of
-    /// `n / columns` up to `setting`, so no plane's row overhangs `n` and masks its accesses.
-    /// Wider planes keep `setting`, since fewer blocks would idle their units, as does an `n`
-    /// that `columns` does not divide.
-    fn fitted_blocks_per_plane(
-        setting: usize,
-        n: usize,
-        columns: usize,
-        plane_width: u32,
-    ) -> usize {
-        match plane_width == 1 && n.is_multiple_of(columns) {
-            true => divisor_at_most(n / columns, setting),
-            false => setting,
-        }
-    }
-
     /// The width [`prepare`](Routine::prepare) launches a plane at, beside `planes`
     /// others in a cube.
     pub fn plane_width(hw: &Hardware, planes: usize) -> u32 {
         (hw.properties.hardware.max_units_per_cube / planes as u32)
             .min(hw.dispatch_plane_size())
             .max(1)
+    }
+
+    /// The vector region of `problem`, over `space`, on `hw` read as `microkernel` reads it: each
+    /// input a register at once, or the widest read below it that its buffer admits and that
+    /// divides the problem, along the dimension it is bound innermost along. The output is written
+    /// as its rhs is lined, or a value at a time.
+    fn vector_region(
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        space: &Space,
+        microkernel: &UnitRegistersMicrokernel,
+    ) -> VectorRegion {
+        let orders = microkernel.orders();
+        let mut vectorization = Vectorization::new();
+        problem.require_reads(orders, &mut vectorization);
+        vectorization.require(microkernel.lined());
+        for operand in MatmulOperand::ALL {
+            vectorization.require(VectorRequirement::masked(
+                operand,
+                space,
+                MatmulDimensions::MNK.of(orders.innermost(operand)),
+            ));
+        }
+        VectorRegion::new(MatmulOperand::INPUTS.map(|input| {
+            let read = vectorization.width(input, |operand| {
+                hw.register_values(problem.elements.get(operand))
+            });
+            Space::new(&[(MatmulDimensions::MNK.of(orders.innermost(input)), read)])
+        }))
     }
 
     /// `microkernel` placed by `partitioning`, its widths settled. A register block reads its
@@ -97,6 +112,34 @@ impl UnitRegistersMatmulRoutineSettings {
         blocks_per_plane: NonZeroUsize::new(32).unwrap(),
         cube_order: CubeOrder::RowMajor,
     };
+
+    /// These settings, each unit's block one `region`.
+    fn counting(&self, region: &BaseRegion) -> Self {
+        let along = |dimension| {
+            NonZeroUsize::new(region.along(dimension)).expect("a region should reach a value")
+        };
+        Self {
+            microkernel: UnitRegistersMicrokernelSettings {
+                rows: along(M),
+                columns: along(N),
+                depth: along(K),
+            },
+            ..*self
+        }
+    }
+
+    /// Blocks along `n` per plane. A one-unit plane (CPU runtime) takes the largest divisor of
+    /// `n / columns` up to the setting, so no plane's row overhangs `n` and masks its accesses.
+    /// Wider planes keep the setting, since fewer blocks would idle their units, as does an `n`
+    /// that `columns` does not divide.
+    pub fn fitted_blocks_per_plane(&self, n: usize, plane_width: u32) -> usize {
+        let columns = self.microkernel.columns.get();
+        let setting = self.blocks_per_plane.get();
+        match plane_width == 1 && n.is_multiple_of(columns) {
+            true => divisor_at_most(n / columns, setting),
+            false => setting,
+        }
+    }
 
     /// Settings for a CPU runtime, where a plane is one unit on one core. Tuned for a col rhs.
     ///
@@ -231,16 +274,16 @@ impl Routine for UnitRegistersMatmulRoutine {
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_plain()?;
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
-        let microkernel =
-            UnitRegistersMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
+        let item = view.work_item();
+        let microkernel = UnitRegistersMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let settings = settings.counting(&BaseRegion::new(
+            &Self::vector_region(hw, problem, &view.space(), &microkernel),
+            microkernel.region(),
+        ));
+        let microkernel = UnitRegistersMicrokernel::best(hw, &item, &settings.microkernel)?;
         let planes = settings.planes;
         let plane_width = Self::plane_width(hw, planes.count());
-        let blocks_per_plane = Self::fitted_blocks_per_plane(
-            settings.blocks_per_plane.get(),
-            problem.n,
-            settings.microkernel.columns.get(),
-            plane_width,
-        );
+        let blocks_per_plane = settings.fitted_blocks_per_plane(problem.n, plane_width);
         let partitioning = view.plane_partitioning(
             microkernel.tiling().units_distributed(N, blocks_per_plane),
             &[M, N],
@@ -300,7 +343,7 @@ mod tests {
     /// the output is written a value at a time.
     #[test]
     fn a_col_rhs_contracts_with_the_lhs_into_one_value_cells() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let col_weight = MatmulRoutineProblem::from(&MatmulShape {
             m: 256,
             n: 512,
@@ -355,7 +398,7 @@ mod tests {
     /// described, those whose plane width no memory-bound routine can merge across included.
     #[test]
     fn the_default_prepares_every_decode_projection_on_every_device() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let f16 = ElemType::Float(FloatKind::F16);
         let settings = UnitRegistersMatmulRoutineSettings::DEFAULT;
         for hw in fixtures() {
@@ -393,15 +436,19 @@ mod tests {
             UnitRegistersMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the floor prepares everywhere")
         };
-        let (wave32, wave32_grid) = prepare(devices::strix_halo());
-        let (wave64, wave64_grid) = prepare(devices::cdna_wave64());
+        let narrow = devices::strix_halo();
+        let mut wide = devices::cdna_wave64();
+        // A block is as wide as a register, which the two fixtures state differently.
+        devices::topology(&mut wide).max_vector_size = narrow.properties.hardware.max_vector_size;
+        let (wave32, wave32_grid) = prepare(narrow);
+        let (wave64, wave64_grid) = prepare(wide);
         assert_eq!(wave32, wave64);
         assert_eq!(wave32_grid.planes().width, 32);
         assert_eq!(wave64_grid.planes().width, 64);
     }
 
-    /// A unit reads its block's `depth` of the lhs and its `columns` of the rhs and the output, so
-    /// the default's four narrows every width, until the extent a mask cuts narrows it further.
+    /// A unit reads as widely as the device does where that divides the problem, its block a whole
+    /// number of those reads; an extent the device's read does not divide narrows it.
     #[test]
     fn the_widths_are_what_the_accesses_and_the_binding_admit() {
         let hw = devices::strix_halo();
@@ -414,20 +461,19 @@ mod tests {
             let widths = blueprint.widths;
             (widths.lhs, widths.rhs, widths.out)
         };
-        assert_eq!(widths(256, 512, 64), (4, 4, 4));
-        // A `k` the steps overhang masks the lhs, whose contiguous dimension it is, at a width that
-        // divides it.
-        assert_eq!(widths(256, 512, 22), (2, 4, 4));
-        // An `n` the planes overhang masks the rhs and the output, likewise.
-        assert_eq!(widths(256, 516, 64), (4, 4, 4));
-        assert_eq!(widths(256, 514, 64), (4, 2, 2));
+        assert_eq!(widths(256, 512, 64), (8, 8, 8));
+        // The lhs is read along `k`, at a width that divides it.
+        assert_eq!(widths(256, 512, 22), (2, 8, 8));
+        // The rhs and the output along `n`, likewise.
+        assert_eq!(widths(256, 516, 64), (8, 4, 4));
+        assert_eq!(widths(256, 514, 64), (8, 2, 2));
     }
 
     /// `cpu_col_rhs` settings with `n = 1632`: 32 blocks of width 2 per plane would overhang `n`,
     /// so `prepare` fits them to 24, and the col rhs stays vectorized along `K`.
     #[test]
     fn the_cpu_settings_fit_their_planes_to_an_n_their_count_overhangs() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let hw = devices::cpu_12();
         let col_weight = MatmulRoutineProblem::from(&MatmulShape {
             m: 2304,
@@ -448,37 +494,33 @@ mod tests {
         assert_eq!(blueprint.widths.lhs, blueprint.widths.rhs);
     }
 
+    /// The CPU settings with the block two columns wide and 32 blocks to a plane.
+    fn two_columns() -> UnitRegistersMatmulRoutineSettings {
+        let defaults = UnitRegistersMatmulRoutineSettings::DEFAULT;
+        UnitRegistersMatmulRoutineSettings {
+            microkernel: UnitRegistersMicrokernelSettings {
+                columns: NonZeroUsize::new(2).unwrap(),
+                ..defaults.microkernel
+            },
+            ..defaults
+        }
+    }
+
     #[test]
     fn a_one_unit_plane_takes_a_count_that_divides_n() {
+        let settings = two_columns();
         // 816 = 2^4·3·17 and 136 = 2^3·17 blocks of width 2.
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1632, 2, 1),
-            24
-        );
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 272, 2, 1),
-            17
-        );
+        assert_eq!(settings.fitted_blocks_per_plane(1632, 1), 24);
+        assert_eq!(settings.fitted_blocks_per_plane(272, 1), 17);
         // A divisor is kept; an `n` of fewer blocks than `setting` takes all of them.
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1024, 2, 1),
-            32
-        );
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 32, 2, 1),
-            16
-        );
+        assert_eq!(settings.fitted_blocks_per_plane(1024, 1), 32);
+        assert_eq!(settings.fitted_blocks_per_plane(32, 1), 16);
     }
 
     #[test]
     fn a_wider_plane_or_a_ragged_n_keeps_the_setting() {
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1632, 2, 32),
-            32
-        );
-        assert_eq!(
-            UnitRegistersMatmulRoutine::fitted_blocks_per_plane(32, 1633, 2, 1),
-            32
-        );
+        let settings = two_columns();
+        assert_eq!(settings.fitted_blocks_per_plane(1632, 32), 32);
+        assert_eq!(settings.fitted_blocks_per_plane(1633, 1), 32);
     }
 }

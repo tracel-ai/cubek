@@ -1,5 +1,4 @@
-use crate::kernels::AttentionKernel;
-use crate::kernels::tune::AttentionTuneInputs;
+use crate::kernels::{AttentionKernel, AttentionTuneInputs};
 use cubecl::Device;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;

@@ -14,9 +14,10 @@ pub enum ReduceError {
     /// A top-k keeps no value: `k` is 0.
     #[error("A top-k keeps at least one value; k is 0.")]
     EmptyTopK,
-    /// The reduced dim is shorter than the `k` a top-k keeps.
+    /// The reduced dim is shorter than the cells a row writes: `k` for a top-k, one for every other
+    /// operation, which an empty dim is too short for.
     #[error(
-        "The input reduce axis length (currently {axis_length:?}) should be at least k ({k:?})."
+        "The input reduce axis length (currently {axis_length:?}) should be at least the {k:?} a row writes."
     )]
     ReduceAxisTooSmall { axis_length: usize, k: usize },
     /// The output's shape is not the input's with the reduced dim one wide (`k` wide for a top-k).

@@ -29,8 +29,8 @@ impl ReduceElements {
     ///
     /// # Panics
     ///
-    /// Where `operation` writes an index or a flag and `out` is `None`, or `input` is a boolean or
-    /// a complex number.
+    /// Where `operation` writes an index or a flag and `out` is `None`, or sums, multiplies or
+    /// averages a boolean or a complex number.
     pub fn for_operation(
         operation: ReduceOperation,
         input: ElemType,
@@ -90,7 +90,8 @@ pub struct ReduceRoutineProblem {
     pub axis: usize,
     pub operation: ReduceOperation,
     pub elements: ReduceElements,
-    /// The axis both operands step one element along, if they share one: what a line runs along.
+    /// The innermost axis, where a line runs along it: the buffers a line is read from and written
+    /// to whole step one element along it. `None` where none does, and a line holds one value.
     pub contiguous: Option<usize>,
     /// The alignment in elements of the input's buffer, then the output's, read by that position
     /// (Position Usage).
@@ -132,13 +133,16 @@ impl ReduceRoutineProblem {
             "a reduction along axis {axis} writes the input's shape with that axis {} wide",
             operation.written_per_row()
         );
-        // A line runs along the innermost axis where both operands step one element along it,
-        // past the row axes one long, which hold no step (as `labelled` leaves them out).
+        // A line runs along the innermost axis where the operands it is read from and written to
+        // step one element along it, past the row axes one long, which hold no step (as
+        // `labelled` leaves them out). A line along the reduced axis is only read: its row goes out
+        // a cell.
         let inner = (0..shape.len())
             .rev()
             .find(|&d| d == axis || shape[d] > 1)
             .expect("the reduced axis is one of the input's");
-        let contiguous = (steps_one(input, inner) && steps_one(out, inner)).then_some(inner);
+        let written_whole = inner == axis || steps_one(out, inner);
+        let contiguous = (steps_one(input, inner) && written_whole).then_some(inner);
         Self {
             elem_alignments: [input, out]
                 .map(|geometry| ElemAlignment::new(geometry.shape(), geometry.strides())),
@@ -197,12 +201,27 @@ impl ReduceRoutineProblem {
         }
     }
 
+    /// This problem with its input's buffer aligned as one laid out as `input` is.
+    pub(crate) fn with_input_aligned_as(&self, input: &Geometry) -> Self {
+        let [_, out_alignment] = self.elem_alignments;
+        Self {
+            elem_alignments: [
+                ElemAlignment::new(input.shape(), input.strides()),
+                out_alignment,
+            ],
+            ..self.clone()
+        }
+    }
+
     /// This problem with the indices of its values written beside them in `element`, to
-    /// `indices`: a line runs along the innermost axis only where that buffer steps one element
-    /// along it too.
+    /// `indices`: a line of rows runs along the innermost axis only where that buffer steps one
+    /// element along it too.
     pub(crate) fn writing_indices(mut self, element: ElemType, indices: &TensorBinding) -> Self {
         let indices = Geometry::from(indices);
-        self.contiguous = self.contiguous.filter(|&inner| steps_one(&indices, inner));
+        let axis = self.axis;
+        self.contiguous = self
+            .contiguous
+            .filter(|&inner| inner == axis || steps_one(&indices, inner));
         self.indices = Some(ReduceIndices {
             element,
             elem_alignment: ElemAlignment::new(indices.shape(), indices.strides()),
@@ -249,11 +268,9 @@ impl ReduceRoutineProblem {
         strides: &[usize],
         along: Dimension,
     ) -> (Vec<(usize, usize)>, Vec<Dimension>) {
+        let stepping = (0..shape.len()).filter(|&d| d == self.axis || shape[d] != 1);
         let mut labelled: Vec<(Dimension, (usize, usize))> = Vec::new();
-        for d in 0..shape.len() {
-            if d != self.axis && shape[d] == 1 {
-                continue;
-            }
+        for d in stepping {
             let dimension = match d == self.axis {
                 true => along,
                 false => BATCH,
@@ -274,7 +291,7 @@ impl ReduceRoutineProblem {
             }
         }
         if !labelled.iter().any(|&(dimension, _)| dimension == BATCH) {
-            labelled.insert(0, (BATCH, (1, 1)));
+            labelled.insert(0, (BATCH, ONE_ROW));
         }
         labelled
             .into_iter()
@@ -289,7 +306,7 @@ impl ReduceRoutineProblem {
 
     /// How the input is checked where a tile reaches past its edge: a read there returns the
     /// identity of the operation's edge monoid ([`ReduceOperation::edge_monoid`]), which leaves
-    /// the total unchanged (`tracel:cubecl::edge-reads-identity`).
+    /// the total unchanged.
     pub(crate) fn input_boundary(&self) -> BoundaryPolicy {
         BoundaryPolicy::Overhanging(Boundary::Identity(self.operation.edge_monoid()))
     }
@@ -311,6 +328,12 @@ impl ReduceRoutineProblem {
             Some(axis) if axis != self.axis => BATCH,
             _ => REDUCED,
         }
+    }
+
+    /// How many values the axis a line runs along holds, which the line stays in: one where no axis
+    /// is contiguous.
+    pub(crate) fn line_stays_in(&self) -> usize {
+        self.contiguous.map_or(1, |inner| self.shape[inner])
     }
 
     /// What one load of the input covers, its lines `width` wide: a run along
@@ -394,8 +417,7 @@ impl ReduceRoutineProblem {
     }
 
     /// The problem this one's Tune Key stands for ([`ReduceKey`](crate::kernels::ReduceKey)): what
-    /// every reduce routine prepares its Blueprint from, so every call of one key compiles the
-    /// same kernel.
+    /// the rule picks a routine from.
     pub(crate) fn keyed(&self) -> Self {
         Self::from(&crate::kernels::ReduceKey::from(self))
     }
@@ -407,7 +429,7 @@ impl ReduceRoutineProblem {
     ///
     /// # Panics
     ///
-    /// Where `axis` is not an axis of `shape`.
+    /// As [`stated`](Self::stated).
     pub(crate) fn of_shape(
         shape: &[usize],
         axis: usize,
@@ -445,6 +467,9 @@ impl ReduceRoutineProblem {
     }
 }
 
+/// The `(extent, stride)` of a row axis that holds one row.
+const ONE_ROW: (usize, usize) = (1, 1);
+
 /// Two neighbouring row axes as one, the outer `(extent, stride)` and the inner, where the outer
 /// steps the inner's whole span.
 fn merged_rows(
@@ -455,13 +480,16 @@ fn merged_rows(
 }
 
 impl EstimatedProblem for ReduceRoutineProblem {
-    /// Every value read once and accumulated once, every cell written once.
+    /// Every value read once and accumulated once, every cell written once, and its index beside
+    /// it where the problem writes any.
     fn demand(&self) -> Work {
         let values: usize = self.shape.iter().product();
         let cells = self.row_count() * self.operation.written_per_row();
+        let index_bytes = self.indices.map_or(0, |indices| indices.element.size());
         Work {
             compute_ops: values,
-            bytes: values * self.elements.input.size() + cells * self.elements.out.size(),
+            bytes: values * self.elements.input.size()
+                + cells * (self.elements.out.size() + index_bytes),
         }
     }
 }
@@ -502,10 +530,29 @@ impl ReduceRoutineProblem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cubecl::std::tensor::TensorHandle;
+    use cubecl::tile::Monoid;
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
     const F32: ElemType = ElemType::Float(FloatKind::F32);
     const U32: ElemType = ElemType::UInt(UIntKind::U32);
+
+    /// A sum of f32 values.
+    fn sum_elements() -> ReduceElements {
+        ReduceElements {
+            input: F32,
+            accumulator: F32,
+            out: F32,
+        }
+    }
+
+    /// A buffer of `shape` stated at `strides`, whose cells no test here reaches.
+    fn buffer_at_strides(shape: &[usize], strides: &[usize]) -> TensorBinding {
+        let client = cubecl::test_device().client();
+        let mut buffer = TensorHandle::empty(&client, shape.to_vec(), F32).binding();
+        buffer.strides = strides.iter().copied().collect();
+        buffer
+    }
 
     #[test]
     fn a_sum_of_halves_accumulates_in_f32() {
@@ -561,19 +608,27 @@ mod tests {
         ReduceElements::for_operation(ReduceOperation::Sum, ElemType::Bool, None);
     }
 
+    #[test]
+    #[should_panic(expected = "write an element the caller names")]
+    fn an_index_without_an_element_to_be_written_in_panics() {
+        ReduceElements::for_operation(ReduceOperation::ArgMax, F32, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn an_axis_past_the_inputs_rank_panics() {
+        let input = Geometry::row_major(&[4, 8]);
+        let out = Geometry::row_major(&[4, 1]);
+        ReduceRoutineProblem::stated(&input, &out, 2, ReduceOperation::Sum, sum_elements());
+    }
+
     /// An output not the input's shape with the reduced axis as wide as a row writes is refused.
     #[test]
     #[should_panic]
     fn a_stated_output_of_another_shape_panics() {
         let input = Geometry::row_major(&[4, 8]);
         let out = Geometry::row_major(&[4, 2]);
-        ReduceRoutineProblem::stated(
-            &input,
-            &out,
-            1,
-            ReduceOperation::Sum,
-            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
-        );
+        ReduceRoutineProblem::stated(&input, &out, 1, ReduceOperation::Sum, sum_elements());
     }
 
     /// Lines lie along the reduced axis where it is the contiguous one.
@@ -590,7 +645,48 @@ mod tests {
         assert_eq!(across.lines_along(), BATCH);
     }
 
-    /// Across the reduced axis, an owner holds a line of `width` rows.
+    /// Rows side by side going out strided leave no axis for a line to run along: it holds a value.
+    #[test]
+    fn a_line_of_rows_going_out_strided_holds_one_value() {
+        let input = Geometry::row_major(&[8, 4]);
+        let out = Geometry::new(&[(1, 8), (4, 2)]);
+        let problem =
+            ReduceRoutineProblem::stated(&input, &out, 0, ReduceOperation::Sum, sum_elements());
+        assert_eq!(problem.line_stays_in(), 1);
+    }
+
+    /// Along the reduced axis a line is only read, however its row's cells go out.
+    #[test]
+    fn a_line_along_the_reduced_axis_reads_whole_beside_a_strided_output() {
+        const ROW_LEN: usize = 8;
+        let input = Geometry::row_major(&[4, ROW_LEN]);
+        let out = Geometry::new(&[(4, 1), (2, 4)]);
+        let problem = ReduceRoutineProblem::stated(
+            &input,
+            &out,
+            1,
+            ReduceOperation::TopK { k: 2 },
+            ReduceElements::for_operation(ReduceOperation::TopK { k: 2 }, F32, None),
+        );
+        assert_eq!(problem.line_stays_in(), ROW_LEN);
+    }
+
+    #[test]
+    fn the_demand_counts_the_indices_written() {
+        const ROWS: usize = 4;
+        const ROW_LEN: usize = 300;
+        let problem = ReduceRoutineProblem {
+            indices: Some(ReduceIndices {
+                element: U32,
+                elem_alignment: ElemAlignment::ONE,
+            }),
+            ..ReduceRoutineProblem::dense(&[ROWS, ROW_LEN], 1, ReduceOperation::ArgMax)
+        };
+        let read = ROWS * ROW_LEN * problem.elements.input.size();
+        let written = ROWS * (problem.elements.out.size() + U32.size());
+        assert_eq!(problem.demand().bytes, read + written);
+    }
+
     #[test]
     fn an_owner_across_the_axis_holds_a_line_of_rows() {
         const WIDTH: usize = 4;
@@ -602,7 +698,6 @@ mod tests {
         );
     }
 
-    /// Along the reduced axis, an owner holds one row.
     #[test]
     fn an_owner_along_the_axis_holds_one_row() {
         const WIDTH: usize = 4;
@@ -620,7 +715,6 @@ mod tests {
         assert_eq!(across.row_boxes_at_width(WIDTH), ROWS.div_ceil(WIDTH));
     }
 
-    /// A tensor of one axis is given a row axis of one.
     #[test]
     fn a_tensor_of_one_axis_is_given_a_row_axis() {
         let problem = ReduceRoutineProblem::dense(&[9], 0, ReduceOperation::Sum);
@@ -648,17 +742,11 @@ mod tests {
     fn the_lines_lie_along_a_reduced_axis_before_axes_one_long() {
         let input = Geometry::row_major(&[4, 8, 1]);
         let out = Geometry::row_major(&[4, 1, 1]);
-        let problem = ReduceRoutineProblem::stated(
-            &input,
-            &out,
-            1,
-            ReduceOperation::Sum,
-            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
-        );
+        let problem =
+            ReduceRoutineProblem::stated(&input, &out, 1, ReduceOperation::Sum, sum_elements());
         assert_eq!(problem.lines_along(), REDUCED);
     }
 
-    /// A tensor of one axis is one row.
     #[test]
     fn a_tensor_of_one_axis_is_one_row() {
         let problem = ReduceRoutineProblem::dense(&[9], 0, ReduceOperation::Sum);
@@ -718,6 +806,82 @@ mod tests {
         assert_eq!(
             across.split_part(UNITS, UNIT_LINES, WIDTH),
             UNITS * UNIT_LINES
+        );
+    }
+
+    #[test]
+    fn an_unbound_input_is_read_at_exactly_the_callers_width() {
+        const WIDTH: usize = 2;
+        let problem = ReduceRoutineProblem::of_unbound(
+            &Geometry::row_major(&[4, 8]),
+            WIDTH,
+            &buffer_at_strides(&[4, 1], &[1, 1]),
+            1,
+            ReduceOperation::Sum,
+            sum_elements(),
+        );
+        assert_eq!(
+            problem.elem_alignments[0],
+            ElemAlignment::stored_piece(WIDTH)
+        );
+    }
+
+    #[test]
+    fn an_input_aligned_as_a_geometry_takes_the_lines_that_geometry_takes() {
+        let problem = ReduceRoutineProblem {
+            elem_alignments: [ElemAlignment::stored_piece(2); 2],
+            ..ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Sum)
+        };
+        let aligned = problem.with_input_aligned_as(&Geometry::row_major(&[4, 8]));
+        assert_eq!(
+            aligned.elem_alignments,
+            [ElemAlignment::dense_rows(8), ElemAlignment::stored_piece(2)]
+        );
+    }
+
+    #[test]
+    fn indices_are_written_in_their_element_at_their_buffers_alignment() {
+        let problem = ReduceRoutineProblem::dense(&[8, 4], 0, ReduceOperation::ArgMax);
+        let written = problem.writing_indices(U32, &buffer_at_strides(&[1, 4], &[4, 1]));
+        assert_eq!(
+            written.indices,
+            Some(ReduceIndices {
+                element: U32,
+                elem_alignment: ElemAlignment::dense_rows(4),
+            })
+        );
+    }
+
+    #[test]
+    fn a_line_of_rows_whose_indices_go_out_strided_holds_one_value() {
+        let problem = ReduceRoutineProblem::dense(&[8, 4], 0, ReduceOperation::ArgMax);
+        let written = problem.writing_indices(U32, &buffer_at_strides(&[1, 4], &[8, 2]));
+        assert_eq!(written.line_stays_in(), 1);
+    }
+
+    /// Along the reduced axis no index goes out in a line.
+    #[test]
+    fn a_line_along_the_reduced_axis_reads_whole_beside_strided_indices() {
+        const ROW_LEN: usize = 8;
+        let problem =
+            ReduceRoutineProblem::dense(&[4, ROW_LEN], 1, ReduceOperation::ArgTopK { k: 2 });
+        let written = problem.writing_indices(U32, &buffer_at_strides(&[4, 2], &[4, 2]));
+        assert_eq!(written.line_stays_in(), ROW_LEN);
+    }
+
+    #[test]
+    fn a_keyed_problem_is_as_large_as_its_keys_buckets() {
+        let problem = ReduceRoutineProblem::dense(&[3, 7, 300], 2, ReduceOperation::Sum);
+        assert_eq!(problem.keyed().shape, vec![64, 1024]);
+    }
+
+    /// A product's identity is one, where an unstated boundary reads zero.
+    #[test]
+    fn a_products_input_reads_the_products_identity_past_its_edge() {
+        let problem = ReduceRoutineProblem::dense(&[4, 8], 1, ReduceOperation::Prod);
+        assert_eq!(
+            problem.input_boundary(),
+            BoundaryPolicy::Overhanging(Boundary::Identity(Monoid::Prod))
         );
     }
 

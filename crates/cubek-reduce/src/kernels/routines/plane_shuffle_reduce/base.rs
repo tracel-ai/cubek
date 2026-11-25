@@ -1,17 +1,17 @@
 use super::kernel::{plane_shuffle_reduce_kernel, plane_shuffle_reduce_with_indices_kernel};
 use crate::kernels::{
-    BATCH, ReduceBinding, ReduceBlueprint, ReduceLauncher, ReduceRoutineProblem,
-    each_microkernel_with, estimate_reduce, microkernel_widths, prepared_from_key,
+    BATCH, ReduceBinding, ReduceBlueprint, ReduceRoutine, ReduceRoutineProblem,
+    each_microkernel_with, estimate_reduce, microkernel_widths,
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, TileOperand, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
 use cubecl::tile::{Partitioning, TileTensorLaunch};
-use cubek_microkernel::reduce::ReduceOperand;
 use cubek_microkernel::reduce::plane::{
     PlaneShuffleReduceMicrokernel, PlaneShuffleReduceMicrokernelSettings,
 };
+use cubek_microkernel::reduce::{ReduceCarrierFamily, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
@@ -73,35 +73,29 @@ impl Routine for PlaneShuffleReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        // Inside, `problem` is the problem the call's Tune Key stands for.
-        prepared_from_key::<Self, _>(hw, problem, |problem| {
-            let microkernel = PlaneShuffleReduceMicrokernel::best(
-                hw,
-                &problem.work_item(),
-                &settings.microkernel,
-            )?;
-            let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line());
-            let microkernel = microkernel.across_rows(hw, widths[0], problem.row_count());
-            let partitioning = Partitioning::new(
-                problem.space(),
-                microkernel
-                    .levels(&problem.owner_box_at_width(widths[0]))
-                    .launch_planes(
-                        &[BATCH],
-                        PlaneOrder::new(&[(BATCH, settings.planes)], CubeOrder::RowMajor),
-                    )
-                    .build(),
-            );
-            let cube = CubeResources {
-                plane_width: microkernel.lanes() as u32,
-                shared_memory: 0,
-            };
-            let grid = Grid::new(hw, &partitioning, cube)?;
-            Ok((
-                ReduceBlueprint::new(microkernel, partitioning, widths),
-                grid,
-            ))
-        })
+        let microkernel =
+            PlaneShuffleReduceMicrokernel::best(hw, &problem.work_item(), &settings.microkernel)?;
+        let widths = microkernel_widths(hw, problem, &microkernel, microkernel.widest_line())?;
+        let microkernel = microkernel.across_rows(hw, widths[0], problem.row_count());
+        let partitioning = Partitioning::new(
+            problem.space(),
+            microkernel
+                .levels(&problem.owner_box_at_width(widths[0]))
+                .launch_planes(
+                    &[BATCH],
+                    PlaneOrder::new(&[(BATCH, settings.planes)], CubeOrder::RowMajor),
+                )
+                .build(),
+        );
+        let cube = CubeResources {
+            plane_width: microkernel.lanes() as u32,
+            shared_memory: 0,
+        };
+        let grid = Grid::new(hw, &partitioning, cube)?;
+        Ok((
+            ReduceBlueprint::new(microkernel, partitioning, widths),
+            grid,
+        ))
     }
 
     fn estimate(
@@ -114,10 +108,10 @@ impl Routine for PlaneShuffleReduceRoutine {
     }
 }
 
-impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine {
+impl ReduceRoutine<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine {
     const NAME: &'static str = "plane-shuffle-reduce";
 
-    fn dispatch<I: TileOperand>(
+    fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
@@ -131,11 +125,12 @@ impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine
         unsafe {
             match binding.indices.zip(problem.indices) {
                 Some((indices, index)) => {
-                    plane_shuffle_reduce_with_indices_kernel::launch_unchecked::<I>(
+                    plane_shuffle_reduce_with_indices_kernel::launch_unchecked::<F, I>(
                         client,
                         grid.launch.cube_count,
                         grid.launch.cube_dim,
                         blueprint.width,
+                        problem.operation.written_per_row(),
                         binding.input,
                         binding.out,
                         indices.arg(),
@@ -149,11 +144,12 @@ impl ReduceLauncher<PlaneShuffleReduceMicrokernel> for PlaneShuffleReduceRoutine
                         ],
                     )
                 }
-                None => plane_shuffle_reduce_kernel::launch_unchecked::<I>(
+                None => plane_shuffle_reduce_kernel::launch_unchecked::<F, I>(
                     client,
                     grid.launch.cube_count,
                     grid.launch.cube_dim,
                     blueprint.width,
+                    problem.operation.written_per_row(),
                     binding.input,
                     binding.out,
                     binding.launcher.partitioning_arg(),
@@ -172,7 +168,6 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
 
-    /// Four row axes, more than a launch grid has: every row axis is one [`BATCH`](crate::kernels::BATCH).
     #[test]
     fn prepares_more_row_axes_than_the_grid_holds() {
         let hw = devices::m2_pro();
@@ -182,7 +177,7 @@ mod tests {
         assert!(prepared.is_ok(), "{prepared:?}");
     }
 
-    /// tracel:kernel::routine-tested-without-features: no planes, so a Decline.
+    /// A plane needs the plane instructions its lanes meet by.
     #[test]
     fn declines_lacking_every_feature() {
         let hw = devices::lacking_every_feature(devices::m2_pro());

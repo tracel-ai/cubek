@@ -424,7 +424,7 @@ impl PlaneShufflePackedPlacement {
             return Err(MATMUL_STREAMED_INPUT_FLOAT);
         }
         let view = MatmulView::new(problem, PlaneShuffleMatmulRoutine::ROWS_KIND)?;
-        view.check_steps(hw)?;
+        view.check_reads(hw)?;
         let microkernel =
             PlaneShuffleMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
         let (columns, _) = microkernel.column_cut();

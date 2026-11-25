@@ -3,8 +3,8 @@
 use crate::kernels::conversion::converted;
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
-    AttentionRoutineProblem, AttentionScoring, CacheScales, KvSource, PAGED_PACKED_UNREAD,
-    PackedAttentionCache, QueryDimension, SCALED_PACKED_UNREAD,
+    AttentionRoutineProblem, AttentionScoring, CacheScales, KvSource, PackedAttentionCache,
+    QueryDimension, SCALED_PACKED_UNREAD, page_table,
 };
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
@@ -21,9 +21,8 @@ use cubecl::tile::{
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
-    AttentionMicrokernel, AttentionOperand, AttentionOperands, B, D, DV, G, KV, Q, S,
+    AttentionMicrokernel, AttentionOperand, AttentionOperands, B, CacheLines, D, DV, G, KV, Q, S,
 };
-use cubek_std::layout::BindingOrder;
 use cubek_std::routine::ADMITTED_PLAN_RUNS;
 use cubek_std::routine::Grid;
 
@@ -117,8 +116,7 @@ impl AttentionTensors {
     /// # Errors
     ///
     /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`PACKED_WIDTH_UNREAD`] and [`ATTENTION_GROUP_UNEVEN`]:
-    /// what the routines decline whatever the device; [`PAGED_PACKED_UNREAD`],
-    /// [`SCALED_PACKED_UNREAD`] and what
+    /// what the routines decline whatever the device; [`SCALED_PACKED_UNREAD`] and what
     /// [`KvSource::read_as_block_pages`] declines: sources no routine reads; and
     /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
     ///
@@ -165,8 +163,9 @@ impl AttentionTensors {
                 Self::assert_cache_scales(&kv.scales);
             }
             (AttentionCache::Packed(_), _) if kv.scales.any() => return Err(SCALED_PACKED_UNREAD),
-            (AttentionCache::Packed(cache), None) => Self::admit_packed(client, &query, cache)?,
-            (AttentionCache::Packed(_), Some(_)) => return Err(PAGED_PACKED_UNREAD),
+            (AttentionCache::Packed(cache), pages) => {
+                Self::admit_packed(client, &query, cache, pages.as_ref())?
+            }
         }
         let group = Self::group(&query, kv.num_kv_heads())?;
         Ok(Self::assemble(
@@ -261,47 +260,6 @@ impl AttentionTensors {
     /// stage it.
     pub const VERIFIED_CACHE: [ElemType; 1] = [ElemType::Float(FloatKind::E4M3)];
 
-    /// Float operands of one element the routines take and `client`'s device runs, `key` and
-    /// `value` laid out as sequences, or as pools of pages where `pages` names them.
-    ///
-    /// # Errors
-    ///
-    /// [`ATTENTION_ELEMENT_UNVERIFIED`] and [`ELEMENT_NOT_ON_DEVICE`].
-    ///
-    /// # Panics
-    ///
-    /// As [`attention`](Self::attention), for float keys and values.
-    fn admit_float(
-        client: &Client,
-        query: &PlainTensor,
-        key: &PlainTensor,
-        value: &PlainTensor,
-        pages: Option<&PlainTensor>,
-    ) -> Result<(), Decline> {
-        Self::admit_elements(client, query, key, value)?;
-        let (q_shape, k_shape, v_shape) = (query.shape(), key.shape(), value.shape());
-        assert!(
-            q_shape.num_dims() == 4 && k_shape.num_dims() == 4 && v_shape.num_dims() == 4,
-            "attention's operands are [b, h, q, d], and [b, kv, s, ·] or [pages, kv, page_size, ·]"
-        );
-        assert!(
-            v_shape[0] == k_shape[0] && v_shape[1] == k_shape[1] && v_shape[2] == k_shape[2],
-            "the keys and values agree on their sequences or pages, key heads and positions"
-        );
-        assert_eq!(k_shape[3], q_shape[3], "the keys' head dim is the query's");
-        match pages {
-            Some(pages) => {
-                Self::assert_page_table(pages, q_shape[0]);
-                assert!(
-                    k_shape[0] > 0 && k_shape[2] > 0 && pages.shape()[1] > 0,
-                    "a paged attention reads a pool, its pages and its table rows non-empty"
-                );
-            }
-            None => assert_eq!(k_shape[0], q_shape[0], "the operands' batch dims agree"),
-        }
-        Ok(())
-    }
-
     /// Scales of a float cache the routines read: each one `f32` over its whole side.
     ///
     /// # Panics
@@ -314,37 +272,6 @@ impl AttentionTensors {
                 "a cache's scale is one f32 over its whole side"
             );
         }
-    }
-
-    /// A packed cache the routines read, under `query` of an element they take and `client`'s
-    /// device runs.
-    ///
-    /// # Errors
-    ///
-    /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`ELEMENT_NOT_ON_DEVICE`] and [`PACKED_WIDTH_UNREAD`].
-    ///
-    /// # Panics
-    ///
-    /// A query whose head dim is not the cache's, twice it with a fix-up.
-    fn admit_packed(
-        client: &Client,
-        query: &PlainTensor,
-        cache: &PackedAttentionCache,
-    ) -> Result<(), Decline> {
-        Self::admit_element(client, query)?;
-        if ![cache.bits.key, cache.bits.value]
-            .iter()
-            .all(|bits| matches!(bits, 2 | 4 | 8))
-        {
-            return Err(PACKED_WIDTH_UNREAD);
-        }
-        let coords = cache.coords();
-        let widened = match cache.fixup {
-            Some(_) => 2 * coords,
-            None => coords,
-        };
-        assert_eq!(query.shape()[3], widened, "the query spans the keys' lines");
-        Ok(())
     }
 
     /// The elements of float operands, where the routines take them and `client`'s device runs
@@ -494,27 +421,6 @@ impl AttentionTensors {
             [held] => panic!("expected one value, or one per sequence ({sequences}), got {held}"),
             dims => panic!("a per-sequence length is of rank one, got {dims:?}"),
         }
-    }
-
-    /// `pages` is a page table of `sequences`: `u32` `(sequences, pages_per_sequence)`, read by
-    /// stride, so it is not copied.
-    ///
-    /// # Panics
-    ///
-    /// If it is not `u32`, not rank 2, or holds another count of rows.
-    fn assert_page_table(pages: &PlainTensor, sequences: usize) {
-        assert_eq!(
-            pages.elem,
-            Self::COUNTER,
-            "a page table is u32, got {:?}",
-            pages.elem
-        );
-        let shape = pages.shape();
-        assert_eq!(shape.rank(), 2, "a page table is of rank two");
-        assert_eq!(
-            shape[0], sequences,
-            "a page table holds one row per sequence"
-        );
     }
 
     /// The element of every count the kernels read: a length, a page, an arrival.
@@ -831,9 +737,8 @@ impl AttentionTensors {
                         TileSpec::new(Projection::new(&[head], &[PhysicalAxisMap::broadcast()])),
                     )
                 };
-                // A pool of pages is placed by its table, keyed by the batch and the keys'
-                // positions: it covers the launch, its rows the batch and its columns the keys.
-                // The side's scale is stated first, so the table places the values under it.
+                // A pool of pages is placed by its table ([`page_table`]). The side's
+                // scale is stated first, so the table places the values under it.
                 let read_cache =
                     |tensor: &PlainTensor,
                      dimensions: &'static [Dimension],
@@ -851,47 +756,48 @@ impl AttentionTensors {
                         };
                         match &self.kv.pages {
                             Some(pages) => arg
-                                .indexed_covering(
-                                    TileTensorLaunch::new(
-                                        pages.binding.clone().into_tensor_arg(),
-                                        ElemType::UInt(UIntKind::U32),
-                                        1,
-                                        TileSpec::direct(&[B, S]),
-                                    ),
-                                    Indexing::Coordinate(B),
-                                )
+                                .indexed_covering(page_table(pages), Indexing::Coordinate(B))
                                 .expect(ADMITTED_PLAN_RUNS),
                             None => arg,
                         }
                     };
-                let scales = &self.kv.scales;
-                let key_scale = || scales.key.as_ref().map(|scale| per_tensor(scale, D));
-                let key = match blueprint.microkernel.key_order() {
-                    BindingOrder::InBufferOrder => read_cache(
-                        key,
-                        &[B, KV, S, D],
-                        widths.key,
-                        AttentionOperand::Key,
-                        key_scale(),
-                    ),
-                    BindingOrder::Stated => read_cache(
-                        &key.transposed(),
-                        &[B, KV, D, S],
-                        widths.key,
-                        AttentionOperand::Key,
-                        key_scale(),
-                    ),
+                let order = blueprint.microkernel.cache_order();
+                // A side over the dimensions its buffer steps, or with its keys innermost.
+                let read_side = |tensor: &PlainTensor,
+                                 stored: &'static [Dimension],
+                                 along_keys: &'static [Dimension],
+                                 width: usize,
+                                 operand: AttentionOperand,
+                                 scale: Option<TileTensorLaunch>| {
+                    match operand.lines(order) {
+                        CacheLines::AsStored => read_cache(tensor, stored, width, operand, scale),
+                        CacheLines::AlongKeys => {
+                            read_cache(&tensor.transposed(), along_keys, width, operand, scale)
+                        }
+                    }
                 };
-                let value = read_cache(
+                let scales = &self.kv.scales;
+                let key = read_side(
+                    key,
+                    &[B, KV, S, D],
+                    &[B, KV, D, S],
+                    widths.key,
+                    AttentionOperand::Key,
+                    scales.key.as_ref().map(|scale| per_tensor(scale, D)),
+                );
+                let value = read_side(
                     value,
                     &[B, KV, S, DV],
+                    &[B, KV, DV, S],
                     widths.value,
                     AttentionOperand::Value,
                     scales.value.as_ref().map(|scale| per_tensor(scale, DV)),
                 );
                 AttentionCacheBinding::Tiles { key, value }
             }
-            AttentionCache::Packed(cache) => AttentionCacheBinding::Packed(cache.bind(&launcher)),
+            AttentionCache::Packed(cache) => {
+                AttentionCacheBinding::Packed(cache.bind(&launcher, self.kv.pages.as_ref()))
+            }
         };
         let out = runs(
             arg(
@@ -982,6 +888,128 @@ impl AttentionTensors {
     }
 }
 
+impl AttentionTensors {
+    /// Float operands of one element the routines take and `client`'s device runs, `key` and
+    /// `value` laid out as sequences, or as pools of pages where `pages` names them.
+    ///
+    /// # Errors
+    ///
+    /// [`ATTENTION_ELEMENT_UNVERIFIED`] and [`ELEMENT_NOT_ON_DEVICE`].
+    ///
+    /// # Panics
+    ///
+    /// As [`attention`](Self::attention), for float keys and values.
+    fn admit_float(
+        client: &Client,
+        query: &PlainTensor,
+        key: &PlainTensor,
+        value: &PlainTensor,
+        pages: Option<&PlainTensor>,
+    ) -> Result<(), Decline> {
+        Self::admit_elements(client, query, key, value)?;
+        let (q_shape, k_shape, v_shape) = (query.shape(), key.shape(), value.shape());
+        assert!(
+            q_shape.num_dims() == 4 && k_shape.num_dims() == 4 && v_shape.num_dims() == 4,
+            "attention's operands are [b, h, q, d], and [b, kv, s, ·] or [pages, kv, page_size, ·]"
+        );
+        assert!(
+            v_shape[0] == k_shape[0] && v_shape[1] == k_shape[1] && v_shape[2] == k_shape[2],
+            "the keys and values agree on their sequences or pages, key heads and positions"
+        );
+        assert_eq!(k_shape[3], q_shape[3], "the keys' head dim is the query's");
+        Self::assert_cache_rows(q_shape[0], [k_shape[0], k_shape[2]], pages);
+        Ok(())
+    }
+
+    /// A packed cache the routines read, under `query` of an element they take and `client`'s
+    /// device runs, laid out as sequences, or as pools of pages where `pages` names them.
+    ///
+    /// # Errors
+    ///
+    /// [`ATTENTION_ELEMENT_UNVERIFIED`], [`ELEMENT_NOT_ON_DEVICE`] and [`PACKED_WIDTH_UNREAD`].
+    ///
+    /// # Panics
+    ///
+    /// A query whose head dim is not the cache's, twice it with a fix-up; buffers that disagree
+    /// on their sequences or pages, key heads or positions; or as
+    /// [`attention`](Self::attention), for the batch and the page table.
+    fn admit_packed(
+        client: &Client,
+        query: &PlainTensor,
+        cache: &PackedAttentionCache,
+        pages: Option<&PlainTensor>,
+    ) -> Result<(), Decline> {
+        Self::admit_element(client, query)?;
+        if ![cache.bits.key, cache.bits.value]
+            .iter()
+            .all(|bits| matches!(bits, 2 | 4 | 8))
+        {
+            return Err(PACKED_WIDTH_UNREAD);
+        }
+        let coords = cache.coords();
+        let widened = match cache.fixup {
+            Some(_) => 2 * coords,
+            None => coords,
+        };
+        assert_eq!(query.shape()[3], widened, "the query spans the keys' lines");
+        let rows = cache.key.words.shape();
+        let buffers = [&cache.key.words, &cache.key.norms, &cache.value.words]
+            .into_iter()
+            .chain([&cache.value.norms])
+            .chain(cache.fixup.as_ref().map(|fixup| &fixup.errs));
+        for buffer in buffers {
+            let shape = buffer.shape();
+            assert!(
+                shape.num_dims() == 4 && shape.as_slice()[..3] == rows.as_slice()[..3],
+                "a packed cache's buffers agree on their sequences or pages, key heads and \
+                 positions"
+            );
+        }
+        Self::assert_cache_rows(query.shape()[0], [rows[0], rows[2]], pages);
+        Ok(())
+    }
+
+    /// A cache whose buffers hold `rows`, `[sequences or pages, positions]`, under the query's
+    /// `sequences`: one row a sequence, or a pool that `pages` names a row of for each sequence.
+    ///
+    /// # Panics
+    ///
+    /// As [`attention`](Self::attention), for the batch and the page table.
+    fn assert_cache_rows(sequences: usize, rows: [usize; 2], pages: Option<&PlainTensor>) {
+        match pages {
+            Some(pages) => Self::assert_page_table(pages, sequences, rows),
+            None => assert_eq!(rows[0], sequences, "the operands' batch dims agree"),
+        }
+    }
+
+    /// `pages` is a page table of `sequences` over a pool whose buffers hold `rows`,
+    /// `[pages, page_size]`: `u32` `(sequences, pages_per_sequence)`, read by stride, so it is not
+    /// copied, and neither the pool, its pages nor the table's rows empty.
+    ///
+    /// # Panics
+    ///
+    /// If it is not `u32`, not rank 2, holds another count of rows, or the pool, a page or a row
+    /// is empty.
+    fn assert_page_table(pages: &PlainTensor, sequences: usize, rows: [usize; 2]) {
+        assert_eq!(
+            pages.elem,
+            Self::COUNTER,
+            "a page table is u32, got {:?}",
+            pages.elem
+        );
+        let shape = pages.shape();
+        assert_eq!(shape.rank(), 2, "a page table is of rank two");
+        assert_eq!(
+            shape[0], sequences,
+            "a page table holds one row per sequence"
+        );
+        assert!(
+            rows[0] > 0 && rows[1] > 0 && shape[1] > 0,
+            "a paged attention reads a pool, its pages and its table rows non-empty"
+        );
+    }
+}
+
 /// Where the cubes sharing a box of queries leave their partials, in the sum's element
 /// ([`AttentionTensors::split_slots`]).
 pub struct AttentionSplitSlots {
@@ -991,4 +1019,111 @@ pub struct AttentionSplitSlots {
     pub max: TensorHandle,
     /// Each query's running sum of probabilities in every slot, beside the max.
     pub sum: TensorHandle,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::kernels::*;
+    use cubecl::client::Client;
+    use cubecl::prelude::*;
+    use cubecl::zspace::Shape;
+    use cubecl::zspace::metadata::Metadata;
+    use cubek_matmul::kernels::tensor::PlainTensor;
+    use cubek_test_utils::TestInput;
+
+    /// The shapes of a packed test cache: its keys' words and norms `[rows, 2, 4, 1]`, its values'
+    /// words and norms their own shapes, and the page table where the cache lies in pages.
+    struct PackedShapes<'a> {
+        pub rows: usize,
+        pub value_words: &'a [usize],
+        pub value_norms: &'a [usize],
+        pub pages: Option<[usize; 2]>,
+    }
+
+    /// The attention of one sequence's three queries of four heads, of head dim eight, over a
+    /// packed cache of four-bit keys and values of `shapes`.
+    fn attend_packed(shapes: PackedShapes) {
+        let client: Client = cubecl::test_device().client();
+        let tensor = |shape: &[usize], element: ElemType| {
+            PlainTensor::of_handle(
+                TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+                    .dtype(element)
+                    .zeros()
+                    .generate_without_host_data(),
+            )
+        };
+        let (f32, u32) = (f32::elem_type_native(), u32::elem_type_native());
+        let operand = |words: &[usize], norms: &[usize]| PackedAttentionOperand {
+            words: tensor(words, u32),
+            norms: tensor(norms, f32),
+            codebook: tensor(&[16], f32),
+        };
+        let rows = shapes.rows;
+        let cache = PackedAttentionCache::new(
+            operand(&[rows, 2, 4, 1], &[rows, 2, 4, 1]),
+            operand(shapes.value_words, shapes.value_norms),
+            KvBitWidths { key: 4, value: 4 },
+            None,
+        );
+        let kv = KvSource::new(AttentionCache::Packed(cache));
+        // A table of no column is a view of one cell, which no buffer holds empty.
+        let kv = match shapes.pages {
+            Some(shape) => kv.paged(tensor(&[1, 1], u32).viewed(Metadata::new(shape, [1, 1]))),
+            None => kv,
+        };
+        let queries = AttentionQueries::Dense {
+            query: tensor(&[1, 4, 3, 8], f32),
+            lengths: tensor(&[1], u32),
+        };
+        let scoring = AttentionScoring::standard(AttentionVisibility::Attended, 8);
+        let _ = AttentionTensors::attention(&client, queries, kv, scoring);
+    }
+
+    /// Packed buffers that disagree on their positions state no cache.
+    #[test]
+    #[should_panic(expected = "a packed cache's buffers agree")]
+    fn packed_buffers_of_other_positions_panic() {
+        attend_packed(PackedShapes {
+            rows: 1,
+            value_words: &[1, 2, 8, 1],
+            value_norms: &[1, 2, 8, 1],
+            pages: None,
+        });
+    }
+
+    /// A packed operand's norms of another rank than its words' state no cache.
+    #[test]
+    #[should_panic(expected = "a packed cache's buffers agree")]
+    fn packed_norms_not_of_rank_four_panic() {
+        attend_packed(PackedShapes {
+            rows: 1,
+            value_words: &[1, 2, 4, 1],
+            value_norms: &[1, 2, 4],
+            pages: None,
+        });
+    }
+
+    /// A packed cache laid out as sequences holds one row a sequence of the query.
+    #[test]
+    #[should_panic(expected = "the operands' batch dims agree")]
+    fn packed_sequences_of_another_batch_than_the_query_panic() {
+        attend_packed(PackedShapes {
+            rows: 2,
+            value_words: &[2, 2, 4, 1],
+            value_norms: &[2, 2, 4, 1],
+            pages: None,
+        });
+    }
+
+    /// A packed cache in pages is read through a table whose rows name pages.
+    #[test]
+    #[should_panic(expected = "its table rows non-empty")]
+    fn packed_pages_under_an_empty_table_row_panic() {
+        attend_packed(PackedShapes {
+            rows: 2,
+            value_words: &[2, 2, 4, 1],
+            value_norms: &[2, 2, 4, 1],
+            pages: Some([1, 0]),
+        });
+    }
 }

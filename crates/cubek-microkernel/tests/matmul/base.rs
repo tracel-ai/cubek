@@ -46,6 +46,45 @@ impl HostMatmul {
             .collect()
     }
 
+    /// What `launch` writes into an output holding `fill` to begin with, its inputs the host's.
+    ///
+    /// # Errors
+    ///
+    /// Why the tile DSL cannot bind the launch.
+    pub(crate) fn written_by(
+        launch: &impl MatmulLaunch,
+        client: &Client,
+        fill: f32,
+    ) -> Result<Vec<Written>, Decline> {
+        let [m, n, k] = launch.shape();
+        let product = Self::new(launch.shape());
+        let elements = launch.elements();
+        let input = |values: Vec<f32>, rows, columns, element| {
+            TestInput::builder(client.clone(), shape![rows, columns])
+                .dtype(element)
+                .custom(values)
+                .generate_without_host_data()
+        };
+        let out = input(vec![fill; m * n], m, n, elements.out);
+        let rhs = match launch.rhs_layout() {
+            MatmulLayout::Col => input(product.rhs_transposed(), n, k, elements.input),
+            _ => input(product.rhs.clone(), k, n, elements.input),
+        };
+        launch.launch(
+            client,
+            input(product.lhs, m, k, elements.input)
+                .binding()
+                .into_tensor_arg(),
+            rhs.binding().into_tensor_arg(),
+            out.clone().binding().into_tensor_arg(),
+        )?;
+        Ok(vec![Written {
+            name: "out",
+            tensor: out,
+            host: HostDataType::F32,
+        }])
+    }
+
     /// `lhs · rhs`, `m × n`.
     pub(crate) fn out(&self) -> HostData {
         let [m, n, k] = self.shape;
@@ -135,33 +174,7 @@ impl<S: MatmulSettings> ScopeUnderTest for Matmul<S> {
         let launch = case
             .settings
             .launch(&self.hw, case.elements, case.lines, case.steps)?;
-        let [m, n, k] = launch.shape();
-        let product = HostMatmul::new(launch.shape());
-        let elements = launch.elements();
-        let input = |values: Vec<f32>, rows, columns, element| {
-            TestInput::builder(client.clone(), shape![rows, columns])
-                .dtype(element)
-                .custom(values)
-                .generate_without_host_data()
-        };
-        let out = input(vec![-1e4; m * n], m, n, elements.out);
-        let rhs = match launch.rhs_layout() {
-            MatmulLayout::Col => input(product.rhs_transposed(), n, k, elements.input),
-            _ => input(product.rhs.clone(), k, n, elements.input),
-        };
-        launch.launch(
-            client,
-            input(product.lhs, m, k, elements.input)
-                .binding()
-                .into_tensor_arg(),
-            rhs.binding().into_tensor_arg(),
-            out.clone().binding().into_tensor_arg(),
-        )?;
-        Ok(vec![Written {
-            name: "out",
-            tensor: out,
-            host: HostDataType::F32,
-        }])
+        HostMatmul::written_by(&launch, client, -1e4)
     }
 
     fn reference(&self, case: &Self::Case) -> Vec<HostData> {

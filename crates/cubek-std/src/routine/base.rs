@@ -17,6 +17,51 @@ pub const ROUTINE_LISTS_NO_SETTING: Decline = Decline::Unserved {
     why: "the routine lists no setting on this device",
 };
 
+/// The first of `attempts` that is `Ok`, the rest never run; where none is, the last decline, or
+/// `none` where there are no attempts.
+///
+/// # Errors
+///
+/// The last decline, or `none`.
+pub fn first_served<T>(
+    attempts: impl IntoIterator<Item = Result<T, Decline>>,
+    none: Decline,
+) -> Result<T, Decline> {
+    first_serving(attempts).map_err(|declined| declined.unwrap_or(none))
+}
+
+/// [`first_served`] over attempts that always hold a floor, whose decline is the answer where no
+/// attempt serves.
+///
+/// # Errors
+///
+/// The last decline.
+///
+/// # Panics
+///
+/// On no attempt.
+pub fn first_served_on_floor<T>(
+    attempts: impl IntoIterator<Item = Result<T, Decline>>,
+) -> Result<T, Decline> {
+    first_serving(attempts)
+        .map_err(|declined| declined.expect("attempts that hold a floor are never empty"))
+}
+
+/// The one loop of both: the first attempt that serves, else the last decline, `None` where there
+/// were no attempts.
+fn first_serving<T>(
+    attempts: impl IntoIterator<Item = Result<T, Decline>>,
+) -> Result<T, Option<Decline>> {
+    let mut declined = None;
+    for attempt in attempts {
+        match attempt {
+            Ok(served) => return Ok(served),
+            Err(why) => declined = Some(why),
+        }
+    }
+    Err(declined)
+}
+
 /// How a family prepares a kernel written around one microkernel: the settings worth measuring
 /// on a device, the widths its operands bind at, and for a problem at one setting the Blueprint
 /// and Grid of one launch, or a Decline, and what that launch is estimated to cost. Its
@@ -71,14 +116,12 @@ pub trait Routine {
         hw: &Hardware,
         problem: &Self::Problem,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
-        let mut declined = ROUTINE_LISTS_NO_SETTING;
-        for settings in Self::settings(hw) {
-            match Self::prepare(hw, problem, &settings) {
-                Ok(prepared) => return Ok(prepared),
-                Err(why) => declined = why,
-            }
-        }
-        Err(declined)
+        first_served(
+            Self::settings(hw)
+                .iter()
+                .map(|settings| Self::prepare(hw, problem, settings)),
+            ROUTINE_LISTS_NO_SETTING,
+        )
     }
 
     /// Set in `estimate` the parts this routine owns of the kernel `blueprint` and `grid` describe

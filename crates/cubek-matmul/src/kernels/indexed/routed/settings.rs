@@ -1,14 +1,14 @@
 use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
-use cubek_std::routine::Routine;
+use cubek_std::routine::{Routine, first_served_on_floor};
 
-use crate::kernels::indexed::routed::RoutedMatmulTensors;
-use crate::kernels::tune::{ListedFor, Listing, Product, first_served};
+use crate::kernels::indexed::routed::{RoutedMatmulCandidate, RoutedMatmulTensors};
 use crate::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutine,
     PlaneShuffleMatmulRoutineSettings, UnitRegistersMatmulRoutine,
     UnitRegistersMatmulRoutineSettings,
 };
+use crate::kernels::{ListedFor, Listing, Product};
 
 /// The settings every round must be able to fall back on, each for the kind of stack it serves.
 /// Each declines where another runs: the plane shuffle where the device commits to no plane
@@ -47,7 +47,7 @@ impl RoutedFloors {
         let unit_registers = Listing::admitted(&self.unit_registers, stack).map(|floor| {
             tensors.served_by::<_, _, UnitRegistersMatmulRoutine>(hw, &floor.settings)
         });
-        first_served(plane_shuffle.chain(cube_staged).chain(unit_registers))
+        first_served_on_floor(plane_shuffle.chain(cube_staged).chain(unit_registers))
     }
 
     pub(crate) const LISTED: Self = Self {
@@ -82,23 +82,24 @@ impl RoutedFloors {
     };
 }
 
-/// The settings worth racing on a routed product, each routine's list for the stacks each is
-/// listed for.
+/// The candidates of a routed product, each routine's list for the stacks each is listed for:
+/// those worth racing ([`raced`](Self::raced)), or those every round must be able to fall back on
+/// ([`floors`](Self::floors)).
 #[derive(Debug, Clone)]
-pub(crate) struct RoutedCandidates {
-    /// Every plane shuffle setting worth racing. Each declines a stack it cannot read, so the
-    /// float ones race on a packed stack too: some read one faster than the packed lead does.
-    pub plane_shuffle: Vec<Listing<PlaneShuffleMatmulRoutineSettings>>,
-    /// Every cube staged setting worth racing: against a packed stack the one-step settings
-    /// first, then the packed ones.
-    pub cube_staged: Vec<Listing<CubeStagedMatmulRoutineSettings>>,
-    /// Every unit registers setting worth racing, listed for a float stack.
-    pub unit_registers: Vec<Listing<UnitRegistersMatmulRoutineSettings>>,
+pub struct RoutedMatmulCandidates {
+    /// The plane shuffle's. Each declines a stack it cannot read, so the float ones race on a
+    /// packed stack too: some read one faster than the packed lead does.
+    pub plane_shuffle: Vec<RoutedMatmulCandidate<PlaneShuffleMatmulRoutine>>,
+    /// The cube staged routine's: against a packed stack the one-step settings first, then the
+    /// packed ones.
+    pub cube_staged: Vec<RoutedMatmulCandidate<CubeStagedMatmulRoutine>>,
+    /// The unit registers', listed for a float stack.
+    pub unit_registers: Vec<RoutedMatmulCandidate<UnitRegistersMatmulRoutine>>,
 }
 
-impl RoutedCandidates {
+impl RoutedMatmulCandidates {
     /// The settings worth racing on `hw`.
-    pub(crate) fn new(hw: &Hardware) -> Self {
+    pub fn raced(hw: &Hardware) -> Self {
         let plane_shuffle = Listing::float_then_packed(
             PlaneShuffleMatmulRoutine::settings(hw),
             PlaneShuffleMatmulRoutine::indexed_packed_settings(),
@@ -116,12 +117,32 @@ impl RoutedCandidates {
             .map(|settings| Listing {
                 settings,
                 kind: ListedFor::Float,
-            })
-            .collect();
+            });
         Self {
-            plane_shuffle,
-            cube_staged,
-            unit_registers,
+            plane_shuffle: RoutedMatmulCandidate::listed(PlaneShuffleMatmulRoutine, plane_shuffle),
+            cube_staged: RoutedMatmulCandidate::listed(CubeStagedMatmulRoutine, cube_staged),
+            unit_registers: RoutedMatmulCandidate::listed(
+                UnitRegistersMatmulRoutine,
+                unit_registers,
+            ),
+        }
+    }
+
+    /// The settings every round must be able to fall back on, each for the kind of stack it
+    /// serves: a device none of them prepares a product on is refused before racing
+    /// ([`RoutedMatmulTensors::served_on_floor`]).
+    pub fn floors() -> Self {
+        let floors = RoutedFloors::LISTED;
+        Self {
+            plane_shuffle: RoutedMatmulCandidate::listed(
+                PlaneShuffleMatmulRoutine,
+                floors.plane_shuffle,
+            ),
+            cube_staged: RoutedMatmulCandidate::listed(CubeStagedMatmulRoutine, floors.cube_staged),
+            unit_registers: RoutedMatmulCandidate::listed(
+                UnitRegistersMatmulRoutine,
+                floors.unit_registers,
+            ),
         }
     }
 }

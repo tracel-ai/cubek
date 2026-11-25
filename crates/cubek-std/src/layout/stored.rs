@@ -5,6 +5,7 @@
 //! operand reads one value and is constant inside nothing, and the same reads serve it without
 //! asking whether anything is quantized at all.
 
+use crate::TMA_ROW_BYTES;
 use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
 use crate::matmul_dimensions::{K, blocked};
 use cubecl::ir::ElemType;
@@ -431,6 +432,14 @@ impl Operand {
             .rev()
             .find(|&group| units.is_multiple_of(group) && words.is_multiple_of(group))
             .unwrap_or(1)
+    }
+
+    /// The run of values the TMA engine moves at full speed into a stage of this operand's, its
+    /// values `element`: [`TMA_ROW_BYTES`] along the dimension its words run along. NVFP4's `e2m1`
+    /// rows are a hundred and twenty-eight values of `k`.
+    pub fn tma_row(&self, element: ElemType) -> Space {
+        let values = (TMA_ROW_BYTES * u8::BITS as usize / element.size_bits().max(1)).max(1);
+        Space::new(&[(self.lined(), values)])
     }
 
     /// Reads down `K` that one `run` of a `[k, rows]` matrix read as this operand holds, its

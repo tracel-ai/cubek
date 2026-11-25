@@ -1,7 +1,7 @@
 use crate::matmul::plane::{PlaneShuffleKSplit, PlaneShuffleMicrokernelSettings};
 use crate::matmul::{
     MatmulBlocks, MatmulDim, MatmulDimensions, MatmulLayout, MatmulMicrokernel, MatmulOperand,
-    MatmulOperands, MatmulRows, MatmulStep, MatmulWorkItem,
+    MatmulOperands, MatmulRows, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
@@ -32,7 +32,7 @@ const WORD_BYTES: usize = core::mem::size_of::<u32>();
 /// rhs's is a few vectors of columns, each read at a few rows of `K`.
 ///
 /// Against a packed rhs ([`PlaneShuffleBlocks`]) the units multiply each read by its block's
-/// scale, and a step is the rhs's ([`MatmulStep`]). Where the scales group `K`, a unit takes
+/// scale, and a step is the rhs's ([`VectorRegion`](cubecl::tile::VectorRegion)). Where the scales group `K`, a unit takes
 /// a word of scales a turn and the units take turns, so a unit holds whole blocks and the walk
 /// over them sits above the units; where they do not, each unit takes a contiguous run of `K`. A
 /// unit's columns are whole reads of the rhs, or whole words of scales where the scales group
@@ -205,7 +205,7 @@ impl PlaneShuffleMicrokernel {
     }
 
     /// The columns a unit reads of a packed rhs, whose blocks cut `space`, and the units along `K`
-    /// that spread it, for each count of steps of `N` ([`MatmulStep`]) from the settings' down to
+    /// that spread it, for each count of steps of `N` ([`VectorRegion`](cubecl::tile::VectorRegion)) from the settings' down to
     /// one whose columns close `n` on one split dimension and leave `shared` units, the plane's
     /// share left by the units along `M`, whole groups along `N`.
     ///
@@ -227,8 +227,8 @@ impl PlaneShuffleMicrokernel {
         shared: usize,
     ) -> impl Iterator<Item = (usize, PlaneShuffleBlocks)> {
         let operand = space.operand(MatmulOperand::Rhs);
-        let step = MatmulStep::new(hw, space.operands(), item.elements);
-        let (depth, columns_a_step) = (step.along(K), step.along(N));
+        let vectors = space.operands().vector_region(hw, &item.elements);
+        let (depth, columns_a_step) = (vectors.along(K), vectors.along(N));
         let value_bits = space
             .packings
             .rhs

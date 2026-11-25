@@ -13,7 +13,7 @@
 //! of several rows, its scales stored in tiles of their own beside the values.
 //!
 //! The tile is the writer's: a load picks it for the device from the step of the product
-//! (`MatmulStep`), a whole number of blocks along `k`. Under the block-scaled instruction, its
+//! ([`BaseRegion`](cubecl::tile::BaseRegion)), a whole number of blocks along `k`. Under the block-scaled instruction, its
 //! stages filled by the TMA engine, NVFP4's step is `128 × 8`: two of the instruction's `16 × 8 ×
 //! 64` calls deep, so a column's row in a tile is the 64 bytes a box copies at full speed, and the
 //! instruction's eight columns wide. A descriptor over the tiles lands a stage of them as it lands

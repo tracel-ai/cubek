@@ -40,7 +40,6 @@ fn try_reduce() -> Result<(), ReduceError> {
 
     Reduce::new(RULE).execute(
         &client,
-        &cubecl::test_device(),
         input.binding(),
         output.binding(),
         1,
@@ -73,7 +72,6 @@ fn try_reduce_with_indices() -> Result<(), ReduceError> {
 
     Reduce::new(RULE).execute_with_indices(
         &client,
-        &cubecl::test_device(),
         input.binding(),
         values.binding(),
         indices.binding(),

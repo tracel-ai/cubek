@@ -8,6 +8,7 @@ mod direct;
 mod im2col;
 mod multi_level;
 mod split;
+mod tile;
 mod unit;
 
 pub(crate) use base::*;

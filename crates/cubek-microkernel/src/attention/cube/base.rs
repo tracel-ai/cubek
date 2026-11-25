@@ -3,7 +3,7 @@ use crate::attention::cube::{
 };
 use crate::attention::{
     AttentionCacheKind, AttentionMicrokernel, AttentionOperand, AttentionOperands,
-    AttentionStagingCount, AttentionWorkItem, G, Q, S,
+    AttentionStagingCount, AttentionWorkItem, CacheOrder, G, Q, S,
 };
 use crate::matmul::cube::CubeStagedDelivery;
 use crate::split_keys_merge::SlotShape;
@@ -11,7 +11,6 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Dimension, Levels, Space, StageStorage};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageRing, StagedOperand};
 
 /// A box of queries of some heads of the group a cube owns: its planes each take the rows of one
@@ -192,10 +191,15 @@ impl CubeAttentionMicrokernel {
         let planes = self.layout().planes() * self.plane.window_bytes(item);
         let (query, ring) = match self.plane.reads() {
             CubePlaneReads::Stage => {
-                let query = self.staged_query(item);
-                let query = query.bytes(hw, &self.query_storage(&query.space));
+                let query = match self.plane.stages_query() {
+                    true => {
+                        let query = self.staged_query(item);
+                        query.bytes(hw, &self.query_storage(&query.space))
+                    }
+                    false => 0,
+                };
                 let stage: usize = item
-                    .stage(self.seq_kv(), self.key_order())
+                    .stage(self.seq_kv(), self.cache_order())
                     .iter()
                     .map(|operand| operand.bytes(hw, storage))
                     .sum();
@@ -290,7 +294,7 @@ impl Microkernel for CubeAttentionMicrokernel {
                     hw,
                     &requested
                         .served(item)
-                        .stage(requested.seq_kv(), requested.key_order()),
+                        .stage(requested.seq_kv(), requested.cache_order()),
                     requested.layout().planes() * requested.units,
                 );
                 let delivery = requested.resolve_delivery(hw, &ring);
@@ -329,8 +333,8 @@ impl Microkernel for CubeAttentionMicrokernel {
 
 impl AttentionMicrokernel for CubeAttentionMicrokernel {
     /// Its planes' microkernel's.
-    fn key_order(&self) -> BindingOrder {
-        self.plane.key_order()
+    fn cache_order(&self) -> CacheOrder {
+        self.plane.cache_order()
     }
 
     /// Its planes' microkernel's.

@@ -1,4 +1,4 @@
-//! The cube routine at every setting it lists: its own autotune's floor.
+//! The cube routine at every setting it lists: the family's floor.
 
 use cubecl::client::Client;
 use cubecl::ir::ElemType;
@@ -7,7 +7,7 @@ use cubek_std::Hardware;
 use cubek_swiglu::kernels::{CubeSwigluRoutine, SwigluRoutineCandidate};
 use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, Written};
 
-use crate::swiglu::{ELEMENTS, FusedRows};
+use crate::swiglu::{ELEMENTS, F32, FusedRows};
 
 /// The cube routine on the test device.
 struct CubeSwiglu;
@@ -59,7 +59,7 @@ impl ScopeUnderTest for CubeSwiglu {
     }
 }
 
-/// Every setting serves every case: the routine is its own autotune's floor.
+/// Every setting serves every case: the routine is the family's floor.
 #[test]
 fn cube_routine_matches_the_reference() {
     let hw = Hardware::from_client(&cubecl::test_device().client());
@@ -77,4 +77,21 @@ fn cube_routine_matches_the_reference() {
         })
         .collect();
     CubeSwiglu.check(cases);
+}
+
+/// No rows, and rows of no width: the floor launches nothing, and hands back an empty output of the
+/// asked shape.
+#[test]
+fn empty_rows_launch_nothing() {
+    let client = cubecl::test_device().client();
+    let floor = SwigluRoutineCandidate::floor(&Hardware::from_client(&client));
+    for rows in [
+        FusedRows { rows: 0, dim: 128 },
+        FusedRows { rows: 3, dim: 0 },
+    ] {
+        let out = floor
+            .launch(&rows.call(&client, F32))
+            .unwrap_or_else(|why| panic!("the floor refused {rows:?}: {why:?}"));
+        assert_eq!(out.shape().as_slice(), [rows.rows, rows.dim], "{rows:?}");
+    }
 }

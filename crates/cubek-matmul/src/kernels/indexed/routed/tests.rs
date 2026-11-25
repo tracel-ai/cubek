@@ -1,23 +1,22 @@
-//! The routed tuner's key, listings and floors, and its launch of no rows.
+//! The routed product's key, listings and floors, the operands it is measured on, and its launch
+//! of no rows.
 
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::*;
 use cubecl::server::CopyDescriptor;
 use cubecl::std::tensor::TensorHandle;
-use cubek_std::autotune::GroupPriority;
-use cubek_std::devices;
+use cubek_std::{Hardware, devices};
 use cubek_test_utils::client;
 
-use super::tune::spread_routes;
-use super::{RoutedFloors, RoutedMatmulTensors, launch_tuned};
+use super::{RoutedFloors, RoutedMatmulTensors};
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::{Listing, Product};
 use crate::kernels::{
-    CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutineSettings,
+    CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutineSettings, UnitRegistersMatmulRoutine,
     UnitRegistersMatmulRoutineSettings,
 };
+use crate::kernels::{Listing, Product};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 
@@ -132,13 +131,13 @@ fn a_packed_stack_is_asked_every_plane_shuffle_floor_and_the_packed_cube_staged_
 }
 
 /// Routes far out of range, as a discarded launch leaves them, are replaced by routes naming every
-/// expert in turn, for the candidates to be measured on.
+/// expert in turn.
 #[test]
 fn spread_routes_replace_garbage_from_a_discarded_launch() {
     let client = client();
     let (rows, slots, experts) = (5, 3, 4);
     let tensors = routed_by(&client, rows, slots, &vec![0xF000_0000; rows * slots]);
-    let spread = spread_routes(&tensors.key(), &tensors);
+    let spread = tensors.with_spread_routes();
     let routes = spread.routes();
     let bytes = client.read_one_unchecked_tensor(CopyDescriptor::new(
         routes.binding.handle.clone(),
@@ -163,7 +162,7 @@ fn on_a_cpu_runtime_a_float_stack_has_a_floor() {
     assert!(served.is_ok(), "{served:?}");
 }
 
-/// No row means no launch: the output is empty rather than refused.
+/// No row means no launch: the output is empty rather than refused, whatever the routine.
 #[test]
 fn no_rows_return_an_empty_output() {
     let client = client();
@@ -188,7 +187,12 @@ fn no_rows_return_an_empty_output() {
         SlabDimension::Output,
     )
     .expect("no row declines nothing");
-    let out = launch_tuned(&cubecl::test_device(), tensors, GroupPriority::DEFAULT)
+    let out = tensors
+        .launch(
+            &Hardware::from_client(&client),
+            &UnitRegistersMatmulRoutine,
+            &UnitRegistersMatmulRoutineSettings::DEFAULT,
+        )
         .expect("no row declines nothing");
     assert_eq!(out.shape().to_vec(), vec![0, slots, n]);
 }

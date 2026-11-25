@@ -1,7 +1,9 @@
 //! The devices and problems the family's host-side tests run against.
 
-use crate::kernels::tune::key::{AttentionKey, AttentionKeyElements};
-use crate::kernels::{AttentionRoutineProblem, AttentionVisibility, QueryPlacement, ScoreScale};
+use crate::kernels::{
+    AttentionKey, AttentionKeyElements, AttentionRoutineProblem, AttentionVisibility,
+    QueryPlacement, ScoreScale,
+};
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_std::Hardware;

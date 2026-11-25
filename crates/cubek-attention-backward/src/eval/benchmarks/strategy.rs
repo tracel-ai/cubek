@@ -1,13 +1,12 @@
 use cubek_test_utils::CatalogEntry;
 
-/// What runs a row: one strategy at its lead setting, or the tuned pass.
+/// What runs a row: one strategy at its lead setting.
 #[derive(Debug, Clone, Copy)]
 pub enum AttentionBackwardStrategy {
     UnitLead,
     PlaneLead,
     CubeLead,
     HypercubeLead,
-    Tuned,
 }
 
 pub fn strategies() -> Vec<CatalogEntry<AttentionBackwardStrategy>> {
@@ -32,6 +31,5 @@ pub fn strategies() -> Vec<CatalogEntry<AttentionBackwardStrategy>> {
             "Hypercube strategy (lead)",
             AttentionBackwardStrategy::HypercubeLead,
         ),
-        CatalogEntry::new("tuned", "Tuned", AttentionBackwardStrategy::Tuned),
     ]
 }

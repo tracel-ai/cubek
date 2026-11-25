@@ -76,6 +76,10 @@ impl core::fmt::Display for HypercubeLastArrivalMatmulRoutineSettings {
 pub type HypercubeLastArrivalMatmulRoutineBlueprint =
     MatmulBlueprint<HypercubeStagedMicrokernel, StageStorage>;
 
+/// The word of shared memory each cube's last arrival learns its count in, beside its
+/// microkernel's ([`LastArrival::hand_on`](cubecl::tile::launch::LastArrival::hand_on)).
+const ARRIVAL_SLOT_BYTES: usize = size_of::<u32>();
+
 impl HypercubeLastArrivalMatmulRoutine {
     /// What it declines on a device that does not say how many workers it has, the count its grid
     /// is sized by.
@@ -225,7 +229,7 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             microkernel.cube.fill.delivery == CubeStagedDelivery::Tma,
         )?;
         if microkernel.cube.walk().decoded().is_some() {
-            view.check_steps(hw)?;
+            view.check_reads(hw)?;
         }
         let target = Self::cubes(hw, settings)?;
         // Against packed inputs each cube contracts them as its microkernel reads them, over the
@@ -252,7 +256,9 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
         let storage = resolved.storage;
         let cube = CubeResources {
             plane_width: resolved.plane_width,
-            shared_memory: resolved.shared_memory,
+            // A cube walks the boxes its run touches in turn, its stages live across them, so the
+            // windows its fragments bounce through into its slot open beside the stages.
+            shared_memory: resolved.shared_memory_beside_windows + ARRIVAL_SLOT_BYTES,
         };
         let microkernel = HypercubeStagedMicrokernel {
             cube: resolved.microkernel,
