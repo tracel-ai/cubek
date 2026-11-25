@@ -117,7 +117,7 @@ mod tests {
     mod walk_across_300_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitWalkMicrokernelLauncher { columns: 2 }, Across, 300, 4, Plain, [
+        reduce_tests!(UnitWalkMicrokernelLauncher::new(2), Across, 300, 4, Plain, [
             sum: ReduceOperation::Sum,
             prod: ReduceOperation::Prod,
             max: ReduceOperation::Max,
@@ -132,7 +132,7 @@ mod tests {
     mod walk_across_320_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitWalkMicrokernelLauncher { columns: 2 }, Across, 320, 4, Plain, [
+        reduce_tests!(UnitWalkMicrokernelLauncher::new(2), Across, 320, 4, Plain, [
             sum: ReduceOperation::Sum,
         ]);
     }

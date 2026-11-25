@@ -3,7 +3,7 @@ use crate::reduce::cube::{
     cube_staged_reduce_microkernel,
 };
 use crate::reduce::{Accumulable, ReduceOperand, ReduceOperation, ReduceWorkItem};
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::{Region, Tile};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
@@ -62,17 +62,10 @@ impl core::fmt::Display for HypercubeAtomicReduceMicrokernel {
     }
 }
 
-/// The atomic hypercube of each of the cube's candidates, where `item` sums.
-fn candidates_of_a_sum(
-    hw: &Hardware,
-    item: &ReduceWorkItem,
-    settings: &CubeStagedReduceMicrokernelSettings,
-) -> impl Iterator<Item = HypercubeAtomicReduceMicrokernel> {
-    let sums = item.operation == ReduceOperation::Sum;
-    CubeStagedReduceMicrokernel::candidates(hw, item, settings)
-        .filter(move |_| sums)
-        .map(HypercubeAtomicReduceMicrokernel::new)
-}
+/// Why an operation other than a sum declines: the cubes meet by atomic adds.
+const ONLY_SUMS: Decline = Decline::Unserved {
+    why: "the atomic hypercube only sums",
+};
 
 impl Microkernel for HypercubeAtomicReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
@@ -80,7 +73,7 @@ impl Microkernel for HypercubeAtomicReduceMicrokernel {
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the atomic hypercube needs the cube reduce, and a sum";
+    const DECLINE: &'static str = "the atomic hypercube runs where its cube reduce runs";
 
     /// As the cube it is built from.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
@@ -92,7 +85,24 @@ impl Microkernel for HypercubeAtomicReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        candidates_of_a_sum(hw, item, settings)
+        CubeStagedReduceMicrokernel::candidates(hw, item, settings).map(Self::new)
+    }
+
+    fn admits(item: &ReduceWorkItem) -> Result<(), Decline> {
+        match item.operation {
+            ReduceOperation::Sum => Ok(()),
+            _ => Err(ONLY_SUMS),
+        }
+    }
+
+    /// The hypercube of the cube's best, the cube's own Decline coming through where it has none.
+    fn best(
+        hw: &Hardware,
+        item: &ReduceWorkItem,
+        settings: &Self::Settings,
+    ) -> Result<Self, Decline> {
+        Self::admits(item)?;
+        CubeStagedReduceMicrokernel::best(hw, item, settings).map(Self::new)
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
@@ -139,17 +149,28 @@ mod tests {
     use crate::reduce::testing::HypercubeAtomicMicrokernelLauncher;
     use cubek_std::devices;
 
-    /// An atomic hypercube of a sum, on an M2 Pro.
-    fn best_of(operation: ReduceOperation) -> Result<HypercubeAtomicReduceMicrokernel, ()> {
-        let hw = devices::m2_pro();
-        let settings = HypercubeAtomicReduceMicrokernel::settings(&hw)[0];
-        let item = ReduceWorkItem::along_f32(operation);
-        HypercubeAtomicReduceMicrokernel::best(&hw, &item, &settings).map_err(|_| ())
-    }
-
     #[test]
     fn it_reduces_no_max() {
-        assert!(best_of(ReduceOperation::Max).is_err());
+        let hw = devices::m2_pro();
+        let settings = HypercubeAtomicReduceMicrokernel::settings(&hw)[0];
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Max);
+        assert_eq!(
+            HypercubeAtomicReduceMicrokernel::best(&hw, &item, &settings),
+            Err(ONLY_SUMS)
+        );
+    }
+
+    /// The cube's own Decline comes through: a range of plane widths.
+    #[test]
+    fn it_declines_where_its_cube_declines() {
+        let hw = devices::rdna_range();
+        let settings = HypercubeAtomicReduceMicrokernel::settings(&hw)[0];
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let declined = HypercubeAtomicReduceMicrokernel::best(&hw, &item, &settings);
+        assert!(
+            matches!(declined, Err(Decline::ImprecisePlaneDim { .. })),
+            "{declined:?}"
+        );
     }
 
     #[test]
@@ -163,7 +184,7 @@ mod tests {
     /// Rows 300 values long along the reduced dimension, a value a line, in three parts.
     mod along_three_parts {
         use super::*;
-        reduce_tests!(HypercubeAtomicMicrokernelLauncher { planes: 4, parts: 3 }, Along, 300, 1, Plain, [
+        reduce_tests!(HypercubeAtomicMicrokernelLauncher::new(4, 3), Along, 300, 1, Plain, [
             sum: ReduceOperation::Sum,
         ]);
     }
@@ -171,7 +192,7 @@ mod tests {
     /// The same across it, each lane its own row.
     mod across_three_parts {
         use super::*;
-        reduce_tests!(HypercubeAtomicMicrokernelLauncher { planes: 4, parts: 3 }, Across, 300, 4, Plain, [
+        reduce_tests!(HypercubeAtomicMicrokernelLauncher::new(4, 3), Across, 300, 4, Plain, [
             sum: ReduceOperation::Sum,
         ]);
     }

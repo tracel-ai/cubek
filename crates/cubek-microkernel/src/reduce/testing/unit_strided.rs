@@ -10,7 +10,13 @@ use cubek_std::Hardware;
 /// Each unit reads its row's lines a stride apart into its carrier, which the lines' write writes.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct UnitStridedMicrokernelLauncher {
-    pub(crate) stride: usize,
+    stride: usize,
+}
+
+impl UnitStridedMicrokernelLauncher {
+    pub(crate) const fn new(stride: usize) -> Self {
+        Self { stride }
+    }
 }
 
 impl MicrokernelLauncher for UnitStridedMicrokernelLauncher {

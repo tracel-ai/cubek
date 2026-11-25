@@ -7,10 +7,10 @@ use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, TestInput, launch_and_capture_outcome,
 };
 
-use crate::ReduceOperation;
 use crate::eval::EvalWorkspace;
 use crate::eval::cpu_reference::{ReduceReference, output_shape_for};
 use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
+use crate::{ReduceError, ReduceOperation};
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
 /// build their input from this alone, so the two see the same values.
@@ -77,7 +77,8 @@ fn ramp_of_elem_count(elem_count: usize) -> Vec<f32> {
 ///
 /// # Panics
 ///
-/// Where `shape` has fewer axes than `axis` counts.
+/// Where `shape` has fewer axes than `axis` counts, or the routine that runs returns a
+/// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken).
 pub(crate) fn strategy_result(
     client: Client,
     shape: Vec<usize>,
@@ -106,32 +107,44 @@ pub(crate) fn strategy_result(
         EvalWorkspace::new(&client, &shape, axis, operation, elements, with_indices).workspace;
     let reduce = kernels::Reduce::new(strategy).with_workspace(workspace);
     let outcome = launch_and_capture_outcome(&client, &[&values.handle, &indices.handle], |c| {
-        match with_indices {
-            true => reduce
-                .execute_with_indices(
-                    c,
-                    input_handle.clone().binding(),
-                    values.clone().binding(),
-                    indices.clone().binding(),
-                    axis,
-                    operation,
-                    elements,
-                    index_dtype,
-                )
-                .into(),
-            false => reduce
-                .execute(
-                    c,
-                    input_handle.clone().binding(),
-                    values.clone().binding(),
-                    axis,
-                    operation,
-                    elements,
-                )
-                .into(),
-        }
+        let launched = match with_indices {
+            true => reduce.execute_with_indices(
+                c,
+                input_handle.clone().binding(),
+                values.clone().binding(),
+                indices.clone().binding(),
+                axis,
+                operation,
+                elements,
+                index_dtype,
+            ),
+            false => reduce.execute(
+                c,
+                input_handle.clone().binding(),
+                values.clone().binding(),
+                axis,
+                operation,
+                elements,
+            ),
+        };
+        unbroken(launched).into()
     });
     read_back(&client, outcome, values)
+}
+
+/// `launched`, which a routine that breaks what it prepared fails rather than leaves for the
+/// caller to read as a launch it cannot run.
+///
+/// # Panics
+///
+/// Where `launched` is a [`Decline::Broken`](cubecl::tile::launch::Decline::Broken): a bug of the routine.
+fn unbroken(launched: Result<(), ReduceError>) -> Result<(), ReduceError> {
+    if let Err(ReduceError::Declined(broken)) = &launched
+        && broken.is_broken()
+    {
+        panic!("{broken}");
+    }
+    launched
 }
 
 /// What an output holds before its launch: a value no comparison's result comes near, so a kernel

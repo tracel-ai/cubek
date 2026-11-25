@@ -162,14 +162,6 @@ mod tests {
     /// its own row.
     mod columns_across_300_long_four_wide {
         use super::*;
-        every_operation!(
-            CubeColumnsMicrokernelLauncher {
-                planes: 4,
-                columns: 2
-            },
-            Across,
-            300,
-            4
-        );
+        every_operation!(CubeColumnsMicrokernelLauncher::new(4, 2), Across, 300, 4);
     }
 }

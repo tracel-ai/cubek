@@ -113,13 +113,13 @@ mod tests {
     /// line.
     mod line_along_300_long_four_wide {
         use super::*;
-        every_operation!(CubeLineMicrokernelLauncher { planes: 4 }, Along, 300, 4);
+        every_operation!(CubeLineMicrokernelLauncher::new(4), Along, 300, 4);
     }
 
     /// The cube's read one line of rows wide, 37 values long across the reduced dimension, each lane its
     /// own row.
     mod line_across_37_long_four_wide {
         use super::*;
-        every_operation!(CubeLineMicrokernelLauncher { planes: 4 }, Across, 37, 4);
+        every_operation!(CubeLineMicrokernelLauncher::new(4), Across, 37, 4);
     }
 }

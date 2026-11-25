@@ -13,7 +13,7 @@ use cubek_reduce::kernels::{
 use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{
     Distribution, HostData, HostDataType, HostDataVec, ScopeChecker, StridedLayout, TestInput,
-    Written, assert_equals_approx, supports_f16_arithmetic,
+    TestOutcome, Written, assert_equals_approx, supports_f16_arithmetic,
 };
 
 use cubek_reduce::eval::EvalWorkspace;
@@ -132,6 +132,23 @@ pub fn is_the_references(
     assert_equals_approx(&written, &reference.output, 0.0)
         .as_test_outcome()
         .enforce();
+}
+
+/// Whether `launched` ran: where it declined, a skip, or a failure where the decline is
+/// [`Decline::Broken`].
+///
+/// # Panics
+///
+/// Where `launched` failed for a reason other than a decline: the call is outside the operation's
+/// Domain, which a test never makes.
+pub fn ran(launched: Result<(), ReduceError>) -> bool {
+    let declined = match launched {
+        Ok(()) => return true,
+        Err(ReduceError::Declined(why)) => why,
+        Err(why) => panic!("{why}"),
+    };
+    TestOutcome::refused(&"the call", &declined).enforce();
+    false
 }
 
 /// Per-element probability of `1` that yields a genuine mix of 0/1 reduction outputs for `case`'s

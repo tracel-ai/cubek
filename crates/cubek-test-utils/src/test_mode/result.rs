@@ -23,7 +23,8 @@
 
 use crate::test_mode::base::decide;
 use cubecl::prelude::Client;
-use std::fmt::Display;
+use cubecl::tile::launch::Decline;
+use std::fmt::{Debug, Display};
 
 /// CPU-only routines (e.g. `cpu_gemm`, where a plane is a thread) compute the wrong result
 /// on a GPU backend. Records a `Skipped` outcome and returns `true` when `client` is not a
@@ -106,6 +107,16 @@ pub enum TestOutcome {
 }
 
 impl TestOutcome {
+    /// The outcome of a launch of `case` its scope refused for `why`: a skip, or a failure where
+    /// the scope claims the launch and finds it broken ([`Decline::Broken`]).
+    pub fn refused(case: &impl Debug, why: &Decline) -> Self {
+        let reason = format!("{case:?}: {why}");
+        match why.is_broken() {
+            true => TestOutcome::Validated(ValidationResult::Fail(reason)),
+            false => TestOutcome::Validated(ValidationResult::Skipped(reason)),
+        }
+    }
+
     /// Apply the current test mode to this outcome and fail the test if rejected.
     ///
     /// Convenience wrapper for `decide(self).enforce()`: applies the

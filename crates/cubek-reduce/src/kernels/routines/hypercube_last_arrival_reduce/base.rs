@@ -425,9 +425,13 @@ mod tests {
         let tensors = ReduceTensors::zeros(&reduction.shape, reduction.axis, reduction.operation)
             .with_workspace(workspace.clone());
         let hw = Hardware::from_client(&client);
-        if let Err(decline) = launch_shortest_parts(&hw, &tensors) {
-            return TestOutcome::Validated(ValidationResult::Skipped(decline.to_string()))
-                .enforce();
+        match launch_shortest_parts(&hw, &tensors) {
+            Err(broken) if broken.is_broken() => panic!("{broken}"),
+            Err(refused) => {
+                return TestOutcome::Validated(ValidationResult::Skipped(refused.to_string()))
+                    .enforce();
+            }
+            Ok(()) => {}
         }
         assert!(
             arrivals_of(&client, workspace)

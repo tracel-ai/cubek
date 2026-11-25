@@ -141,11 +141,6 @@ mod tests {
     /// its own row.
     mod columns_across_300_long_four_wide {
         use super::*;
-        every_operation!(
-            PlaneColumnsMicrokernelLauncher { columns: 2 },
-            Across,
-            300,
-            4
-        );
+        every_operation!(PlaneColumnsMicrokernelLauncher::new(2), Across, 300, 4);
     }
 }

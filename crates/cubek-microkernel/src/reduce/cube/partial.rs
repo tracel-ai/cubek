@@ -90,7 +90,7 @@ mod tests {
     mod partial_along_300_long_one_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(CubePartialMicrokernelLauncher { planes: 4 }, Along, 300, 1, Plain, [
+        reduce_tests!(CubePartialMicrokernelLauncher::new(4), Along, 300, 1, Plain, [
             sum: ReduceOperation::Sum,
             prod: ReduceOperation::Prod,
             max: ReduceOperation::Max,
@@ -105,7 +105,7 @@ mod tests {
     mod partial_across_300_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(CubePartialMicrokernelLauncher { planes: 4 }, Across, 300, 4, Plain, [
+        reduce_tests!(CubePartialMicrokernelLauncher::new(4), Across, 300, 4, Plain, [
             sum: ReduceOperation::Sum,
             max: ReduceOperation::Max,
             min: ReduceOperation::Min,

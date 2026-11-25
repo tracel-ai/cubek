@@ -14,7 +14,13 @@ use cubek_std::Hardware;
 /// A plane's units lie across several lines of rows, and each column's first unit's carrier is written.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct UnitWalkMicrokernelLauncher {
-    pub(crate) columns: usize,
+    columns: usize,
+}
+
+impl UnitWalkMicrokernelLauncher {
+    pub(crate) const fn new(columns: usize) -> Self {
+        Self { columns }
+    }
 }
 
 impl MicrokernelLauncher for UnitWalkMicrokernelLauncher {

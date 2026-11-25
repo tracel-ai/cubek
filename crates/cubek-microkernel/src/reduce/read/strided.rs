@@ -93,7 +93,7 @@ mod tests {
     mod along_37_long_one_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitStridedMicrokernelLauncher { stride: 3 }, Along, 37, 1, Plain, [
+        reduce_tests!(UnitStridedMicrokernelLauncher::new(3), Along, 37, 1, Plain, [
             sum: ReduceOperation::Sum,
             prod: ReduceOperation::Prod,
             max: ReduceOperation::Max,
@@ -108,7 +108,7 @@ mod tests {
     mod along_36_long_one_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitStridedMicrokernelLauncher { stride: 3 }, Along, 36, 1, Plain, [
+        reduce_tests!(UnitStridedMicrokernelLauncher::new(3), Along, 36, 1, Plain, [
             sum: ReduceOperation::Sum,
         ]);
     }
@@ -117,7 +117,7 @@ mod tests {
     mod across_37_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitStridedMicrokernelLauncher { stride: 3 }, Across, 37, 4, Plain, [
+        reduce_tests!(UnitStridedMicrokernelLauncher::new(3), Across, 37, 4, Plain, [
             sum: ReduceOperation::Sum,
             max: ReduceOperation::Max,
             min: ReduceOperation::Min,

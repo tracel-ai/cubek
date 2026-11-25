@@ -2,7 +2,7 @@
 //! values set, so each writes both a `0` and a `1`, which random inputs (`reduce_dim.rs`) leave to
 //! chance. The reference's answers on these rows are pinned by its own Small Tests.
 
-use crate::reduce::it::test_case::{UNIT, is_the_references};
+use crate::reduce::it::test_case::{UNIT, is_the_references, ran};
 use cubecl::{
     ir::{ElemType, FloatKind, UIntKind},
     prelude::*,
@@ -58,12 +58,21 @@ fn reduces_the_mask_like_the_reference(operation: ReduceOperation) {
 
     let input_binding = input_handle.binding();
     let output_binding = output_handle.clone().binding();
+    let mut launched = false;
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        Reduce::new(UNIT)
-            .execute(c, input_binding, output_binding, 1, operation, elements)
-            .expect("the unit kernel should serve every problem");
+        launched = ran(Reduce::new(UNIT).execute(
+            c,
+            input_binding,
+            output_binding,
+            1,
+            operation,
+            elements,
+        ));
         ExecutionOutcome::Executed
     });
+    if !launched {
+        return;
+    }
 
     match outcome {
         ExecutionOutcome::Executed => is_the_references(

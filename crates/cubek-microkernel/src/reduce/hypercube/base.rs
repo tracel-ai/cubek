@@ -5,7 +5,7 @@ use crate::reduce::cube::{
 use crate::reduce::read::{UnitPartialsReduceMicrokernel, unit_partials_reduce_microkernel};
 use crate::reduce::{Accumulable, REDUCED, ReduceOperand, ReduceWorkItem};
 use cubecl::tile::Tile;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
@@ -111,17 +111,9 @@ impl core::fmt::Display for HypercubeLastArrivalReduceMicrokernel {
     }
 }
 
-/// The hypercube of each of the cube's candidates, where device memory stays coherent across cubes in a
-/// launch, which is how they meet.
-fn candidates_meeting_in_device_memory(
-    hw: &Hardware,
-    item: &ReduceWorkItem,
-    settings: &CubeStagedReduceMicrokernelSettings,
-) -> impl Iterator<Item = HypercubeLastArrivalReduceMicrokernel> {
-    let meets = hw.properties.features.device_memory_scope;
-    CubeStagedReduceMicrokernel::candidates(hw, item, settings)
-        .filter(move |_| meets)
-        .map(HypercubeLastArrivalReduceMicrokernel::new)
+/// Whether one cube's stores reach another within a launch on `hw`, which is how the cubes meet.
+fn meets_in_device_memory(hw: &Hardware) -> bool {
+    hw.properties.features.device_memory_scope
 }
 
 impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
@@ -130,7 +122,7 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the hypercube reduce needs the cube reduce, and one cube's stores reaching another within a launch";
+    const DECLINE: &'static str = "the last-arrival hypercube needs one cube's stores reaching another within a launch (`device_memory_scope`)";
 
     /// The cube microkernel's.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
@@ -142,7 +134,23 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        candidates_meeting_in_device_memory(hw, item, settings)
+        let meets = meets_in_device_memory(hw);
+        CubeStagedReduceMicrokernel::candidates(hw, item, settings)
+            .filter(move |_| meets)
+            .map(Self::new)
+    }
+
+    /// The hypercube of the cube's best, the cube's own Decline coming through where it has none.
+    fn best(
+        hw: &Hardware,
+        item: &ReduceWorkItem,
+        settings: &Self::Settings,
+    ) -> Result<Self, Decline> {
+        let part = CubeStagedReduceMicrokernel::best(hw, item, settings)?;
+        if !meets_in_device_memory(hw) {
+            return Err(Decline::Unserved { why: Self::DECLINE });
+        }
+        Ok(Self::new(part))
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
@@ -303,7 +311,12 @@ mod tests {
         devices::features(&mut hw).device_memory_scope = false;
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
         let settings = HypercubeLastArrivalReduceMicrokernel::settings(&hw)[0];
-        assert!(HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings).is_err());
+        assert_eq!(
+            HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings),
+            Err(Decline::Unserved {
+                why: HypercubeLastArrivalReduceMicrokernel::DECLINE
+            })
+        );
     }
 
     /// The merged carrier and one partial, a line each, beside two registers.
@@ -331,10 +344,7 @@ mod tests {
         use super::*;
 
         const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
-            HypercubeLastArrivalMicrokernelLauncher {
-                planes: 4,
-                parts: 2,
-            };
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 2);
 
         every_operation!(MICROKERNEL, Along, 64, 1);
     }
@@ -345,10 +355,7 @@ mod tests {
         use super::*;
 
         const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
-            HypercubeLastArrivalMicrokernelLauncher {
-                planes: 4,
-                parts: 8,
-            };
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 8);
 
         every_operation!(MICROKERNEL, Along, 8192, 4);
 
@@ -364,10 +371,7 @@ mod tests {
         use super::*;
 
         const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
-            HypercubeLastArrivalMicrokernelLauncher {
-                planes: 4,
-                parts: 3,
-            };
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 3);
 
         every_operation!(MICROKERNEL, Across, 300, 4);
 

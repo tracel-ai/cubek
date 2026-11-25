@@ -11,7 +11,13 @@ use cubek_std::Hardware;
 /// A plane reads several lines of rows wide, a column of units each.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlaneColumnsMicrokernelLauncher {
-    pub(crate) columns: usize,
+    columns: usize,
+}
+
+impl PlaneColumnsMicrokernelLauncher {
+    pub(crate) const fn new(columns: usize) -> Self {
+        Self { columns }
+    }
 }
 
 impl MicrokernelLauncher for PlaneColumnsMicrokernelLauncher {

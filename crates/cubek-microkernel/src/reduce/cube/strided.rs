@@ -251,13 +251,13 @@ mod tests {
     /// line.
     mod strided_along_300_long_four_wide {
         use super::*;
-        every_operation!(CubeStridedMicrokernelLauncher { planes: 4 }, Along, 300, 4);
+        every_operation!(CubeStridedMicrokernelLauncher::new(4), Along, 300, 4);
     }
 
     /// The same across the reduced dimension, each lane its own row.
     mod strided_across_300_long_four_wide {
         use super::*;
-        every_operation!(CubeStridedMicrokernelLauncher { planes: 4 }, Across, 300, 4);
+        every_operation!(CubeStridedMicrokernelLauncher::new(4), Across, 300, 4);
     }
 
     const PARTIAL_COUNT: usize = 4;

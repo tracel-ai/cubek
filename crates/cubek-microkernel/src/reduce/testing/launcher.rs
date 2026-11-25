@@ -4,6 +4,7 @@ use crate::reduce::{
     TopKReduceCarrierFamily, TopValuesReduceCarrierFamily, ValuesReduceCarrierFamily,
 };
 use cubecl::client::Client;
+use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Decline, Grid};
 use cubecl::tile::{Launcher, Levels, Partitioning, Space, TileTensorLaunch};
@@ -34,6 +35,15 @@ pub(crate) trait MicrokernelLauncher: Copy + core::fmt::Debug {
     /// Why the device runs no such microkernel.
     fn plane_width(&self, hw: &Hardware, _item: &ReduceWorkItem) -> Result<usize, Decline> {
         Ok(hw.plane_dim().unwrap_or(1) as usize)
+    }
+
+    /// Whether `hw` runs it into an output of `out`.
+    ///
+    /// # Errors
+    ///
+    /// Why the device runs no such microkernel into `out`.
+    fn serves_out(&self, _hw: &Hardware, _out: ElemType) -> Result<(), Decline> {
+        Ok(())
     }
 
     /// What its launch counts as a plane: a cube's units where no level states one.
