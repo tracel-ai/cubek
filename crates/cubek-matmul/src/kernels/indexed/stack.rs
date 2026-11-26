@@ -92,21 +92,6 @@ impl SlabDimension {
         }
     }
 
-    /// Whether `stack`, float or packed, is whole slabs along this dimension, `slabs` of them.
-    ///
-    /// # Errors
-    ///
-    /// [`MATMUL_STACK_NOT_WHOLE_SLABS`].
-    pub(crate) fn admit(self, stack: &StoredTensor, slabs: usize) -> Result<(), Decline> {
-        if stack.values().shape().rank() != 2 || slabs == 0 {
-            return Err(MATMUL_STACK_NOT_WHOLE_SLABS);
-        }
-        if !stack.extent([K, N], self.dimension()).is_multiple_of(slabs) {
-            return Err(MATMUL_STACK_NOT_WHOLE_SLABS);
-        }
-        Ok(())
-    }
-
     /// One slab's `[k, n]` out of `stack`, float or packed, holding `slabs` of them along this
     /// dimension.
     ///
@@ -144,6 +129,23 @@ impl SlabDimension {
     }
 }
 
+impl SlabDimension {
+    /// Whether `stack`, float or packed, is whole slabs along this dimension, `slabs` of them.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_STACK_NOT_WHOLE_SLABS`].
+    pub(crate) fn admit(self, stack: &StoredTensor, slabs: usize) -> Result<(), Decline> {
+        if stack.values().shape().rank() != 2 || slabs == 0 {
+            return Err(MATMUL_STACK_NOT_WHOLE_SLABS);
+        }
+        if !stack.extent([K, N], self.dimension()).is_multiple_of(slabs) {
+            return Err(MATMUL_STACK_NOT_WHOLE_SLABS);
+        }
+        Ok(())
+    }
+}
+
 /// The stack as `[groups, k, n]`, one `[k, n]` slab a batch, over the buffer it lies in: a
 /// strided batch rather than a gathered dim. A `cmma` or plane-register fragment reads no
 /// gathered operand, a gathered dim compiles one slab's extent into its coefficients where a
@@ -161,7 +163,7 @@ impl SlabView {
     ///
     /// # Assumptions
     ///
-    /// The view is whole slabs, at least one.
+    /// As [`SlabDimension::slab_of`].
     ///
     /// # Panics
     ///

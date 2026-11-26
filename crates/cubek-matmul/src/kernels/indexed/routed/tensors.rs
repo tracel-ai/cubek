@@ -65,9 +65,6 @@ impl core::fmt::Debug for RoutedMatmulTensors {
 }
 
 impl RoutedMatmulTensors {
-    /// The most rows a key tells apart: past it a grid is full whatever the count.
-    const ROWS_KEYED: usize = 65536;
-
     /// `lhs[rows, k]` against the stack `rhs` of `experts` slabs laid `along`, float or packed,
     /// each row routed to the slabs its row of `routes[rows, slots]` names, on `client`'s device.
     /// The rows and the routes are made dense, and a float stack is copied only where it is
@@ -290,6 +287,11 @@ impl RoutedMatmulTensors {
     pub fn stack_kind(&self) -> OperandKind {
         self.rhs.kind()
     }
+}
+
+impl RoutedMatmulTensors {
+    /// The most rows a key tells apart: past it a grid is full whatever the count.
+    const ROWS_KEYED: usize = 65536;
 }
 
 impl RoutedMatmulTensors {

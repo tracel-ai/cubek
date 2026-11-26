@@ -26,9 +26,9 @@ pub const GROUPED_TILE_OF_NO_ROW: Decline = Decline::Unserved {
     why: "a tile of grouped rows holds at least one row",
 };
 
-/// A route sort other than a `u32` place per route, at least one route a token.
+/// A route sort other than a `u32` place per route of its tokens, at least one route a token.
 pub const ROUTE_SORT_UNREAD: Decline = Decline::Unserved {
-    why: "a route sort is one u32 place per route, at least one route a token",
+    why: "a route sort is one u32 place per route of its tokens, at least one route a token",
 };
 
 /// Rows no gated activation reads: not two halves wide, or grouped into other groups than the
@@ -71,22 +71,77 @@ impl GroupedRows {
     ///
     /// # Guarantees
     ///
-    /// Whatever the ends are, a group that runs backwards takes no tile, and no row past `rows` is
-    /// read or written.
+    /// No row past `rows` is read or written, and a group whose end is below the one before it
+    /// takes no tile.
     ///
     /// # Errors
     ///
-    /// [`GROUP_ENDS_UNREAD`], and [`GROUPED_TILE_OF_NO_ROW`].
+    /// [`GROUP_ENDS_UNREAD`], and [`GROUPED_TILE_OF_NO_ROW`], before anything is launched.
     pub fn new(
         client: &Client,
         ends: PlainTensor,
         rows: usize,
         align: usize,
     ) -> Result<Self, Decline> {
+        Self::admit_layout(&ends, align)?;
+        Ok(Self::laid_out(client, ends, rows, align))
+    }
+
+    /// Rows a tile holds: every group starts on a multiple of it.
+    pub fn align(&self) -> usize {
+        self.align
+    }
+
+    /// The slab of each tile, `u32`: the sentinel `groups` past the real ones.
+    pub fn table(&self) -> TensorHandle {
+        self.table.clone()
+    }
+
+    /// Each group's first tile, `u32`, and one past the last group's: group
+    /// `g`'s tiles are `starts[g]..starts[g + 1]`, `groups + 1` entries.
+    pub fn starts(&self) -> TensorHandle {
+        self.starts.clone()
+    }
+
+    /// The client the layout lives on.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// How many rows are grouped, padding aside.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Rows once every group is padded to whole tiles: `tiles · align`.
+    pub fn padded_rows(&self) -> usize {
+        self.table.shape().num_elements() * self.align
+    }
+
+    /// [`padded_rows`](Self::padded_rows) of `rows` rows grouped into `groups`, each padded to
+    /// start on a multiple of `align` rows: the bound the layout lays out, whatever the groups
+    /// turn out to hold.
+    pub fn padded_extent(rows: usize, groups: usize, align: usize) -> usize {
+        Self::tiles(rows, groups, align) * align
+    }
+}
+
+impl GroupedRows {
+    /// Whether a layout is built from `ends` and `align`: one `u32` end per group, at least one,
+    /// and tiles of a row at least.
+    ///
+    /// # Errors
+    ///
+    /// [`GROUP_ENDS_UNREAD`], and [`GROUPED_TILE_OF_NO_ROW`].
+    pub(crate) fn admit_layout(ends: &PlainTensor, align: usize) -> Result<(), Decline> {
         if align == 0 {
             return Err(GROUPED_TILE_OF_NO_ROW);
         }
-        admit_ends(&ends)?;
+        admit_ends(ends)
+    }
+
+    /// [`new`](Self::new), its ends and `align` ones [`admit_layout`](Self::admit_layout) takes.
+    pub(crate) fn laid_out(client: &Client, ends: PlainTensor, rows: usize, align: usize) -> Self {
         let ends = ends.into_contiguous(client);
         let groups = ends.shape().num_elements();
         let tiles = Self::tiles(rows, groups, align);
@@ -104,7 +159,7 @@ impl GroupedRows {
             starts.clone().binding().into_tensor_arg(),
             align as u32,
         );
-        Ok(Self {
+        Self {
             client: client.clone(),
             ends,
             table,
@@ -112,7 +167,7 @@ impl GroupedRows {
             starts,
             rows,
             align,
-        })
+        }
     }
 
     /// [`new`](Self::new) laid out on the host and uploaded, so it holds where launches are
@@ -149,27 +204,6 @@ impl GroupedRows {
             rows,
             align,
         }
-    }
-
-    /// Rows a tile holds: every group starts on a multiple of it.
-    pub fn align(&self) -> usize {
-        self.align
-    }
-
-    /// The slab of each tile, `u32`: the sentinel `groups` past the real ones.
-    pub fn table(&self) -> TensorHandle {
-        self.table.clone()
-    }
-
-    /// Each group's first tile, `u32`, and one past the last group's: group
-    /// `g`'s tiles are `starts[g]..starts[g + 1]`, `groups + 1` entries.
-    pub fn starts(&self) -> TensorHandle {
-        self.starts.clone()
-    }
-
-    /// The client the layout lives on.
-    pub fn client(&self) -> &Client {
-        &self.client
     }
 
     /// How many groups the rows are laid out by.
@@ -226,11 +260,6 @@ impl GroupedRows {
         rows
     }
 
-    /// How many rows are grouped, padding aside.
-    pub fn rows(&self) -> usize {
-        self.rows
-    }
-
     /// The rows `sort` placed, padded and gathered from their tokens in the
     /// same pass: sorted place `p` holds row `route_at_place[p] / slots` of
     /// `tokens`, `[tokens, width]`, so the sorted copy of the tokens never
@@ -238,8 +267,8 @@ impl GroupedRows {
     ///
     /// # Assumptions
     ///
-    /// The tokens are `[tokens, width]`, and the sort is one [`RouteSort::admit`] takes, of as
-    /// many places as this layout groups rows.
+    /// The tokens are `[tokens, width]`, and the sort is one [`RouteSort::admit`] takes for them,
+    /// of as many places as this layout groups rows.
     pub(crate) fn pad_routes(&self, tokens: PlainTensor, sort: RouteSort) -> TensorHandle {
         self.pad_from(tokens, Some(sort))
     }
@@ -336,18 +365,6 @@ impl GroupedRows {
         Ok(out)
     }
 
-    /// Rows once every group is padded to whole tiles: `tiles · align`.
-    pub fn padded_rows(&self) -> usize {
-        self.table.shape().num_elements() * self.align
-    }
-
-    /// [`padded_rows`](Self::padded_rows) of `rows` rows grouped into `groups`, each padded to
-    /// start on a multiple of `align` rows: the bound the layout lays out, whatever the groups
-    /// turn out to hold.
-    pub fn padded_extent(rows: usize, groups: usize, align: usize) -> usize {
-        Self::tiles(rows, groups, align) * align
-    }
-
     /// Tiles of `align` rows that `rows` rows grouped into `groups` take at most, each group
     /// padded to start on a tile: `rows + groups · (align - 1)` rounded up to whole tiles.
     fn tiles(rows: usize, groups: usize, align: usize) -> usize {
@@ -416,13 +433,15 @@ pub struct RouteSort {
 }
 
 impl RouteSort {
-    /// Whether the sort is a `u32` place per route, at least one route a token.
+    /// Whether the sort is a `u32` place per route of `tokens` tokens, at least one route a token:
+    /// a place reads the token its route names, so a place past them would read past the tokens.
     ///
     /// # Errors
     ///
     /// [`ROUTE_SORT_UNREAD`].
-    pub(crate) fn admit(&self) -> Result<(), Decline> {
-        if self.route_at_place.elem != U32 || self.slots == 0 {
+    pub(crate) fn admit(&self, tokens: usize) -> Result<(), Decline> {
+        let places = self.route_at_place.shape().num_elements();
+        if self.route_at_place.elem != U32 || self.slots == 0 || places != tokens * self.slots {
             return Err(ROUTE_SORT_UNREAD);
         }
         Ok(())

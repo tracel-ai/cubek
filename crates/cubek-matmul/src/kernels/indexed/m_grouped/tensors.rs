@@ -24,11 +24,17 @@ use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, 
 use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_dimensions::{K, N};
+use cubek_std::routine::Breakable;
 
 /// A grouped product whose rows' contraction is not its slabs'.
 pub const M_GROUPED_SHAPES_DISAGREE: Decline = Decline::Unserved {
     why: "a grouped product is [rows, k] against slabs of [k, n]",
 };
+
+/// What a launch pads its rows on: the rows and the ends [`MGroupedMatmulTensors::new`] admitted,
+/// in chunks of a row at least.
+const PADDED_AS_ADMITTED: &str =
+    "the rows and the ends should be as the product admitted them, in chunks of a row at least";
 
 /// A grouped product padded over no row: a layout holds one at least.
 pub const M_GROUPED_NO_ROW: Decline = Decline::Unserved {
@@ -53,9 +59,6 @@ pub struct MGroupedMatmulTensors {
 }
 
 impl MGroupedMatmulTensors {
-    /// The most rows a key tells apart: past it a grid is full whatever the count.
-    const ROWS_KEYED: usize = 65536;
-
     /// The rows `source` holds against `rhs` on `client`'s device, grouped by `ends` (each group's
     /// cumulative end row as a `u32`, one group a slab), the slabs laid along `along`. A float
     /// stack is read where it lies, and copied only where it overlaps itself or is contiguous
@@ -63,8 +66,11 @@ impl MGroupedMatmulTensors {
     ///
     /// # Assumptions
     ///
-    /// The ends never decrease, and the last is the rows' count. The places of a routed source
-    /// name each route once.
+    /// As [`MGroupedRowSource::pad`].
+    ///
+    /// # Guarantees
+    ///
+    /// As [`MGroupedRowSource::pad`].
     ///
     /// # Errors
     ///
@@ -255,7 +261,8 @@ impl MGroupedMatmulTensors {
         let (lhs, layout) = self
             .source
             .clone()
-            .pad(&self.client, self.ends.clone(), chunk_rows)?
+            .pad(&self.client, self.ends.clone(), chunk_rows)
+            .or_broken(PADDED_AS_ADMITTED)?
             .into_parts();
         let [k, n] = self.slab_shape();
         let (chunks, elem) = (lhs.shape()[0] / chunk_rows, lhs.dtype);
@@ -287,8 +294,13 @@ impl MGroupedMatmulTensors {
             bound,
             &settings.routine,
         )?;
-        PaddedRows::new(out, layout)
+        Ok(PaddedRows::laid_out(out, layout))
     }
+}
+
+impl MGroupedMatmulTensors {
+    /// The most rows a key tells apart: past it a grid is full whatever the count.
+    const ROWS_KEYED: usize = 65536;
 }
 
 impl MGroupedMatmulTensors {

@@ -37,15 +37,20 @@ impl KGroupedMatmulTensors {
     /// `lhs[rows, m]` and `rhs[rows, n]` on `client`'s device, their rows grouped by `ends`, each
     /// group's cumulative end row as a `u32`, one group a slab.
     ///
+    /// # Assumptions
+    ///
+    /// The ends never decrease, and the last is the rows' count.
+    ///
     /// # Guarantees
     ///
-    /// The product is defined whatever the ends are: a group sums the rows from the end before its
-    /// own up to its own, none where they run backwards, and none past `rows`.
+    /// No row past the rows' count is read, and a group whose end is below the one before it sums
+    /// no row.
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`], [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an operand stored in
-    /// tiles, [`K_GROUPED_SHAPES_DISAGREE`], and [`GROUP_ENDS_UNREAD`].
+    /// [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an operand stored in tiles,
+    /// [`K_GROUPED_SHAPES_DISAGREE`], [`GROUP_ENDS_UNREAD`], each before anything is copied, and as
+    /// [`MatmulInputs::new`].
     pub fn new(
         client: &Client,
         lhs: PlainTensor,
@@ -55,12 +60,12 @@ impl KGroupedMatmulTensors {
         if lhs.is_tiled() || rhs.is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
-        let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?.into_parts();
         let (lhs_shape, rhs_shape) = (lhs.shape(), rhs.shape());
         if lhs_shape.rank() != 2 || rhs_shape.rank() != 2 || rhs_shape[0] != lhs_shape[0] {
             return Err(K_GROUPED_SHAPES_DISAGREE);
         }
         admit_ends(&ends)?;
+        let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?.into_parts();
         Ok(Self {
             client: client.clone(),
             lhs,

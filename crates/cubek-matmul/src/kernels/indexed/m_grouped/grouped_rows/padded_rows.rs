@@ -28,31 +28,6 @@ impl PaddedRows {
         Ok(Self { rows, layout })
     }
 
-    /// The same rows as `layout` places them.
-    ///
-    /// # Assumptions
-    ///
-    /// `layout` lays out as many padded rows as the one that places them now.
-    pub(crate) fn placed_by(&self, layout: GroupedRows) -> Self {
-        Self {
-            rows: self.rows.clone(),
-            layout,
-        }
-    }
-
-    /// Whether the rows are a `[gate | up]` output over `groups` groups, which another layout of
-    /// those groups gates.
-    ///
-    /// # Errors
-    ///
-    /// [`GATED_ROWS_UNREAD`].
-    pub(crate) fn admit_gated(&self, groups: usize) -> Result<(), Decline> {
-        if self.layout.groups() != groups || !self.rows.shape()[1].is_multiple_of(2) {
-            return Err(GATED_ROWS_UNREAD);
-        }
-        Ok(())
-    }
-
     /// The padded rows, `[tiles · align, width]`.
     pub fn rows(&self) -> &TensorHandle {
         &self.rows
@@ -91,5 +66,37 @@ impl PaddedRows {
     ) -> Result<TensorHandle, Decline> {
         self.layout
             .combine_routes(&self.rows, routes, place_of_route, weights)
+    }
+}
+
+impl PaddedRows {
+    /// `rows`, `[tiles · align, width]`, as `layout`, which laid them out, places them.
+    pub(crate) fn laid_out(rows: TensorHandle, layout: GroupedRows) -> Self {
+        Self { rows, layout }
+    }
+
+    /// The same rows as `layout` places them.
+    ///
+    /// # Assumptions
+    ///
+    /// `layout` lays out as many padded rows as the one that places them now.
+    pub(crate) fn placed_by(&self, layout: GroupedRows) -> Self {
+        Self {
+            rows: self.rows.clone(),
+            layout,
+        }
+    }
+
+    /// Whether the rows are a `[gate | up]` output over `groups` groups, which another layout of
+    /// those groups gates.
+    ///
+    /// # Errors
+    ///
+    /// [`GATED_ROWS_UNREAD`].
+    pub(crate) fn admit_gated(&self, groups: usize) -> Result<(), Decline> {
+        if self.layout.groups() != groups || !self.rows.shape()[1].is_multiple_of(2) {
+            return Err(GATED_ROWS_UNREAD);
+        }
+        Ok(())
     }
 }
