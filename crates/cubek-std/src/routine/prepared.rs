@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use cubecl::tile::launch::Decline;
 use cubecl_environment::sync::Mutex;
 
@@ -15,22 +17,28 @@ type Prepared<R> = Result<(<R as Routine>::Blueprint, Grid), Decline>;
 /// each, which costs more host time than the launch of a small product; a tuned winner runs the
 /// same few problems for the rest of the process.
 ///
-/// It holds the [`CAPACITY`](Self::CAPACITY) problems prepared last, so a caller cycling through
-/// many shapes costs a comparison per held problem and no more than preparing each.
+/// It keeps the [`CAPACITY`](Self::CAPACITY) problems prepared last, so a caller cycling through
+/// many shapes costs a comparison per kept problem and no more than preparing each.
 pub struct PreparedLaunches<R: Routine> {
-    held: Mutex<Vec<(R::Problem, Prepared<R>)>>,
+    /// The problems prepared last, oldest first, each beside what it prepared: looked up by its
+    /// problem (a Keyed Usage, by comparison, a problem being neither hashed nor ordered), and the
+    /// oldest dropped first once full (an Arrival Usage).
+    recent: Mutex<VecDeque<(R::Problem, Prepared<R>)>>,
 }
 
 impl<R: Routine> PreparedLaunches<R>
 where
     R::Problem: PartialEq,
 {
-    /// The most problems held: a model's handful of shapes per winner.
+    /// The most problems kept: a model's handful of shapes per winner.
     pub const CAPACITY: usize = 16;
 
     /// The launch `R` prepares for `problem` at `settings` on `hw`, or why it declines it: the one
-    /// held for `problem`, or prepared now and held. The caller hands the same setting and device
-    /// every time.
+    /// kept for `problem`, or prepared now and kept.
+    ///
+    /// # Assumptions
+    ///
+    /// Every call hands the same `settings` and `hw`.
     ///
     /// # Errors
     ///
@@ -41,15 +49,15 @@ where
         problem: &R::Problem,
         settings: &R::Settings,
     ) -> Prepared<R> {
-        let mut held = self.held.lock();
-        if let Some((_, prepared)) = held.iter().find(|(held, _)| held == problem) {
+        let mut recent = self.recent.lock();
+        if let Some((_, prepared)) = recent.iter().find(|(kept, _)| kept == problem) {
             return prepared.clone();
         }
         let prepared = R::prepare(hw, problem, settings);
-        if held.len() == Self::CAPACITY {
-            drop(held.remove(0));
+        if recent.len() == Self::CAPACITY {
+            recent.pop_front();
         }
-        held.push((problem.clone(), prepared.clone()));
+        recent.push_back((problem.clone(), prepared.clone()));
         prepared
     }
 }
@@ -57,7 +65,7 @@ where
 impl<R: Routine> Default for PreparedLaunches<R> {
     fn default() -> Self {
         Self {
-            held: Mutex::new(Vec::new()),
+            recent: Mutex::new(VecDeque::new()),
         }
     }
 }
@@ -65,7 +73,7 @@ impl<R: Routine> Default for PreparedLaunches<R> {
 impl<R: Routine> core::fmt::Debug for PreparedLaunches<R> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PreparedLaunches")
-            .field("held", &self.held.lock().len())
+            .field("recent", &self.recent.lock().len())
             .finish()
     }
 }

@@ -1,11 +1,12 @@
 use super::base::{self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement};
+use super::tma::CubeStagedTmaBinding;
 use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,
 };
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder};
-use cubecl::tile::{StageStorage, TileTensorLaunch};
+use cubecl::tile::{Launcher, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
@@ -130,13 +131,25 @@ impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedWgmmaMatmu
     /// A cube owns a box of the rows.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
 
+    type Extras = CubeStagedTmaBinding;
+
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        tensors: &MatmulTensors<Out>,
+        launcher: &Launcher,
+        blueprint: &CubeStagedMatmulRoutineBlueprint,
+    ) -> Result<CubeStagedTmaBinding, Decline> {
+        base::bind_extras(tensors, launcher, blueprint)
+    }
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        tma: CubeStagedTmaBinding,
         blueprint: CubeStagedMatmulRoutineBlueprint,
         grid: Grid,
-    ) -> Result<(), Decline> {
-        base::dispatch::<O, Out>(tensors, binding, blueprint, grid)
+    ) {
+        base::dispatch::<O, Out>(tensors, binding, tma, blueprint, grid)
     }
 }

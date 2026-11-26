@@ -81,11 +81,9 @@ where
     ///
     /// # Errors
     ///
-    /// Why this device cannot run the gate at this setting.
-    ///
-    /// # Panics
-    ///
-    /// On an `out` of another shape or element than the gate's.
+    /// Why this device cannot run the gate at this setting, and
+    /// [`SWIGLU_OUTPUT_UNREAD`](crate::kernels::SWIGLU_OUTPUT_UNREAD) for an `out` of another shape
+    /// or element than the gate's, or not dense.
     pub fn launch_contiguous(
         &self,
         call: &SwigluCall,

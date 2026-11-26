@@ -6,7 +6,7 @@ use crate::kernels::{
 };
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
-use cubecl::tile::{StageStorage, TileTensorLaunch};
+use cubecl::tile::{Launcher, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::{
@@ -18,6 +18,24 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::microkernel::StageRing;
 use cubek_std::routine::{Grid, Routine};
+
+/// What a fill the TMA engine moves declines: a packed input stored in tiles laid block by block
+/// ([`TileWords::BlockByBlock`](cubek_std::layout::tile_order::TileWords::BlockByBlock)), whose tile rows are no row's run for a descriptor to land.
+pub const MATMUL_WORDS_BLOCK_BY_BLOCK_UNMOVED_BY_TMA: Decline = Decline::Unserved {
+    why: "a tensor map lands a packed input's words a row's run at a time, and this one's tiles \
+          lay them block by block; the cube's units move them",
+};
+
+/// What the TMA engine moves for a cube staged kernel, bound beside its operands: nothing where
+/// its units fill the stages and its fragments store the box.
+pub struct CubeStagedTmaBinding {
+    /// The lhs's and the rhs's tensor maps the engine fills the stages from, read in place of the
+    /// bound inputs, where it fills them.
+    pub inputs: Option<(TileTensorLaunch, TileTensorLaunch)>,
+    /// The output's tensor map the engine stores the box through, written in place of the bound
+    /// output, where it stores it.
+    pub output: Option<TileTensorLaunch>,
+}
 
 /// `out = lhs · rhs` as [`CubeStagedMatmulRoutine`](crate::kernels::CubeStagedMatmulRoutine) runs
 /// it, each stage landed by the TMA engine, one descriptor a stage an operand, while every plane
@@ -184,13 +202,25 @@ impl MatmulRoutine<CubeStagedMicrokernel, StageStorage> for CubeStagedTmaMatmulR
     /// A cube owns a box of the rows.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
 
+    type Extras = CubeStagedTmaBinding;
+
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        tensors: &MatmulTensors<Out>,
+        launcher: &Launcher,
+        blueprint: &CubeStagedMatmulRoutineBlueprint,
+    ) -> Result<CubeStagedTmaBinding, Decline> {
+        base::bind_extras(tensors, launcher, blueprint)
+    }
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        tma: CubeStagedTmaBinding,
         blueprint: CubeStagedMatmulRoutineBlueprint,
         grid: Grid,
-    ) -> Result<(), Decline> {
-        base::dispatch::<O, Out>(tensors, binding, blueprint, grid)
+    ) {
+        base::dispatch::<O, Out>(tensors, binding, tma, blueprint, grid)
     }
 }

@@ -14,18 +14,32 @@ use cubek_std::Hardware;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 
 /// A routine of this kind: it prepares a launch of a max pooling and launches it on tensors.
+///
+/// # Assumptions
+///
+/// [`dispatch`](Self::dispatch) is handed the binding [`bind`](Self::bind) returned for the same
+/// tensors, blueprint and grid.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait PoolRoutine: Routine<Problem = PoolRoutineProblem> {
-    /// Launch the kernel `blueprint` compiles, on `grid`, over `tensors`.
+    /// `tensors`' operands bound as `blueprint` states them, on `grid`.
     ///
     /// # Errors
     ///
     /// As [`PoolTensors::bind`].
-    fn dispatch(
+    fn bind(
         &self,
         tensors: &PoolTensors,
-        blueprint: Self::Blueprint,
-        grid: Grid,
-    ) -> Result<(), Decline>;
+        blueprint: &Self::Blueprint,
+        grid: &Grid,
+    ) -> Result<PoolBinding, Decline>;
+
+    /// Launch its kernel on `grid` over `binding`, `tensors`' operands as [`bind`](Self::bind)
+    /// bound them, which carry every decision of its blueprint.
+    fn dispatch(&self, tensors: &PoolTensors, binding: PoolBinding, grid: Grid);
 }
 
 /// `tensors` pooled by `routine` at `settings` on `hw`.
@@ -40,7 +54,9 @@ pub fn launch_pool_routine<R: PoolRoutine>(
     settings: &R::Settings,
 ) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
-    routine.dispatch(tensors, blueprint, grid)
+    let binding = routine.bind(tensors, &blueprint, &grid)?;
+    routine.dispatch(tensors, binding, grid);
+    Ok(())
 }
 
 /// The NHWC input and output of one max pooling, and the problem they state.

@@ -14,11 +14,24 @@ use cubek_matmul::kernels::tensor::{
 use cubek_microkernel::row_store::RowStore;
 use cubek_microkernel::swiglu::{D, H, R, SwigluOperands};
 use cubek_std::Hardware;
+use cubek_std::layout::is_dense;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid};
 
 /// What a launch of this kind declines before preparing anything: rows that are not floats.
 pub const SWIGLU_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the microkernel SwiGLU gates float rows",
+};
+
+/// What a launch of this kind declines before preparing anything: an input of no dim, or whose
+/// last dim is odd, which holds no fused row of two halves.
+pub const SWIGLU_ROW_NOT_TWO_HALVES: Decline = Decline::Unserved {
+    why: "a fused gate/up row is the last dim of the input, of an even width",
+};
+
+/// What a launch into a buffer its caller allocated declines: an output of another shape or
+/// element than the gate's, or not dense.
+pub const SWIGLU_OUTPUT_UNREAD: Decline = Decline::Unserved {
+    why: "the output takes the input's element and shape at half its width, laid densely",
 };
 
 /// The tensors of one gate, its output among them, and the problem they state.
@@ -75,14 +88,12 @@ impl SwigluTensors {
     ///
     /// # Errors
     ///
-    /// [`SWIGLU_ELEMENT_UNVERIFIED`], what the routines decline whatever the device, and
-    /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
-    ///
-    /// # Panics
-    ///
-    /// On an odd last dim: no fused row of two halves.
+    /// [`SWIGLU_ELEMENT_UNVERIFIED`] and [`SWIGLU_ROW_NOT_TWO_HALVES`], what the routines decline
+    /// whatever the device, and [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does
+    /// not run.
     pub fn new(client: &Client, both: PlainTensor) -> Result<Self, Decline> {
-        let input = SwigluInput::new(client, both)?;
+        let shape = SwigluInput::admit(client, &both)?;
+        let input = SwigluInput::new(client, both, shape);
         let (out, _) =
             PlainTensor::empty_contiguous(client, input.shape.clone().into(), input.fused.elem);
         Ok(input.into_contiguous(out))
@@ -122,13 +133,13 @@ impl SwigluTensors {
 impl SwigluTensors {
     /// A contiguous output for the gate of `both`: the input's shape at half its width.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On an odd last dim: no fused row of two halves.
-    pub fn allocate_out(client: &Client, both: &PlainTensor) -> TensorHandle {
-        let (handle, _) =
-            PlainTensor::empty_contiguous(client, gated_shape(both).into(), both.elem);
-        handle
+    /// [`SWIGLU_ROW_NOT_TWO_HALVES`].
+    pub fn allocate_out(client: &Client, both: &PlainTensor) -> Result<TensorHandle, Decline> {
+        let shape = gated_shape(both)?;
+        let (handle, _) = PlainTensor::empty_contiguous(client, shape.into(), both.elem);
+        Ok(handle)
     }
 
     /// [`SwigluTensors::new`] into `out`, a contiguous buffer the caller allocated
@@ -136,17 +147,18 @@ impl SwigluTensors {
     ///
     /// # Errors
     ///
-    /// As [`SwigluTensors::new`].
-    ///
-    /// # Panics
-    ///
-    /// As [`SwigluTensors::new`], and on an `out` of another shape or element than the gate's.
+    /// As [`SwigluTensors::new`], and [`SWIGLU_OUTPUT_UNREAD`].
     pub(crate) fn contiguous(
         client: &Client,
         both: PlainTensor,
         out: TensorHandle,
     ) -> Result<Self, Decline> {
-        Ok(SwigluInput::new(client, both)?.into_contiguous(out))
+        let shape = SwigluInput::admit(client, &both)?;
+        let dense = is_dense(out.shape(), out.strides());
+        if !out.shape().iter().eq(shape.iter()) || out.dtype != both.elem || !dense {
+            return Err(SWIGLU_OUTPUT_UNREAD);
+        }
+        Ok(SwigluInput::new(client, both, shape).into_contiguous(out))
     }
 }
 
@@ -158,13 +170,11 @@ impl SwigluTensors<PackedRows> {
     /// # Errors
     ///
     /// As [`SwigluTensors::new`], and what [`PackedRows::new`] declines of `out`.
-    ///
-    /// # Panics
-    ///
-    /// As [`SwigluTensors::new`], and on an `out` not shaped `[rows, d]`.
     pub fn packed(client: &Client, both: PlainTensor, out: PackedTensor) -> Result<Self, Decline> {
-        let input = SwigluInput::new(client, both)?;
-        let out = PackedRows::new(out, input.rows, input.dim)?;
+        let shape = SwigluInput::admit(client, &both)?;
+        let [rows, dim] = rows_and_dim(&shape);
+        let out = PackedRows::new(out, rows, dim)?;
+        let input = SwigluInput::new(client, both, shape);
         let (placement, store) = (Placement::dense_rows(input.dim), out.store());
         Ok(input.with_out(out, placement, store))
     }
@@ -174,7 +184,7 @@ impl SwigluTensors<PackedRows> {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    /// As the `bind` of the tensors writing into a buffer.
     pub fn bind<M>(
         &self,
         blueprint: &SwigluBlueprint<M>,
@@ -198,14 +208,11 @@ impl SwigluTensors<TiledRows> {
     /// # Errors
     ///
     /// As [`SwigluTensors::new`], and what [`TiledRows::new`] declines of `out`.
-    ///
-    /// # Panics
-    ///
-    /// As [`SwigluTensors::new`].
     pub fn tiled(client: &Client, both: PlainTensor, out: PlainTensor) -> Result<Self, Decline> {
-        let input = SwigluInput::new(client, both)?;
-        let element = input.fused.elem;
-        let out = TiledRows::new(out, input.rows, input.dim, element)?;
+        let shape = SwigluInput::admit(client, &both)?;
+        let [rows, dim] = rows_and_dim(&shape);
+        let out = TiledRows::new(out, rows, dim, both.elem)?;
+        let input = SwigluInput::new(client, both, shape);
         let placement = Placement::from(&out);
         Ok(input.with_out(out, placement, RowStore::Plain))
     }
@@ -215,7 +222,7 @@ impl SwigluTensors<TiledRows> {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    /// As the `bind` of the tensors writing into a buffer.
     pub fn bind<M>(
         &self,
         blueprint: &SwigluBlueprint<M>,
@@ -282,18 +289,26 @@ impl<Out> SwigluBinding<Out> {
 /// The fused rows as every launch reads them, before the output is decided.
 /// The shape of the gate of `both`: its shape at half its width.
 ///
-/// # Panics
+/// # Errors
 ///
-/// On an odd last dim: no fused row of two halves.
-fn gated_shape(both: &PlainTensor) -> Vec<usize> {
+/// [`SWIGLU_ROW_NOT_TWO_HALVES`].
+fn gated_shape(both: &PlainTensor) -> Result<Vec<usize>, Decline> {
     let mut shape = both.binding.shape.to_vec();
-    let last = shape.last_mut().expect("a tensor has a last dimension");
-    assert!(
-        last.is_multiple_of(2),
-        "a fused gate/up row has an even width, got {last}"
-    );
-    *last /= 2;
-    shape
+    match shape.last_mut() {
+        Some(last) if last.is_multiple_of(2) => *last /= 2,
+        _ => return Err(SWIGLU_ROW_NOT_TWO_HALVES),
+    }
+    Ok(shape)
+}
+
+/// The rows and the dim of a gate of `shape`, `[rows, dim]`.
+///
+/// # Assumptions
+///
+/// `shape` has a last dim, as a gated shape does.
+fn rows_and_dim(shape: &[usize]) -> [usize; 2] {
+    let (dim, rows) = shape.split_last().expect("a gated shape has a last dim");
+    [rows.iter().product(), *dim]
 }
 
 struct SwigluInput {
@@ -310,46 +325,45 @@ impl SwigluInput {
     /// The fused rows of `both`, `(..., 2 · d)` laid out `[gate | up]`, as dense rows starting on
     /// a whole read, bound as `[r, h, d]`.
     ///
+    /// # Assumptions
+    ///
+    /// `shape` is what [`admit`](Self::admit) returned for `both`.
+    fn new(client: &Client, both: PlainTensor, shape: Vec<usize>) -> Self {
+        let [rows, dim] = rows_and_dim(&shape);
+        let read_bytes = Hardware::from_client(client).properties.io_width() as u64 / 8;
+        let both = both.into_dense_at(client, read_bytes);
+        let fused = both.viewed(Metadata::new([rows, 2, dim], [2 * dim, dim, 1]));
+        Self {
+            client: client.clone(),
+            fused,
+            shape,
+            rows,
+            dim,
+        }
+    }
+
+    /// The gate's shape of `both`, checked from its shape and element alone, before any copy.
+    ///
     /// # Errors
     ///
     /// As [`SwigluTensors::new`].
-    fn new(client: &Client, both: PlainTensor) -> Result<Self, Decline> {
+    fn admit(client: &Client, both: &PlainTensor) -> Result<Vec<usize>, Decline> {
         if !matches!(both.elem, ElemType::Float(_)) {
             return Err(SWIGLU_ELEMENT_UNVERIFIED);
         }
         if !both.runs_on(client) {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
-        let shape = gated_shape(&both);
-        let dim = *shape.last().expect("a tensor has a last dimension");
-        let rows = shape[..shape.len() - 1].iter().product();
-        let read_bytes = Hardware::from_client(client).properties.io_width() as u64 / 8;
-        let both = both.into_dense_at(client, read_bytes);
-        let fused = both.viewed(Metadata::new([rows, 2, dim], [2 * dim, dim, 1]));
-        Ok(Self {
-            client: client.clone(),
-            fused,
-            shape,
-            rows,
-            dim,
-        })
+        gated_shape(both)
     }
 
     /// The tensors of the gate of these rows into `out`, a contiguous buffer in the input's shape
     /// at half its width.
     ///
-    /// # Panics
+    /// # Assumptions
     ///
-    /// On an `out` of another shape or element than the gate's.
+    /// `out` takes the gate's shape and the input's element.
     fn into_contiguous(self, out: TensorHandle) -> SwigluTensors {
-        assert!(
-            out.shape().iter().eq(self.shape.iter()),
-            "the output takes the input's shape at half its width"
-        );
-        assert_eq!(
-            out.dtype, self.fused.elem,
-            "the output takes the input's element"
-        );
         let rows = PlainTensor::of_handle(out.clone())
             .viewed(Metadata::new([self.rows, self.dim], [self.dim, 1]));
         let placement = Placement::from(&rows);
@@ -390,5 +404,55 @@ impl SwigluInput {
             },
             store,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::FloatKind;
+    use cubek_test_utils::client;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// Zeros of `shape` in `f32`.
+    fn zeros(shape: &[usize]) -> PlainTensor {
+        PlainTensor::of_handle(TensorHandle::zeros(&client(), shape.to_vec(), F32))
+    }
+
+    #[test]
+    fn an_odd_fused_row_declines() {
+        let declined = SwigluTensors::new(&client(), zeros(&[4, 7])).err();
+
+        assert_eq!(declined, Some(SWIGLU_ROW_NOT_TWO_HALVES));
+    }
+
+    #[test]
+    fn a_dense_output_whose_lone_axis_carries_any_stride_is_served() {
+        let mut out = TensorHandle::zeros(&client(), vec![1, 4, 4], F32);
+        out.metadata = Box::new(Metadata::new(vec![1, 4, 4], vec![4, 4, 1]));
+
+        let served = SwigluTensors::contiguous(&client(), zeros(&[1, 4, 8]), out);
+
+        assert!(served.is_ok());
+    }
+
+    #[test]
+    fn a_strided_output_declines() {
+        let mut out = TensorHandle::zeros(&client(), vec![4, 4], F32);
+        out.metadata = Box::new(Metadata::new(vec![4, 4], vec![1, 4]));
+
+        let declined = SwigluTensors::contiguous(&client(), zeros(&[4, 8]), out).err();
+
+        assert_eq!(declined, Some(SWIGLU_OUTPUT_UNREAD));
+    }
+
+    #[test]
+    fn an_output_of_another_shape_declines() {
+        let out = TensorHandle::zeros(&client(), vec![4, 8], F32);
+
+        let declined = SwigluTensors::contiguous(&client(), zeros(&[4, 8]), out).err();
+
+        assert_eq!(declined, Some(SWIGLU_OUTPUT_UNREAD));
     }
 }

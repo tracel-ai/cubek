@@ -437,6 +437,9 @@ impl ScopeUnderTest for ByStrategy {
         );
         match (launched, self.declines) {
             (Ok(()), _) => Ok(Product::written(out)),
+            // A launch that broke what its routine prepared fails the test, whatever it declines.
+            #[cfg(feature = "tiled")]
+            (Err(cubek_matmul::definition::MatmulSetupError::Broken(broken)), _) => Err(broken),
             (Err(_), Declines::AsItStates) => Err(Decline::Unserved {
                 why: "the strategy serves no such product on this device",
             }),

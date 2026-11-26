@@ -8,7 +8,8 @@ use cubek_microkernel::random::Normal;
 ///
 /// # Errors
 ///
-/// Why no random kernel runs on this device.
+/// Why no random kernel runs on this device, and [`Decline::Broken`] where a kernel's binding
+/// finds false what its routine prepared.
 pub fn random_normal(
     client: &Client,
     mean: f32,

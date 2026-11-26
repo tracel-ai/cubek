@@ -33,13 +33,17 @@ pub fn first_served<T>(
 /// [`first_served`] over attempts that always hold a floor, whose decline is the answer where no
 /// attempt serves.
 ///
+/// # Assumptions
+///
+/// `attempts` holds at least one attempt.
+///
 /// # Errors
 ///
 /// The last decline.
 ///
 /// # Panics
 ///
-/// On no attempt.
+/// Where `attempts` is empty, against its Assumption.
 pub fn first_served_on_floor<T>(
     attempts: impl IntoIterator<Item = Result<T, Decline>>,
 ) -> Result<T, Decline> {
@@ -66,6 +70,16 @@ fn first_serving<T>(
 /// on a device, the widths its operands bind at, and for a problem at one setting the Blueprint
 /// and Grid of one launch, or a Decline, and what that launch is estimated to cost. Its
 /// implementors are field-less markers, so its functions take no `self`.
+///
+/// # Assumptions
+///
+/// [`estimate`](Self::estimate) is handed a blueprint and a grid that [`prepare`](Self::prepare)
+/// returned for its problem.
+///
+/// # Guarantees
+///
+/// [`prepare`](Self::prepare) reads nothing off the device and allocates nothing on it, and
+/// returns the same answer for the same description of the device, problem and settings.
 pub trait Routine {
     /// The problem, as the host describes it.
     type Problem: Debug + Clone + EstimatedProblem;
@@ -136,6 +150,10 @@ pub trait Routine {
 }
 
 /// A problem whose kernels are estimated against it: it states its own demand.
+///
+/// # Guarantees
+///
+/// [`demand`](Self::demand) reads only the problem.
 pub trait EstimatedProblem {
     /// What the problem asks for, whichever routine runs it.
     fn demand(&self) -> Work;

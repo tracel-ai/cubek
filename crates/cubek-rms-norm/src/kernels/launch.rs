@@ -16,6 +16,16 @@ use cubek_std::routine::{Grid, Routine};
 /// A routine states what is its own — how it places its microkernel's rows, and the kernel it
 /// dispatches through any destination — and the launches around those are written once, on its
 /// candidate ([`RmsNormRoutineCandidate`](crate::kernels::RmsNormRoutineCandidate)).
+///
+/// # Assumptions
+///
+/// [`dispatch`](Self::dispatch) is handed the binding the tensors' `bind` returned for the same
+/// blueprint and grid.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait RmsNormRoutine<M>:
     Routine<Problem = RmsNormRoutineProblem, Microkernel = M, Blueprint = RmsNormBlueprint<M>>
 {
