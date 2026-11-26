@@ -564,6 +564,26 @@ pub const ELEMENT_NOT_ON_DEVICE: Decline = Decline::Unserved {
 };
 
 #[cfg(test)]
+impl PlainTensor {
+    /// A zero-filled `[side, side]` in `elem`, stored in tiles of sixteen by sixteen, row by row.
+    ///
+    /// # Panics
+    ///
+    /// On a `side` that is not whole tiles.
+    pub(crate) fn zeros_in_tiles(client: &Client, side: usize, elem: ElemType) -> Self {
+        assert!(
+            side.is_multiple_of(16),
+            "whole tiles of sixteen, got {side}"
+        );
+        let rows = Self::zeros(client, &[side, side], vec![side, 1], elem);
+        rows.viewed(cubek_std::layout::assemble(&[
+            &[(side / 16, side * 16), (16, 16)],
+            &[(side / 16, 256), (16, 1)],
+        ]))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::PlainTensor;
     use cubek_std::layout::Fragments;
