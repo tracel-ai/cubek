@@ -9,7 +9,7 @@ use cubecl::{
     client::Client,
     ir::{ElemType, FloatKind},
     std::tensor::TensorHandle,
-    zspace::Shape,
+    zspace::{Shape, shape},
 };
 use cubek_quant::scheme::QuantScheme;
 use cubek_test_utils::{TestInput, quant_layout};
@@ -67,11 +67,15 @@ pub(crate) fn quantize(
     shape: &Shape,
 ) -> (TensorHandle, TensorHandle, Option<TensorHandle>) {
     let (values, scales) = quant_outputs(client, scheme, shape);
+    // The coarser grid where the scheme has one; a test handing a binding the scheme does not
+    // take gets one cell, for the launch to refuse.
     let dims: Vec<usize> = shape.iter().copied().collect();
-    let coarser_grid = scheme.scale_grids(&dims).nth(1).map(Shape::from);
-    let out_global = global.zip(coarser_grid).map(|(_, grid)| {
-        TensorHandle::zeros(client, grid, ElemType::Float(FloatKind::F32))
-    });
+    let coarser_grid = scheme
+        .scale_grids(&dims)
+        .nth(1)
+        .map_or(shape![1], Shape::from);
+    let out_global =
+        global.map(|_| TensorHandle::zeros(client, coarser_grid, ElemType::Float(FloatKind::F32)));
 
     let mut in_bindings = vec![scale.clone().binding()];
     let mut out_bindings = vec![scales.clone().binding()];

@@ -311,14 +311,8 @@ fn each_row_reads_its_own_coarser_scale() {
     let finest = f32_tensor(&client, &finest, scale_shape(&scheme, &shape));
     let coarser = f32_tensor(&client, &coarser, shape![rows, 1]);
 
-    let (values, stored, out_coarser) = quantize(
-        &client,
-        &scheme,
-        &input,
-        &finest,
-        Some(&coarser),
-        &shape,
-    );
+    let (values, stored, out_coarser) =
+        quantize(&client, &scheme, &input, &finest, Some(&coarser), &shape);
     let out = dequantize(
         &client,
         &scheme,
@@ -331,6 +325,9 @@ fn each_row_reads_its_own_coarser_scale() {
 
     let bytes = client.read_one_unchecked_tensor(out.into_copy_descriptor());
     for (i, (got, want)) in f32::from_bytes(&bytes).iter().zip(&data).enumerate() {
-        assert!((got - want).abs() <= want.abs() * 1e-6, "{i}: {got} != {want}");
+        assert!(
+            (got - want).abs() <= want.abs() * 1e-6,
+            "{i}: {got} != {want}"
+        );
     }
 }
