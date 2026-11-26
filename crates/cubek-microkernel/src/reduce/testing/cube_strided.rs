@@ -11,7 +11,13 @@ use cubek_std::Hardware;
 /// A cube reads its rows into a carrier, whose line its first unit writes.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CubeStridedMicrokernelLauncher {
-    pub(crate) planes: usize,
+    planes: usize,
+}
+
+impl CubeStridedMicrokernelLauncher {
+    pub(crate) const fn new(planes: usize) -> Self {
+        Self { planes }
+    }
 }
 
 impl MicrokernelLauncher for CubeStridedMicrokernelLauncher {
@@ -74,9 +80,9 @@ fn cube_strided_reduce_kernel<
             read.carrier,
             &o,
             &ComptimeOption::new_None(),
-            read.values,
+            read.value_count,
             UNIT_POS == 0,
-            comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lanes)),
+            comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lane_count)),
         );
     }
 }

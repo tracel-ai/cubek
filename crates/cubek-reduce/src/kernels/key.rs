@@ -103,7 +103,7 @@ impl From<&ReduceTensors<Geometry>> for ReduceKey {
 impl From<&ReduceRoutineProblem> for ReduceKey {
     /// # Panics
     ///
-    /// Where `axis` is not an axis of `problem`.
+    /// Where an Assumption of [`ReduceRoutineProblem`] is broken.
     fn from(problem: &ReduceRoutineProblem) -> Self {
         let [input, out] = problem.elem_alignments;
         let out_lane_count = problem.indices.map_or(widest_line_of(out), |indices| {

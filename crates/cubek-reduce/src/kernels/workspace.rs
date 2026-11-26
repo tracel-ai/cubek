@@ -19,8 +19,19 @@ pub(crate) const WORKSPACE_LOST: Decline = Decline::Broken {
 
 /// The scratch of a reduction whose last cube merges a row split across cubes, which its caller
 /// allocates and owns: each cube's partial, its indices where the carrier keeps any, and one arrival
-/// counter a box of rows. The counters hold zero when the caller first gives them, and every launch leaves
-/// them at zero, so one workspace serves every launch that runs after the one before it ends.
+/// counter a box of rows.
+///
+/// # Assumptions
+///
+/// - Its buffers live on the client the tensors it is given with launch on.
+/// - Every counter of `arrivals` holds zero when the caller first gives the workspace.
+/// - The launches given one workspace run one after another, each once the one before it ends.
+/// - Its three buffers alias neither each other nor the input or the outputs of a launch given
+///   them.
+///
+/// # Guarantees
+///
+/// - Every launch leaves the counters at zero, so one workspace serves every launch after it.
 #[derive(Debug, Clone)]
 pub struct ReduceWorkspace {
     /// The partials, in the accumulator's element.
@@ -45,9 +56,18 @@ impl ReduceWorkspace {
     /// `with_indices`: enough for every setting of the last-arrival hypercube, at every width, so it
     /// serves whichever the strategy picks.
     ///
+    /// # Assumptions
+    ///
+    /// - `axis` is an axis of `shape`.
+    ///
+    /// # Guarantees
+    ///
+    /// - The bytes serve an input of `shape` in any layout: the partials are laid out by the
+    ///   shape alone, whatever the input's strides.
+    ///
     /// # Panics
     ///
-    /// Where `shape` has no axis `axis`.
+    /// Where its Assumption is broken.
     pub fn bytes_for(
         client: &Client,
         shape: &[usize],

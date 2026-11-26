@@ -47,9 +47,13 @@ impl PlaneShuffleReduceMicrokernel {
     /// transaction of `hw` holds, where its lines run across the reduced dimension and `rows`
     /// rows there are; one line of rows where its lines run along it.
     ///
+    /// # Assumptions
+    ///
+    /// - `width` is at least one.
+    ///
     /// # Panics
     ///
-    /// Where its lines are zero wide.
+    /// Where its Assumption is broken.
     pub fn across_rows(self, hw: &Hardware, width: usize, rows: usize) -> Self {
         Self {
             lines_across: lines_across(hw, &self.item, width, rows.div_ceil(width), self.lanes),
@@ -77,7 +81,8 @@ impl PlaneShuffleReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where the plane's top-k keeps no value.
+    /// Where its item breaks an Assumption of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem): a
+    /// top-k that keeps no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
@@ -91,10 +96,16 @@ impl PlaneShuffleReduceMicrokernel {
     /// (`plane_shuffle_reduce_microkernel`), `plane` a region of the levels
     /// [`levels`](PlaneShuffleReduceMicrokernel::levels) states.
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    ///
     /// # Panics
     ///
-    /// Where the plane's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,

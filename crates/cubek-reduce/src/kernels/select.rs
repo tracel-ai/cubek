@@ -26,28 +26,29 @@ use cubek_std::routine::{Grid, Routine};
 ///
 /// # Errors
 ///
-/// Why the unit routine cannot run the problem here, which no device refuses.
+/// A [`Decline::Broken`] of the routine that ran, and otherwise why the unit routine cannot run
+/// the problem here, which no device refuses.
 pub(crate) fn select(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
     let keyed = tensors.problem().keyed();
     if let Some((settings, blueprint)) =
         filling_the_device::<UnitDirectReduceRoutine, _>(hw, &keyed)
         && unit_keeps_up(hw, &keyed, blueprint.lane_count)
-        && launched::<UnitDirectReduceRoutine, _>(hw, tensors, &settings)
+        && launched::<UnitDirectReduceRoutine, _>(hw, tensors, &settings)?
     {
         return Ok(());
     }
     if let Some((settings, _)) = filling_the_device::<PlaneShuffleReduceRoutine, _>(hw, &keyed)
-        && launched::<PlaneShuffleReduceRoutine, _>(hw, tensors, &settings)
+        && launched::<PlaneShuffleReduceRoutine, _>(hw, tensors, &settings)?
     {
         return Ok(());
     }
     if let Some(settings) = hypercube_filling_the_device(hw, &keyed)
-        && launched::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors, &settings)
+        && launched::<HypercubeLastArrivalReduceRoutine, _>(hw, tensors, &settings)?
     {
         return Ok(());
     }
     if let Some((settings, _, _)) = first_served::<CubeStagedReduceRoutine, _>(hw, &keyed)
-        && launched::<CubeStagedReduceRoutine, _>(hw, tensors, &settings)
+        && launched::<CubeStagedReduceRoutine, _>(hw, tensors, &settings)?
     {
         return Ok(());
     }
@@ -139,15 +140,24 @@ fn filling_the_device<R: ReduceRoutine<M>, M>(
         .map(|(settings, blueprint, _)| (settings, blueprint))
 }
 
-/// Whether `R` at `settings` launched on `tensors`: `false` where it declines them.
+/// Whether `R` at `settings` launched on `tensors`: `false` where it does not serve them, so the
+/// next routine may.
+///
+/// # Errors
+///
+/// A [`Decline::Broken`] of `R`'s, a bug no other routine stands in for.
 fn launched<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     tensors: &ReduceTensors,
     settings: &R::Settings,
-) -> bool {
-    R::prepare(hw, tensors.problem(), settings)
-        .and_then(|(blueprint, grid)| R::launch(tensors, blueprint, grid))
-        .is_ok()
+) -> Result<bool, Decline> {
+    let launch = R::prepare(hw, tensors.problem(), settings)
+        .and_then(|(blueprint, grid)| R::launch(tensors, blueprint, grid));
+    match launch {
+        Ok(()) => Ok(true),
+        Err(broken) if broken.is_broken() => Err(broken),
+        Err(_) => Ok(false),
+    }
 }
 
 #[cfg(test)]

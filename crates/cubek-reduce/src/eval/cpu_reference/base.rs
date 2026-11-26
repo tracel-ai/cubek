@@ -13,9 +13,14 @@ impl ReduceReference {
     /// What `operation` writes for every row of `input` along `axis`, laid as its output is: each
     /// row's [`ReduceOperation::reference_cells`] along `axis`, `progress` advanced by one a cell.
     ///
+    /// # Assumptions
+    ///
+    /// - `axis` is an axis of `input`.
+    /// - Each row meets [`ReduceOperation::reference_cells`]'s Assumption.
+    ///
     /// # Panics
     ///
-    /// Where `axis` is not an axis of `input`, or as [`ReduceOperation::reference_cells`] does.
+    /// Where an Assumption is broken.
     pub fn new(
         input: &HostData,
         axis: usize,

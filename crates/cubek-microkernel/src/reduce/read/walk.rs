@@ -34,6 +34,10 @@ impl UnitWalkReduceMicrokernel {
 impl UnitWalkReduceMicrokernel {
     /// The cells of `input` `region`'s walk gives this unit, accumulated from the identity
     /// (`unit_walk_reduce_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         region: &Region,
@@ -102,8 +106,8 @@ pub(crate) fn unit_walk_reduce_microkernel<
     }
     RowsRead::<C> {
         carrier: acc,
-        values,
-        row_lanes,
+        value_count: values,
+        row_lane_count: row_lanes,
     }
 }
 
@@ -117,7 +121,7 @@ mod tests {
     mod walk_across_300_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitWalkMicrokernelLauncher { columns: 2 }, Across, 300, 4, Plain, [
+        reduce_tests!(UnitWalkMicrokernelLauncher::new(2), Across, 300, 4, Plain, [
             sum: ReduceOperation::Sum,
             prod: ReduceOperation::Prod,
             max: ReduceOperation::Max,
@@ -132,7 +136,7 @@ mod tests {
     mod walk_across_320_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitWalkMicrokernelLauncher { columns: 2 }, Across, 320, 4, Plain, [
+        reduce_tests!(UnitWalkMicrokernelLauncher::new(2), Across, 320, 4, Plain, [
             sum: ReduceOperation::Sum,
         ]);
     }

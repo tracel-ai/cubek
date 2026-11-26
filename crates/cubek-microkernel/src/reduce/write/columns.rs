@@ -23,13 +23,19 @@ impl UnitGroupColumnWriteMicrokernel {
 #[cube]
 impl UnitGroupColumnWriteMicrokernel {
     /// `total`, a column of rows' carrier, written to `out` and `indices` at the cell of
-    /// `region`'s walk its column's first unit holds, `values` the values each row held
+    /// `region`'s walk its column's first unit holds, `values` the values each row holds
     /// (`unit_group_column_write_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     ///
     /// # Panics
     ///
-    /// Where the column's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn write<
         Out: Numeric,
         Idx: Numeric,
@@ -97,7 +103,7 @@ mod tests {
     mod walk_across_300_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitGroupColumnMicrokernelLauncher { columns: 2 }, Across, 300, 4, Plain, [
+        reduce_tests!(UnitGroupColumnMicrokernelLauncher::new(2), Across, 300, 4, Plain, [
             sum: ReduceOperation::Sum,
             mean: ReduceOperation::Mean,
             max: ReduceOperation::Max,

@@ -36,6 +36,10 @@ impl CubeStridedReduceMicrokernel {
 impl CubeStridedReduceMicrokernel {
     /// The lines of `input` accumulated by the cube into `C`, the line at `l` read as line
     /// `first_line + l` of its row (`cube_strided_reduce_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         input: &Tile,
@@ -96,8 +100,8 @@ pub(crate) fn cube_strided_reduce_microkernel<
     );
     RowsRead::<C> {
         carrier: total,
-        values: read.values,
-        row_lanes: read.row_lanes,
+        value_count: read.value_count,
+        row_lane_count: read.row_lane_count,
     }
 }
 
@@ -251,13 +255,13 @@ mod tests {
     /// line.
     mod strided_along_300_long_four_wide {
         use super::*;
-        every_operation!(CubeStridedMicrokernelLauncher { planes: 4 }, Along, 300, 4);
+        every_operation!(CubeStridedMicrokernelLauncher::new(4), Along, 300, 4);
     }
 
     /// The same across the reduced dimension, each lane its own row.
     mod strided_across_300_long_four_wide {
         use super::*;
-        every_operation!(CubeStridedMicrokernelLauncher { planes: 4 }, Across, 300, 4);
+        every_operation!(CubeStridedMicrokernelLauncher::new(4), Across, 300, 4);
     }
 
     const PARTIAL_COUNT: usize = 4;

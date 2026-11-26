@@ -82,6 +82,13 @@ fn precisions() -> &'static [ReduceBenchPrecision] {
 }
 
 /// One reduction of the catalogue: the shape it reads, what it computes, and how it is launched.
+///
+/// # Assumptions
+///
+/// - `axis` is an axis of `shape`, which holds a value.
+/// - A problem that launches a values and an indices half ([`ReduceBenchKind::TwoLaunch`],
+///   [`ReduceBenchKind::Fused`]) reduces by an operation that has such a pair: a max, a min, a
+///   top-k or their indices.
 pub struct ReduceProblem {
     /// The catalogued input's extent along each axis, read by axis (Position Usage) and walked in
     /// their order (Arrival Usage).

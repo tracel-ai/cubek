@@ -27,13 +27,19 @@ impl UnitCarrierWriteMicrokernel {
 
 #[cube]
 impl UnitCarrierWriteMicrokernel {
-    /// `acc` written to `out` and `indices`, `values` the values each of its rows held
+    /// `acc` written to `out` and `indices`, `values` the values each of its rows holds
     /// (`unit_carrier_write_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     ///
     /// # Panics
     ///
-    /// Where the carrier's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn write<Out: Numeric, Idx: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         acc: C,
@@ -55,7 +61,7 @@ impl UnitCarrierWriteMicrokernel {
 }
 
 /// `acc` written by one unit to `out`, its window of the output, and `indices` beside it, slot by
-/// slot, `values` the values each of its rows held. Where a line's lanes hold one row
+/// slot, `values` the values each of its rows holds. Where a line's lanes hold one row
 /// (`row_lanes` above one), the lanes are combined into
 /// the row's carrier first and each slot written as one cell; the whole line, a row a lane,
 /// otherwise.

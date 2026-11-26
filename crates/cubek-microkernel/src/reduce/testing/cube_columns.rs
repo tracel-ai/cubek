@@ -9,8 +9,14 @@ use cubek_std::Hardware;
 /// A cube reads several lines of rows wide, a column of units of every plane each.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CubeColumnsMicrokernelLauncher {
-    pub(crate) planes: usize,
-    pub(crate) columns: usize,
+    planes: usize,
+    columns: usize,
+}
+
+impl CubeColumnsMicrokernelLauncher {
+    pub(crate) const fn new(planes: usize, columns: usize) -> Self {
+        Self { planes, columns }
+    }
 }
 
 impl MicrokernelLauncher for CubeColumnsMicrokernelLauncher {

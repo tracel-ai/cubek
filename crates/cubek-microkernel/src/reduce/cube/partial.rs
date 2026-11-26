@@ -27,9 +27,15 @@ impl CubePartialReduceMicrokernel {
     /// The lines of `input`, the line at `l` read as line `first_line + l` of its row, reduced into
     /// partial `part` of `partials` and `partial_indices` (`cube_partial_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    ///
     /// # Panics
     ///
-    /// Where the cube's carrier and `partial_indices` disagree on whether it keeps indices.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumption on `partial_indices`: a tile
+    /// handed where its carrier keeps no indices, or none where it keeps them.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         input: &Tile,
@@ -90,7 +96,7 @@ mod tests {
     mod partial_along_300_long_one_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(CubePartialMicrokernelLauncher { planes: 4 }, Along, 300, 1, Plain, [
+        reduce_tests!(CubePartialMicrokernelLauncher::new(4), Along, 300, 1, Plain, [
             sum: ReduceOperation::Sum,
             prod: ReduceOperation::Prod,
             max: ReduceOperation::Max,
@@ -105,7 +111,7 @@ mod tests {
     mod partial_across_300_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(CubePartialMicrokernelLauncher { planes: 4 }, Across, 300, 4, Plain, [
+        reduce_tests!(CubePartialMicrokernelLauncher::new(4), Across, 300, 4, Plain, [
             sum: ReduceOperation::Sum,
             max: ReduceOperation::Max,
             min: ReduceOperation::Min,

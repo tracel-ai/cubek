@@ -26,6 +26,12 @@ impl UnitStridedReduceMicrokernel {
 impl UnitStridedReduceMicrokernel {
     /// The lines of `input` from `first` on, a turn apart, accumulated from the identity, line `l` as
     /// line `offset + l` of its row (`unit_strided_reduce_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    /// - `first` is below the stride, the units that read the row together: one step past the full
+    ///   ones then covers the rest.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         input: &Tile,
@@ -78,8 +84,8 @@ pub(crate) fn unit_strided_reduce_microkernel<
     }
     RowsRead::<C> {
         carrier: acc,
-        values: count * row_lanes,
-        row_lanes,
+        value_count: count * row_lanes,
+        row_lane_count: row_lanes,
     }
 }
 
@@ -93,7 +99,7 @@ mod tests {
     mod along_37_long_one_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitStridedMicrokernelLauncher { stride: 3 }, Along, 37, 1, Plain, [
+        reduce_tests!(UnitStridedMicrokernelLauncher::new(3), Along, 37, 1, Plain, [
             sum: ReduceOperation::Sum,
             prod: ReduceOperation::Prod,
             max: ReduceOperation::Max,
@@ -108,7 +114,7 @@ mod tests {
     mod along_36_long_one_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitStridedMicrokernelLauncher { stride: 3 }, Along, 36, 1, Plain, [
+        reduce_tests!(UnitStridedMicrokernelLauncher::new(3), Along, 36, 1, Plain, [
             sum: ReduceOperation::Sum,
         ]);
     }
@@ -117,7 +123,7 @@ mod tests {
     mod across_37_long_four_wide {
         use super::*;
         use crate::reduce::ReduceOperation;
-        reduce_tests!(UnitStridedMicrokernelLauncher { stride: 3 }, Across, 37, 4, Plain, [
+        reduce_tests!(UnitStridedMicrokernelLauncher::new(3), Across, 37, 4, Plain, [
             sum: ReduceOperation::Sum,
             max: ReduceOperation::Max,
             min: ReduceOperation::Min,

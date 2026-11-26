@@ -9,7 +9,13 @@ use cubek_std::Hardware;
 /// A cube reads one line of rows wide.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CubeLineMicrokernelLauncher {
-    pub(crate) planes: usize,
+    planes: usize,
+}
+
+impl CubeLineMicrokernelLauncher {
+    pub(crate) const fn new(planes: usize) -> Self {
+        Self { planes }
+    }
 }
 
 impl MicrokernelLauncher for CubeLineMicrokernelLauncher {

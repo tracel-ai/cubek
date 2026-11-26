@@ -22,8 +22,14 @@ const PARTIAL_LINES: Dimension = Dimension(4);
 /// the parts.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HypercubeLastArrivalMicrokernelLauncher {
-    pub(crate) planes: usize,
-    pub(crate) parts: usize,
+    planes: usize,
+    parts: usize,
+}
+
+impl HypercubeLastArrivalMicrokernelLauncher {
+    pub(crate) const fn new(planes: usize, parts: usize) -> Self {
+        Self { planes, parts }
+    }
 }
 
 impl HypercubeLastArrivalMicrokernelLauncher {

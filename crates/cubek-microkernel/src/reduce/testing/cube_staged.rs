@@ -11,7 +11,13 @@ use cubek_std::Hardware;
 /// A cube reduces its rows.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CubeStagedMicrokernelLauncher {
-    pub(crate) planes: usize,
+    planes: usize,
+}
+
+impl CubeStagedMicrokernelLauncher {
+    pub(crate) const fn new(planes: usize) -> Self {
+        Self { planes }
+    }
 }
 
 impl MicrokernelLauncher for CubeStagedMicrokernelLauncher {

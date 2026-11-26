@@ -4,14 +4,15 @@ use cubek_test_utils::{HostData, Progress, ValidationResult, assert_equals_appro
 use crate::eval::benchmarks::benchmark::two_launch_operations;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::benchmarks::results::{
-    RAMP_MAX_ELEM_COUNT, ReduceInput, ReduceValues, cpu_reference_result, strategy_result,
+    RAMP_MAX_ELEM_COUNT, ReduceInput, ReduceRunError, ReduceValues, cpu_reference_result,
+    strategy_result,
 };
 use crate::kernels::ReduceOpStrategy;
 
 /// Proves and checks the reductions the catalogue times, against the CPU reference.
-pub(crate) struct ReduceCorrectness;
+pub(crate) struct ReduceVerifier;
 
-impl ReduceCorrectness {
+impl ReduceVerifier {
     /// Proves `strategy` correct on a small shape before it's timed, so a wrong
     /// kernel can't win a benchmark by being fast.
     ///
@@ -32,7 +33,8 @@ impl ReduceCorrectness {
             values: ReduceValues::Ramp,
         };
 
-        let actual = Self::kernel_output(client.clone(), strategy, &proof, input)?;
+        let actual = Self::kernel_output(client.clone(), strategy, &proof, input)
+            .map_err(|why| why.to_string())?;
         let expected = Self::reference_output(client, &proof, input, None)?;
 
         match assert_equals_approx(&actual, &expected, proof.tolerance()) {
@@ -45,7 +47,7 @@ impl ReduceCorrectness {
     }
 }
 
-impl ReduceCorrectness {
+impl ReduceVerifier {
     /// Validate the path that is actually benchmarked. The two-launch kind runs
     /// the same `Reduce::execute` as `Single` for its values half, so only the fused kind
     /// needs the dedicated entrypoint.
@@ -54,7 +56,7 @@ impl ReduceCorrectness {
         strategy: &ReduceOpStrategy,
         problem: &ReduceProblem,
         input: ReduceInput,
-    ) -> Result<HostData, String> {
+    ) -> Result<HostData, ReduceRunError> {
         strategy_result(
             client,
             problem.shape.clone(),
@@ -108,7 +110,7 @@ fn proof_shape(shape: &[usize], axis: usize) -> Vec<usize> {
     proof
 }
 
-impl cubek_test_utils::Correctness for ReduceCorrectness {
+impl cubek_test_utils::Correctness for ReduceVerifier {
     type Problem = ReduceProblem;
     type Strategy = ReduceOpStrategy;
 
@@ -120,6 +122,7 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
     ) -> Result<HostData, String> {
         let client = cubecl::test_device().client();
         Self::kernel_output(client, strategy, problem, seeded_input(problem, seeds))
+            .map_err(|why| why.to_string())
     }
 
     fn reference_result(
@@ -197,7 +200,7 @@ mod tests {
 
     #[test]
     fn a_right_kernel_is_proved() {
-        let proved = ReduceCorrectness::verify(&UNIT, &small_problem(ReduceBenchKind::Single));
+        let proved = ReduceVerifier::verify(&UNIT, &small_problem(ReduceBenchKind::Single));
         assert_eq!(proved, Ok(()));
     }
 
@@ -205,14 +208,130 @@ mod tests {
     #[test]
     fn a_fused_kernels_values_are_the_references() {
         let problem = small_problem(ReduceBenchKind::Fused);
-        let written = ReduceCorrectness
+        let written = ReduceVerifier
             .kernel_result(&UNIT, &problem, &[7])
             .expect("the unit kernel serves every problem");
-        let expected = ReduceCorrectness
+        let expected = ReduceVerifier
             .reference_result(&problem, &[7], None)
             .expect("the reference reduces every problem");
         assert_equals_approx(&written, &expected, problem.tolerance())
             .as_test_outcome()
             .enforce();
+    }
+
+    /// Correctness over the benchmark catalogue: each pair checked at both precisions, under a
+    /// module named for the shape so a second one does not collide. The list is a subset because
+    /// one pair folds 67M elements against the host reference; what is missing has no check at all.
+    mod catalog {
+        use super::*;
+        use crate::eval::benchmarks::{ReduceBenchPrecision, ReduceCategory};
+        use cubek_test_utils::{CatalogEntry, Category as _, TestOutcome, ValidationResult};
+
+        const SEEDS: [u64; 2] = [12, 34];
+
+        fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
+            entries
+                .into_iter()
+                .find(|e| e.id == id)
+                .unwrap_or_else(|| panic!("unknown id: {id}"))
+                .value
+        }
+
+        /// Checks the strategy `strategy_id` on the problem `problem_id` against the reference: a
+        /// decline is a skip, a [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) a
+        /// failure.
+        fn check(strategy_id: &str, problem_id: &str) {
+            let strategy: ReduceOpStrategy = lookup(ReduceCategory.strategies(), strategy_id);
+            let problem: ReduceProblem = lookup(ReduceCategory.problems(), problem_id);
+            let client = cubecl::test_device().client();
+            let input = seeded_input(&problem, &SEEDS);
+            let actual = match ReduceVerifier::kernel_output(client, &strategy, &problem, input) {
+                Ok(host) => host,
+                Err(ReduceRunError::Declined(why)) => {
+                    return TestOutcome::refused(&problem_id, &why).enforce();
+                }
+                Err(ReduceRunError::OutsideDomain(why)) => {
+                    panic!("{problem_id} lies outside the reduction's Domain: {why}")
+                }
+                Err(ReduceRunError::DidNotRun(why)) => {
+                    return TestOutcome::CompileError(why).enforce();
+                }
+            };
+            let expected = ReduceVerifier
+                .reference_result(&problem, &SEEDS, None)
+                .unwrap_or_else(|e| panic!("reference failed for {problem_id}: {e}"));
+            assert_equals_approx(&actual, &expected, problem.tolerance())
+                .as_test_outcome()
+                .enforce();
+        }
+
+        /// The check of the problem's f16 row, which the catalogue offers only where the device
+        /// folds f16, so there is nothing to look up otherwise: a skip.
+        fn check_f16(strategy_id: &str, problem_id: &str) {
+            let f16 = ReduceBenchPrecision::F16;
+            match f16.is_offered_on(&cubecl::test_device().client()) {
+                true => check(strategy_id, &format!("{problem_id}{}", f16.suffix())),
+                false => TestOutcome::Validated(ValidationResult::Skipped(
+                    "no f16 row on this device".to_string(),
+                ))
+                .enforce(),
+            }
+        }
+
+        macro_rules! bench_catalog {
+            ($shape:ident; $($problem:ident: [$($strategy:ident),+ $(,)?]),+ $(,)?) => {
+                mod $shape {
+                    use super::*;
+
+                    $(mod $problem {
+                        use super::*;
+
+                        $(mod $strategy {
+                            use super::*;
+
+                            const STRATEGY: &str = stringify!($strategy);
+                            const PROBLEM: &str =
+                                concat!(stringify!($problem), "_", stringify!($shape));
+
+                            #[test]
+                            fn f32() {
+                                check(STRATEGY, PROBLEM);
+                            }
+
+                            #[test]
+                            fn f16() {
+                                check_f16(STRATEGY, PROBLEM);
+                            }
+                        })+
+                    })+
+                }
+            };
+        }
+
+        bench_catalog! {
+            axis2_32x512x4095;
+
+            sum: [unit, plane_shuffle],
+            arg_topk1: [unit],
+            arg_topk2: [unit],
+            arg_topk3: [unit],
+
+            // The fused entries get timed against the two-launch ones, so they have to be
+            // correct at the benchmark's own shape and strategy, not only at the small
+            // shapes the integration tests cover.
+            topk2_fused: [cube_staged],
+            topk3_fused: [unit, cube_staged],
+            topk3_two_launch: [cube_staged],
+            max_fused: [unit, cube_staged],
+            min_fused: [unit, cube_staged],
+        }
+
+        bench_catalog! {
+            sampler_1x151936;
+
+            // The rule splits this one long row across cubes, on the hypercube.
+            arg_topk1: [tile],
+            topk20: [tile],
+        }
     }
 }

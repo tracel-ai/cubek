@@ -29,10 +29,16 @@ impl PlaneLineReduceMicrokernel {
     /// As [`PlaneShuffleReduceMicrokernel::reduce`](crate::reduce::plane::PlaneShuffleReduceMicrokernel::reduce),
     /// one line of rows wide (`plane_line_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    ///
     /// # Panics
     ///
-    /// Where the plane's line's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,
@@ -91,9 +97,9 @@ pub(crate) fn plane_line_reduce_microkernel<
         total,
         out,
         indices,
-        read.values,
+        read.value_count,
         UNIT_POS_PLANE == 0,
-        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lanes)),
+        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lane_count)),
     );
 }
 

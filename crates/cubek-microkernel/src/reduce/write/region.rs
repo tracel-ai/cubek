@@ -23,12 +23,18 @@ impl UnitRegionWriteMicrokernel {
 #[cube]
 impl UnitRegionWriteMicrokernel {
     /// `total` written to `region`'s cells of `out` and `indices` by the unit that `writes`, `values`
-    /// the values each row held (`unit_region_write_microkernel`).
+    /// the values each row holds (`unit_region_write_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     ///
     /// # Panics
     ///
-    /// Where the region's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn write<Out: Numeric, Idx: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         region: &Region,

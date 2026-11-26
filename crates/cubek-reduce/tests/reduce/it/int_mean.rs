@@ -5,7 +5,7 @@ use cubecl::{prelude::*, std::tensor::TensorHandle};
 use cubek_reduce::ReduceOperation;
 use cubek_reduce::kernels::{Reduce, ReduceElements};
 
-use crate::reduce::it::test_case::UNIT;
+use crate::reduce::it::test_case::{UNIT, ran};
 
 #[test]
 fn a_mean_of_i32_keeps_the_digits_an_f32_drops() {
@@ -19,16 +19,17 @@ fn a_mean_of_i32_keeps_the_digits_an_f32_drops() {
     let input = TensorHandle::new_contiguous([1, ROW_VALUE_COUNT], row, i32_dtype);
     let out = TensorHandle::empty(&client, [1, 1], i32_dtype);
 
-    Reduce::new(UNIT)
-        .execute(
-            &client,
-            input.binding(),
-            out.clone().binding(),
-            1,
-            ReduceOperation::Mean,
-            ReduceElements::for_operation(ReduceOperation::Mean, i32_dtype, None),
-        )
-        .expect("the unit kernel should serve every problem");
+    let launched = Reduce::new(UNIT).execute(
+        &client,
+        input.binding(),
+        out.clone().binding(),
+        1,
+        ReduceOperation::Mean,
+        ReduceElements::for_operation(ReduceOperation::Mean, i32_dtype, None),
+    );
+    if !ran(launched) {
+        return;
+    }
 
     let written = client.read_one_unchecked(out.handle);
     assert_eq!(i32::from_bytes(&written)[0], VALUE);

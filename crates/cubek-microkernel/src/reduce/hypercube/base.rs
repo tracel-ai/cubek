@@ -5,7 +5,7 @@ use crate::reduce::cube::{
 use crate::reduce::read::{UnitPartialsReduceMicrokernel, unit_partials_reduce_microkernel};
 use crate::reduce::{Accumulable, REDUCED, ReduceOperand, ReduceWorkItem};
 use cubecl::tile::Tile;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
@@ -19,7 +19,7 @@ const ARRIVAL_SLOT_BYTES: usize = size_of::<u32>();
 /// It runs where the cube's microkernel runs and where one cube's stores reach another within a
 /// launch (`device_memory_scope`), which is how the cubes meet: on WGSL, whose storage barrier
 /// orders a workgroup's own memory only, the last cube was seen reading another's partial as the
-/// zero it held before the write.
+/// zero it stored before the write.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeLastArrivalReduceMicrokernel {
     /// The cube microkernel each cube reduces its part with.
@@ -36,7 +36,8 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its part's top-k keeps no value.
+    /// Where its item breaks an Assumption of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem): a
+    /// top-k that keeps no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.part.widest_line()
     }
@@ -50,11 +51,26 @@ impl HypercubeLastArrivalReduceMicrokernel {
 impl HypercubeLastArrivalReduceMicrokernel {
     /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` (`hypercube_last_arrival_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    /// - `arrivals[counter]` holds zero when the launch starts, and exactly `parts` cubes of the
+    ///   launch count themselves in at it, each once, each with its own `part` below `parts`.
+    /// - No other row's cubes write the slots of `partials` and `partial_indices` this row's
+    ///   cubes store their partials in.
+    ///
+    /// # Guarantees
+    ///
+    /// - The launch leaves `arrivals[counter]` at zero, so its caller's counters serve the next
+    ///   launch.
+    ///
     /// # Panics
     ///
-    /// Where the hypercube's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
-    /// Where its part's carrier and `partial_indices` disagree on whether it keeps indices.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices` (a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep) or on `partial_indices` (a tile handed where its carrier keeps no
+    /// indices, or none where it keeps them).
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"
@@ -111,17 +127,9 @@ impl core::fmt::Display for HypercubeLastArrivalReduceMicrokernel {
     }
 }
 
-/// The hypercube of each of the cube's candidates, where device memory stays coherent across cubes in a
-/// launch, which is how they meet.
-fn candidates_meeting_in_device_memory(
-    hw: &Hardware,
-    item: &ReduceWorkItem,
-    settings: &CubeStagedReduceMicrokernelSettings,
-) -> impl Iterator<Item = HypercubeLastArrivalReduceMicrokernel> {
-    let meets = hw.properties.features.device_memory_scope;
-    CubeStagedReduceMicrokernel::candidates(hw, item, settings)
-        .filter(move |_| meets)
-        .map(HypercubeLastArrivalReduceMicrokernel::new)
+/// Whether one cube's stores reach another within a launch on `hw`, which is how the cubes meet.
+fn meets_in_device_memory(hw: &Hardware) -> bool {
+    hw.properties.features.device_memory_scope
 }
 
 impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
@@ -130,7 +138,8 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the hypercube reduce needs the cube reduce, and one cube's stores reaching another within a launch";
+    const DECLINE: &'static str = "the last-arrival hypercube needs one cube's stores reaching \
+        another within a launch (`device_memory_scope`)";
 
     /// The cube microkernel's.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
@@ -142,7 +151,24 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        candidates_meeting_in_device_memory(hw, item, settings)
+        let meets = meets_in_device_memory(hw);
+        CubeStagedReduceMicrokernel::candidates(hw, item, settings)
+            .filter(move |_| meets)
+            .map(Self::new)
+    }
+
+    /// The hypercube of the cube's best where the cubes meet in device memory, the cube's own
+    /// Decline coming through where the device runs no cube.
+    fn best(
+        hw: &Hardware,
+        item: &ReduceWorkItem,
+        settings: &Self::Settings,
+    ) -> Result<Self, Decline> {
+        let part = CubeStagedReduceMicrokernel::best(hw, item, settings)?;
+        if !meets_in_device_memory(hw) {
+            return Err(Decline::Unserved { why: Self::DECLINE });
+        }
+        Ok(Self::new(part))
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
@@ -171,9 +197,6 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
 /// a row, a mean dividing by `values`, the values the whole row holds.
 ///
-/// `arrivals` holds a counter for every row, or box of rows, its caller counts apart, at zero; the
-/// row's last cube sets it back to zero once it has merged, so the caller's counters serve its
-/// next launch.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.
 #[cube]
@@ -303,7 +326,12 @@ mod tests {
         devices::features(&mut hw).device_memory_scope = false;
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
         let settings = HypercubeLastArrivalReduceMicrokernel::settings(&hw)[0];
-        assert!(HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings).is_err());
+        assert_eq!(
+            HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings),
+            Err(Decline::Unserved {
+                why: HypercubeLastArrivalReduceMicrokernel::DECLINE
+            })
+        );
     }
 
     /// The merged carrier and one partial, a line each, beside two registers.
@@ -331,10 +359,7 @@ mod tests {
         use super::*;
 
         const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
-            HypercubeLastArrivalMicrokernelLauncher {
-                planes: 4,
-                parts: 2,
-            };
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 2);
 
         every_operation!(MICROKERNEL, Along, 64, 1);
     }
@@ -345,10 +370,7 @@ mod tests {
         use super::*;
 
         const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
-            HypercubeLastArrivalMicrokernelLauncher {
-                planes: 4,
-                parts: 8,
-            };
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 8);
 
         every_operation!(MICROKERNEL, Along, 8192, 4);
 
@@ -364,10 +386,7 @@ mod tests {
         use super::*;
 
         const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
-            HypercubeLastArrivalMicrokernelLauncher {
-                planes: 4,
-                parts: 3,
-            };
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 3);
 
         every_operation!(MICROKERNEL, Across, 300, 4);
 

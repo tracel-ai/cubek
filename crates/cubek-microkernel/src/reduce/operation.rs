@@ -171,9 +171,13 @@ impl ReduceOperation {
     /// indices where it writes them, for every lane of a line: past `lane_slots` they spill out of registers, so the line
     /// narrows, down to one value for a list longer than `lane_slots`.
     ///
+    /// # Assumptions
+    ///
+    /// - A top-k keeps at least one value (`k > 0`).
+    ///
     /// # Panics
     ///
-    /// Where a top-k keeps `k = 0` values.
+    /// Where its Assumption is broken.
     pub const fn widest_line_at_lane_slot_count(self, lane_slots: usize) -> Option<usize> {
         match self {
             Self::TopK { k } | Self::ArgTopK { k } => Some(line_count_at_least_one(lane_slots / k)),
@@ -199,10 +203,14 @@ impl ReduceOperation {
     /// index wins a tie, so a max or a min keeps a NaN. Past a row shorter than `k`, a top-k
     /// writes what an empty slot holds: `-inf` for a value and `u32::MAX` for an index.
     ///
+    /// # Assumptions
+    ///
+    /// - `row` holds a value where the operation keeps one of them: a max, a min, their
+    ///   magnitudes and their indices.
+    ///
     /// # Panics
     ///
-    /// Where `row` is empty and the operation keeps one of its values: a max, a min, their
-    /// magnitudes and their indices.
+    /// Where its Assumption is broken.
     pub fn reference_cells(self, row: &[f32]) -> Vec<f32> {
         match self {
             Self::Sum => vec![row.iter().sum()],

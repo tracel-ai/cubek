@@ -11,11 +11,19 @@ pub struct EvalWorkspace {
 }
 
 impl EvalWorkspace {
-    /// A workspace on `client` as large as [`ReduceWorkspace::bytes_for`] asks, its counters zero.
+    /// A workspace on `client` as large as [`ReduceWorkspace::bytes_for`] asks.
+    ///
+    /// # Assumptions
+    ///
+    /// - That of [`ReduceWorkspace::bytes_for`].
+    ///
+    /// # Guarantees
+    ///
+    /// - Its counters hold zero, as [`ReduceWorkspace`] assumes of a workspace first given.
     ///
     /// # Panics
     ///
-    /// As [`ReduceWorkspace::bytes_for`].
+    /// Where its Assumption is broken.
     pub fn new(
         client: &Client,
         shape: &[usize],

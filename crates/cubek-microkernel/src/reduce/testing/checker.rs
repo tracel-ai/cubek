@@ -39,6 +39,7 @@ impl<M: MicrokernelLauncher> ScopeChecker for ReduceMicrokernelScopeChecker<M> {
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
         let host = self.host(case);
+        self.microkernel.serves_out(&self.hw, case.out())?;
         let item = ReduceWorkItem {
             operation: case.operation,
             input: F32,

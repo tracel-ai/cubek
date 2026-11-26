@@ -9,6 +9,16 @@ use cubek_std::microkernel::{CubeFootprint, KernelEstimate};
 /// A reduced row as its microkernels see it: what it reduces with, what it reads and accumulates,
 /// and which dimension its lines run along. Not how long it is: a microkernel reads its row's length off its tile, so
 /// whether the length is compiled in is its launch's choice.
+///
+/// # Assumptions
+///
+/// - A top-k keeps at least one value (`k > 0`).
+/// - The indices are written beside the values (`with_indices`) only where the operation's carrier
+///   keeps them ([`ReduceCarrier::carries_indices`](crate::reduce::ReduceCarrier::carries_indices)):
+///   a microkernel writes the indices its carrier keeps.
+/// - A microkernel of the item is handed a tile of `indices` exactly where the item writes the
+///   indices beside the values ([`ReduceWrites::Both`](crate::reduce::ReduceWrites::Both)), and a
+///   tile of `partial_indices` exactly where its carrier keeps indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceWorkItem {
     pub operation: ReduceOperation,

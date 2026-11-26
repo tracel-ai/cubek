@@ -12,7 +12,7 @@ use cubek_reduce::kernels::{Reduce, ReduceElements};
 use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{StridedLayout, TestInput};
 
-use crate::reduce::it::test_case::RULE;
+use crate::reduce::it::test_case::{RULE, ran};
 
 /// Every element of the reduction `f32`, its output's included.
 fn elements() -> ReduceElements {
@@ -69,12 +69,10 @@ fn try_reduce_with_indices() -> Result<(), ReduceError> {
 
 #[test]
 fn a_call_whose_output_holds_nothing_returns() {
-    let result = try_reduce();
-    assert!(result.is_ok(), "expected Ok, got {result:?}");
+    ran(try_reduce());
 }
 
 #[test]
 fn a_call_with_indices_whose_outputs_hold_nothing_returns() {
-    let result = try_reduce_with_indices();
-    assert!(result.is_ok(), "expected Ok, got {result:?}");
+    ran(try_reduce_with_indices());
 }

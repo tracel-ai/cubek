@@ -29,7 +29,8 @@ impl UnitDirectReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its carrier is a top-k keeping no value.
+    /// Where its item breaks an Assumption of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem): a
+    /// top-k that keeps no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
@@ -41,10 +42,16 @@ impl UnitDirectReduceMicrokernel {
 impl UnitDirectReduceMicrokernel {
     /// One unit's row of `input` reduced into `out` and `indices` (`unit_direct_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    ///
     /// # Panics
     ///
-    /// Where the unit's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,

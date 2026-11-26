@@ -25,9 +25,13 @@ pub struct CubeColumnsReduceMicrokernel {
 }
 
 impl CubeColumnsReduceMicrokernel {
+    /// # Assumptions
+    ///
+    /// - `columns` is a power of two, at most `lanes`.
+    ///
     /// # Panics
     ///
-    /// Where `columns` is not a power of two at most one plane's `lanes`.
+    /// Where its Assumption is broken.
     pub fn new(item: ReduceWorkItem, lanes: usize, planes: usize, columns: usize) -> Self {
         assert!(
             spreads_across(lanes, columns),
@@ -54,10 +58,16 @@ impl CubeColumnsReduceMicrokernel {
     /// As [`CubeStagedReduceMicrokernel::reduce`](crate::reduce::cube::CubeStagedReduceMicrokernel::reduce),
     /// several lines of rows wide (`cube_columns_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    ///
     /// # Panics
     ///
-    /// Where the cube's columns' item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,
@@ -133,7 +143,7 @@ pub(crate) fn cube_columns_reduce_microkernel<
         total,
         out,
         indices,
-        read.values,
+        read.value_count,
         comptime!(UnitGroupColumnWriteMicrokernel::new(item)),
     );
 }
@@ -162,14 +172,6 @@ mod tests {
     /// its own row.
     mod columns_across_300_long_four_wide {
         use super::*;
-        every_operation!(
-            CubeColumnsMicrokernelLauncher {
-                planes: 4,
-                columns: 2
-            },
-            Across,
-            300,
-            4
-        );
+        every_operation!(CubeColumnsMicrokernelLauncher::new(4, 2), Across, 300, 4);
     }
 }

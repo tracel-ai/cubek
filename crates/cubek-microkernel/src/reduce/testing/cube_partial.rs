@@ -10,7 +10,13 @@ use cubek_std::Hardware;
 /// A cube reduces its rows into their one partial.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CubePartialMicrokernelLauncher {
-    pub(crate) planes: usize,
+    planes: usize,
+}
+
+impl CubePartialMicrokernelLauncher {
+    pub(crate) const fn new(planes: usize) -> Self {
+        Self { planes }
+    }
 }
 
 impl MicrokernelLauncher for CubePartialMicrokernelLauncher {

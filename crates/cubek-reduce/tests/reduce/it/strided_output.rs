@@ -7,7 +7,7 @@ use cubek_reduce::ReduceOperation;
 use cubek_reduce::kernels::{Reduce, ReduceElements, ReduceOpStrategy};
 use cubek_test_utils::{HostDataType, StridedLayout, TestInput};
 
-use crate::reduce::it::test_case::{RULE, UNIT, is_the_references};
+use crate::reduce::it::test_case::{RULE, UNIT, is_the_references, ran};
 
 /// A sum along the first dim of `[8, 2, 4]`, its cells column-major.
 fn sums_into_column_major_cells(strategy: ReduceOpStrategy) {
@@ -39,16 +39,17 @@ fn sums_into_column_major_cells(strategy: ReduceOpStrategy) {
         .zeros()
         .generate_without_host_data();
 
-    Reduce::new(strategy)
-        .execute(
-            &client,
-            input.binding(),
-            out.clone().binding(),
-            0,
-            ReduceOperation::Sum,
-            ReduceElements::for_operation(ReduceOperation::Sum, dtype, None),
-        )
-        .expect("a sum writes its cells at their own strides");
+    let launched = Reduce::new(strategy).execute(
+        &client,
+        input.binding(),
+        out.clone().binding(),
+        0,
+        ReduceOperation::Sum,
+        ReduceElements::for_operation(ReduceOperation::Sum, dtype, None),
+    );
+    if !ran(launched) {
+        return;
+    }
 
     is_the_references(
         &client,

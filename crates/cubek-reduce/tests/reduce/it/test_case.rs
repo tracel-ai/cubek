@@ -13,7 +13,7 @@ use cubek_reduce::kernels::{
 use cubek_reduce::{ReduceError, ReduceOperation};
 use cubek_test_utils::{
     Distribution, HostData, HostDataType, HostDataVec, ScopeChecker, StridedLayout, TestInput,
-    Written, assert_equals_approx, supports_f16_arithmetic,
+    TestOutcome, Written, assert_equals_approx, supports_f16_arithmetic,
 };
 
 use cubek_reduce::eval::EvalWorkspace;
@@ -134,11 +134,30 @@ pub fn is_the_references(
         .enforce();
 }
 
+/// Whether `launched` ran: where it declined, a skip, or a failure where the decline is
+/// [`Decline::Broken`].
+///
+/// # Panics
+///
+/// Where `launched` failed for a reason other than a decline: the call is outside the operation's
+/// Domain, which a test never makes.
+pub fn ran(launched: Result<(), ReduceError>) -> bool {
+    let declined = match launched {
+        Ok(()) => return true,
+        Err(ReduceError::Declined(why)) => why,
+        Err(why) => panic!("{why}"),
+    };
+    TestOutcome::refused(&"the call", &declined).enforce();
+    false
+}
+
 /// Per-element probability of `1` that yields a genuine mix of 0/1 reduction outputs for `case`'s
 /// reduce axis length.
 fn flag_probability(case: &TestCase) -> f32 {
+    /// Flags set a row, on average, which keeps a short row's mix away from all or none.
+    const SET_FLAG_COUNT: f32 = 1.5;
     let axis_len = case.shape[case.axis.unwrap()].max(1) as f32;
-    (1.5 / axis_len).clamp(0.0, 1.0)
+    (SET_FLAG_COUNT / axis_len).min(1.0)
 }
 
 /// The input of `case`, as it states it or seeded from `distribution`: its tensor, and its values
@@ -250,10 +269,8 @@ impl Op {
         match self {
             Op::Any => Distribution::Bernoulli(flag_probability),
             Op::All => Distribution::Bernoulli(1.0 - flag_probability),
-            // Around one, so a long row's product neither vanishes nor overflows, and a product
-            // the kernel never wrote cannot pass as one too small to tell from zero.
-            Op::Prod => Distribution::Uniform(0.9, 1.1),
-            _ => Distribution::Uniform(-1., 1.),
+            Op::Prod => PRODUCT_FACTORS,
+            _ => SIGNED_VALUES,
         }
     }
 
@@ -277,10 +294,7 @@ impl Op {
     /// sum, a mean or a product, the rounding of the element it is written in.
     fn tolerance(self, output: ElemType) -> f32 {
         match self {
-            Op::Sum | Op::Mean | Op::Prod => match output {
-                ElemType::Float(FloatKind::F16) => 2e-3,
-                _ => 1e-4,
-            },
+            Op::Sum | Op::Mean | Op::Prod => rounding_of(output),
             Op::Min
             | Op::Max
             | Op::MaxAbs
@@ -294,6 +308,21 @@ impl Op {
             | Op::ArgMin
             | Op::ArgTopK(_) => 0.,
         }
+    }
+}
+
+/// Values around one, so a long row's product neither vanishes nor overflows, and a product the
+/// kernel never wrote cannot pass as one too small to tell from zero.
+const PRODUCT_FACTORS: Distribution = Distribution::Uniform(0.9, 1.1);
+
+/// Values of either sign, each at most one in magnitude.
+const SIGNED_VALUES: Distribution = Distribution::Uniform(-1., 1.);
+
+/// The rounding of a sum, a mean or a product written in `output`.
+fn rounding_of(output: ElemType) -> f32 {
+    match output {
+        ElemType::Float(FloatKind::F16) => 2e-3,
+        _ => 1e-4,
     }
 }
 

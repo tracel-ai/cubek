@@ -15,23 +15,34 @@ use cubek_std::Hardware;
 /// `parts` cubes of `planes` planes, each adding its part of the row into an output that holds zero.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct HypercubeAtomicMicrokernelLauncher {
-    pub(crate) planes: usize,
-    pub(crate) parts: usize,
+    planes: usize,
+    parts: usize,
 }
 
-/// Why a device without an atomic add of the accumulator's element runs none.
+impl HypercubeAtomicMicrokernelLauncher {
+    pub(crate) const fn new(planes: usize, parts: usize) -> Self {
+        Self { planes, parts }
+    }
+}
+
+/// Why a device without an atomic add of the output's element runs none.
 const NO_ATOMIC_ADD: Decline = Decline::Unserved {
-    why: "the device has no atomic add for the accumulator's element",
+    why: "the device has no atomic add for the output's element",
 };
 
 impl MicrokernelLauncher for HypercubeAtomicMicrokernelLauncher {
     fn plane_width(&self, hw: &Hardware, item: &ReduceWorkItem) -> Result<usize, Decline> {
+        cube_lanes(hw, item, self.planes)
+    }
+
+    /// The kernel adds into the output's element.
+    fn serves_out(&self, hw: &Hardware, out: ElemType) -> Result<(), Decline> {
         let adds = hw
             .properties
-            .atomic_type_usage(Type::atomic(item.accumulator))
+            .atomic_type_usage(Type::atomic(out))
             .contains(AtomicUsage::Add);
         match adds {
-            true => cube_lanes(hw, item, self.planes),
+            true => Ok(()),
             false => Err(NO_ATOMIC_ADD),
         }
     }

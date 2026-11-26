@@ -7,6 +7,7 @@ use cubecl::client::Client;
 use cubecl::ir::Type;
 use cubecl::ir::features::AtomicUsage;
 use cubecl::prelude::LaunchArg;
+use cubecl::tile::Launcher;
 use cubecl::tile::launch::{AccumulateArgLaunch, Bound, Decline, TileOperand, Vectorization};
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeAtomicReduceMicrokernel;
@@ -19,8 +20,13 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
-/// The output must hold zero before it runs ([`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
-/// zeroes it), since it only ever adds.
+/// [`launch_zeroed_atomic`](crate::kernels::launch_zeroed_atomic) and its unbound twin zero the
+/// output with [`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine) first.
+///
+/// # Assumptions
+///
+/// - The output holds zero before [`launch`](ReduceRoutine::launch) or
+///   [`dispatch`](ReduceRoutine::dispatch) runs, since it only ever adds.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HypercubeAtomicReduceRoutine;
 
@@ -49,6 +55,10 @@ impl core::fmt::Display for HypercubeAtomicReduceSettings {
 }
 
 pub type HypercubeAtomicReduceBlueprint = ReduceBlueprint<HypercubeAtomicReduceMicrokernel>;
+
+/// The output as its kernel takes it: an argument the cubes add into atomically, in the element the
+/// launch defines.
+type AtomicOut = AccumulateArgLaunch<'static, hypercube_atomic_reduce_kernel::Out>;
 
 impl Routine for HypercubeAtomicReduceRoutine {
     type Problem = ReduceRoutineProblem;
@@ -83,6 +93,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
+        HypercubeAtomicReduceMicrokernel::admits(&problem.work_item())?;
         if !hw
             .properties
             .atomic_type_usage(Type::atomic(problem.elements.out))
@@ -135,24 +146,24 @@ impl Routine for HypercubeAtomicReduceRoutine {
 impl ReduceRoutine<HypercubeAtomicReduceMicrokernel> for HypercubeAtomicReduceRoutine {
     const NAME: &'static str = "hypercube-atomic-reduce";
 
-    /// The output as the launch binds it, which its kernel takes as an atomic argument.
-    type Out = Bound;
+    /// The output as an argument several cubes add into atomically.
+    type Out = AtomicOut;
 
-    fn out_arg(out: Bound) -> Bound {
-        out
+    fn out_arg(out: Bound) -> AtomicOut {
+        let (spec, lane_count) = (out.spec.clone(), out.vector_size);
+        AccumulateArgLaunch::new(out.tensor(), lane_count, spec)
     }
 
     /// A sum accumulates into values alone, whichever carrier `F` serves.
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
-        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Bound>,
+        launcher: &Launcher,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, AtomicOut>,
         blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
         let elements = problem.elements;
-        let (spec, lane_count) = (binding.out.spec.clone(), binding.out.vector_size);
-        let out = AccumulateArgLaunch::new(binding.out.tensor(), lane_count, spec);
         // SAFETY: both operands are bound through the launcher, which masks the reads and writes of a
         // tile the problem's edge cuts short, and the kernel indexes no buffer but through its tiles;
         // the output only receives atomic adds. Its shared memory is the slots its microkernel
@@ -164,8 +175,8 @@ impl ReduceRoutine<HypercubeAtomicReduceMicrokernel> for HypercubeAtomicReduceRo
                 grid.launch.cube_dim,
                 blueprint.lane_count,
                 binding.input,
-                out,
-                binding.launcher.partitioning_arg(),
+                binding.out,
+                launcher.partitioning_arg(),
                 blueprint.microkernel,
                 [elements.input, elements.accumulator, elements.out],
             )
@@ -199,6 +210,19 @@ mod tests {
         HypercubeAtomicReduceRoutine,
         ReduceRoutineProblem::work_item
     );
+
+    /// A max declines for the item, before the device is asked for an atomic add it may lack.
+    #[test]
+    fn declines_a_max_for_the_item_first() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Max);
+        let settings = HypercubeAtomicReduceRoutine::settings(&devices::m2_pro())[0];
+        let prepared = HypercubeAtomicReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert_eq!(
+            prepared,
+            HypercubeAtomicReduceMicrokernel::admits(&problem.work_item())
+        );
+    }
 
     /// An M2 Pro adds floats atomically, so it is the max that declines.
     #[test]

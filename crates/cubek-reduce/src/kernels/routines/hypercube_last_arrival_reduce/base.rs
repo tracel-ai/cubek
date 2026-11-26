@@ -10,6 +10,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::Launcher;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{Bound, Decline, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
@@ -226,6 +227,7 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
+        launcher: &Launcher,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: HypercubeLastArrivalReduceBlueprint,
         grid: Grid,
@@ -248,7 +250,7 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
         let arrivals = TensorHandle::new_contiguous([row_boxes], workspace.arrivals, counter);
         let bind_partials = |handle: TensorHandle, element| {
             bound_at(
-                &binding.launcher,
+                launcher,
                 problem,
                 handle.binding(),
                 PARTIALS,
@@ -276,6 +278,7 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
             hypercube_last_arrival_reduce_kernel::<F, I>,
             problem,
             client,
+            launcher,
             binding,
             blueprint,
             grid,
@@ -296,7 +299,7 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
     use cubek_std::routine::ROUTINE_LISTS_NO_SETTING;
-    use cubek_test_utils::{TestOutcome, ValidationResult};
+    use cubek_test_utils::TestOutcome;
 
     prepares_more_row_axes_than_the_grid_holds!(HypercubeLastArrivalReduceRoutine);
     declines_lacking_every_feature!(HypercubeLastArrivalReduceRoutine);
@@ -425,9 +428,8 @@ mod tests {
         let tensors = ReduceTensors::zeros(&reduction.shape, reduction.axis, reduction.operation)
             .with_workspace(workspace.clone());
         let hw = Hardware::from_client(&client);
-        if let Err(decline) = launch_shortest_parts(&hw, &tensors) {
-            return TestOutcome::Validated(ValidationResult::Skipped(decline.to_string()))
-                .enforce();
+        if let Err(refused) = launch_shortest_parts(&hw, &tensors) {
+            return TestOutcome::refused(&reduction, &refused).enforce();
         }
         assert!(
             arrivals_of(&client, workspace)

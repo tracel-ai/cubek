@@ -33,10 +33,16 @@ impl CubeLineReduceMicrokernel {
     /// As [`CubeStagedReduceMicrokernel::reduce`](crate::reduce::cube::CubeStagedReduceMicrokernel::reduce),
     /// one line of rows wide (`cube_line_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    ///
     /// # Panics
     ///
-    /// Where the cube's line's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,
@@ -98,9 +104,9 @@ pub(crate) fn cube_line_reduce_microkernel<
         read.carrier,
         out,
         indices,
-        read.values,
+        read.value_count,
         UNIT_POS == 0,
-        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lanes)),
+        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lane_count)),
     );
 }
 
@@ -113,13 +119,13 @@ mod tests {
     /// line.
     mod line_along_300_long_four_wide {
         use super::*;
-        every_operation!(CubeLineMicrokernelLauncher { planes: 4 }, Along, 300, 4);
+        every_operation!(CubeLineMicrokernelLauncher::new(4), Along, 300, 4);
     }
 
     /// The cube's read one line of rows wide, 37 values long across the reduced dimension, each lane its
     /// own row.
     mod line_across_37_long_four_wide {
         use super::*;
-        every_operation!(CubeLineMicrokernelLauncher { planes: 4 }, Across, 37, 4);
+        every_operation!(CubeLineMicrokernelLauncher::new(4), Across, 37, 4);
     }
 }

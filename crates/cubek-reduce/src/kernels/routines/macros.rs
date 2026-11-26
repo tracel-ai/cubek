@@ -53,7 +53,7 @@ macro_rules! reduce_kernel {
 macro_rules! launch_reduce_kernel {
     (
         $kernel:ident::<$family:ident, $input:ident>,
-        $problem:expr, $client:expr, $binding:expr, $blueprint:expr, $grid:expr
+        $problem:expr, $client:expr, $launcher:expr, $binding:expr, $blueprint:expr, $grid:expr
         $(, $operand:expr)* $(,)?
     ) => {
         // SAFETY: every tensor is bound through the launcher, which masks the reads and writes of a
@@ -72,7 +72,7 @@ macro_rules! launch_reduce_kernel {
                 $binding.out,
                 $binding.indices.map(Bound::arg).into(),
                 $($operand,)*
-                $binding.launcher.partitioning_arg(),
+                $launcher.partitioning_arg(),
                 $blueprint.microkernel,
                 $problem.compiled_elements(),
             )
