@@ -8,7 +8,7 @@ use cubek_microkernel::random::Uniform;
 ///
 /// # Errors
 ///
-/// Why no random kernel runs on this device.
+/// As [`random_normal`](crate::random_normal).
 pub fn random_uniform(
     client: &Client,
     lower_bound: f32,

@@ -31,7 +31,7 @@
 //! Autotune drops a candidate that returns `Err`, so at least one routine of a family must be
 //! launchable everywhere. A capability query turns `Err` into `false`. A launch that finds what
 //! its `prepare` claimed does not hold returns [`Decline::Broken`](cubecl::tile::launch::Decline),
-//! logged as the bug it is ([`Breakable`]), before anything launches: the selector drops it as any
+//! logged as the bug it is ([`Breakable`]), before its kernel launches: the selector drops it as any
 //! other, and a test fails on it.
 
 mod base;

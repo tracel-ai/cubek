@@ -78,8 +78,8 @@ fn first_serving<T>(
 ///
 /// # Guarantees
 ///
-/// [`prepare`](Self::prepare) is pure: it reads only the device's description, the problem and the
-/// settings, allocates nothing, and returns the same answer for the same three.
+/// [`prepare`](Self::prepare) reads nothing off the device and allocates nothing on it, and
+/// returns the same answer for the same description of the device, problem and settings.
 pub trait Routine {
     /// The problem, as the host describes it.
     type Problem: Debug + Clone + EstimatedProblem;

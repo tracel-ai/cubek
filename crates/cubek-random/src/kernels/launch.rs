@@ -15,10 +15,15 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 /// A routine of this kind: it prepares a launch of any distribution and launches it on an output,
 /// its kernel compiled for distribution `D`.
 ///
+/// # Assumptions
+///
+/// [`dispatch`](Self::dispatch) is handed the binding [`bind`](Self::bind) returned for the same
+/// tensor, blueprint and grid.
+///
 /// # Guarantees
 ///
-/// [`dispatch`](Self::dispatch) launches whatever [`bind`](Self::bind) bound: every refusal of a
-/// launch is met while binding, before anything launches.
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait RandomRoutine: Routine<Problem = RandomRoutineProblem> {
     /// `tensor` bound as `blueprint` states it, on `grid`.
     ///

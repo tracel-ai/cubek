@@ -8,7 +8,7 @@ use cubek_microkernel::random::Bernoulli;
 ///
 /// # Errors
 ///
-/// Why no random kernel runs on this device.
+/// As [`random_normal`](crate::random_normal).
 pub fn random_bernoulli(
     client: &Client,
     probability: f32,

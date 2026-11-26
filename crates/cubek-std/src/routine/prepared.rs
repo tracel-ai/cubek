@@ -34,8 +34,11 @@ where
     pub const CAPACITY: usize = 16;
 
     /// The launch `R` prepares for `problem` at `settings` on `hw`, or why it declines it: the one
-    /// kept for `problem`, or prepared now and kept. The caller hands the same setting and device
-    /// every time.
+    /// kept for `problem`, or prepared now and kept.
+    ///
+    /// # Assumptions
+    ///
+    /// Every call hands the same `settings` and `hw`.
     ///
     /// # Errors
     ///

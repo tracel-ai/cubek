@@ -15,10 +15,15 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 
 /// A routine of this kind: it prepares a launch of a max pooling and launches it on tensors.
 ///
+/// # Assumptions
+///
+/// [`dispatch`](Self::dispatch) is handed the binding [`bind`](Self::bind) returned for the same
+/// tensors, blueprint and grid.
+///
 /// # Guarantees
 ///
-/// [`dispatch`](Self::dispatch) launches whatever [`bind`](Self::bind) bound: every refusal of a
-/// launch is met while binding, before anything launches.
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait PoolRoutine: Routine<Problem = PoolRoutineProblem> {
     /// `tensors`' operands bound as `blueprint` states them, on `grid`.
     ///
