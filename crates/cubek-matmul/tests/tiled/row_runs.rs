@@ -128,29 +128,44 @@ fn plane_shuffle_settings_write_only_the_rows_of_each_run() {
     let (mut launched, mut refused) = (0, Vec::new());
     for case in shuffle.at(settings, &products) {
         match shuffle.attempt(&client, &case) {
-            Ok(outcome) => {
-                launched += 1;
-                outcome.enforce();
-            }
+            Ok(outcome) => launched += enforced(outcome),
             Err(why) => refused.push(why),
         }
     }
-    let by_device = |why: &Decline| {
-        let past = matches!(
-            why,
-            Decline::CubePastDevice { .. } | Decline::CubeShapePastDevice { .. }
-        );
-        past || matches!(
-            why,
-            Decline::GridPastDevice { .. } | Decline::SharedMemoryPastDevice { .. }
-        ) || matches!(
-            why,
-            Decline::PlanesUnavailable | Decline::ImprecisePlaneDim { .. }
-        )
-    };
+    skip_unless_launched(launched, &refused);
+}
+
+/// One for a case that launched, its outcome enforced.
+fn enforced(outcome: TestOutcome) -> usize {
+    outcome.enforce();
+    1
+}
+
+/// Where no case launched, a skip, provided every refusal is for what the device lacks.
+fn skip_unless_launched(launched: usize, refused: &[Decline]) {
     if launched == 0 {
-        assert!(refused.iter().all(by_device), "refused: {refused:?}");
-        let skipped = ValidationResult::Skipped("the device refuses every setting".into());
-        TestOutcome::Validated(skipped).enforce();
+        skip_refused_by_device(refused)
     }
+}
+
+fn skip_refused_by_device(refused: &[Decline]) {
+    assert!(
+        refused.iter().all(refused_by_device),
+        "refused: {refused:?}"
+    );
+    let skipped = ValidationResult::Skipped("the device refuses every setting".into());
+    TestOutcome::Validated(skipped).enforce();
+}
+
+/// Whether `why` names something the device lacks rather than something the product breaks.
+fn refused_by_device(why: &Decline) -> bool {
+    matches!(
+        why,
+        Decline::CubePastDevice { .. }
+            | Decline::CubeShapePastDevice { .. }
+            | Decline::GridPastDevice { .. }
+            | Decline::SharedMemoryPastDevice { .. }
+            | Decline::PlanesUnavailable
+            | Decline::ImprecisePlaneDim { .. }
+    )
 }

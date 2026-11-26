@@ -647,12 +647,15 @@ impl MatmulTensors {
     /// The rhs is one [`admit_stack`](Self::admit_stack) takes.
     fn matrix_of(rhs: &PlainTensor, index: MatmulIndex) -> PlainTensor {
         match index {
-            MatmulIndex::Slab { .. } | MatmulIndex::RunOfMOnSlab { .. } => {
-                let (shape, strides) = (&rhs.binding.shape, &rhs.binding.strides);
-                rhs.viewed(Metadata::new(shape[1..].to_vec(), strides[1..].to_vec()))
-            }
+            MatmulIndex::Slab { .. } | MatmulIndex::RunOfMOnSlab { .. } => Self::first_slab(rhs),
             MatmulIndex::RunOfK => rhs.clone(),
         }
+    }
+
+    /// A stacked rhs's first `[k, n]` slab, at the slab's strides.
+    fn first_slab(rhs: &PlainTensor) -> PlainTensor {
+        let (shape, strides) = (&rhs.binding.shape, &rhs.binding.strides);
+        rhs.viewed(Metadata::new(shape[1..].to_vec(), strides[1..].to_vec()))
     }
 
     /// `operand` as a product beside a packed input reads it, along `dimensions` and `k` deep: a
