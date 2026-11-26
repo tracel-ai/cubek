@@ -18,7 +18,7 @@ use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleD
 
 use super::harness::{dequantize, f32_tensor, quant_outputs, quantize, scale_shape};
 use super::{Needs, Quantized, RoundTrip};
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 const M: usize = 8;
 const N: usize = 32;

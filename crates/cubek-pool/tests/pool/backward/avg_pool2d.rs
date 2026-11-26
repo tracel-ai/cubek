@@ -5,7 +5,7 @@ use cubecl::zspace::Shape;
 use cubek_pool::{
     definition::AvgPoolOptions, eval::cpu_reference::cpu_reference_pool_backward, pool2d_backward,
 };
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 use cubek_test_utils::TestInput;
 
 const AVG_POOL2D_BACKWARD_TOLERANCE: f32 = 0.000001;

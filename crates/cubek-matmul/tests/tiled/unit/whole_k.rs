@@ -2,7 +2,7 @@
 //! all of `K` alone. It holds at most a decode step's rows.
 
 use cubek_matmul::kernels::UnitWholeKMatmulRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Declines, Product};
 use crate::tiled::ByRoutine;

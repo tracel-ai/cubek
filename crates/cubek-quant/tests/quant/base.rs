@@ -9,7 +9,7 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_quant::scheme::QuantScheme;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, Written};
 
 use super::harness::{dequantize, f32_tensor, quantize, scale_shape};
 
@@ -93,7 +93,7 @@ impl RoundTrip {
 /// Quantize, then dequantize, against the reconstruction the case states.
 pub(crate) struct Quantized;
 
-impl ScopeUnderTest for Quantized {
+impl ScopeChecker for Quantized {
     type Case = RoundTrip;
 
     fn launch(&self, client: &Client, trip: &RoundTrip) -> Result<Vec<Written>, Decline> {

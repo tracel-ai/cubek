@@ -8,7 +8,7 @@ use cubek_microkernel::matmul::hypercube::{
     HypercubeStagedMicrokernel, HypercubeStagedMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Matmul, MatmulCase, MatmulSettings};
 

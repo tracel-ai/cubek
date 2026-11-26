@@ -8,7 +8,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_convolution::{ConvolutionArgs, Im2colTensors, launch_im2col};
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, Written};
 
 use crate::convolution::{Conv, F32, Storage};
 
@@ -55,7 +55,7 @@ impl<const N: usize> Lowering<N> {
 /// The im2col kernel against the host's columns, on convolutions of `N` spatial axes.
 struct Im2col<const N: usize>;
 
-impl<const N: usize> ScopeUnderTest for Im2col<N> {
+impl<const N: usize> ScopeChecker for Im2col<N> {
     type Case = Lowering<N>;
 
     fn launch(&self, client: &Client, lowering: &Lowering<N>) -> Result<Vec<Written>, Decline> {

@@ -18,7 +18,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 use half::f16;
 
 /// The shape of one attention, and how its queries see its keys.
@@ -578,7 +578,7 @@ impl<L: AttentionLaunch> Forward<L> {
     }
 }
 
-impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
+impl<L: AttentionLaunch> ScopeChecker for Forward<L> {
     type Case = ForwardCase<SettingsOf<L>>;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

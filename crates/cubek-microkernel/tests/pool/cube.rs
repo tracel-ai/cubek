@@ -3,7 +3,7 @@
 
 use crate::launch::pool::WindowDimension;
 use cubek_std::Hardware;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::pool::{F16, F32, Pool, PoolCase};
 

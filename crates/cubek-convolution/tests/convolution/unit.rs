@@ -7,7 +7,7 @@
 use cubek_convolution::UnitTiling;
 use cubek_convolution::{Strategy, UnitStrategy};
 use cubek_matmul::multi_level::routines::TileSizeSelection;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::convolution::{ByStrategy, Conv, ConvCase, Convolves, Declines, F32, Pass, Storage};
 

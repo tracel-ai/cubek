@@ -1,1 +1,3 @@
-benchmarks::run_bench!(reduce);
+fn main() {
+    benchmarks::run_category(&benchmarks::reduce::ReduceCategory);
+}

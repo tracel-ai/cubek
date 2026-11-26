@@ -17,7 +17,7 @@ use cubek_pool::{
     pool2d, pool2d_backward, pool2d_with_indices, pool2d_with_indices_backward, pool3d,
     pool3d_backward,
 };
-use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, ScopeChecker, TestInput, Written};
 
 /// The element the indices of a max pool are written in.
 pub(crate) const INDICES: ElemType = ElemType::Int(IntKind::I32);
@@ -221,7 +221,7 @@ impl<const N: usize> Pooled<N> {
 /// the case asks for them.
 pub(crate) struct PoolForward<const N: usize>;
 
-impl<const N: usize> ScopeUnderTest for PoolForward<N>
+impl<const N: usize> ScopeChecker for PoolForward<N>
 where
     Entries: PoolEntry<N>,
 {
@@ -313,7 +313,7 @@ impl<const N: usize> Unpooled<N> {
 /// indices the forward pool wrote for it where the case reads them.
 pub(crate) struct PoolBackward<const N: usize>;
 
-impl<const N: usize> ScopeUnderTest for PoolBackward<N>
+impl<const N: usize> ScopeChecker for PoolBackward<N>
 where
     Entries: PoolEntry<N>,
 {

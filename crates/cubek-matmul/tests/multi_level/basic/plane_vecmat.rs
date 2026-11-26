@@ -2,7 +2,7 @@
 //! takes only a col rhs.
 
 use cubek_matmul::multi_level::Strategy as MultiLevel;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{ByStrategy, Declines, F16, Product};
 

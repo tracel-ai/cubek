@@ -9,7 +9,7 @@ use cubecl::prelude::Scalar;
 use cubecl::std::tensor::TensorHandle;
 #[cfg(feature = "heavy")]
 use cubek_fft::rfft_launch;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 #[cfg(feature = "heavy")]
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, TestInput, TestOutcome,

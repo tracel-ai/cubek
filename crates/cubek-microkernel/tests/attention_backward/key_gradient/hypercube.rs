@@ -8,7 +8,7 @@ use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::attention_backward::{Backward, BackwardSettings};
 

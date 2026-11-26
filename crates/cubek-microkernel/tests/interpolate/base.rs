@@ -7,7 +7,7 @@ use cubecl::prelude::*;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
 pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -105,7 +105,7 @@ impl Interpolate {
     }
 }
 
-impl ScopeUnderTest for Interpolate {
+impl ScopeChecker for Interpolate {
     type Case = InterpolateCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

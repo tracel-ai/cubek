@@ -7,7 +7,7 @@ use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::split_keys_merge::SlotShape;
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, ScopeChecker, TestInput, Written};
 
 use crate::split_keys_merge::{F16, F32, HostSlots};
 
@@ -25,7 +25,7 @@ struct PlaneMergeCase {
     val_dim: usize,
 }
 
-impl ScopeUnderTest for PlaneMerge {
+impl ScopeChecker for PlaneMerge {
     type Case = PlaneMergeCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

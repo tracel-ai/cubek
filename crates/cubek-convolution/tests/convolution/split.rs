@@ -10,7 +10,7 @@ use cubek_convolution::{
 };
 use cubek_matmul::definition::MatmulElems;
 use cubek_std::InputBinding;
-use cubek_test_utils::{ExecutionOutcome, ScopeUnderTest, TestOutcome, launch_and_capture_outcome};
+use cubek_test_utils::{ExecutionOutcome, ScopeChecker, TestOutcome, launch_and_capture_outcome};
 
 use crate::convolution::{Conv, ConvRoutine, ConvTensors, Convolves, Declines, F32, Pass, Storage};
 
