@@ -273,7 +273,14 @@ impl CubeStagedTmaDecline {
         };
         // A packed lhs in rows is dense rows of words, which its buffer facts leave out: its rows
         // are whole lines where `k` packs into them. A float one is aligned as its buffer states.
-        let lhs_in_tiles = buffers.stored_tiles.lhs.is_some();
+        // A packed lhs in tile order is in tiles though its buffers state no stored tile, as for
+        // tiles that lay its words block by block, whose rows are no run a descriptor lands.
+        let lhs_in_tiles = buffers.stored_tiles.lhs.is_some()
+            || blocks
+                .packings
+                .lhs
+                .as_ref()
+                .is_some_and(|packing| packing.operand.tile_order().is_some());
         let lhs_rows_aligned = match blocks.packings.lhs {
             Some(_) => {
                 (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES)

@@ -19,13 +19,6 @@ use cubek_std::microkernel::KernelEstimate;
 use cubek_std::microkernel::StageRing;
 use cubek_std::routine::{Grid, Routine};
 
-/// What a fill the TMA engine moves declines: a packed input stored in tiles laid block by block
-/// ([`TileWords::BlockByBlock`](cubek_std::layout::tile_order::TileWords::BlockByBlock)), whose tile rows are no row's run for a descriptor to land.
-pub const MATMUL_WORDS_BLOCK_BY_BLOCK_UNMOVED_BY_TMA: Decline = Decline::Unserved {
-    why: "a tensor map lands a packed input's words a row's run at a time, and this one's tiles \
-          lay them block by block; the cube's units move them",
-};
-
 /// What the TMA engine moves for a cube staged kernel, bound beside its operands: nothing where
 /// its units fill the stages and its fragments store the box.
 pub struct CubeStagedTmaBinding {

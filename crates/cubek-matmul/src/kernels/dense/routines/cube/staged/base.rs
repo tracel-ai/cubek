@@ -5,7 +5,7 @@
 //! [`CubeStagedPlacement::prepare`].
 
 use super::kernel::cube_staged_matmul_kernel;
-use super::tma::{CubeStagedTmaBinding, MATMUL_WORDS_BLOCK_BY_BLOCK_UNMOVED_BY_TMA};
+use super::tma::CubeStagedTmaBinding;
 use crate::kernels::{
     CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
     MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
@@ -29,7 +29,6 @@ use cubek_microkernel::matmul::{
 };
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::tile_order::TileWords;
 use cubek_std::matmul_dimensions::{K, KB, KI, MI, N, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
@@ -161,8 +160,7 @@ impl<'a> CubeStagedPlacement<'a> {
     /// Whether the TMA engine can fill its stages: the device has it and the ring holds what it
     /// lands ([`Delivery::runs_on`], [`Delivery::holds`]), a box lands each stage as its
     /// instruction reads it ([`CubeStagedTmaDecline`]), the operands are read through no index,
-    /// no input's rows are one element wide, and no packed input's tiles lay its words block by
-    /// block.
+    /// and no input's rows are one element wide.
     pub(crate) fn check_tma_fill(&self, hw: &Hardware) -> Result<(), Decline> {
         let microkernel = self.microkernel();
         Delivery::Tma.runs_on(&hw.properties)?;
@@ -183,19 +181,8 @@ impl<'a> CubeStagedPlacement<'a> {
             self.problem
                 .rows_one_element_wide(operand, orders.get(operand))
         });
-        if one_element_rows {
-            return Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA);
-        }
-        let words_block_by_block = MatmulOperand::INPUTS.into_iter().any(|operand| {
-            self.problem
-                .inputs
-                .get(operand)
-                .packing()
-                .and_then(|packing| packing.operand.tile_order())
-                .is_some_and(|order| order.words() == TileWords::BlockByBlock)
-        });
-        match words_block_by_block {
-            true => Err(MATMUL_WORDS_BLOCK_BY_BLOCK_UNMOVED_BY_TMA),
+        match one_element_rows {
+            true => Err(MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA),
             false => Ok(()),
         }
     }
@@ -673,7 +660,7 @@ mod tests {
     use cubek_microkernel::matmul::MatmulStoredTile;
     use cubek_std::devices;
     use cubek_std::layout::stored::{Operand, Packing};
-    use cubek_std::layout::tile_order::{self, TileOrder};
+    use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
     use cubek_std::matmul_dimensions::M;
     use cubek_std::routine::Routine;
 
@@ -728,12 +715,13 @@ mod tests {
             .map(|settings| CubeStagedTmaStoredMatmulRoutine::prepare(&hw, &problem, settings))
             .collect();
 
+        let in_tiles: Decline = CubeStagedTmaDecline::StoredInTiles(MatmulOperand::Lhs).into();
         assert!(prepared.iter().all(Result::is_err));
         assert!(
-            prepared.iter().any(|prepared| {
-                prepared.as_ref().err() == Some(&MATMUL_WORDS_BLOCK_BY_BLOCK_UNMOVED_BY_TMA)
-            }),
-            "a TMA fill declines an lhs laid block by block as such"
+            prepared
+                .iter()
+                .any(|prepared| prepared.as_ref().err() == Some(&in_tiles)),
+            "a TMA fill declines an lhs laid block by block as stored in tiles it cannot land"
         );
     }
 }
