@@ -127,31 +127,6 @@ impl MatmulPartitioning {
         )
     }
 
-    /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
-    /// cube's box holds where every row is held whole.
-    fn compiled_space(&self) -> Space {
-        let space = self.partitioning.space();
-        match self.rows_kind {
-            MatmulRowsKind::Tiled => space.clone(),
-            MatmulRowsKind::Whole => {
-                let rows = self.dimensions_kind.rows_dimension();
-                let cube_rows = self.cube.extent(rows);
-                Space::new(
-                    &space
-                        .extents()
-                        .into_iter()
-                        .map(|(dimension, extent)| {
-                            (
-                                dimension,
-                                if dimension == rows { cube_rows } else { extent },
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }
-        }
-    }
-
     /// The batch dimensions a cube is handed one of: the problem's longer than one.
     pub fn batch_dimensions(&self) -> &[Dimension] {
         &self.batch_dimensions
@@ -291,9 +266,7 @@ impl MatmulPartitioning {
     /// [`Decline::Broken`]: a tiled launch whose output is masked where its tiles do not overhang
     /// it.
     pub fn check_masked_where_overhanging(&self, out: &TileSpec) -> Result<(), Decline> {
-        let as_claimed =
-            self.rows_kind == MatmulRowsKind::Whole || !out.is_checked() || self.overhangs_output();
-        match as_claimed {
+        match self.masks_only_where_overhanging(out) {
             true => Ok(()),
             false => Breakable::broken(MASKED_ONLY_WHERE_OVERHANGING),
         }
@@ -318,6 +291,39 @@ impl MatmulPartitioning {
     /// The tile DSL's partitioning, for what it reads of it: the launch and the binding.
     pub fn as_tile(&self) -> &Partitioning {
         &self.partitioning
+    }
+}
+
+impl MatmulPartitioning {
+    /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
+    /// cube's box holds where every row is held whole.
+    fn compiled_space(&self) -> Space {
+        let space = self.partitioning.space();
+        match self.rows_kind {
+            MatmulRowsKind::Tiled => space.clone(),
+            MatmulRowsKind::Whole => {
+                let rows = self.dimensions_kind.rows_dimension();
+                let cube_rows = self.cube.extent(rows);
+                Space::new(
+                    &space
+                        .extents()
+                        .into_iter()
+                        .map(|(dimension, extent)| {
+                            (
+                                dimension,
+                                if dimension == rows { cube_rows } else { extent },
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+        }
+    }
+
+    /// Whether `out`'s writes are masked only where the tiles overhang it, or the launch holds
+    /// every row whole, whose claim it is not.
+    fn masks_only_where_overhanging(&self, out: &TileSpec) -> bool {
+        self.rows_kind == MatmulRowsKind::Whole || !out.is_checked() || self.overhangs_output()
     }
 }
 

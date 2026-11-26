@@ -144,3 +144,66 @@ fn launch_with_fallback(
     *dtypes = passed;
     fallback(dtypes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::definition::MatmulAvailabilityError;
+    use cubecl::ir::{ElemType, FloatKind};
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+    const F16: ElemType = ElemType::Float(FloatKind::F16);
+
+    /// What `launch_with_fallback` answers where `first` changes the element types and answers
+    /// `first`, and the fallback answers `Ok` where it is handed the element types the caller
+    /// passed; and whether the fallback ran.
+    fn launched(first: MatmulSetupError) -> (Result<(), MatmulSetupError>, bool) {
+        let mut dtypes = MatmulElems::from_single_dtype(F32);
+        let mut fell_back = false;
+        let launched = launch_with_fallback(
+            &mut dtypes,
+            |dtypes| {
+                *dtypes = MatmulElems::from_single_dtype(F16);
+                Err(first)
+            },
+            |dtypes| {
+                fell_back = true;
+                match *dtypes == MatmulElems::from_single_dtype(F32) {
+                    true => Ok(()),
+                    false => Err(MatmulSetupError::InvalidConfig(Box::new("changed dtypes"))),
+                }
+            },
+        );
+        (launched, fell_back)
+    }
+
+    #[test]
+    fn a_feature_the_device_lacks_falls_back_on_the_dtypes_passed() {
+        let (launched, fell_back) = launched(MatmulAvailabilityError::PlaneOpsUnavailable.into());
+
+        assert!(fell_back);
+        assert!(launched.is_ok());
+    }
+
+    #[test]
+    fn a_refused_problem_falls_back() {
+        let (launched, fell_back) = launched(MatmulSetupError::InvalidConfig(Box::new("refused")));
+
+        assert!(fell_back);
+        assert!(launched.is_ok());
+    }
+
+    #[cfg(feature = "tiled")]
+    #[test]
+    fn a_broken_launch_does_not_fall_back() {
+        let broken = cubecl::tile::launch::Decline::Broken {
+            condition: "the routine holds",
+            cause: None,
+        };
+
+        let (launched, fell_back) = launched(broken.clone().into());
+
+        assert!(!fell_back);
+        assert!(matches!(launched, Err(MatmulSetupError::Broken(decline)) if decline == broken));
+    }
+}

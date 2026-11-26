@@ -9,7 +9,8 @@ use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulRowsKind};
 use cubek_std::Hardware;
 
 use crate::kernels::{
-    MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
+    MATMUL_TENSORS_READ_FOR_OTHER_ROWS, MatmulBlueprint, MatmulIndexTable, MatmulOutput,
+    MatmulRoutineProblem, MatmulTensors,
 };
 use cubecl::tile::{
     Geometry, Launcher, TileTensorLaunch,
@@ -29,11 +30,17 @@ const ALLOCATED: &str = "a launch allocating its output hands it back";
 /// every row whole or tiles them, and however each input is stored: its kernel reads each input
 /// as the tile it is bound as. A routine declines a problem whose inputs it does not read.
 ///
+/// # Assumptions
+///
+/// [`bind_extras`](Self::bind_extras) is handed tensors a launch holding its rows as
+/// [`ROWS_KIND`](Self::ROWS_KIND) says reads ([`MatmulTensors::is_read_for`]), and
+/// [`dispatch`](Self::dispatch) the binding [`MatmulTensors::bind`] and the extras
+/// [`bind_extras`](Self::bind_extras) returned for the same tensors, blueprint and grid.
+///
 /// # Guarantees
 ///
-/// [`dispatch`](Self::dispatch) launches whatever [`MatmulTensors::bind`] and
-/// [`bind_extras`](Self::bind_extras) bound: every refusal of a launch is met while binding,
-/// before anything launches.
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches. Binding may allocate scratch and zero it.
 pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>
 {
@@ -46,7 +53,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::Replace;
 
     /// What its kernel reads beside the three operands its tensors bind, bound with them before
-    /// anything launches: `()` for a kernel that reads nothing more.
+    /// its kernel launches: `()` for a kernel that reads nothing more.
     type Extras;
 
     /// What its kernel reads beside `tensors`' operands, bound under `launcher` as `blueprint`
@@ -79,15 +86,17 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     ///
     /// # Errors
     ///
-    /// Why the tile engine refuses to bind a float input as it is stored under the launch: one
-    /// stored in tiles that the launch's last cubes reach past, which the routine, reading the
-    /// problem and not the tensors, could not see. As [`bind_extras`](Self::bind_extras).
+    /// [`MATMUL_TENSORS_READ_FOR_OTHER_ROWS`]. As [`MatmulTensors::bind`] and
+    /// [`bind_extras`](Self::bind_extras).
     fn dispatch_into_buffer(
         &self,
         tensors: &MatmulTensors,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
     ) -> Result<(), Decline> {
+        if !tensors.is_read_for(Self::ROWS_KIND) {
+            return Err(MATMUL_TENSORS_READ_FOR_OTHER_ROWS);
+        }
         let binding = tensors
             .bind(&blueprint, &grid)?
             .map_out(|out| (out, Write::Replace));
@@ -253,7 +262,7 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, S
     ///
     /// # Errors
     ///
-    /// Why the tile engine refuses to bind a float input as it is stored under the launch, and as
+    /// [`MATMUL_TENSORS_READ_FOR_OTHER_ROWS`]. As [`MatmulTensors::bind`] and
     /// [`MatmulRoutine::bind_extras`].
     pub fn new(
         routine: R,
@@ -261,6 +270,9 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, S
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
     ) -> Result<Self, Decline> {
+        if !tensors.is_read_for(R::ROWS_KIND) {
+            return Err(MATMUL_TENSORS_READ_FOR_OTHER_ROWS);
+        }
         let binding = tensors.bind(&blueprint, &grid)?;
         let extras = routine.bind_extras(&tensors, &binding.launcher, &blueprint)?;
         Ok(Self {

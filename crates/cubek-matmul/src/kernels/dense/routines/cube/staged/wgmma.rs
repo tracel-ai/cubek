@@ -1,6 +1,5 @@
-use super::base::{
-    self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement, CubeStagedTmaBinding,
-};
+use super::base::{self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement};
+use super::tma::CubeStagedTmaBinding;
 use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,

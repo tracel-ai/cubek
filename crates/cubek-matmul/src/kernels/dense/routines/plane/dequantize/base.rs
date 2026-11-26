@@ -62,7 +62,8 @@ impl PlaneDequantizeMatmulRoutine {
     /// # Errors
     ///
     /// [`MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED`] for an `element` the packed routines are not
-    /// verified at, and why `hw` cannot place the decode.
+    /// verified at, and why `hw` cannot place the decode. As [`MatmulDequantizeBinding::new`],
+    /// and [`Decline::Broken`] where the device refuses the grid `prepare` admitted.
     pub fn launch_on(
         &self,
         hw: &Hardware,
@@ -92,22 +93,18 @@ impl PlaneDequantizeMatmulRoutine {
             true => [problem.n, problem.k],
             false => [problem.k, problem.n],
         };
+        let launcher = grid.launcher(client, || {
+            (
+                blueprint.partitioning.kernel(),
+                blueprint.partitioning.as_tile().space().clone(),
+            )
+        })?;
         let (mut into, into_plain) = PlainTensor::empty(client, rows.to_vec().into(), element);
         let MatmulDequantizeBinding {
             launcher,
             packed,
             out,
-        } = MatmulDequantizeBinding::new(
-            &packed,
-            &into_plain,
-            grid.launcher(client, || {
-                (
-                    blueprint.partitioning.kernel(),
-                    blueprint.partitioning.as_tile().space().clone(),
-                )
-            })?,
-            blueprint.widths.rhs,
-        )?;
+        } = MatmulDequantizeBinding::new(&packed, &into_plain, launcher, blueprint.widths.rhs)?;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
         // its tiles; it holds no shared memory.
@@ -125,8 +122,10 @@ impl PlaneDequantizeMatmulRoutine {
         }
         // A `[n, k]` buffer read as the `[k, n]` matrix it holds, `k` its contiguous dimension.
         if lined == K {
-            let step = into.strides()[0];
-            into.metadata = Box::new(Metadata::new(vec![problem.k, problem.n], vec![1, step]));
+            into.metadata = Box::new(Metadata::new(
+                vec![problem.k, problem.n],
+                vec![1, into.strides()[0]],
+            ));
         }
         Ok(into)
     }

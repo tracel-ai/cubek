@@ -67,7 +67,7 @@ impl TiledRows {
     ///
     /// # Errors
     ///
-    /// As [`PackedTensor::bind`](crate::kernels::tensor::PackedTensor::bind).
+    /// [`Decline::Broken`] where the tile engine refuses to bind the matrix the routine prepared.
     pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<Bound, Decline> {
         launcher
             .arg(self.tensor.binding.clone(), self.tensor.elem)
@@ -131,5 +131,48 @@ impl PackedRows {
             BlockScales::Fields,
             Delivery::SyncPerUnit,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::select::packed::nvfp4_scheme;
+    use cubecl::ir::UIntKind;
+    use cubecl::std::tensor::TensorHandle;
+    use cubek_std::layout::stored::Operand;
+    use cubek_test_utils::client;
+
+    /// A packed NVFP4 matrix over `dimensions`, sixteen rows of sixty-four values along `K`.
+    fn packed(dimensions: [cubecl::tile::Dimension; 2]) -> PackedTensor {
+        let scheme = nvfp4_scheme();
+        let u32 = ElemType::UInt(UIntKind::U32);
+        let zeros = |shape: [usize; 2]| {
+            PlainTensor::of_handle(TensorHandle::zeros(&client(), shape.to_vec(), u32))
+        };
+        let operand = Operand::of_scheme(&scheme, K, dimensions).expect("one block along k");
+        PackedTensor::new(
+            zeros([16, 64 / scheme.num_quants()]),
+            // A scale byte a block of sixteen values, four a word.
+            zeros([16, 1]),
+            Some(zeros([1, 1])),
+            scheme,
+            operand,
+            [(dimensions[0], 16), (K, 64)],
+        )
+    }
+
+    #[test]
+    fn a_packed_output_of_other_rows_declines() {
+        let declined = PackedRows::new(packed([M, K]), 8, 64).err();
+
+        assert_eq!(declined, Some(PACKED_ROWS_UNSERVED));
+    }
+
+    #[test]
+    fn a_packed_output_over_other_dimensions_declines() {
+        let declined = PackedRows::new(packed([cubek_std::matmul_dimensions::N, K]), 16, 64).err();
+
+        assert_eq!(declined, Some(PACKED_ROWS_UNSERVED));
     }
 }

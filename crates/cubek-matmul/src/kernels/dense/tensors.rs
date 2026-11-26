@@ -51,16 +51,20 @@ const TMA_FILLS_A_STAGE_A_BOX_LANDS: &str = "the fill delivers by TMA only a sta
 /// What should hold of a packed product the TMA engine fills.
 const TMA_FILLS_A_PACKED_RHS: &str = "a packed product the TMA engine fills has a packed rhs";
 
-/// What should hold of tensors a staged or shared binding binds.
-const STAGED_BINDING_IS_TILED: &str = "a staged or shared binding is a tiled launch's";
-
-/// What should hold of an output the TMA engine stores.
+/// What should hold of how a packed product states the output the TMA engine stores.
 const TMA_STORES_ROWS_AND_COLUMNS: &str =
     "the TMA engine stores a box of an output stated as one dim of rows and one of columns";
 
-/// What should hold of an output the TMA engine stores.
+/// What should hold of where the TMA engine stores.
 const TMA_STORES_INTO_A_BUFFER: &str =
     "the TMA engine stores a box only into a buffer the launch allocates";
+
+/// What a launch declines of tensors a caller read for another way of holding the rows than its
+/// routine's ([`MatmulRoutine::ROWS_KIND`](crate::kernels::MatmulRoutine::ROWS_KIND)): float
+/// operands laid out, copied or bound as another launch reads them.
+pub const MATMUL_TENSORS_READ_FOR_OTHER_ROWS: Decline = Decline::Unserved {
+    why: "the tensors were read for a launch holding its rows another way than this routine",
+};
 
 /// What a routine streaming the `[k, n]` input packed declines: a float one. A packed `[m, k]`
 /// input against it is decoded first.
@@ -587,6 +591,13 @@ impl MatmulTensors {
 
     /// The three operands bound as `blueprint` states them, on `grid`: under its partitioning, at
     /// its widths, the output its buffer.
+    ///
+    /// # Errors
+    ///
+    /// Why the tile engine refuses to bind a float input as it is stored under the launch: one
+    /// stored in tiles that the launch's last cubes reach past, which the routine, reading the
+    /// problem and not the tensors, could not see. [`Decline::Broken`] where it refuses anything
+    /// else the routine prepared, and on an output masked where its tiles do not overhang it.
     pub fn bind<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
@@ -710,6 +721,10 @@ impl MatmulTensors<Geometry> {
     /// The three operands bound as `blueprint` states them, on `grid`, the output derived over the
     /// sink's layout rather than a buffer: its spec, and the geometry the derivation settled, which
     /// the caller's sink addresses through.
+    ///
+    /// # Errors
+    ///
+    /// As the `bind` of the tensors writing into a buffer.
     pub fn bind<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
@@ -782,20 +797,20 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// routine binds where the TMA engine stores its cubes' boxes
     /// ([`TmaStored`](cubecl::tile::launch::TmaStored)).
     ///
+    /// # Assumptions
+    ///
+    /// Float tensors are read for a launch tiling its rows ([`is_read_for`](Self::is_read_for)).
+    ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] on float tensors read for every row whole, on a sink, which no
-    /// descriptor addresses, and on a packed product whose blocks cut its rows or columns: the
-    /// store that chose the engine refused all three.
+    /// [`Decline::Broken`] on a sink, which no descriptor addresses, and on a packed product whose
+    /// blocks cut its rows or columns: the store that chose the engine refused both.
     pub fn tma_output(&self, stage: &MatmulStage) -> Result<TileTensorLaunch, Decline> {
         // A packed product states its output over the block-split space, its rows and columns
         // one block each where the store took it (`CubeStagedTmaStoreDecline::BlockSplit`): the
         // positions inside them, which the descriptor's rows and columns are.
         let output: [Dimension; 2] = match self.read(|view| view.blocks()) {
-            None => {
-                self.check_tiled()?;
-                [M, N]
-            }
+            None => [M, N],
             Some(blocks) => match blocks.restated_dims(M, N, 1).as_slice() {
                 [(rows, ..), (columns, ..)] => [*rows, *columns],
                 _ => return Breakable::broken(TMA_STORES_ROWS_AND_COLUMNS),
@@ -835,6 +850,16 @@ impl MatmulTensors<MatmulOutputBuffer> {
 }
 
 impl<Out> MatmulTensors<Out> {
+    /// Whether a launch holding its rows as `rows_kind` says reads these tensors: packed ones
+    /// whatever the launch, float ones where they were read for it.
+    pub fn is_read_for(&self, rows_kind: MatmulRowsKind) -> bool {
+        let packed = !matches!(
+            (&self.lhs, &self.rhs),
+            (StoredTensor::Plain(_), StoredTensor::Plain(_))
+        );
+        packed || self.rows_kind == rows_kind
+    }
+
     /// The lhs, as the launch reads it.
     pub fn lhs(&self) -> &StoredTensor {
         &self.lhs
@@ -1094,8 +1119,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// # Panics
     ///
-    /// On a packed input: its tensors hold every row whole, which
-    /// [`check_tiled`](Self::check_tiled) refuses first.
+    /// On a packed input: only a launch tiling its rows reads its inputs as float ones.
     fn plain(&self) -> [&PlainTensor; 2] {
         [&self.lhs, &self.rhs].map(|operand| match operand {
             StoredTensor::Plain(tensor) => tensor,
@@ -1148,16 +1172,25 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// # Errors
     ///
+    /// # Assumptions
+    ///
+    /// The tensors are float ones read for a launch tiling its rows: only such a launch stages
+    /// them through these descriptors.
+    ///
+    /// # Errors
+    ///
     /// [`Decline::Broken`] on a stage no box lands as `storage` holds it, which the fill that chose
-    /// the engine refused, and on tensors read for every row whole: only a launch tiling its rows
-    /// stages them.
+    /// the engine refused.
+    ///
+    /// # Panics
+    ///
+    /// On a packed input, against its Assumption.
     pub fn tma_operands(
         &self,
         stage: &MatmulStage,
         storage: &StageStorage,
         orders: MatmulOperands<BindingOrder>,
     ) -> Result<(TileTensorLaunch, TileTensorLaunch), Decline> {
-        self.check_tiled()?;
         let problem = self.problem();
         let [lhs, rhs] = self.plain();
         let landing = |tensor: &PlainTensor, operand: MatmulOperand| {
@@ -1194,8 +1227,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] on a float rhs, since a packed product's rhs is packed, and where the
-    /// engine refuses what the routine prepared.
+    /// [`Decline::Broken`] on a float rhs, since a packed product's rhs is packed; as
+    /// [`PackedTensor::bind_by_tma`].
     #[allow(clippy::too_many_arguments)]
     pub fn tma_packed_operands(
         &self,
@@ -1305,11 +1338,16 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// ([`Partitioning::arrival_slots`](cubecl::tile::Partitioning::arrival_slots)), beside one
     /// arrival counter a box, holding zero.
     ///
+    /// It allocates the slots and the counters, and launches the zeroing of the counters.
+    ///
+    /// # Assumptions
+    ///
+    /// Float tensors are read for a launch tiling its rows: only such a launch shares its boxes'
+    /// `K`. Packed ones merge their batches into the rows whatever the launch.
+    ///
     /// # Errors
     ///
-    /// As [`PackedTensor::bind`], and [`Decline::Broken`] on float tensors read for every row
-    /// whole: only a launch tiling its rows shares its boxes' `K`. Packed ones merge their batches
-    /// into the rows whatever the launch.
+    /// [`Decline::Broken`] where the tile engine refuses to bind the slots the routine prepared.
     pub fn bind_last_arrival<Mk: MatmulMicrokernel, SM>(
         &self,
         blueprint: &MatmulBlueprint<Mk, SM>,
@@ -1321,10 +1359,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         // ([`bind_packed`](Self::bind_packed)). Stated as labels, so a batch dimension one box long
         // stays a dim of the slots.
         let output: Vec<Dimension> = match self.read(|view| view.blocks()) {
-            None => {
-                self.check_tiled()?;
-                vec![M, N]
-            }
+            None => vec![M, N],
             Some(blocks) => blocks
                 .restated_dims(M, N, 1)
                 .into_iter()
@@ -1350,19 +1385,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 .or_broken(ADMITTED_PLAN_RUNS)?,
             arrivals: ZeroedCounters::new(partitioning.arrival_counters(), &self.client).into_arg(),
         })
-    }
-
-    /// Whether the tensors were read for a launch tiling its rows, the only one a staged or shared
-    /// binding belongs to.
-    ///
-    /// # Errors
-    ///
-    /// [`Decline::Broken`] on tensors read for every row whole.
-    fn check_tiled(&self) -> Result<(), Decline> {
-        match self.rows_kind {
-            MatmulRowsKind::Tiled => Ok(()),
-            MatmulRowsKind::Whole => Breakable::broken(STAGED_BINDING_IS_TILED),
-        }
     }
 
     /// The launcher `blueprint`'s partitioning launches on `grid`, and the lhs and the rhs bound

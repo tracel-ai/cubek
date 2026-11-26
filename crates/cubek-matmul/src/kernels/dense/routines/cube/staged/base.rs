@@ -5,6 +5,7 @@
 //! [`CubeStagedPlacement::prepare`].
 
 use super::kernel::cube_staged_matmul_kernel;
+use super::tma::{CubeStagedTmaBinding, MATMUL_WORDS_BLOCK_BY_BLOCK_UNMOVED_BY_TMA};
 use crate::kernels::{
     CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
     MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
@@ -33,13 +34,6 @@ use cubek_std::matmul_dimensions::{K, KB, KI, MI, N, NI};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
 use std::borrow::Cow;
-
-/// What a fill the TMA engine moves declines: a packed input stored in tiles laid block by block
-/// ([`TileWords::BlockByBlock`]), whose tile rows are no row's run for a descriptor to land.
-pub const MATMUL_WORDS_BLOCK_BY_BLOCK_UNMOVED_BY_TMA: Decline = Decline::Unserved {
-    why: "a tensor map lands a packed input's words a row's run at a time, and this one's tiles \
-          lay them block by block; the cube's units move them",
-};
 
 /// The cube routines' blueprint: how a stage its microkernel walks holds its cells is the one
 /// layout of shared memory that depends on the problem; the rest is the microkernel's.
@@ -344,17 +338,6 @@ pub(crate) fn estimate(
     }
 }
 
-/// What the TMA engine moves for a cube staged kernel, bound beside its operands: nothing where
-/// its units fill the stages and its fragments store the box.
-pub struct CubeStagedTmaBinding {
-    /// The lhs's and the rhs's tensor maps the engine fills the stages from, read in place of the
-    /// bound inputs, where it fills them.
-    pub inputs: Option<(TileTensorLaunch, TileTensorLaunch)>,
-    /// The output's tensor map the engine stores the box through, written in place of the bound
-    /// output, where it stores it.
-    pub output: Option<TileTensorLaunch>,
-}
-
 /// What the TMA engine moves for every cube staged routine, bound under `launcher`: the tensor
 /// maps it fills the stages from, where the fill's delivery is the engine, and the one it stores
 /// the box through, where the store is.
@@ -406,52 +389,73 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
     blueprint: CubeStagedMatmulRoutineBlueprint,
     grid: Grid,
 ) {
+    let MatmulBinding {
+        launcher,
+        lhs,
+        rhs,
+        out,
+    } = binding;
+    let (lhs, rhs) = tma.inputs.unwrap_or((lhs, rhs));
+    match tma.output {
+        None => launch_through::<O, Out>(
+            tensors,
+            MatmulBinding {
+                launcher,
+                lhs,
+                rhs,
+                out,
+            },
+            blueprint,
+            grid,
+        ),
+        Some(out) => launch_through::<TmaStored, Out>(
+            tensors,
+            MatmulBinding {
+                launcher,
+                lhs,
+                rhs,
+                out,
+            },
+            blueprint,
+            grid,
+        ),
+    }
+}
+
+/// The cube staged kernel launched over `binding`, its box reaching the output through the
+/// destination `D`.
+fn launch_through<D: DestinationLaunch, Out: MatmulOutput>(
+    tensors: &MatmulTensors<Out>,
+    binding: MatmulBinding<D::Operand, TileTensorLaunch, TileTensorLaunch>,
+    blueprint: CubeStagedMatmulRoutineBlueprint,
+    grid: Grid,
+) {
     // The elements of the item its planes contract: packed inputs it decodes at the element
     // they decode into, ones it reads as stored at the element their values name.
     let elements = blueprint
         .microkernel
         .contracted(&tensors.work_item())
         .kernel_elements();
-    let client = tensors.client();
-    let out_width = blueprint.widths.out;
-    let (lhs, rhs) = tma.inputs.unwrap_or((binding.lhs, binding.rhs));
     // SAFETY: every operand is bound through the launcher, which masks the reads and writes
     // of a tile the problem's edge cuts short, or by a descriptor, whose copies fill what lies
     // past the operand with zeros and whose stores leave what lies past it unwritten; the
     // kernel indexes no buffer but through its tiles. Its shared memory is sized by the planes
     // of the grid it launches on: the stage fill counts `grid.launch.cube_dim`'s units, the
     // scratch windows `grid.planes()`.
-    match tma.output {
-        None => unsafe {
-            cube_staged_matmul_kernel::launch_unchecked::<O>(
-                client,
-                grid.launch.cube_count.clone(),
-                grid.launch.cube_dim,
-                out_width,
-                lhs,
-                rhs,
-                O::arg(binding.out),
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel.walk(),
-                blueprint.shared_memory,
-                elements,
-            );
-        },
-        Some(out) => unsafe {
-            cube_staged_matmul_kernel::launch_unchecked::<TmaStored>(
-                client,
-                grid.launch.cube_count.clone(),
-                grid.launch.cube_dim,
-                out_width,
-                lhs,
-                rhs,
-                out,
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel.walk(),
-                blueprint.shared_memory,
-                elements,
-            );
-        },
+    unsafe {
+        cube_staged_matmul_kernel::launch_unchecked::<D>(
+            tensors.client(),
+            grid.launch.cube_count.clone(),
+            grid.launch.cube_dim,
+            blueprint.widths.out,
+            binding.lhs,
+            binding.rhs,
+            D::arg(binding.out),
+            binding.launcher.partitioning_arg(),
+            blueprint.microkernel.walk(),
+            blueprint.shared_memory,
+            elements,
+        );
     }
 }
 

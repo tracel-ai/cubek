@@ -1,9 +1,8 @@
 use core::num::NonZeroUsize;
 
-use super::base::{
-    self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement, CubeStagedTmaBinding,
-};
+use super::base::{self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement};
 use super::block_scaled::{self, StagedShape};
+use super::tma::CubeStagedTmaBinding;
 use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
     MatmulTensors, cube_order_name,

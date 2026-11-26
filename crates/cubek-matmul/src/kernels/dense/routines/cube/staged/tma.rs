@@ -1,6 +1,4 @@
-use super::base::{
-    self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement, CubeStagedTmaBinding,
-};
+use super::base::{self, CubeStagedMatmulRoutineBlueprint, CubeStagedPlacement};
 use super::block_scaled::{self, QUAD, StagedShape};
 use crate::kernels::{
     MatmulBinding, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
@@ -20,6 +18,24 @@ use cubek_std::Hardware;
 use cubek_std::microkernel::KernelEstimate;
 use cubek_std::microkernel::StageRing;
 use cubek_std::routine::{Grid, Routine};
+
+/// What a fill the TMA engine moves declines: a packed input stored in tiles laid block by block
+/// ([`TileWords::BlockByBlock`](cubek_std::layout::tile_order::TileWords::BlockByBlock)), whose tile rows are no row's run for a descriptor to land.
+pub const MATMUL_WORDS_BLOCK_BY_BLOCK_UNMOVED_BY_TMA: Decline = Decline::Unserved {
+    why: "a tensor map lands a packed input's words a row's run at a time, and this one's tiles \
+          lay them block by block; the cube's units move them",
+};
+
+/// What the TMA engine moves for a cube staged kernel, bound beside its operands: nothing where
+/// its units fill the stages and its fragments store the box.
+pub struct CubeStagedTmaBinding {
+    /// The lhs's and the rhs's tensor maps the engine fills the stages from, read in place of the
+    /// bound inputs, where it fills them.
+    pub inputs: Option<(TileTensorLaunch, TileTensorLaunch)>,
+    /// The output's tensor map the engine stores the box through, written in place of the bound
+    /// output, where it stores it.
+    pub output: Option<TileTensorLaunch>,
+}
 
 /// `out = lhs · rhs` as [`CubeStagedMatmulRoutine`](crate::kernels::CubeStagedMatmulRoutine) runs
 /// it, each stage landed by the TMA engine, one descriptor a stage an operand, while every plane
