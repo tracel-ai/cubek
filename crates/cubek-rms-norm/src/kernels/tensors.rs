@@ -17,6 +17,7 @@ use cubek_matmul::kernels::tensor::{
 use cubek_microkernel::rms_norm::{B, D, R, RmsNormOperands};
 use cubek_microkernel::row_store::RowStore;
 use cubek_std::Hardware;
+use cubek_std::layout::is_dense;
 use cubek_std::routine::Grid;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
@@ -123,9 +124,9 @@ struct RmsNormInputs {
 /// and elements alone ([`RmsNormInputs::admit`]), and whether its rows are read as one batch entry.
 #[derive(Debug, Clone, Copy)]
 struct RmsNormAdmitted {
-    rows: usize,
-    dim: usize,
-    one_entry: bool,
+    pub rows: usize,
+    pub dim: usize,
+    pub one_entry: bool,
 }
 
 impl RmsNormInputs {
@@ -351,7 +352,7 @@ impl RmsNormTensors {
         out: TensorHandle,
     ) -> Result<Self, Decline> {
         let admitted = RmsNormInputs::admit(client, &input, &weight, false)?;
-        let dense = PlainTensor::of_handle(out.clone()).is_contiguous();
+        let dense = is_dense(out.shape(), out.strides());
         if !out.shape().iter().eq(input.binding.shape.iter()) || out.dtype != input.elem || !dense {
             return Err(RMS_NORM_OUTPUT_UNREAD);
         }
@@ -676,6 +677,17 @@ mod tests {
             RmsNormInputs::admit(&client(), &zeros(&[4, 8], F32), &zeros(&[2, 8], F32), true);
 
         assert_eq!(admitted.err(), Some(RMS_NORM_ROWS_IN_ENTRIES));
+    }
+
+    #[test]
+    fn a_dense_output_whose_lone_axis_carries_any_stride_is_served() {
+        let mut out = TensorHandle::zeros(&client(), vec![1, 4, 8], F32);
+        out.metadata = Box::new(Metadata::new(vec![1, 4, 8], vec![8, 8, 1]));
+
+        let served =
+            RmsNormTensors::contiguous(&client(), zeros(&[1, 4, 8], F32), zeros(&[8], F32), out);
+
+        assert!(served.is_ok());
     }
 
     #[test]

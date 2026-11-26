@@ -18,7 +18,7 @@ pub enum MatmulSetupError {
     Launch(LaunchError),
 
     /// A launch found false what its routine prepared: a bug in the routine, never a feature the
-    /// device lacks nor a problem the routine refuses, so no caller falls back past it.
+    /// device lacks nor a problem the routine refuses.
     #[cfg(feature = "tiled")]
     Broken(cubecl::tile::launch::Decline),
 }

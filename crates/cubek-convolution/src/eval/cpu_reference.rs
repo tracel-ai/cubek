@@ -28,15 +28,18 @@ const HOST_HAS_NO_TRANSPOSED: &str = "the host states no transposed forward";
 /// Run `strategy` against `operation` over `spec`'s geometry with seeded operands and return its
 /// output as a [`HostData`]: the forward's activation, the weight gradient or the data gradient.
 ///
+/// # Assumptions
+///
+/// The strategy's routines hold what they prepare.
+///
 /// # Errors
 ///
 /// Why the strategy refused the convolution, or why its launch failed, which a test skips.
 ///
 /// # Panics
 ///
-/// On a launch that broke what its routine prepared
-/// ([`MatmulSetupError::Broken`](cubek_matmul::definition::MatmulSetupError::Broken)): a bug, which
-/// a test fails on rather than skips.
+/// Where a launch returns a [`MatmulSetupError::Broken`], against its Assumption: a bug, which a
+/// test fails on rather than skips.
 pub fn strategy_result(
     client: Client,
     spec: ConvSpec,

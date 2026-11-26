@@ -361,4 +361,31 @@ mod tests {
 
         assert_eq!(declined, Some(MATMUL_TENSORS_READ_FOR_OTHER_ROWS));
     }
+
+    #[test]
+    fn a_sink_read_for_other_rows_declines() {
+        let (client, hw) = (client(), Hardware::from_client(&client()));
+        let tiled = MatmulTensors::new(
+            &client,
+            zeros(&[4, 8]),
+            zeros(&[8, 16]),
+            MatmulRowsKind::Tiled,
+        )
+        .expect("dense float operands");
+        let (blueprint, grid) =
+            UnitRegistersMatmulRoutine::prepare_first_served(&hw, &tiled.problem())
+                .expect("the unit routine serves a small product");
+        let sink = MatmulTensors::sink(
+            &client,
+            zeros(&[4, 8]),
+            zeros(&[8, 16]),
+            MatmulRowsKind::Whole,
+        )
+        .expect("dense float operands");
+
+        let declined =
+            MatmulSinkLaunch::new(UnitRegistersMatmulRoutine, sink, blueprint, grid).err();
+
+        assert_eq!(declined, Some(MATMUL_TENSORS_READ_FOR_OTHER_ROWS));
+    }
 }

@@ -83,7 +83,7 @@ where
     ///
     /// Why this device cannot run the gate at this setting, and
     /// [`SWIGLU_OUTPUT_UNREAD`](crate::kernels::SWIGLU_OUTPUT_UNREAD) for an `out` of another shape
-    /// or element than the gate's.
+    /// or element than the gate's, or not dense.
     pub fn launch_contiguous(
         &self,
         call: &SwigluCall,

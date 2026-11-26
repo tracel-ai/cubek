@@ -89,7 +89,7 @@ where
     ///
     /// Why this device cannot run the norm at this setting, and
     /// [`RMS_NORM_OUTPUT_UNREAD`](crate::kernels::RMS_NORM_OUTPUT_UNREAD) for an `out` of another
-    /// shape or element than the input's.
+    /// shape or element than the input's, or not dense.
     pub fn launch_contiguous(
         &self,
         call: &RmsNormCall,

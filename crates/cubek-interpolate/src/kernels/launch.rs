@@ -97,7 +97,9 @@ impl InterpolateTensors {
     ///
     /// # Assumptions
     ///
-    /// `input` and `output` are both of rank four, as [`interpolate`](crate::interpolate) checks.
+    /// As [`interpolate`](crate::interpolate) checks: `input` and `output` are both of rank four,
+    /// `output` holds the input's batches and channels, both are stored in `element`, and both
+    /// live on `client`'s device.
     ///
     /// # Panics
     ///

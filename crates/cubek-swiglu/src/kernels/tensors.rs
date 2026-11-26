@@ -14,6 +14,7 @@ use cubek_matmul::kernels::tensor::{
 use cubek_microkernel::row_store::RowStore;
 use cubek_microkernel::swiglu::{D, H, R, SwigluOperands};
 use cubek_std::Hardware;
+use cubek_std::layout::is_dense;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid};
 
 /// What a launch of this kind declines before preparing anything: rows that are not floats.
@@ -153,7 +154,7 @@ impl SwigluTensors {
         out: TensorHandle,
     ) -> Result<Self, Decline> {
         let shape = SwigluInput::admit(client, &both)?;
-        let dense = PlainTensor::of_handle(out.clone()).is_contiguous();
+        let dense = is_dense(out.shape(), out.strides());
         if !out.shape().iter().eq(shape.iter()) || out.dtype != both.elem || !dense {
             return Err(SWIGLU_OUTPUT_UNREAD);
         }
@@ -424,6 +425,16 @@ mod tests {
         let declined = SwigluTensors::new(&client(), zeros(&[4, 7])).err();
 
         assert_eq!(declined, Some(SWIGLU_ROW_NOT_TWO_HALVES));
+    }
+
+    #[test]
+    fn a_dense_output_whose_lone_axis_carries_any_stride_is_served() {
+        let mut out = TensorHandle::zeros(&client(), vec![1, 4, 4], F32);
+        out.metadata = Box::new(Metadata::new(vec![1, 4, 4], vec![4, 4, 1]));
+
+        let served = SwigluTensors::contiguous(&client(), zeros(&[1, 4, 8]), out);
+
+        assert!(served.is_ok());
     }
 
     #[test]

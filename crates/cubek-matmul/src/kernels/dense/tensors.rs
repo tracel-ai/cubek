@@ -235,7 +235,7 @@ impl MatmulTensors {
     ///
     /// As [`new`](Self::new), and [`MATMUL_OUTPUT_UNREAD`] for an output of another shape, of an
     /// element the routines do not write, stored in tiles, or, beside a packed input, other than
-    /// row-major.
+    /// row-major; read for every row whole, one whose leading dims do not merge into rows.
     pub fn writing_into(
         client: &Client,
         lhs: StoredTensor,
@@ -249,9 +249,11 @@ impl MatmulTensors {
         };
         // The output is checked off the shapes before a launch copies an operand.
         let out_shape = Operands::out_shape(&lhs, &rhs, rows_kind)?;
+        let rows_unmerged = rows_kind == MatmulRowsKind::Whole && !Operands::merges_into_rows(&out);
         if out.shape().as_slice() != out_shape.as_slice()
             || !MatmulInputs::VERIFIED.contains(&out.elem)
             || out.is_tiled()
+            || rows_unmerged
         {
             return Err(MATMUL_OUTPUT_UNREAD);
         }
@@ -1514,8 +1516,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     }
 }
 
-/// What a launch whose cubes share its boxes' `K` binds beside its operands
-/// ([`bind_last_arrival`](MatmulTensors#method.bind_last_arrival)).
+/// What a launch whose cubes share its boxes' `K` binds beside its operands: the extras of the
+/// last-arrival routine ([`HypercubeLastArrivalMatmulRoutine`](crate::kernels::HypercubeLastArrivalMatmulRoutine)).
 pub struct MatmulLastArrivalBinding {
     /// Two cube boxes a cube, in the sum's element, for the parts of the boxes it shares.
     pub slots: Bound,
@@ -1679,16 +1681,22 @@ impl Operands {
     /// `lhs` where its leading dims merge into rows of its last at one step, a row-major copy of it
     /// where they do not: an lhs the launch reads as rows either way.
     fn with_mergeable_rows(client: &Client, lhs: PlainTensor) -> PlainTensor {
-        let (shape, strides) = (lhs.shape(), lhs.binding.strides.to_vec());
-        let rank = shape.rank();
-        let merges = rank >= 1
-            && strides[rank - 1] == 1
-            && (0..rank.saturating_sub(2))
-                .all(|dim| strides[dim] == shape[dim + 1] * strides[dim + 1]);
-        match merges && !lhs.is_tiled() {
+        match Self::merges_into_rows(&lhs) {
             true => lhs,
             false => lhs.into_contiguous(client),
         }
+    }
+
+    /// Whether `tensor`'s leading dims merge into rows of its last at one step, its last one
+    /// element a step, untiled: what a launch reading every row whole binds as rows.
+    fn merges_into_rows(tensor: &PlainTensor) -> bool {
+        let (shape, strides) = (tensor.shape(), &tensor.binding.strides);
+        let rank = shape.rank();
+        rank >= 1
+            && strides[rank - 1] == 1
+            && (0..rank.saturating_sub(2))
+                .all(|dim| strides[dim] == shape[dim + 1] * strides[dim + 1])
+            && !tensor.is_tiled()
     }
 
     /// The shape of `lhs · rhs`: the broadcast batch dims, then `m × n`.
@@ -1946,6 +1954,23 @@ mod tests {
         let declined = declined_product(&[2, 4, 8], &[3, 8, 16], MatmulRowsKind::Tiled);
 
         assert_eq!(declined, Some(MATMUL_BATCHES_DO_NOT_BROADCAST));
+    }
+
+    #[test]
+    fn an_output_of_rows_that_do_not_merge_declines_for_every_row_whole() {
+        let mut out = zeros(&[2, 4, 16], F32);
+        out = out.viewed(Metadata::new(vec![2, 4, 16], vec![128, 16, 1]));
+
+        let declined = MatmulTensors::writing_into(
+            &client(),
+            StoredTensor::Plain(zeros(&[2, 4, 8], F32)),
+            StoredTensor::Plain(zeros(&[8, 16], F32)),
+            out,
+            MatmulRowsKind::Whole,
+        )
+        .err();
+
+        assert_eq!(declined, Some(MATMUL_OUTPUT_UNREAD));
     }
 
     #[test]
