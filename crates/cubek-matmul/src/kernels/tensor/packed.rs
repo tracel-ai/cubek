@@ -604,10 +604,20 @@ impl PackedTensor {
     /// Every level binds as the words it lies in and is served every scale a word holds: the unit
     /// that reads a word of scales holds the blocks of every field in it.
     ///
+    /// # Assumptions
+    ///
+    /// - `launcher` was built for the problem of the product this matrix is an operand of.
+    /// - `width` is a multiple of the values a word of its scheme packs.
+    /// - Its scales are blocks along one of its dimensions: its scheme is block-scaled.
+    ///
     /// # Errors
     ///
     /// [`Decline::Broken`] where the tile engine refuses what the routine prepared, and on block
     /// scales read as words that lie in tiles or under a window of rows.
+    ///
+    /// # Panics
+    ///
+    /// Where its scheme is not block-scaled, an Assumption above.
     pub fn bind(
         &self,
         launcher: &Launcher,
@@ -766,12 +776,20 @@ impl PackedTensor {
     /// fill issue them beside the descriptors. As [`BlockScales::Fields`], each scale is read and
     /// narrowed on its own, by the copy engine.
     ///
+    /// # Assumptions
+    ///
+    /// As [`bind`](Self::bind).
+    ///
     /// # Errors
     ///
     /// As [`bind`](Self::bind), and [`Decline::Broken`] on words in tiles laid block by block,
     /// whose tile rows are no row's run; on a stage not whole tiles along its rows, nor whole
     /// tiles or a part dividing one along `k`; on words in rows of a stack, or not one dense run a
     /// row; on scales in tiles of a stack, or a stage not whole strips of a tile's rows.
+    ///
+    /// # Panics
+    ///
+    /// As [`bind`](Self::bind).
     pub fn bind_by_tma(
         &self,
         launcher: &Launcher,

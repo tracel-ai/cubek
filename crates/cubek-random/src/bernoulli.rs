@@ -6,6 +6,11 @@ use cubek_microkernel::random::Bernoulli;
 
 /// `out` filled with `1` at probability `probability` and `0` otherwise, drawn off `seed`.
 ///
+/// # Assumptions
+///
+/// - `dtype` is the element `out`'s buffer stores.
+/// - `probability` lies in `[0, 1]`.
+///
 /// # Errors
 ///
 /// As [`random_normal`](crate::random_normal).

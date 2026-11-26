@@ -6,6 +6,11 @@ use cubek_microkernel::random::Normal;
 
 /// `out` filled with values of mean `mean` and standard deviation `std`, drawn off `seed`.
 ///
+/// # Assumptions
+///
+/// - `dtype` is the element `out`'s buffer stores.
+/// - `std` is at least zero.
+///
 /// # Errors
 ///
 /// Why no random kernel runs on this device, and [`Decline::Broken`] where a kernel's binding

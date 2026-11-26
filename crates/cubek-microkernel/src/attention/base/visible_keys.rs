@@ -35,13 +35,17 @@ impl VisibleKeys {
     /// queries lie end to end, the count of its run of `query_ends`, their cumulative counts, over
     /// `queries` in all; and the cells of `mask`, over `[B, KV, G, Q, S]`, where there is one.
     ///
+    /// # Assumptions
+    ///
+    /// `len` holds at least one entry, and so does `query_ends` where it is given: a launch of no
+    /// sequence runs no cube.
+    ///
     /// # Guarantees
     ///
     /// Where the ends never decrease and the last is `queries`, a run holds the queries its ends
     /// count. Whatever `len` and `query_ends` hold, no key at or past `keys` is seen, and a run
     /// holds no query past the `queries` there are: an end is read as at most `queries`, and a
-    /// start as at most its end. Where `query_ends` holds an entry, an owner past its entries
-    /// reads the last; every launch of this crate has one, a launch of no sequence running no cube.
+    /// start as at most its end. An owner past the entries of `query_ends` reads the last.
     #[allow(
         clippy::clone_on_copy,
         reason = "the cube macro expands no dereference of a comptime option, only its clone"
@@ -60,7 +64,7 @@ impl VisibleKeys {
         let queries = query_ends
             .clone()
             .map::<u32, _>(|ends| {
-                let run = VisibleKeys::capped_entry(sequence, ends.len());
+                let run = VisibleKeys::capped_entry(sequence, ends.shape(0));
                 let end = ends[run].min(queries);
                 let mut start = 0u32;
                 if run > 0 {
@@ -91,11 +95,14 @@ impl VisibleKeys {
     /// The keys sequence `sequence` attends: its entry of `len`, read by stride, so a single
     /// length bound at stride zero is every sequence's.
     ///
+    /// # Assumptions
+    ///
+    /// `len` holds at least one entry: a launch of no sequence runs no cube.
+    ///
     /// # Guarantees
     ///
-    /// At most `keys`: a length past them attends as a length of the keys there are. Where `len`
-    /// holds an entry, a sequence past its entries reads the last; every launch of this crate has
-    /// one, a launch of no sequence running no cube.
+    /// At most `keys`: a length past them attends as a length of the keys there are. A sequence
+    /// past the entries of `len` reads the last.
     pub fn attended_length(len: &Tensor<u32>, sequence: usize, keys: u32) -> u32 {
         let entry = VisibleKeys::capped_entry(sequence, len.shape(0));
         len[entry * len.stride(0)].min(keys)

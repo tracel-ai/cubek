@@ -6,6 +6,11 @@ use cubek_microkernel::random::Uniform;
 
 /// `out` filled with values spread evenly over `[lower_bound, upper_bound)`, drawn off `seed`.
 ///
+/// # Assumptions
+///
+/// - `dtype` is the element `out`'s buffer stores.
+/// - `lower_bound` is below `upper_bound`.
+///
 /// # Errors
 ///
 /// As [`random_normal`](crate::random_normal).

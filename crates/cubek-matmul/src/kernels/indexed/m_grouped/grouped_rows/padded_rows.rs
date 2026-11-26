@@ -48,12 +48,19 @@ impl PaddedRows {
         self.layout.unpad(PlainTensor::of_handle(self.rows))
     }
 
-    /// Every token's routes read back out of these rows and summed under their weights: see
-    /// `GroupedRows::combine_routes`.
+    /// Every token's routes read back out of these rows and summed under their weights:
+    /// `out[t] = Σ_s weights[t, s] · rows[row of route t · slots + s]`, where `routes` names each
+    /// route's group and `place_of_route` its place among the grouped rows, one `u32` per route,
+    /// and `weights` is `[tokens, slots]` at the rows' element.
     ///
     /// # Assumptions
     ///
     /// Every route that names a group names the one its place lies in.
+    ///
+    /// # Guarantees
+    ///
+    /// The output is `[tokens, width]` at the rows' element, each row summed in `f32` in route
+    /// order by one writer, so the sum's order is fixed. A route naming no group adds nothing.
     ///
     /// # Errors
     ///

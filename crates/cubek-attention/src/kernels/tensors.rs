@@ -310,7 +310,11 @@ impl AttentionTensors {
     /// The same attention, query `q` of head `h` of sequence `b` not seeing key `s` where
     /// `mask[b, h, q, s]` is not zero, on top of what its visibility hides. A dim the mask does
     /// not vary along is read at stride zero, so a mask broadcast over the batch or the heads is
-    /// never copied. Its element is any integer, a stored boolean among them.
+    /// never copied.
+    ///
+    /// # Assumptions
+    ///
+    /// The mask's element is an integer, a stored boolean among them.
     ///
     /// # Errors
     ///
@@ -475,6 +479,10 @@ impl AttentionTensors {
     /// ([`AttentionMicrokernel::served`]), each side of a float cache under its per-tensor scale
     /// ([`KvSource::scales`]). A packed cache binds no tile: its kernel decodes it as it reads it
     /// ([`AttentionCacheBinding::Packed`]).
+    ///
+    /// # Assumptions
+    ///
+    /// `blueprint` and `grid` were prepared for [`problem`](Self::problem).
     ///
     /// # Guarantees
     ///

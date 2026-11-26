@@ -49,6 +49,13 @@ impl Grid {
     /// partitioning states, not ones cubek derives again. `settle` runs on the grid's first launch
     /// alone: every later one clones the launcher it built.
     ///
+    /// # Assumptions
+    ///
+    /// - Every call on this grid and its clones states, through `settle`, the same partitioning
+    ///   and the same space.
+    /// - Neither `launch` nor `shared_memory` changes after the first launch on this grid or its
+    ///   clones.
+    ///
     /// # Errors
     ///
     /// [`Decline::Broken`] where the device refuses the grid, which [`Grid::new`] already admitted
