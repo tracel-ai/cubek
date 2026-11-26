@@ -121,9 +121,8 @@ enum PackedStack {
     },
 }
 
-/// Whether `operand`, `extent` long along `along`, is read whole in each of `slabs` slabs of it: no
-/// slab splits a read, a scale's block or a word of block scales, and in tiles each is whole strips
-/// of its rows, a fixed step from the next.
+/// No slab splits a read, a scale block or a word of block scales; in tile order each slab is whole
+/// strips (rows of tiles).
 fn slabs_are_whole(operand: &Operand, along: Dimension, extent: usize, slabs: usize) -> bool {
     if slabs == 0 || !extent.is_multiple_of(slabs) {
         return false;
@@ -138,9 +137,8 @@ fn slabs_are_whole(operand: &Operand, along: Dimension, extent: usize, slabs: us
     slab.is_multiple_of(operand.read(along)) && blocks_whole && strips_whole
 }
 
-/// What `stated` states of a matrix of some rows in tiles, over `slabs` matrices of `rows` rows
-/// each: every slab's rows stated as the one matrix they are stored as, split into its slabs
-/// ([`TileOrder::stacked`]); one matrix as it is.
+/// For a stack, the whole matrix's layout split into one layout per slab; for one matrix, the layout
+/// unchanged.
 fn stated_by_slab(
     slabs: Option<usize>,
     rows: usize,
