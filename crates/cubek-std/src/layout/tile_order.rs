@@ -33,7 +33,7 @@ use crate::layout::{Fragments, assemble, fragments, fragments_of};
 use crate::matmul_dimensions::{K, KB, KI, blocked};
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::{
-    BlockExtent, BlockSize, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+    BlockExtent, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
 };
 use cubecl::tile::Dimension;
 use cubecl::tile::layout::{Stagger, StorageLevels, StoragePartitioning};
@@ -223,12 +223,18 @@ impl TileOrder {
             return None;
         };
         let finest = scheme.finest();
-        let coarser = scheme.levels().nth(1).map(|level| level.size);
-        let ([BlockExtent::Values(block), BlockExtent::VALUE], None | Some(BlockSize::TENSOR)) =
-            (finest.size.extents_in(), coarser)
-        else {
+        let [BlockExtent::Values(block), BlockExtent::VALUE] = finest.size.extents_in() else {
             return None;
         };
+        // Tile order moves the finest grid alone: a coarser level constant down `k`, one scale
+        // for the matrix or one a column, spans whole tiles and keeps its grid as it is.
+        let coarser_kept = scheme
+            .levels()
+            .nth(1)
+            .is_none_or(|coarser| Operand::constant_along(&coarser, 0).is_some());
+        if !coarser_kept {
+            return None;
+        }
         let byte_scales = ElemType::from_scale_dtype(finest.dtype).size_bits() == 8;
         let symmetric = scheme.mode == QuantMode::Symmetric;
         if !(symmetric && byte_scales) {
@@ -1336,6 +1342,22 @@ mod tests {
             assert!(!TileOrder::stores(&refused), "{refused:?}");
             assert_eq!(form(&refused), None, "{refused:?}");
         }
+    }
+
+    /// A coarser level constant down `k`, one scale a column, keeps the finest level's tile order;
+    /// one that varies along `k` spans no whole tile.
+    #[test]
+    fn a_coarser_level_down_k_keeps_the_tile_order() {
+        use cubecl::quant::scheme::BlockSize;
+        let column = BlockSize::with_rest(
+            &[BlockExtent::WholeAxis, BlockExtent::VALUE],
+            BlockExtent::VALUE,
+        );
+        let mxfp4 = down_k(QuantValue::E2M1, 32, ScaleDtype::UE8M0);
+        let per_column = mxfp4.coarser_per_block(column, ScaleDtype::F32);
+        let along_k = mxfp4.coarser_per_block([64, 1], ScaleDtype::F32);
+        assert!(TileOrder::stores(&per_column));
+        assert!(!TileOrder::stores(&along_k));
     }
 
     /// An MXFP8 matrix, a block of thirty-two four to a word, round-trips through the kernel's
