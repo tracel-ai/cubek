@@ -5,9 +5,16 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 
-/// Every cube running the cube microkernel on its box with planes that read its stage, held as
-/// `storage`, over the keys its rows see, and writing each row's logsumexp where the launch binds
+/// Every cube running the cube microkernel on its box with planes that read its stage, laid out
+/// as `storage`, over the keys its rows see, and writing each row's logsumexp where the launch binds
 /// one.
+///
+/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `len`, `keys`, `scale`: as
+///   `unit_attention_kernel`'s.
+/// - `query_ends`: the cumulative counts of the sequences' queries, `[b]`, where they lie end to
+///   end.
+/// - `queries`: the queries a sequence has, or, where they lie end to end, all of them, which caps
+///   their ends.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "the query and keys' stage element is defined from them at launch, which the kernel \
@@ -24,6 +31,7 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float, EV: Float>(
     len: &Tensor<u32>,
     query_ends: ComptimeOption<&Tensor<u32>>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeAttentionMicrokernel,
@@ -42,7 +50,8 @@ pub fn cube_staged_attention_kernel<EA: Float, ES: Float, EV: Float>(
 
     for sequence in &partitioning {
         for cube in sequence {
-            let visible = VisibleKeys::new(len, &query_ends, &cube, queries, &mask, visibility);
+            let visible =
+                VisibleKeys::new(len, &query_ends, &cube, queries, keys, &mask, visibility);
             let k = key.within(S, 0, visible.attended as usize);
             let v = value.within(S, 0, visible.attended as usize);
             let bias = visible.step_bias::<EA>(&partitioning, &cube);

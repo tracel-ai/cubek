@@ -1,7 +1,9 @@
 use cubecl::zspace::{Shape, Strides};
-use cubek_test_utils::skip_unless_f16_arithmetic;
+use cubek_test_utils::ScopeChecker;
 
-use super::test_case::{CUBE, PLANE, TestCase, UNIT};
+use super::test_case::{
+    CUBE, Op, PLANE, ReduceScopeChecker, TestCase, UNIT, ValuePlace, values_by_place,
+};
 
 /// `case` holding the values `data` lays out for its shape and axis.
 fn with_values(case: TestCase, data: fn(&Shape, usize) -> Vec<f32>) -> TestCase {
@@ -9,52 +11,44 @@ fn with_values(case: TestCase, data: fn(&Shape, usize) -> Vec<f32>) -> TestCase 
     case.with_data(values)
 }
 
-/// A test for each extremum of `case` over the values `data` lays out, each one launch; with
-/// `unless`, a skip where that check of the device says so.
+/// A test for each extremum of `case` over the values `data` lays out, each one launch.
 macro_rules! extrema_tests {
-    ($case:expr, $data:expr $(, unless $skip:path)?) => {
+    ($case:expr, $data:expr) => {
         use super::*;
 
         #[test]
         fn max() {
-            $(if $skip(&cubecl::test_device().client()) { return; })?
-            with_values($case, $data).test_max();
+            ReduceScopeChecker.check([with_values($case, $data).reduced_by(Op::Max)]);
         }
 
         #[test]
         fn min() {
-            $(if $skip(&cubecl::test_device().client()) { return; })?
-            with_values($case, $data).test_min();
+            ReduceScopeChecker.check([with_values($case, $data).reduced_by(Op::Min)]);
         }
 
         #[test]
         fn max_abs() {
-            $(if $skip(&cubecl::test_device().client()) { return; })?
-            with_values($case, $data).test_max_abs();
+            ReduceScopeChecker.check([with_values($case, $data).reduced_by(Op::MaxAbs)]);
         }
 
         #[test]
         fn arg_max() {
-            $(if $skip(&cubecl::test_device().client()) { return; })?
-            with_values($case, $data).test_argmax();
+            ReduceScopeChecker.check([with_values($case, $data).reduced_by(Op::ArgMax)]);
         }
 
         #[test]
         fn arg_min() {
-            $(if $skip(&cubecl::test_device().client()) { return; })?
-            with_values($case, $data).test_argmin();
+            ReduceScopeChecker.check([with_values($case, $data).reduced_by(Op::ArgMin)]);
         }
 
         #[test]
         fn max_with_indices() {
-            $(if $skip(&cubecl::test_device().client()) { return; })?
-            with_values($case, $data).test_max_with_indices();
+            ReduceScopeChecker.check([with_values($case, $data).reduced_by(Op::MaxWithIndices)]);
         }
 
         #[test]
         fn min_with_indices() {
-            $(if $skip(&cubecl::test_device().client()) { return; })?
-            with_values($case, $data).test_min_with_indices();
+            ReduceScopeChecker.check([with_values($case, $data).reduced_by(Op::MinWithIndices)]);
         }
     };
 }
@@ -126,12 +120,7 @@ mod unit_seed_valued_f32 {
 
     #[test]
     fn top_3_with_indices() {
-        case().test_topk_with_indices(3);
-    }
-
-    #[test]
-    fn arg_max() {
-        case().test_argmax();
+        ReduceScopeChecker.check([case().reduced_by(Op::TopKWithIndices(3))]);
     }
 }
 
@@ -166,8 +155,7 @@ mod plane_strided_f32 {
 mod plane_parallel_f16 {
     extrema_tests!(
         TestCase::new::<half::f16>(Shape::new([9, 64]), Strides::new(&[64, 1]), Some(1), PLANE),
-        nan_extrema_data,
-        unless skip_unless_f16_arithmetic
+        nan_extrema_data
     );
 }
 
@@ -190,38 +178,40 @@ mod unit_singleton_f32 {
 mod unit_infinite_identities_f32 {
     use super::*;
 
-    fn case(value: f32) -> TestCase {
+    fn case_holding_value(value: f32) -> TestCase {
         unit_case(Shape::new([2, 64]), Strides::new(&[64, 1]), 1).with_data(vec![value; 128])
     }
 
     #[test]
     fn max() {
-        case(f32::NEG_INFINITY).test_max();
+        ReduceScopeChecker.check([case_holding_value(f32::NEG_INFINITY).reduced_by(Op::Max)]);
     }
 
     #[test]
     fn arg_max() {
-        case(f32::NEG_INFINITY).test_argmax();
+        ReduceScopeChecker.check([case_holding_value(f32::NEG_INFINITY).reduced_by(Op::ArgMax)]);
     }
 
     #[test]
     fn max_with_indices() {
-        case(f32::NEG_INFINITY).test_max_with_indices();
+        ReduceScopeChecker
+            .check([case_holding_value(f32::NEG_INFINITY).reduced_by(Op::MaxWithIndices)]);
     }
 
     #[test]
     fn min() {
-        case(f32::INFINITY).test_min();
+        ReduceScopeChecker.check([case_holding_value(f32::INFINITY).reduced_by(Op::Min)]);
     }
 
     #[test]
     fn arg_min() {
-        case(f32::INFINITY).test_argmin();
+        ReduceScopeChecker.check([case_holding_value(f32::INFINITY).reduced_by(Op::ArgMin)]);
     }
 
     #[test]
     fn min_with_indices() {
-        case(f32::INFINITY).test_min_with_indices();
+        ReduceScopeChecker
+            .check([case_holding_value(f32::INFINITY).reduced_by(Op::MinWithIndices)]);
     }
 }
 
@@ -242,49 +232,45 @@ mod max_abs_short_axis_nan {
 
     #[test]
     fn unit() {
-        unit_case(Shape::new([2, 3]), Strides::new(&[3, 1]), 1)
+        ReduceScopeChecker.check([unit_case(Shape::new([2, 3]), Strides::new(&[3, 1]), 1)
             .with_data(VALUES.to_vec())
-            .test_max_abs();
+            .reduced_by(Op::MaxAbs)]);
     }
 
     #[test]
     fn plane() {
-        plane_case(Shape::new([2, 3]), Strides::new(&[3, 1]), 1)
+        ReduceScopeChecker.check([plane_case(Shape::new([2, 3]), Strides::new(&[3, 1]), 1)
             .with_data(VALUES.to_vec())
-            .test_max_abs();
+            .reduced_by(Op::MaxAbs)]);
     }
 }
 
 fn nan_extrema_data(shape: &Shape, axis: usize) -> Vec<f32> {
-    let axis_len = shape[axis];
-    let inner_len = shape.iter().skip(axis + 1).product::<usize>();
-    let num_elements = shape.iter().product::<usize>();
+    values_by_place(shape, axis, |place| {
+        let ValuePlace {
+            coordinate,
+            row,
+            row_value_count,
+        } = place;
+        let last = row_value_count - 1;
+        let base = (coordinate % 7) as f32 - 3.0 + (row % 3) as f32 * 0.125;
 
-    (0..num_elements)
-        .map(|linear| {
-            let axis_coordinate = (linear / inner_len) % axis_len;
-            let outer = linear / (inner_len * axis_len);
-            let inner = linear % inner_len;
-            let slice = outer * inner_len + inner;
-            let base = (axis_coordinate % 7) as f32 - 3.0 + (slice % 3) as f32 * 0.125;
-
-            match slice % 9 {
-                0 if axis_coordinate == axis_len / 2 => f32::NAN,
-                1 if axis_coordinate == 0 => f32::NAN,
-                2 if axis_coordinate + 1 == axis_len => f32::NAN,
-                3 if axis_coordinate == axis_len / 3 || axis_coordinate == (2 * axis_len) / 3 => {
-                    f32::NAN
-                }
-                4 => f32::NAN,
-                5 if axis_coordinate == 0 || axis_coordinate + 1 == axis_len => 9.0,
-                6 if axis_coordinate == 0 || axis_coordinate + 1 == axis_len => -9.0,
-                7 if axis_coordinate == 0 => f32::NEG_INFINITY,
-                7 if axis_coordinate + 1 == axis_len => f32::INFINITY,
-                7 if axis_coordinate == axis_len / 2 => f32::NAN,
-                _ => base,
+        match row % 9 {
+            0 if coordinate == row_value_count / 2 => f32::NAN,
+            1 if coordinate == 0 => f32::NAN,
+            2 if coordinate == last => f32::NAN,
+            3 if coordinate == row_value_count / 3 || coordinate == (2 * row_value_count) / 3 => {
+                f32::NAN
             }
-        })
-        .collect()
+            4 => f32::NAN,
+            5 if coordinate == 0 || coordinate == last => 9.0,
+            6 if coordinate == 0 || coordinate == last => -9.0,
+            7 if coordinate == 0 => f32::NEG_INFINITY,
+            7 if coordinate == last => f32::INFINITY,
+            7 if coordinate == row_value_count / 2 => f32::NAN,
+            _ => base,
+        }
+    })
 }
 
 /// The NaN layout of [`nan_extrema_data`] with every NaN given its own payload and
@@ -293,15 +279,18 @@ fn mixed_nan_extrema_data(shape: &Shape, axis: usize) -> Vec<f32> {
     nan_extrema_data(shape, axis)
         .into_iter()
         .enumerate()
-        .map(|(linear, value)| {
-            if !value.is_nan() {
-                return value;
-            }
-            let payload = 0x7FC0_0000 | ((linear as u32 % 0x3F_FFFF) + 1);
-            let sign = if linear % 2 == 0 { 0 } else { 0x8000_0000 };
-            f32::from_bits(payload | sign)
+        .map(|(linear, value)| match value.is_nan() {
+            true => nan_of_index(linear as u32),
+            false => value,
         })
         .collect()
+}
+
+/// A NaN whose payload and sign are `index`'s own.
+fn nan_of_index(index: u32) -> f32 {
+    let payload = 0x7FC0_0000 | ((index % 0x3F_FFFF) + 1);
+    let sign = (index % 2) << 31;
+    f32::from_bits(payload | sign)
 }
 
 /// Both signed zeros in every row, above every other value, at coordinates that
@@ -311,24 +300,13 @@ fn mixed_nan_extrema_data(shape: &Shape, axis: usize) -> Vec<f32> {
 /// that told the two apart would pass every other test here and pick the wrong
 /// index for exactly this input.
 fn signed_zero_data(shape: &Shape, axis: usize) -> Vec<f32> {
-    let axis_len = shape[axis];
-    let inner_len = shape.iter().skip(axis + 1).product::<usize>();
-    let num_elements = shape.iter().product::<usize>();
-
-    (0..num_elements)
-        .map(|linear| {
-            let axis_coordinate = (linear / inner_len) % axis_len;
-            let outer = linear / (inner_len * axis_len);
-            let inner = linear % inner_len;
-            let slice = outer * inner_len + inner;
-
-            match (axis_coordinate + slice) % 4 {
-                0 => -0.0,
-                1 => 0.0,
-                _ => -((axis_coordinate % 5) as f32) - 1.0,
-            }
-        })
-        .collect()
+    values_by_place(shape, axis, |place| {
+        match (place.coordinate + place.row) % 4 {
+            0 => -0.0,
+            1 => 0.0,
+            _ => -((place.coordinate % 5) as f32) - 1.0,
+        }
+    })
 }
 
 fn integer_extrema_data(shape: &Shape, _axis: usize) -> Vec<f32> {

@@ -12,7 +12,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_rms_norm::kernels::{RmsNormCall, RmsNormRoutine, RmsNormRoutineCandidate};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 use half::f16;
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -197,7 +197,7 @@ impl<R: RmsNormRoutine<M> + Copy, M: Microkernel> RmsNorm<R, M> {
     }
 }
 
-impl<R: RmsNormRoutine<M> + Copy, M: Microkernel> ScopeUnderTest for RmsNorm<R, M> {
+impl<R: RmsNormRoutine<M> + Copy, M: Microkernel> ScopeChecker for RmsNorm<R, M> {
     type Case = RmsNormCase<R, M>;
 
     /// # Panics

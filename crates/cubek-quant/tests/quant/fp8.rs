@@ -19,7 +19,7 @@ use cubek_quant::scheme::{
 
 use super::harness::{dequantize, f32_tensor, quantize};
 use super::{Needs, Quantized, RoundTrip};
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 /// One block, sized to the vector the packed path builds.
 const BLOCK: usize = 8;

@@ -17,7 +17,7 @@ use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
 use cubek_test_utils::{
-    HostData, HostDataType, ScopeUnderTest, TestOutcome, ValidationResult, Written,
+    HostData, HostDataType, ScopeChecker, TestOutcome, ValidationResult, Written,
 };
 
 use crate::matmul::{Declines, skip_unless_matrix_instruction};
@@ -260,7 +260,7 @@ where
     }
 }
 
-impl<R, M, SM> ScopeUnderTest for ByGroupedRoutine<R, M, SM>
+impl<R, M, SM> ScopeChecker for ByGroupedRoutine<R, M, SM>
 where
     R: MatmulRoutine<M, SM>,
     M: MatmulMicrokernel,
@@ -311,6 +311,10 @@ impl Walk {
     }
 
     /// The launch's output when it ran, counting it; else `None`, noting why it did not.
+    ///
+    /// # Panics
+    ///
+    /// On a [`Decline::Broken`]: the routine claimed the launch and broke it.
     fn ran<T>(&mut self, launched: Result<T, Decline>) -> Option<T> {
         match launched {
             Ok(out) => {
@@ -318,6 +322,7 @@ impl Walk {
                 Some(out)
             }
             Err(why) => {
+                assert!(!why.is_broken(), "a setting broke its launch: {why}");
                 self.cubes_past_device &= matches!(why, Decline::CubePastDevice { .. });
                 None
             }

@@ -6,8 +6,9 @@
 //! cube's stores do not reach another within a launch.
 
 use cubecl::zspace::{Shape, Strides};
+use cubek_test_utils::ScopeChecker;
 
-use crate::reduce::it::test_case::{HYPERCUBE, TestCase};
+use crate::reduce::it::test_case::{HYPERCUBE, Op, ReduceScopeChecker, TestCase};
 
 fn case() -> TestCase {
     TestCase::new::<f32>(
@@ -20,22 +21,22 @@ fn case() -> TestCase {
 
 #[test]
 fn hypercube_max_with_indices() {
-    case().test_max_with_indices();
+    ReduceScopeChecker.check([case().reduced_by(Op::MaxWithIndices)]);
 }
 
 #[test]
 fn hypercube_min_with_indices() {
-    case().test_min_with_indices();
+    ReduceScopeChecker.check([case().reduced_by(Op::MinWithIndices)]);
 }
 
 #[test]
 fn hypercube_topk_with_indices_k3() {
-    case().test_topk_with_indices(3);
+    ReduceScopeChecker.check([case().reduced_by(Op::TopKWithIndices(3))]);
 }
 
 // The indices-only path, for comparison: a failure here means the breakage is not specific to
 // writing both.
 #[test]
 fn hypercube_argtopk_k3() {
-    case().test_argtopk(3);
+    ReduceScopeChecker.check([case().reduced_by(Op::ArgTopK(3))]);
 }

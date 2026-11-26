@@ -2,7 +2,7 @@
 
 use cubek_interpolate::definition::{InterpolateMode, InterpolateOptions};
 use cubek_interpolate::kernels::CubeInterpolateRoutineSettings;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::interpolate::forward::{BASELINE, BILINEAR, Forward, ForwardCase, MODES, Resampling};
 

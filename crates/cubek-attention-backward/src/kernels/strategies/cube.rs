@@ -70,8 +70,8 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
     type Blueprint = CubeStagedAttentionBackwardBlueprint;
 
     /// Each walk's microkernel's settings, the other's and the ring at their default, then each
-    /// ring of stages through registers, then each held key walk prefetching through registers,
-    /// then both walks held on the narrow key walks, then those with the key walk's heads apart.
+    /// ring of stages through registers, then each key walk holding its score prefetching
+    /// through registers, then both walks holding theirs on the narrow key walks, then those with the key walk's heads apart.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         let lead = CubeStagedAttentionBackwardSettings::DEFAULT;
         let queries = CubeQueryGradientMicrokernel::settings(hw)
@@ -91,9 +91,9 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
         let rings = [StageRing::DOUBLE, StageRing::SINGLE_THROUGH_REGISTERS]
             .map(|ring| Self::Settings { ring, ..lead });
         // A key walk holding its score in fragments runs nothing but its products between two
-        // fills, so its next stage lands under them: each held setting prefetching through
+        // fills, so its next stage lands under them: each such setting prefetching through
         // registers.
-        let held = CubeKeyGradientMicrokernel::settings(hw)
+        let score_holding = CubeKeyGradientMicrokernel::settings(hw)
             .into_iter()
             .filter(|key_gradient| key_gradient.holds_its_score())
             .map(|key_gradient| Self::Settings {
@@ -101,24 +101,25 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
                 ring: StageRing::SINGLE_THROUGH_REGISTERS,
                 ..lead
             });
-        // Both walks holding their scores in fragments, prefetching through registers: every held
-        // query walk with each narrow held key walk, one key fragment a plane on two or four
+        // Both walks holding their scores in fragments, prefetching through registers: every
+        // query walk holding it with each narrow key walk holding it, one key fragment a plane on two or four
         // planes. Wider key walks and a ring of one stage never won once the stages were swizzled,
         // so they are left to the lists above.
-        let query_held: Vec<_> = CubeQueryGradientMicrokernel::settings(hw)
+        let queries_holding: Vec<_> = CubeQueryGradientMicrokernel::settings(hw)
             .into_iter()
             .filter(|query_gradient| query_gradient.holds_its_score())
             .collect();
         let narrow_keys = [(2, 2), (2, 4), (4, 2), (4, 4), (8, 4)].map(|(queries, planes)| {
             CubeKeyGradientMicrokernelSettings {
-                plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries).held(),
+                plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries)
+                    .score_in_fragments(),
                 planes_along_keys: NonZeroUsize::new(planes).unwrap(),
             }
         });
         let both = narrow_keys
             .into_iter()
             .flat_map(|key_gradient| {
-                query_held
+                queries_holding
                     .iter()
                     .map(move |&query_gradient| Self::Settings {
                         query_gradient,
@@ -141,7 +142,7 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
             .chain(queries)
             .chain(keys)
             .chain(rings)
-            .chain(held)
+            .chain(score_holding)
             .chain(both)
             .chain(apart)
             .collect()
@@ -176,18 +177,23 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
         Ok(CubeStagedAttentionBackwardBlueprint { queries, keys })
     }
 
-    fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint) {
-        CubeStagedQueryGradientRoutine.dispatch(tensors, &blueprint.queries);
+    fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        blueprint: Self::Blueprint,
+    ) -> Result<(), Decline> {
+        CubeStagedQueryGradientRoutine.dispatch(tensors, &blueprint.queries)?;
         match &blueprint.keys {
             KeyHeadsBlueprint::Together(walk) => {
-                CubeStagedKeyGradientRoutine.dispatch(tensors, walk)
+                CubeStagedKeyGradientRoutine.dispatch(tensors, walk)?
             }
             KeyHeadsBlueprint::Apart { sums: walk, cast } => {
                 let sums = KeyGradientSums::zeros(tensors);
-                CubeStagedKeyGradientSumRoutine.dispatch(tensors, walk, &sums);
-                CastKeyGradientRoutine.dispatch(tensors, cast, &sums);
+                CubeStagedKeyGradientSumRoutine.dispatch(tensors, walk, &sums)?;
+                CastKeyGradientRoutine.dispatch(tensors, cast, &sums)?;
             }
         }
+        Ok(())
     }
 
     fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {

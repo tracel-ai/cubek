@@ -11,7 +11,7 @@ use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine};
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, Written};
 
 use crate::matmul::Declines;
 use crate::tiled::indexed::{Routed, Stack, values};
@@ -82,7 +82,7 @@ fn the_routed_floors_read_an_nvfp4_stack_whose_k_is_no_whole_number_of_words() {
 /// ([`RoutedMatmulCandidates::floors`]), what a caller racing the routed candidates falls back on.
 struct FlooredRouted;
 
-impl ScopeUnderTest for FlooredRouted {
+impl ScopeChecker for FlooredRouted {
     type Case = Routed;
 
     /// A cube larger than the device holds is a skip, the CPU runtime's few units; so is a packed

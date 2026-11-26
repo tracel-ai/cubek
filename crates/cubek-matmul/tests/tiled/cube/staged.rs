@@ -7,7 +7,7 @@ use cubek_matmul::kernels::{
     CubeStagedAsyncCopyMatmulRoutine, CubeStagedMatmulRoutine, CubeStagedTmaFillerMatmulRoutine,
     CubeStagedTmaMatmulRoutine, CubeStagedTmaStoredMatmulRoutine, CubeStagedWgmmaMatmulRoutine,
 };
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Declines, F16, F32, Product, RhsTiles};
 use crate::tiled::ByRoutine;

@@ -14,7 +14,7 @@ use cubecl::zspace::shape;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
 use crate::matmul::{F16, F32};
 
@@ -235,7 +235,7 @@ impl<S: AttentionSettings> Attention<S> {
     }
 }
 
-impl<S: AttentionSettings> ScopeUnderTest for Attention<S> {
+impl<S: AttentionSettings> ScopeChecker for Attention<S> {
     type Case = AttentionCase<S>;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

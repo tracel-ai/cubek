@@ -6,9 +6,8 @@ pub mod forward;
 
 use cubecl::{client::Client, ir::ElemType, std::tensor::TensorHandle};
 use cubek_pool::definition::PoolError;
-use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, assert_equals_approx,
-};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, assert_equals_approx};
+use std::fmt::Debug;
 
 pub(crate) use base::*;
 
@@ -27,17 +26,18 @@ pub fn output_host_f32(client: &Client, output: TensorHandle) -> HostData {
     HostData::from_tensor_handle(client, output, HostDataType::F32)
 }
 
+/// `actual` checked against `expected` where `launched` ran, else the outcome of `case`'s launch
+/// that gave no result: a skip where it is unsupported, a failure where it is broken.
 pub fn validate_test(
-    result: Result<(), PoolError>,
+    case: &impl Debug,
+    launched: Result<(), PoolError>,
     actual: HostData,
     expected: HostData,
     tolerance: f32,
 ) {
-    let outcome = match ExecutionOutcome::from(result) {
-        ExecutionOutcome::Executed => {
-            assert_equals_approx(&actual, &expected, tolerance).as_test_outcome()
-        }
-        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    let outcome = match launched {
+        Ok(()) => assert_equals_approx(&actual, &expected, tolerance).as_test_outcome(),
+        Err(error) => TestOutcome::unrun(case, error.into()),
     };
     outcome.enforce();
 }

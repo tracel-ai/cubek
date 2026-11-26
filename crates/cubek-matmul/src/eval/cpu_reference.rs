@@ -8,8 +8,7 @@
 use cubecl::{prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataVec, Progress, StridedLayout, TestInput,
-    launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataVec, KernelResultError, Progress, StridedLayout, TestInput,
 };
 
 use crate::{
@@ -23,13 +22,18 @@ use crate::{
 ///
 /// Inputs are generated via `TestInput::uniform` so the same `(problem, seeds)`
 /// pair produces the same bits on every run.
+///
+/// # Errors
+///
+/// [`KernelResultError::Refused`] with the decline the launch returns, and
+/// [`KernelResultError::NotRun`] where it returns another error or did not run.
 pub fn strategy_result(
     client: Client,
     problem: MatmulProblem,
     strategy: Strategy,
     seed_lhs: u64,
     seed_rhs: u64,
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     produce_with(
         client,
         problem,
@@ -69,7 +73,7 @@ pub(crate) fn produce_with<F>(
     seed_lhs: u64,
     seed_rhs: u64,
     launch: F,
-) -> Result<HostData, String>
+) -> Result<HostData, KernelResultError>
 where
     F: FnOnce(
         &Client,
@@ -88,17 +92,27 @@ where
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
-        launch(c, lhs_handle, rhs_handle, out_handle, &mut dtypes).into()
-    });
+    launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes)?;
+    ExecutionOutcome::of_outputs(&client, &[&out.handle]).into_kernel_result()?;
+    Ok(HostData::from_tensor_handle(
+        &client,
+        out,
+        problem.global_dtypes.out.into(),
+    ))
+}
 
-    match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-            &client,
-            out,
-            problem.global_dtypes.out.into(),
-        )),
+/// The decline a launch returns stays a refusal, which a test skips where the launch is
+/// unsupported and fails on where it is broken; any other error is a kernel that did not run.
+///
+/// Only a broken launch keeps its decline in a [`MatmulSetupError`]: an unsupported one becomes
+/// the availability or configuration error it names, a kernel that did not run.
+impl From<MatmulSetupError> for KernelResultError {
+    fn from(error: MatmulSetupError) -> Self {
+        match error {
+            #[cfg(feature = "tiled")]
+            MatmulSetupError::Broken(decline) => Self::Refused(decline),
+            other => Self::NotRun(format!("Test did not run: {other}")),
+        }
     }
 }
 

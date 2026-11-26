@@ -1,8 +1,14 @@
+#[cfg(doc)]
+use crate::kernels::indexed::m_grouped::{
+    GATED_ROWS_UNREAD, GROUPED_ROWS_UNREAD, ROUTE_SORT_UNREAD,
+};
 use crate::kernels::indexed::m_grouped::{
     GroupedRows, MGroupedChunk, MGroupedFloors, MGroupedMatmulKey, MGroupedRowSource,
     MGroupedSettings, PaddedRows, RouteSort, upload,
 };
-use crate::kernels::indexed::stack::{SlabDimension, SlabView};
+#[cfg(doc)]
+use crate::kernels::indexed::stack::{GROUP_ENDS_UNREAD, MATMUL_STACK_NOT_WHOLE_SLABS};
+use crate::kernels::indexed::stack::{SlabDimension, SlabView, admit_ends};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
@@ -18,6 +24,22 @@ use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, 
 use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_dimensions::{K, N};
+use cubek_std::routine::Breakable;
+
+/// A grouped product whose rows' contraction is not its slabs'.
+pub const M_GROUPED_SHAPES_DISAGREE: Decline = Decline::Unserved {
+    why: "a grouped product is [rows, k] against slabs of [k, n]",
+};
+
+/// What a launch pads its rows on: the rows and the ends [`MGroupedMatmulTensors::new`] admitted,
+/// in chunks of a row at least.
+const PADDED_AS_ADMITTED: &str =
+    "the rows and the ends should be as the product admitted them, in chunks of a row at least";
+
+/// A grouped product padded over no row: a layout holds one at least.
+pub const M_GROUPED_NO_ROW: Decline = Decline::Unserved {
+    why: "a padded product has a row at least",
+};
 
 /// The operands of one grouped product, `out[r] = lhs[r] · rhs[group(r)]`: where the rows come
 /// from, sorted by group, the stack of slabs laid `along`, float or packed, and each group's
@@ -27,6 +49,14 @@ use cubek_std::matmul_dimensions::{K, N};
 /// against the slab of the group it holds, read through the chunks' table ([`MatmulIndex::Slab`]),
 /// so a dense routine serves it ([`launch`](Self::launch)). A chunk past the groups' names no slab
 /// and sums nothing.
+///
+/// # Assumptions
+///
+/// As [`MGroupedRowSource::pad`].
+///
+/// # Guarantees
+///
+/// As [`MGroupedRowSource::pad`].
 #[derive(Clone)]
 pub struct MGroupedMatmulTensors {
     client: Client,
@@ -37,9 +67,6 @@ pub struct MGroupedMatmulTensors {
 }
 
 impl MGroupedMatmulTensors {
-    /// The most rows a key tells apart: past it a grid is full whatever the count.
-    const ROWS_KEYED: usize = 65536;
-
     /// The rows `source` holds against `rhs` on `client`'s device, grouped by `ends` (each group's
     /// cumulative end row as a `u32`, one group a slab), the slabs laid along `along`. A float
     /// stack is read where it lies, and copied only where it overlaps itself or is contiguous
@@ -47,13 +74,10 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for
-    /// an operand stored in tiles.
-    ///
-    /// # Panics
-    ///
-    /// On rows other than a rank-two tensor, a stack other than a rank-two tensor of whole slabs,
-    /// a contraction the rows and the stack do not share, or no group.
+    /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an
+    /// operand stored in tiles, [`GROUPED_ROWS_UNREAD`], [`ROUTE_SORT_UNREAD`] or
+    /// [`GATED_ROWS_UNREAD`] for the rows, [`MATMUL_STACK_NOT_WHOLE_SLABS`],
+    /// [`GROUP_ENDS_UNREAD`], and [`M_GROUPED_SHAPES_DISAGREE`].
     pub fn new(
         client: &Client,
         source: impl Into<MGroupedRowSource>,
@@ -62,13 +86,15 @@ impl MGroupedMatmulTensors {
         along: SlabDimension,
     ) -> Result<Self, Decline> {
         let source = source.into();
+        admit_ends(&ends)?;
+        let groups = ends.shape().num_elements();
+        source.admit(groups)?;
+        along.admit(&rhs, groups)?;
+        let [k, _] = along.slab_shape(&rhs, groups);
+        if source.k() != k {
+            return Err(M_GROUPED_SHAPES_DISAGREE);
+        }
         let rows = source.buffer();
-        let shape = rows.shape();
-        assert_eq!(
-            shape.num_dims(),
-            2,
-            "a grouped product's rows are `[rows, k]`: {shape:?}"
-        );
         if rows.is_tiled() || rhs.values().is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
@@ -83,20 +109,6 @@ impl MGroupedMatmulTensors {
                 StoredTensor::Plain(SlabView::readable(client, rhs.addressable(client)))
             }
         };
-        assert_eq!(
-            rhs.values().shape().num_dims(),
-            2,
-            "a grouped product contracts against a `[k, n]` stack"
-        );
-        let groups = ends.shape().num_elements();
-        assert!(groups > 0, "rows are grouped into one slab at least");
-        let [k, n] = along.slab_shape(&rhs, groups);
-        assert_eq!(
-            source.k(),
-            k,
-            "the rows contract against one slab: {} against slabs of [{k}, {n}]",
-            source.k()
-        );
         Ok(Self {
             client: client.clone(),
             source,
@@ -117,7 +129,7 @@ impl MGroupedMatmulTensors {
     /// gated source's layout is built on the spread ends.
     ///
     /// The sort that makes the call's `ends` and route places can be discarded, as a process mode
-    /// that discards launches does, leaving whatever the buffers held, which a kernel reading
+    /// that discards launches does, leaving whatever the buffers hold, which a kernel reading
     /// them as a layout runs on as garbage. These are uploaded rather than launched, so such a
     /// mode keeps them.
     pub fn with_spread_rows(&self) -> Self {
@@ -143,7 +155,7 @@ impl MGroupedMatmulTensors {
             MGroupedRowSource::Gated(both) => {
                 let align = both.layout().align();
                 let layout = GroupedRows::uploaded(client, &spread, rows, align);
-                MGroupedRowSource::Gated(PaddedRows::new(both.rows().clone(), layout))
+                MGroupedRowSource::Gated(both.placed_by(layout))
             }
         };
         Self {
@@ -161,8 +173,11 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// The last floor's decline, where none serves.
+    /// [`M_GROUPED_NO_ROW`], or the last floor's decline, where none serves.
     pub fn served_on_floor(&self, hw: &Hardware) -> Result<(), Decline> {
+        if self.source.rows() == 0 {
+            return Err(M_GROUPED_NO_ROW);
+        }
         MGroupedFloors::LISTED.served(hw, self)
     }
 
@@ -227,12 +242,8 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// Why `hw` cannot run the product at these settings, or why the routine declines a table or
-    /// the stack as it is stored.
-    ///
-    /// # Panics
-    ///
-    /// On no row: a layout holds one at least.
+    /// [`M_GROUPED_NO_ROW`], why `hw` cannot run the product at these settings, or why the routine
+    /// declines a table or the stack as it is stored.
     pub fn launch<Mk, SM, R>(
         &self,
         hw: &Hardware,
@@ -243,16 +254,16 @@ impl MGroupedMatmulTensors {
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
-        assert!(
-            self.source.rows() > 0,
-            "a padded product has a row at least"
-        );
+        if self.source.rows() == 0 {
+            return Err(M_GROUPED_NO_ROW);
+        }
         let chunk_rows = self.chunk_rows::<Mk, SM, R>(hw, settings)?;
         let stack = self.along.read_slabs(&self.rhs, self.groups())?;
         let (lhs, layout) = self
             .source
             .clone()
             .pad(&self.client, self.ends.clone(), chunk_rows)
+            .or_broken(PADDED_AS_ADMITTED)?
             .into_parts();
         let [k, n] = self.slab_shape();
         let (chunks, elem) = (lhs.shape()[0] / chunk_rows, lhs.dtype);
@@ -284,8 +295,13 @@ impl MGroupedMatmulTensors {
             bound,
             &settings.routine,
         )?;
-        Ok(PaddedRows::new(out, layout))
+        Ok(PaddedRows::laid_out(out, layout))
     }
+}
+
+impl MGroupedMatmulTensors {
+    /// The most rows a key tells apart: past it a grid is full whatever the count.
+    const ROWS_KEYED: usize = 65536;
 }
 
 impl MGroupedMatmulTensors {

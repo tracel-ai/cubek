@@ -72,7 +72,7 @@ impl PlaneKeyGradientMicrokernelSettings {
     }
 
     /// These settings on the manual `mma`, the score kept in its fragments.
-    pub const fn held(self) -> Self {
+    pub const fn score_in_fragments(self) -> Self {
         Self {
             score: ScoreHolder::Fragments,
             ..self
@@ -294,11 +294,11 @@ impl Microkernel for PlaneKeyGradientMicrokernel {
                 scratch: Scratch::WholeGrid,
                 ..Self::Settings::DEFAULT
             },
-            Self::Settings::DEFAULT.held(),
-            Self::Settings::fragments(4, 2).held(),
-            Self::Settings::fragments(2, 4).held(),
-            Self::Settings::fragments(1, 2).held(),
-            Self::Settings::fragments(1, 4).held(),
+            Self::Settings::DEFAULT.score_in_fragments(),
+            Self::Settings::fragments(4, 2).score_in_fragments(),
+            Self::Settings::fragments(2, 4).score_in_fragments(),
+            Self::Settings::fragments(1, 2).score_in_fragments(),
+            Self::Settings::fragments(1, 4).score_in_fragments(),
         ]
     }
 

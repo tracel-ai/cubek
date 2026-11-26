@@ -9,7 +9,7 @@ use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::{HostData, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, ScopeChecker, Written};
 
 /// A plane of `units` units dealt `blocks` blocks of the output, `depth` deep, of `elements`.
 #[derive(Debug, Clone, Copy)]
@@ -64,7 +64,7 @@ impl PlaneWindow {
     }
 }
 
-impl ScopeUnderTest for PlaneWindow {
+impl ScopeChecker for PlaneWindow {
     type Case = WindowCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

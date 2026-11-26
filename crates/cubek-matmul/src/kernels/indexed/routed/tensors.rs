@@ -1,5 +1,7 @@
 use crate::kernels::Product;
 use crate::kernels::indexed::routed::{RoutedFloors, RoutedMatmulKey};
+#[cfg(doc)]
+use crate::kernels::indexed::stack::MATMUL_STACK_NOT_WHOLE_SLABS;
 use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -19,6 +21,17 @@ use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::layout::contiguous;
 use cubek_std::matmul_dimensions::{K, N};
+
+/// Operands of a routed product whose shapes are no `[rows, k]` against slabs of `k` rows, each
+/// row routed as many times as the next.
+pub const ROUTED_SHAPES_DISAGREE: Decline = Decline::Unserved {
+    why: "a routed product is [rows, k] against slabs of [k, n], its routes [rows, slots]",
+};
+
+/// Routes of a routed product that are not `u32` indices into the stack.
+pub const ROUTES_NOT_U32: Decline = Decline::Unserved {
+    why: "routes are u32 indices into the stack",
+};
 
 /// The operands of one routed product: the rows, the stack of `experts` slabs laid `along`, and
 /// each row's routes, `out[r, s] = lhs[r] · rhs[routes[r, s]]`.
@@ -52,23 +65,20 @@ impl core::fmt::Debug for RoutedMatmulTensors {
 }
 
 impl RoutedMatmulTensors {
-    /// The most rows a key tells apart: past it a grid is full whatever the count.
-    const ROWS_KEYED: usize = 65536;
-
     /// `lhs[rows, k]` against the stack `rhs` of `experts` slabs laid `along`, float or packed,
     /// each row routed to the slabs its row of `routes[rows, slots]` names, on `client`'s device.
     /// The rows and the routes are made dense, and a float stack is copied only where it is
     /// contiguous along neither dimension.
     ///
+    /// # Guarantees
+    ///
+    /// The product is defined whatever the routes are: one past the slabs adds nothing to its row.
+    ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`] for a float stack, and [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for a
-    /// stack stored in tiles.
-    ///
-    /// # Panics
-    ///
-    /// On an lhs other than `[rows, k]`, a stack other than rank two or not whole slabs, a
-    /// contraction the slabs do not share, or routes other than `u32`.
+    /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for a
+    /// stack stored in tiles, [`MATMUL_STACK_NOT_WHOLE_SLABS`], [`ROUTED_SHAPES_DISAGREE`] and
+    /// [`ROUTES_NOT_U32`].
     pub fn new(
         client: &Client,
         lhs: PlainTensor,
@@ -80,11 +90,23 @@ impl RoutedMatmulTensors {
         if rhs.values().is_tiled() {
             return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
         }
-        assert_eq!(
-            rhs.values().shape().rank(),
-            2,
-            "a routed stack is a rank-two view"
-        );
+        along.admit(&rhs, experts)?;
+        let lhs_shape = lhs.shape();
+        let [k, _] = along.slab_shape(&rhs, experts);
+        if lhs_shape.rank() != 2 || lhs_shape[1] != k {
+            return Err(ROUTED_SHAPES_DISAGREE);
+        }
+        if routes.elem != ElemType::UInt(UIntKind::U32) {
+            return Err(ROUTES_NOT_U32);
+        }
+        let routes_shape = routes.shape();
+        let slots = *routes_shape
+            .as_slice()
+            .last()
+            .ok_or(ROUTED_SHAPES_DISAGREE)?;
+        if routes_shape.num_elements() != lhs_shape[0] * slots {
+            return Err(ROUTED_SHAPES_DISAGREE);
+        }
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),
             StoredTensor::Scaled(_) => return Err(MATMUL_SCALED_BESIDE_FLOAT),
@@ -93,26 +115,6 @@ impl RoutedMatmulTensors {
                 StoredTensor::Plain(SlabView::readable(client, rhs))
             }
         };
-        assert_eq!(
-            routes.elem,
-            ElemType::UInt(UIntKind::U32),
-            "routes are `u32` indices into the stack"
-        );
-        let lhs_shape = lhs.shape();
-        assert_eq!(lhs_shape.rank(), 2, "a routed lhs is `[rows, k]`");
-        let [k, _] = along.slab_shape(&rhs, experts);
-        assert_eq!(lhs_shape[1], k, "the rows contract against one slab");
-        let routes_shape = routes.shape();
-        let slots = *routes_shape
-            .as_slice()
-            .last()
-            .expect("routes hold each row's experts along their last dim");
-        assert_eq!(
-            routes_shape.num_elements(),
-            lhs_shape[0] * slots,
-            "every row selects {slots} experts: routes {routes_shape:?} over {} rows",
-            lhs_shape[0]
-        );
         Ok(Self {
             client: client.clone(),
             lhs: lhs.into_contiguous(client),
@@ -170,6 +172,10 @@ impl RoutedMatmulTensors {
     /// The product on `routine` at `settings`, prepared for `hw`: `[rows, slots, n]` at the
     /// lhs's element. No row is an empty answer, with no launch.
     ///
+    /// # Guarantees
+    ///
+    /// A decline of the stack as it is stored comes before the output is allocated.
+    ///
     /// # Errors
     ///
     /// Why `hw` cannot run the product at these settings, or why the routine declines a table or
@@ -184,8 +190,12 @@ impl RoutedMatmulTensors {
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
+        if self.rows() == 0 {
+            return Ok(self.output());
+        }
+        let operands = self.operands()?;
         let out = self.output();
-        self.launch_into(hw, routine, settings, &out)?;
+        self.launch_operands_into(hw, routine, settings, operands, &out)?;
         Ok(out)
     }
 
@@ -209,9 +219,8 @@ impl RoutedMatmulTensors {
         if self.rows() == 0 {
             return Ok(());
         }
-        let (lhs, stack, table) = self.operands()?;
-        let bound = self.batched(out);
-        routine.launch_indexed_into(hw, &self.client, lhs, stack, table, bound, settings)
+        let operands = self.operands()?;
+        self.launch_operands_into(hw, routine, settings, operands, out)
     }
 
     /// Whether `R` at `settings` prepares the product on `hw`, of a row at least.
@@ -289,6 +298,11 @@ impl RoutedMatmulTensors {
 }
 
 impl RoutedMatmulTensors {
+    /// The most rows a key tells apart: past it a grid is full whatever the count.
+    const ROWS_KEYED: usize = 65536;
+}
+
+impl RoutedMatmulTensors {
     /// Each row's routes, `u32`.
     #[cfg(test)]
     pub(crate) fn routes(&self) -> &PlainTensor {
@@ -317,6 +331,28 @@ impl RoutedMatmulTensors {
             entries: self.routes.as_rows(rows, slots),
         };
         Ok((lhs, self.along.read_slabs(&self.rhs, self.experts)?, table))
+    }
+
+    /// The product of `operands`, this product's ([`operands`](Self::operands)), on `routine`
+    /// at `settings`, prepared for `hw`, into `out`.
+    ///
+    /// # Errors
+    ///
+    /// As [`launch`](Self::launch).
+    fn launch_operands_into<Mk, SM, R>(
+        &self,
+        hw: &Hardware,
+        routine: &R,
+        settings: &R::Settings,
+        (lhs, stack, table): (PlainTensor, StoredTensor, MatmulIndexTable),
+        out: &TensorHandle,
+    ) -> Result<(), Decline>
+    where
+        Mk: MatmulMicrokernel,
+        R: MatmulRoutine<Mk, SM>,
+    {
+        let bound = self.batched(out);
+        routine.launch_indexed_into(hw, &self.client, lhs, stack, table, bound, settings)
     }
 
     /// `out`, the product's `[rows, slots, n]`, as the dense routines write it: each row's slot a

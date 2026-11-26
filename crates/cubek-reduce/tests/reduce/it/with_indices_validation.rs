@@ -4,59 +4,63 @@
 
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_reduce::ReduceOperation;
-use cubek_reduce::eval::cpu_reference::reference;
 use cubek_reduce::kernels::{Reduce, ReduceElements};
-use cubek_test_utils::{HostData, HostDataType, StridedLayout, TestInput, assert_equals_approx};
+use cubek_test_utils::{HostDataType, StridedLayout, TestInput};
 
-use crate::reduce::it::test_case::UNIT;
+use crate::reduce::it::test_case::{UNIT, is_the_references, ran};
 
 /// A top-2 of `[4, 8]` rows counting up, its indices column-major beside row-major values: the
 /// indices are the reference's, read at their own strides.
 #[test]
 fn writes_indices_at_their_own_strides() {
-    const ROWS: usize = 4;
-    const ROW_LEN: usize = 8;
-    const K: usize = 2;
+    const ROW_COUNT: usize = 4;
+    const ROW_VALUE_COUNT: usize = 8;
+    const KEPT_COUNT: usize = 2;
     let client = cubecl::test_device().client();
     let input_dtype = f32::elem_type_native();
     let u32_dtype = u32::elem_type_native();
 
-    let (input, input_host) = TestInput::builder(client.clone(), Shape::new([ROWS, ROW_LEN]))
+    let (input, input_host) =
+        TestInput::builder(client.clone(), Shape::new([ROW_COUNT, ROW_VALUE_COUNT]))
+            .dtype(input_dtype)
+            .layout(StridedLayout::Explicit(vec![ROW_VALUE_COUNT, 1]))
+            .arange()
+            .generate_with_f32_host_data();
+    let values = TestInput::builder(client.clone(), Shape::new([ROW_COUNT, KEPT_COUNT]))
         .dtype(input_dtype)
-        .layout(StridedLayout::Explicit(vec![ROW_LEN, 1]))
-        .arange()
-        .generate_with_f32_host_data();
-    let values = TestInput::builder(client.clone(), Shape::new([ROWS, K]))
-        .dtype(input_dtype)
-        .layout(StridedLayout::Explicit(vec![K, 1]))
+        .layout(StridedLayout::Explicit(vec![KEPT_COUNT, 1]))
         .zeros()
         .generate_without_host_data();
-    let indices = TestInput::builder(client.clone(), Shape::new([ROWS, K]))
+    let indices = TestInput::builder(client.clone(), Shape::new([ROW_COUNT, KEPT_COUNT]))
         .dtype(u32_dtype)
-        .layout(StridedLayout::Explicit(vec![1, ROWS]))
+        .layout(StridedLayout::Explicit(vec![1, ROW_COUNT]))
         .zeros()
         .generate_without_host_data();
 
-    Reduce::new(UNIT)
-        .execute_with_indices(
-            &client,
-            input.binding(),
-            values.binding(),
-            indices.clone().binding(),
-            1,
-            ReduceOperation::TopK { k: K },
-            ReduceElements {
-                input: input_dtype,
-                accumulator: input_dtype,
-                out: input_dtype,
-            },
-            u32_dtype,
-        )
-        .expect("a top-k writes its indices at their own strides");
+    let launched = Reduce::new(UNIT).execute_with_indices(
+        &client,
+        input.binding(),
+        values.binding(),
+        indices.clone().binding(),
+        1,
+        ReduceOperation::TopK { k: KEPT_COUNT },
+        ReduceElements {
+            input: input_dtype,
+            accumulator: input_dtype,
+            out: input_dtype,
+        },
+        u32_dtype,
+    );
+    if !ran(launched) {
+        return;
+    }
 
-    let written = HostData::from_tensor_handle(&client, indices, HostDataType::from(u32_dtype));
-    let expected = reference(&input_host, 1, ReduceOperation::ArgTopK { k: K }, None);
-    assert_equals_approx(&written, &expected, 0.0)
-        .as_test_outcome()
-        .enforce();
+    is_the_references(
+        &client,
+        indices,
+        HostDataType::from(u32_dtype),
+        &input_host,
+        1,
+        ReduceOperation::ArgTopK { k: KEPT_COUNT },
+    );
 }

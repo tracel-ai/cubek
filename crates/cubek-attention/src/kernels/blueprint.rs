@@ -8,6 +8,10 @@ use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, CacheLines, S};
 use cubek_std::Hardware;
 
+/// What a plane shuffle rests on: it lines every operand alike, at the query's width.
+pub(crate) const PLANE_SHUFFLE_ONE_WIDTH: &str =
+    "the plane shuffle's operands should share one width";
+
 /// What a launch of this kind compiles: the microkernel, the partitioning that places its work
 /// items, the width each operand binds at, and how the routine lays out shared memory.
 ///

@@ -2,17 +2,17 @@
 //!
 //! Every variant but `Specific` is a policy; `Specific` is a pin, as in the matmul and attention
 //! families. None measures: a caller that measures the routines races their settings itself
-//! ([`ReduceRoutineSetting`](crate::kernels::ReduceRoutineSetting)).
+//! ([`ReduceCandidate`](crate::kernels::ReduceCandidate)).
 
 use crate::ReduceError;
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceBlueprint, HypercubeAtomicReduceRoutine,
     HypercubeLastArrivalReduceRoutine, PlaneShuffleReduceRoutine, ReduceRoutine, ReduceTensors,
-    UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine, select,
+    UnitDirectReduceRoutine, UnitDirectZeroReduceRoutine, bound_as, select,
 };
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
-use cubecl::tile::launch::{Decline, TileOperand, Unbound};
+use cubecl::tile::launch::{Bound, Decline, StoredTileOperand, TileOperand, Unbound};
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, Routine};
 use serde::{Deserialize, Serialize};
@@ -57,13 +57,14 @@ pub enum ReduceKernel {
 
 impl ReduceOpStrategy {
     /// Every strategy: the policies, then a pin of every kernel.
-    pub fn all() -> Vec<Self> {
-        let heuristics = ReduceKernelHeuristic::all()
-            .into_iter()
-            .map(Self::Heuristic);
-        let pins = ReduceKernel::all().into_iter().map(Self::Specific);
-        heuristics.chain(pins).collect()
-    }
+    pub const ALL: [Self; 6] = [
+        Self::Heuristic(ReduceKernelHeuristic::Tile),
+        Self::Specific(ReduceKernel::Unit),
+        Self::Specific(ReduceKernel::PlaneShuffle),
+        Self::Specific(ReduceKernel::CubeStaged),
+        Self::Specific(ReduceKernel::HypercubeLastArrival),
+        Self::Specific(ReduceKernel::HypercubeAtomic),
+    ];
 
     /// Whether this strategy lets the caller pick the kernel, rather than naming one.
     pub fn is_policy(&self) -> bool {
@@ -87,9 +88,7 @@ impl Default for ReduceOpStrategy {
 
 impl ReduceKernelHeuristic {
     /// Every ceiling.
-    pub fn all() -> Vec<Self> {
-        vec![Self::Tile]
-    }
+    pub const ALL: [Self; 1] = [Self::Tile];
 
     /// What a report calls this ceiling, in kebab-case.
     pub fn name(&self) -> &'static str {
@@ -101,15 +100,13 @@ impl ReduceKernelHeuristic {
 
 impl ReduceKernel {
     /// Every kernel a pin names.
-    pub fn all() -> Vec<Self> {
-        vec![
-            Self::Unit,
-            Self::PlaneShuffle,
-            Self::CubeStaged,
-            Self::HypercubeLastArrival,
-            Self::HypercubeAtomic,
-        ]
-    }
+    pub const ALL: [Self; 5] = [
+        Self::Unit,
+        Self::PlaneShuffle,
+        Self::CubeStaged,
+        Self::HypercubeLastArrival,
+        Self::HypercubeAtomic,
+    ];
 
     /// What a report calls this kernel, in kebab-case.
     pub fn name(&self) -> &'static str {
@@ -167,12 +164,12 @@ pub(crate) fn launch_kernel(
 }
 
 /// `tensors` summed by the atomic hypercube, at the launch `prepared` holds, into their output,
-/// zeroed first. The zeroing prepares before either launches, so a decline leaves the output as
-/// the caller gave it.
+/// zeroed first. Both prepare and bind before either launches, so a decline before the zeroing
+/// leaves the output as the caller gave it.
 ///
 /// # Errors
 ///
-/// Why the zeroing cannot run the problem here.
+/// Why the zeroing cannot run the problem here, or either cannot bind its operands.
 pub(crate) fn launch_zeroed_atomic(
     hw: &Hardware,
     tensors: &ReduceTensors,
@@ -181,9 +178,17 @@ pub(crate) fn launch_zeroed_atomic(
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) = prepared;
-    UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid);
-    HypercubeAtomicReduceRoutine::launch(tensors, blueprint, grid);
-    Ok(())
+    let (launcher, binding) = tensors.bind(&blueprint, &grid)?;
+    let binding = bound_as(binding, Bound::arg, HypercubeAtomicReduceRoutine::out_arg);
+    UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid)?;
+    HypercubeAtomicReduceRoutine::dispatch_carrier::<StoredTileOperand>(
+        tensors.problem(),
+        tensors.client(),
+        &launcher,
+        binding,
+        blueprint,
+        grid,
+    )
 }
 
 /// [`launch_zeroed_atomic`] on an input the caller binds through `input`.
@@ -200,24 +205,44 @@ pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) = prepared;
-    UnitDirectZeroReduceRoutine::zero_unbound(tensors, zero_blueprint, zero_grid);
-    HypercubeAtomicReduceRoutine::launch_unbound::<I>(tensors, blueprint, grid, input);
-    Ok(())
+    let (launcher, binding) = tensors.bind(&blueprint, &grid)?;
+    let binding = bound_as(binding, input, HypercubeAtomicReduceRoutine::out_arg);
+    UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid)?;
+    HypercubeAtomicReduceRoutine::dispatch_carrier::<I>(
+        tensors.problem(),
+        tensors.client(),
+        &launcher,
+        binding,
+        blueprint,
+        grid,
+    )
 }
 
 /// `tensors` reduced by `R` at the first of its settings `hw` prepares them at.
-fn launch_first_served<R: ReduceRoutine<M>, M>(
+///
+/// # Errors
+///
+/// Why none prepares them ([`Routine::prepare_first_served`]).
+pub(crate) fn launch_first_served<R: ReduceRoutine<M>, M>(
     hw: &Hardware,
     tensors: &ReduceTensors,
 ) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare_first_served(hw, tensors.problem())?;
-    R::launch(tensors, blueprint, grid);
-    Ok(())
+    R::launch(tensors, blueprint, grid)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::testing::{
+        BufferLaunch, BufferScopeChecker, Reduction, UnboundScopeChecker, bound_back,
+        sum_of_long_rows, unbound_tensors,
+    };
+    use cubecl::client::Client;
+    use cubecl::prelude::TensorBinding;
+    use cubecl::tile::launch::StoredTileOperand;
+    use cubek_microkernel::reduce::ReduceOperation;
+    use cubek_test_utils::ScopeChecker;
 
     #[test]
     fn the_default_is_the_rule() {
@@ -230,27 +255,27 @@ mod tests {
     /// The policies, each heuristic, come before the pins.
     #[test]
     fn the_policies_come_before_the_pins() {
-        let policies = ReduceOpStrategy::all()
+        let policies = ReduceOpStrategy::ALL
             .iter()
             .take_while(|strategy| strategy.is_policy())
             .count();
-        assert_eq!(policies, ReduceKernelHeuristic::all().len());
+        assert_eq!(policies, ReduceKernelHeuristic::ALL.len());
     }
 
     #[test]
     fn every_kernel_is_pinned() {
-        let pins = ReduceOpStrategy::all()
+        let pins = ReduceOpStrategy::ALL
             .into_iter()
             .filter(|strategy| !strategy.is_policy())
             .count();
-        assert_eq!(pins, ReduceKernel::all().len());
+        assert_eq!(pins, ReduceKernel::ALL.len());
     }
 
     #[test]
     fn every_name_is_kebab_case() {
         let kebab = |name: &str| name.chars().all(|c| c.is_ascii_lowercase() || c == '-');
         assert!(
-            ReduceOpStrategy::all()
+            ReduceOpStrategy::ALL
                 .iter()
                 .all(|strategy| kebab(strategy.name()))
         );
@@ -258,9 +283,114 @@ mod tests {
 
     #[test]
     fn every_name_is_its_own() {
-        let all = ReduceOpStrategy::all();
+        let all = ReduceOpStrategy::ALL;
         let distinct: std::collections::HashSet<&str> =
             all.iter().map(ReduceOpStrategy::name).collect();
         assert_eq!(distinct.len(), all.len());
+    }
+
+    /// The unit kernel, pinned.
+    mod unit {
+        use super::*;
+
+        const LAUNCH: BufferLaunch = |hw, tensors| launch_kernel(ReduceKernel::Unit, hw, tensors);
+
+        strategy_reduces_each_problem!(LAUNCH);
+    }
+
+    /// The plane kernel, pinned.
+    mod plane_shuffle {
+        use super::*;
+
+        const LAUNCH: BufferLaunch =
+            |hw, tensors| launch_kernel(ReduceKernel::PlaneShuffle, hw, tensors);
+
+        strategy_reduces_each_problem!(LAUNCH);
+    }
+
+    /// The cube kernel, pinned.
+    mod cube_staged {
+        use super::*;
+
+        const LAUNCH: BufferLaunch =
+            |hw, tensors| launch_kernel(ReduceKernel::CubeStaged, hw, tensors);
+
+        strategy_reduces_each_problem!(LAUNCH);
+    }
+
+    /// The last-arrival hypercube kernel, pinned.
+    mod hypercube_last_arrival {
+        use super::*;
+
+        const LAUNCH: BufferLaunch =
+            |hw, tensors| launch_kernel(ReduceKernel::HypercubeLastArrival, hw, tensors);
+
+        strategy_reduces_each_problem!(LAUNCH);
+    }
+
+    /// `tensors` reduced by the kernel `strategy` picks.
+    fn launches_by(strategy: ReduceOpStrategy) -> Result<(), ReduceError> {
+        let tensors = ReduceTensors::zeros(&[4, 300], 1, ReduceOperation::Max);
+        launch_by_strategy(strategy, tensors)
+    }
+
+    #[test]
+    fn the_rule_launches() {
+        let rule = ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile);
+        assert!(launches_by(rule).is_ok());
+    }
+
+    /// The atomic hypercube sums only.
+    #[test]
+    fn a_pinned_kernel_declines_what_it_does_not_run() {
+        let launched = launches_by(ReduceOpStrategy::Specific(ReduceKernel::HypercubeAtomic));
+        assert!(
+            matches!(launched, Err(ReduceError::Declined(_))),
+            "{launched:?}"
+        );
+    }
+
+    /// The atomic hypercube launched on `tensors` into their output, zeroed first.
+    ///
+    /// # Errors
+    ///
+    /// Why it runs no such reduction here.
+    fn launch_zeroed(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline> {
+        let prepared = HypercubeAtomicReduceRoutine::prepare_first_served(hw, tensors.problem())?;
+        launch_zeroed_atomic(hw, tensors, prepared)
+    }
+
+    /// [`launch_zeroed`] of an input the caller binds.
+    ///
+    /// # Errors
+    ///
+    /// As [`launch_zeroed`].
+    fn launch_zeroed_unbound(
+        client: &Client,
+        input: TensorBinding,
+        out: TensorBinding,
+        reduction: &Reduction,
+    ) -> Result<(), Decline> {
+        let tensors =
+            unbound_tensors::<HypercubeAtomicReduceRoutine, _>(client, &input, out, reduction)?;
+        let hw = Hardware::from_client(client);
+        let prepared = HypercubeAtomicReduceRoutine::prepare_first_served(&hw, tensors.problem())?;
+        launch_zeroed_atomic_unbound::<StoredTileOperand>(
+            &hw,
+            &tensors,
+            prepared,
+            bound_back(input),
+        )
+    }
+
+    /// An output that starts away from zero holds the sum alone.
+    #[test]
+    fn the_atomic_hypercube_sums_into_a_zeroed_output() {
+        BufferScopeChecker::new(launch_zeroed).check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn the_atomic_hypercube_sums_an_unbound_input_into_a_zeroed_output() {
+        UnboundScopeChecker::new(launch_zeroed_unbound).check([sum_of_long_rows()]);
     }
 }

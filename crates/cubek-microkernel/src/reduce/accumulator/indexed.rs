@@ -1,6 +1,6 @@
 //! A value with the index it was read at: the argmax and the argmin.
 
-use crate::reduce::{OneIndexed, ReduceAccumulator, ReduceCarrierFamily, lane_indices};
+use crate::reduce::{Accumulable, OneIndexed, ReduceCarrierFamily, lane_indices};
 use cubecl::tile::{Carrier, Indexed, Monoid};
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -12,7 +12,7 @@ impl ReduceCarrierFamily for IndexedReduceCarrierFamily {
 }
 
 #[cube]
-impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Indexed<Acc, N> {
+impl<Acc: Numeric, N: Size> Accumulable<Acc, N> for Indexed<Acc, N> {
     fn accumulate(
         acc: &mut Self,
         line: Vector<Acc, N>,
