@@ -51,12 +51,12 @@ pub(crate) mod tests {
     use cubek_std::Hardware;
     use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
-    const HEADS: usize = 4;
-    const KV_HEADS: usize = 2;
-    const KEYS: usize = 64;
+    const HEAD_COUNT: usize = 4;
+    const KV_HEAD_COUNT: usize = 2;
+    const KEY_COUNT: usize = 64;
     const HEAD_DIM: usize = 32;
     /// Positions a page holds, where a case reads its keys from pools of pages.
-    const PAGE_SIZE: usize = 16;
+    const PAGE_KEY_COUNT: usize = 16;
 
     /// Sequences' queries and the keys each attends: sequence `b`'s queries are the last
     /// `queries[b]` of its first `lengths[b]` keys.
@@ -203,8 +203,8 @@ pub(crate) mod tests {
             HEAD_DIM,
         );
         let sequences = case.queries.len();
-        let per_key = KV_HEADS * KEYS * HEAD_DIM;
-        let per_query = HEADS * HEAD_DIM;
+        let per_key = KV_HEAD_COUNT * KEY_COUNT * HEAD_DIM;
+        let per_query = HEAD_COUNT * HEAD_DIM;
         let total: usize = case.queries.iter().sum();
         let (queries, keys, cached_values) = (
             values(1, total * per_query),
@@ -215,27 +215,34 @@ pub(crate) mod tests {
         // sequence's pages in order, read through a table of their own.
         let cache = |key: &[f32], value: &[f32], count: usize| {
             if !case.paged {
-                let shape = [count, KV_HEADS, KEYS, HEAD_DIM];
+                let shape = [count, KV_HEAD_COUNT, KEY_COUNT, HEAD_DIM];
                 return KvSource::new(AttentionCache::Float {
                     key: tensor(&shape, f16, key.to_vec()),
                     value: tensor(&shape, f16, value.to_vec()),
                 });
             }
-            let per_sequence = KEYS / PAGE_SIZE;
+            let per_sequence = KEY_COUNT / PAGE_KEY_COUNT;
             let pooled = |values: &[f32]| -> Vec<f32> {
                 let mut pool = Vec::with_capacity(values.len());
                 for page in 0..count * per_sequence {
-                    let (sequence, first) = (page / per_sequence, page % per_sequence * PAGE_SIZE);
-                    for head in 0..KV_HEADS {
-                        for position in first..first + PAGE_SIZE {
-                            let at = ((sequence * KV_HEADS + head) * KEYS + position) * HEAD_DIM;
+                    let (sequence, first) =
+                        (page / per_sequence, page % per_sequence * PAGE_KEY_COUNT);
+                    for head in 0..KV_HEAD_COUNT {
+                        for position in first..first + PAGE_KEY_COUNT {
+                            let at = ((sequence * KV_HEAD_COUNT + head) * KEY_COUNT + position)
+                                * HEAD_DIM;
                             pool.extend_from_slice(&values[at..at + HEAD_DIM]);
                         }
                     }
                 }
                 pool
             };
-            let shape = [count * per_sequence, KV_HEADS, PAGE_SIZE, HEAD_DIM];
+            let shape = [
+                count * per_sequence,
+                KV_HEAD_COUNT,
+                PAGE_KEY_COUNT,
+                HEAD_DIM,
+            ];
             let table: Vec<f32> = (0..count * per_sequence).map(|page| page as f32).collect();
             KvSource::new(AttentionCache::Float {
                 key: tensor(&shape, f16, pooled(key)),
@@ -260,7 +267,7 @@ pub(crate) mod tests {
             })
             .collect();
         let packed = AttentionQueries::Packed {
-            query: tensor(&[total, HEADS, HEAD_DIM], f16, queries.clone()),
+            query: tensor(&[total, HEAD_COUNT, HEAD_DIM], f16, queries.clone()),
             ends: tensor(&[sequences], u32, ends),
             longest: *case.queries.iter().max().unwrap(),
             lengths: lengths(case.lengths),
@@ -281,15 +288,15 @@ pub(crate) mod tests {
             }
             // The sequence's queries `[1, h, q, d]` from its run of `[Σ q, h, d]`.
             let mut own = Vec::with_capacity(count * per_query);
-            for head in 0..HEADS {
+            for head in 0..HEAD_COUNT {
                 for query in 0..count {
-                    let at = ((start + query) * HEADS + head) * HEAD_DIM;
+                    let at = ((start + query) * HEAD_COUNT + head) * HEAD_DIM;
                     own.extend_from_slice(&queries[at..at + HEAD_DIM]);
                 }
             }
             let own_keys = |all: &[f32]| all[sequence * per_key..(sequence + 1) * per_key].to_vec();
             let dense = AttentionQueries::Dense {
-                query: tensor(&[1, HEADS, count, HEAD_DIM], f16, own),
+                query: tensor(&[1, HEAD_COUNT, count, HEAD_DIM], f16, own),
                 lengths: lengths(&case.lengths[sequence..=sequence]),
             };
             let kv = cache(&own_keys(&keys), &own_keys(&cached_values), 1);
@@ -297,7 +304,7 @@ pub(crate) mod tests {
                 .expect("what reads packed queries reads dense ones");
             let dense = HostData::from_tensor_handle(&client, out, HostDataType::F32);
             for query in 0..count {
-                for head in 0..HEADS {
+                for head in 0..HEAD_COUNT {
                     for c in 0..HEAD_DIM {
                         let want = dense.get_f32(&[0, query, head, c]);
                         let got = packed.get_f32(&[start + query, head, c]);
@@ -323,13 +330,13 @@ pub(crate) mod tests {
     /// at, against `2^24` in their buffers: the launch counts what the buffers hold.
     #[test]
     fn many_packed_sequences_match_a_batch() {
-        const SEQUENCES: usize = 4096;
-        const HEADS: usize = 32;
-        const KV_HEADS: usize = 8;
+        const SEQUENCE_COUNT: usize = 4096;
+        const HEAD_COUNT: usize = 32;
+        const KV_HEAD_COUNT: usize = 8;
         const HEAD_DIM: usize = 128;
-        /// Keys a page holds, every sequence's in one page of a pool of `POOL`.
-        const PAGE_SIZE: usize = 16;
-        const POOL: usize = 4;
+        /// Keys a page holds, every sequence's in one page of a pool of `POOL_PAGE_COUNT`.
+        const PAGE_KEY_COUNT: usize = 16;
+        const POOL_PAGE_COUNT: usize = 4;
 
         let client: Client = cubecl::test_device().client();
         if let Err(refusal) = Hardware::from_client(&client).plane_dim() {
@@ -350,38 +357,50 @@ pub(crate) mod tests {
                 .map(|i| (((i * 7919 + seed * 104_729) % 97) as f32 - 48.) / 64.)
                 .collect()
         };
-        let queries = values(1, SEQUENCES * HEADS * HEAD_DIM);
-        let pool = [POOL, KV_HEADS, PAGE_SIZE, HEAD_DIM];
+        let queries = values(1, SEQUENCE_COUNT * HEAD_COUNT * HEAD_DIM);
+        let pool = [POOL_PAGE_COUNT, KV_HEAD_COUNT, PAGE_KEY_COUNT, HEAD_DIM];
         let (keys, cached_values) = (
             values(2, pool.iter().product()),
             values(3, pool.iter().product()),
         );
-        let table: Vec<f32> = (0..SEQUENCES).map(|b| (b % POOL) as f32).collect();
+        let table: Vec<f32> = (0..SEQUENCE_COUNT)
+            .map(|b| (b % POOL_PAGE_COUNT) as f32)
+            .collect();
         // Each sequence attends a length of its own, so a run read at another sequence's place
         // writes another value.
-        let lengths: Vec<f32> = (0..SEQUENCES).map(|b| (1 + b % PAGE_SIZE) as f32).collect();
+        let lengths: Vec<f32> = (0..SEQUENCE_COUNT)
+            .map(|b| (1 + b % PAGE_KEY_COUNT) as f32)
+            .collect();
         let cache = || {
             KvSource::new(AttentionCache::Float {
                 key: tensor(&pool, f16, keys.clone()),
                 value: tensor(&pool, f16, cached_values.clone()),
             })
-            .paged(tensor(&[SEQUENCES, 1], u32, table.clone()))
+            .paged(tensor(&[SEQUENCE_COUNT, 1], u32, table.clone()))
         };
         let scoring = AttentionScoring::standard(
             AttentionVisibility::new(true, None, QueryPlacement::Last),
             HEAD_DIM,
         );
-        let ends: Vec<f32> = (1..=SEQUENCES).map(|end| end as f32).collect();
+        let ends: Vec<f32> = (1..=SEQUENCE_COUNT).map(|end| end as f32).collect();
         let packed = || AttentionQueries::Packed {
-            query: tensor(&[SEQUENCES, HEADS, HEAD_DIM], f16, queries.clone()),
-            ends: tensor(&[SEQUENCES], u32, ends.clone()),
+            query: tensor(
+                &[SEQUENCE_COUNT, HEAD_COUNT, HEAD_DIM],
+                f16,
+                queries.clone(),
+            ),
+            ends: tensor(&[SEQUENCE_COUNT], u32, ends.clone()),
             longest: 1,
-            lengths: tensor(&[SEQUENCES], u32, lengths.clone()),
+            lengths: tensor(&[SEQUENCE_COUNT], u32, lengths.clone()),
         };
         // `[Σ q, h, d]` at one query a sequence is `[b, h, 1, d]` in the same order.
         let batch = || AttentionQueries::Dense {
-            query: tensor(&[SEQUENCES, HEADS, 1, HEAD_DIM], f16, queries.clone()),
-            lengths: tensor(&[SEQUENCES], u32, lengths.clone()),
+            query: tensor(
+                &[SEQUENCE_COUNT, HEAD_COUNT, 1, HEAD_DIM],
+                f16,
+                queries.clone(),
+            ),
+            lengths: tensor(&[SEQUENCE_COUNT], u32, lengths.clone()),
         };
         type Routine<'a> = &'a dyn Fn(AttentionQueries) -> Option<TensorHandle>;
         let routines: [(&str, Routine); 2] = [
@@ -411,8 +430,8 @@ pub(crate) mod tests {
             let batch = launch(batch()).expect("what reads packed queries reads dense ones");
             let packed = HostData::from_tensor_handle(&client, packed, HostDataType::F32);
             let batch = HostData::from_tensor_handle(&client, batch, HostDataType::F32);
-            for sequence in 0..SEQUENCES {
-                for head in 0..HEADS {
+            for sequence in 0..SEQUENCE_COUNT {
+                for head in 0..HEAD_COUNT {
                     for c in 0..HEAD_DIM {
                         let want = batch.get_f32(&[sequence, 0, head, c]);
                         let got = packed.get_f32(&[sequence, head, c]);
@@ -432,9 +451,9 @@ pub(crate) mod tests {
     /// buffer is what a read past them would reach.
     #[test]
     fn a_length_past_the_keys_attends_the_keys() {
-        const LENGTH_PAST_THE_KEYS: u32 = 3 * KEYS as u32;
+        const LENGTH_PAST_THE_KEYS: u32 = 3 * KEY_COUNT as u32;
         let client: Client = cubecl::test_device().client();
-        let cache_shape = [1, KV_HEADS, KEYS, HEAD_DIM];
+        let cache_shape = [1, KV_HEAD_COUNT, KEY_COUNT, HEAD_DIM];
         let cases = [
             (1, AttentionVisibility::Attended),
             (
@@ -448,11 +467,11 @@ pub(crate) mod tests {
             |launch, (queries, visibility), past| {
                 let length = match past {
                     true => LENGTH_PAST_THE_KEYS,
-                    false => KEYS as u32,
+                    false => KEY_COUNT as u32,
                 };
                 let tensors = AttentionTensors::new(
                     &client,
-                    random(&client, &[1, HEADS, queries, HEAD_DIM], 1),
+                    random(&client, &[1, HEAD_COUNT, queries, HEAD_DIM], 1),
                     random(&client, &cache_shape, 2),
                     random(&client, &cache_shape, 3),
                     PlainTensor::of_u32s(&client, &[1], &[length]),
@@ -469,23 +488,23 @@ pub(crate) mod tests {
     /// reads pages: the same as an entry naming that page.
     #[test]
     fn a_page_past_the_pool_reads_its_last_page() {
-        const POOL: usize = KEYS / PAGE_SIZE;
-        const PAGE_PAST_THE_POOL: u32 = 100 * POOL as u32;
+        const POOL_PAGE_COUNT: usize = KEY_COUNT / PAGE_KEY_COUNT;
+        const PAGE_PAST_THE_POOL: u32 = 100 * POOL_PAGE_COUNT as u32;
         let client: Client = cubecl::test_device().client();
-        let pool_shape = [POOL, KV_HEADS, PAGE_SIZE, HEAD_DIM];
+        let pool_shape = [POOL_PAGE_COUNT, KV_HEAD_COUNT, PAGE_KEY_COUNT, HEAD_DIM];
         let cases = [AttentionVisibility::Attended];
         assert_past_reads_as_within(&every_launch(), &cases, |launch, visibility, past| {
-            let mut table: Vec<u32> = (0..POOL as u32).collect();
+            let mut table: Vec<u32> = (0..POOL_PAGE_COUNT as u32).collect();
             if past {
-                table[POOL - 1] = PAGE_PAST_THE_POOL;
+                table[POOL_PAGE_COUNT - 1] = PAGE_PAST_THE_POOL;
             }
             let tensors = AttentionTensors::paged(
                 &client,
-                random(&client, &[1, HEADS, 1, HEAD_DIM], 1),
+                random(&client, &[1, HEAD_COUNT, 1, HEAD_DIM], 1),
                 random(&client, &pool_shape, 2),
                 random(&client, &pool_shape, 3),
-                PlainTensor::of_u32s(&client, &[1, POOL], &table),
-                PlainTensor::of_u32s(&client, &[1], &[KEYS as u32]),
+                PlainTensor::of_u32s(&client, &[1, POOL_PAGE_COUNT], &table),
+                PlainTensor::of_u32s(&client, &[1], &[KEY_COUNT as u32]),
                 AttentionScoring::standard(visibility, HEAD_DIM),
             )
             .expect("the case's tensors are verified");
@@ -499,12 +518,11 @@ pub(crate) mod tests {
     /// so its first would be read were the block not capped.
     #[test]
     fn a_listed_block_past_the_pages_reads_the_last_page() {
-        const BLOCKS: u32 = (KEYS / LISTED_BLOCK) as u32;
         assert_past_reads_as_within(&every_launch(), &[()], |launch, (), past| {
-            let mut blocks: Vec<u32> = (0..BLOCKS).collect();
+            let mut blocks: Vec<u32> = (0..BLOCK_COUNT).collect();
             blocks[0] = match past {
-                true => 1000 * BLOCKS + BLOCKS - 1,
-                false => 2 * BLOCKS - 1,
+                true => 1000 * BLOCK_COUNT + BLOCK_COUNT - 1,
+                false => 2 * BLOCK_COUNT - 1,
             };
             launch_listed(launch, &[0, 1], &blocks)
         });
@@ -514,9 +532,8 @@ pub(crate) mod tests {
     /// reads them: the same as a table naming that page.
     #[test]
     fn a_listed_page_past_the_pool_reads_its_last_page() {
-        const BLOCKS: u32 = (KEYS / LISTED_BLOCK) as u32;
         // The second page's blocks, read through the entry past the pool.
-        let blocks: Vec<u32> = (BLOCKS..2 * BLOCKS).collect();
+        let blocks: Vec<u32> = (BLOCK_COUNT..2 * BLOCK_COUNT).collect();
         assert_past_reads_as_within(&every_launch(), &[()], |launch, (), past| {
             let page = match past {
                 true => 100,
@@ -527,17 +544,19 @@ pub(crate) mod tests {
     }
 
     /// Positions a listed block holds.
-    const LISTED_BLOCK: usize = 16;
+    const LISTED_BLOCK_KEY_COUNT: usize = 16;
+    /// Blocks a page of the listed tests holds.
+    const BLOCK_COUNT: u32 = (KEY_COUNT / LISTED_BLOCK_KEY_COUNT) as u32;
 
     /// `launch` on one query attending the keys `blocks` lists, of a pool of two pages of
-    /// [`KEYS`] positions each, through the table `pages`.
+    /// [`KEY_COUNT`] positions each, through the table `pages`.
     fn launch_listed(
         launch: &LeadLaunch,
         pages: &[u32],
         blocks: &[u32],
     ) -> Result<HostData, Decline> {
         let client: Client = cubecl::test_device().client();
-        let pool_shape = [2, KV_HEADS, KEYS, HEAD_DIM];
+        let pool_shape = [2, KV_HEAD_COUNT, KEY_COUNT, HEAD_DIM];
         let kv = KvSource::new(AttentionCache::Float {
             key: random(&client, &pool_shape, 2),
             value: random(&client, &pool_shape, 3),
@@ -545,11 +564,11 @@ pub(crate) mod tests {
         .paged(PlainTensor::of_u32s(&client, &[1, pages.len()], pages))
         .indexed(
             PlainTensor::of_u32s(&client, &[1, blocks.len()], blocks),
-            NonZeroUsize::new(LISTED_BLOCK).expect("a block holds keys"),
+            NonZeroUsize::new(LISTED_BLOCK_KEY_COUNT).expect("a block holds keys"),
         );
         let queries = AttentionQueries::Dense {
-            query: random(&client, &[1, HEADS, 1, HEAD_DIM], 1),
-            lengths: PlainTensor::of_u32s(&client, &[1], &[KEYS as u32]),
+            query: random(&client, &[1, HEAD_COUNT, 1, HEAD_DIM], 1),
+            lengths: PlainTensor::of_u32s(&client, &[1], &[KEY_COUNT as u32]),
         };
         let scoring = AttentionScoring::standard(AttentionVisibility::Attended, HEAD_DIM);
         let tensors = AttentionTensors::attention(&client, queries, kv, scoring)
@@ -568,7 +587,7 @@ pub(crate) mod tests {
         const END_PAST_THE_QUERIES: u32 = 1000;
         let client: Client = cubecl::test_device().client();
         let count = RUNS.iter().sum::<u32>() as usize;
-        let cache_shape = [RUNS.len(), KV_HEADS, KEYS, HEAD_DIM];
+        let cache_shape = [RUNS.len(), KV_HEAD_COUNT, KEY_COUNT, HEAD_DIM];
         let launches: Vec<(String, LeadLaunch)> = vec![
             (
                 "cube staged".to_string(),
@@ -593,10 +612,10 @@ pub(crate) mod tests {
                 false => count as u32,
             };
             let queries = AttentionQueries::Packed {
-                query: random(&client, &[count, HEADS, HEAD_DIM], 1),
+                query: random(&client, &[count, HEAD_COUNT, HEAD_DIM], 1),
                 ends: PlainTensor::of_u32s(&client, &[RUNS.len()], &[RUNS[0], last]),
                 longest: RUNS[0] as usize,
-                lengths: PlainTensor::of_u32s(&client, &[1], &[KEYS as u32]),
+                lengths: PlainTensor::of_u32s(&client, &[1], &[KEY_COUNT as u32]),
             };
             let kv = KvSource::new(AttentionCache::Float {
                 key: random(&client, &cache_shape, 2),

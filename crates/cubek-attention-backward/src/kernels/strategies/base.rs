@@ -49,9 +49,8 @@ pub trait AttentionBackwardLaunch {
     ///
     /// # Guarantees
     ///
-    /// Where it errs, the routines before the one that erred have launched, and the sums they add
-    /// into have been allocated and filled with zeros by a launch of their own; the routine that
-    /// erred launched nothing.
+    /// Where it errs, the routine that erred launched nothing, and the gradients hold what the
+    /// routines before it wrote, which no caller reads until another dispatch writes them whole.
     ///
     /// # Errors
     ///
