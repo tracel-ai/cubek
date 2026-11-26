@@ -539,17 +539,15 @@ macro_rules! prepares_more_row_axes_than_the_grid_holds {
     };
 }
 
-/// A test that `$routine`, which reads a Feature, declines a sum on a device lacking every one.
+/// A test that `$routine`, which reads a Feature, declines a sum on a device lacking every one, as
+/// a launch it does not serve, not a broken one.
 macro_rules! declines_lacking_every_feature {
     ($routine:ty) => {
         #[test]
         fn declines_lacking_every_feature() {
             let prepared = $crate::kernels::testing::prepared_lacking_every_feature::<$routine>();
             assert!(
-                matches!(
-                    prepared,
-                    Err(cubecl::tile::launch::Decline::Unserved { .. })
-                ),
+                matches!(&prepared, Err(decline) if !decline.is_broken()),
                 "{prepared:?}"
             );
         }

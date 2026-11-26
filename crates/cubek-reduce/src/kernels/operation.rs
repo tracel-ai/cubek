@@ -98,7 +98,7 @@ impl Reduce {
     ///
     /// # Panics
     ///
-    /// As [`execute`](Self::execute).
+    /// Where an Assumption of [`Reduce`] is broken.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -140,7 +140,7 @@ impl Reduce {
     ///
     /// # Panics
     ///
-    /// As [`execute`](Self::execute).
+    /// Where an Assumption of [`Reduce`] is broken.
     pub fn launch(&self, tensors: ReduceTensors) -> Result<(), ReduceError> {
         launch_by_strategy(self.strategy, given(self, tensors))
     }
