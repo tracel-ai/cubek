@@ -56,7 +56,6 @@ impl ReduceCandidate {
     ///
     /// Why the routine, or the zeroing before it, cannot run the problem at its setting, or a
     /// [`Decline::Broken`] where it breaks what it prepared.
-
     pub fn launch(&self, tensors: &ReduceTensors) -> Result<(), Decline> {
         self.launcher.launch(tensors)
     }
@@ -73,7 +72,6 @@ impl ReduceCandidate {
     ///
     /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
     /// input, or a [`Decline::Broken`] where it breaks what it prepared.
-
     pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,

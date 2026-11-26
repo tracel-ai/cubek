@@ -91,7 +91,6 @@ impl Reduce {
     /// # Errors
     ///
     /// Every [`ReduceError`].
-
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -130,7 +129,6 @@ impl Reduce {
     /// cannot run the problem on the client's device, or a
     /// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) where it breaks what it
     /// prepared.
-
     pub fn launch(&self, tensors: ReduceTensors) -> Result<(), ReduceError> {
         launch_by_strategy(self.strategy, given(self, tensors))
     }
