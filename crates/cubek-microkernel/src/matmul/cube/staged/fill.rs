@@ -175,11 +175,10 @@ impl CubeStagedTmaDecline {
             Self::of_blocks(item, blocks, buffers, stage, storage, microkernel)
         } else if item.layouts.rhs == MatmulLayout::Strided {
             Some(Self::StridedWeight)
-        } else if let Some(operand) = staged.into_iter().find(|&operand| {
-            let stored = buffers.alignments.get(operand).is_stored_piece()
-                || buffers.stored_tiles.get(operand).is_some();
-            stored && !lands_tiles(operand)
-        }) {
+        } else if let Some(operand) = staged
+            .into_iter()
+            .find(|&operand| Self::stored_in_tiles(item, buffers, operand) && !lands_tiles(operand))
+        {
             Some(Self::StoredInTiles(operand))
         } else if let Some(operand) = staged.into_iter().find(|&operand| !rows_aligned(operand)) {
             Some(Self::Misaligned(operand))
@@ -273,14 +272,7 @@ impl CubeStagedTmaDecline {
         };
         // A packed lhs in rows is dense rows of words, which its buffer facts leave out: its rows
         // are whole lines where `k` packs into them. A float one is aligned as its buffer states.
-        // A packed lhs in tile order is in tiles though its buffers state no stored tile, as for
-        // tiles that lay its words block by block, whose rows are no run a descriptor lands.
-        let lhs_in_tiles = buffers.stored_tiles.lhs.is_some()
-            || blocks
-                .packings
-                .lhs
-                .as_ref()
-                .is_some_and(|packing| packing.operand.tile_order().is_some());
+        let lhs_in_tiles = Self::stored_in_tiles(item, buffers, MatmulOperand::Lhs);
         let lhs_rows_aligned = match blocks.packings.lhs {
             Some(_) => {
                 (blocks.k * bits(MatmulOperand::Lhs) / 8).is_multiple_of(TMA_ALIGNMENT_BYTES)
@@ -338,6 +330,24 @@ impl CubeStagedTmaDecline {
         } else {
             None
         }
+    }
+
+    /// Whether `item`'s `operand` is stored in tiles rather than rows, over buffers as `buffers`
+    /// states them: read in the pieces it is stored in, in a tile the buffers state, or packed in
+    /// tile order, which the buffers state no tile of where its tiles lay its words block by block.
+    fn stored_in_tiles(
+        item: &MatmulWorkItem,
+        buffers: &MatmulBuffers,
+        operand: MatmulOperand,
+    ) -> bool {
+        buffers.alignments.get(operand).is_stored_piece()
+            || buffers.stored_tiles.get(operand).is_some()
+            || item.blocks.as_ref().is_some_and(|blocks| {
+                blocks
+                    .packings
+                    .get(operand)
+                    .is_some_and(|packing| packing.operand.tile_order().is_some())
+            })
     }
 }
 
