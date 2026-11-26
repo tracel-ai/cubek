@@ -9,6 +9,7 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
 use cubecl::tile::{Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::microkernel::{CubePlanes, GlobalStream, KernelEstimate, Microkernel};
 
 /// A box of queries of one head several cubes own together: every cube walks its own run of the
@@ -151,6 +152,11 @@ impl AttentionMicrokernel for HypercubeAttentionMicrokernel {
     /// Its cube's.
     fn cache_order(&self) -> CacheOrder {
         self.cube.cache_order()
+    }
+
+    /// Its cube's.
+    fn values_outer_scale(&self) -> OuterScale {
+        self.cube.values_outer_scale()
     }
 
     /// Its cube's.

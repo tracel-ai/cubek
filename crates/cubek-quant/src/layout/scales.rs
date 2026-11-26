@@ -7,7 +7,7 @@ use cubecl::std::{
 };
 use cubecl::{prelude::*, std::tensor::launch::ViewArg};
 
-use crate::scheme::QuantScheme;
+use crate::scheme::{BlockExtent, BlockSize, QuantScheme};
 
 /// Layout for quantization scales, indexed by quant element index and returns the corresponding
 /// scale based on the quantization type.
@@ -112,7 +112,7 @@ pub struct BlockScaledLayout {
     tensor_len: usize,
     scales_strides: Sequence<usize>,
     #[cube(comptime)]
-    block_size: Vec<u8>,
+    block_size: Vec<BlockExtent>,
     #[cube(comptime)]
     scales_vector_size: usize,
 }
@@ -123,7 +123,7 @@ impl BlockScaledLayout {
         tensor_shape: Sequence<FastDivmod<usize>>,
         tensor_len: usize,
         scales_strides: Sequence<usize>,
-        #[comptime] block_size: Vec<u8>,
+        #[comptime] block_size: Vec<BlockExtent>,
         #[comptime] scales_vector_size: usize,
     ) -> Self {
         BlockScaledLayout {
@@ -149,11 +149,15 @@ impl Layout for BlockScaledLayout {
         #[unroll]
         for i in 0..rank {
             let dim = rank - i - 1;
-            let block_size_local = comptime![self.block_size[dim] as usize];
             let (rem, offs_local) = self.tensor_shape[dim].div_mod(offs);
 
             offs = rem;
-            scale_offs += (offs_local / block_size_local) * self.scales_strides[dim];
+            scale_offs += match comptime!(self.block_size[dim]) {
+                BlockExtent::Values(values) => {
+                    (offs_local / comptime!(values.get() as usize)) * self.scales_strides[dim]
+                }
+                BlockExtent::WholeAxis => 0usize,
+            };
         }
 
         scale_offs / self.scales_vector_size
@@ -184,10 +188,14 @@ impl BlockScaledLayout {
         #[unroll]
         for i in 0..rank {
             let dim = rank - i - 1;
-            let block_size_local = comptime![self.block_size[dim] as usize];
             let (rem, offs_local) = self.tensor_shape[dim].div_mod(offs);
             offs = rem;
-            is_start &= offs_local.is_multiple_of(block_size_local);
+            is_start &= match comptime!(self.block_size[dim]) {
+                BlockExtent::Values(values) => {
+                    offs_local.is_multiple_of(comptime!(values.get() as usize))
+                }
+                BlockExtent::WholeAxis => offs_local == 0,
+            };
         }
 
         is_start
@@ -225,16 +233,16 @@ pub fn scales_layout(
 
     // The innermost level's grid, which a two-level scheme lays out exactly like a one-level block
     // scheme. Its global scale covers the whole tensor and rides its own binding, not this layout.
-    match scheme.block_size() {
-        None => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
-        Some(block_size) => {
+    match scheme.finest().size {
+        BlockSize::TENSOR => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
+        block_size => {
             let tensor_shape = shape_divmod_quant(&values.shape, scheme.num_quants());
             let scales_strides = strides_seq(&scales.strides);
             ScalesLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
                 tensor_shape,
                 values_len,
                 scales_strides,
-                block_size.to_dim_vec(values.shape.len()),
+                block_size.extents_in_rank(values.shape.len()).collect(),
                 scales_vector_size,
             ))
         }

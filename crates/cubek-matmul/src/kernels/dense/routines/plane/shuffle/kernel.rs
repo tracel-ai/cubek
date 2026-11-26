@@ -26,17 +26,17 @@ pub fn plane_shuffle_matmul_kernel<EA: Numeric, E: Numeric, VO: Size, O: Destina
 
     for plane in &partitioning {
         let (c, a, b) = (c.at(&plane), a.at(&plane), b.at(&plane));
+        let (a, a_scale) = a.factor();
+        let (b, b_scale) = b.factor();
         let mut sum = c.register_accumulator::<EA>(&a, &b, block, Semiring::SumProd);
-        let (a, a_factor) = a.factor(&sum);
-        let (b, b_factor) = b.factor(&sum);
 
         sum.zero();
         for k_step in plane.walk_within(&b) {
             plane_shuffle_microkernel(&k_step, &sum, &a, &b, MatmulOperands::AS_BOUND);
         }
 
-        sum.scaled(&a_factor)
-            .scaled(&b_factor)
+        sum.mul(&a_scale)
+            .mul(&b_scale)
             .consumed_by::<O::Served<E>>(&dest, &plane);
     }
     dest.finish();

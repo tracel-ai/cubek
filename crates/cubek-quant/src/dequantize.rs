@@ -164,7 +164,7 @@ pub fn launch_ref(
 ) -> Result<(), LaunchError> {
     check_scale_bindings(scheme, scales.len());
 
-    let scale_dtype: ElemType = ElemType::from_scale_dtype(scheme.scale_dtype());
+    let scale_dtype: ElemType = ElemType::from_scale_dtype(scheme.finest().dtype);
     let (scale, global) = split_levels(scales);
 
     match scheme {

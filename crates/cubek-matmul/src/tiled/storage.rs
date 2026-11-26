@@ -286,13 +286,14 @@ impl StoredLayout {
             }
             let shape: Vec<usize> = batch_dims.iter().chain(stored.shape()).copied().collect();
             strides.extend_from_slice(stored.strides());
-            let fragments: Vec<usize> = batch_dims
+            let ahead = (0..batches).map(|batch| vec![batch]);
+            let named = stored.tiling().physical_dims(dimensions.len());
+            let named = named
                 .iter()
-                .map(|_| 1)
-                .chain(stored.tiling().fragments(dimensions.len()))
-                .collect();
+                .map(|dim| dim.iter().map(|&physical| batches + physical).collect());
+            let dims: Vec<Vec<usize>> = ahead.chain(named).collect();
             Metadata::new(Shape::from(shape), Strides::from(strides))
-                .with_tiling(Tiling::new(&fragments).map_err(config)?)
+                .with_tiling(Tiling::from_physical_dims(&dims).map_err(config)?)
                 .map_err(config)
         };
         let tiles: Vec<(Dimension, usize)> = word_extents
@@ -474,17 +475,17 @@ pub fn untile(
         .with_tiling(src.tiling)
         .and_then(|metadata| metadata.logical_shape())
         .map_err(|e| refused(format!("{e:?}")))?;
-    // Leading dims stored in one piece are batches; the rest are named, each dim's outermost
-    // stored tile its extent over its grid's count, the grid being its coarsest piece, which a
-    // tiling lists first.
-    let fragments = src.tiling.fragments(logical.len());
-    let batches = fragments.iter().take_while(|&&f| f == 1).count();
+    // Leading dims stored in one piece, listed ahead, are batches; the rest are named, each dim's
+    // outermost stored tile its extent over its grid's count, the grid being its coarsest piece.
+    let dims = src.tiling.physical_dims(logical.len());
+    let batches = (0..dims.len())
+        .take_while(|&dim| dims[dim].as_slice() == [dim])
+        .count();
     let extents: Vec<(Dimension, usize)> = (batches..logical.len())
         .map(|d| (Dimension(d as u8), logical[d]))
         .collect();
-    let tiles: Vec<(Dimension, usize)> = extents
-        .iter()
-        .map(|&(dimension, extent)| (dimension, extent / src.shape[dimension.0 as usize]))
+    let tiles: Vec<(Dimension, usize)> = (batches..logical.len())
+        .map(|d| (Dimension(d as u8), logical[d] / src.shape[dims[d][0]]))
         .collect();
     let relayout = Relayout {
         batches: logical[..batches].to_vec(),
@@ -557,7 +558,7 @@ impl Relayout {
         // A line runs along the innermost named dimension when both sides end with it.
         let innermost = named[named.len() - 1];
         let (src_geometry, dst_geometry) = (Geometry::from(&src), Geometry::from(&dst));
-        let (src_labels, dst_labels) = (src_geometry.labels(&named), dst_geometry.labels(&named));
+        let (src_labels, dst_labels) = (src_geometry.labels(&named)?, dst_geometry.labels(&named)?);
         let v = match (src_labels.last(), dst_labels.last()) {
             (Some(&s), Some(&d)) if s == innermost && d == innermost => launch.vector_size(
                 innermost,

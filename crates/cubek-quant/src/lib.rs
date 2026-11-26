@@ -14,7 +14,7 @@ pub mod quantize;
 #[cfg(feature = "kernels")]
 mod tile_tensor;
 #[cfg(feature = "kernels")]
-pub use tile_tensor::{quantized_arg, quantized_arg_shifted};
+pub use tile_tensor::quantized_arg;
 
 #[cfg(feature = "kernels")]
 pub mod layout;
@@ -26,13 +26,13 @@ pub use cubecl_common::quant::scheme;
 
 #[cfg(feature = "kernels")]
 pub(crate) mod utils {
-    use crate::scheme::{QuantScheme, QuantStore};
+    use crate::scheme::{BlockExtent, QuantScheme, QuantStore};
     use cubecl::ir::{ElemType, UIntKind};
 
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
         // Validate block size compatibility
-        if let Some(block_size) = scheme.block_size() {
-            let block_size = *block_size.as_slice().last().unwrap() as usize;
+        if let BlockExtent::Values(block_size) = scheme.finest().size.extents[0] {
+            let block_size = block_size.get() as usize;
             assert!(
                 block_size.is_multiple_of(div),
                 "Block size must be divisible by {div}, got block_size={block_size}"
