@@ -15,42 +15,40 @@ use crate::{
     interpolate,
 };
 use cubecl::client::Client;
-use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
-};
+use cubek_test_utils::{ExecutionOutcome, HostData, HostDataType, KernelResultError, Progress};
 
+/// The output of `problem`'s launch by `strategy` on seeded input.
+///
+/// # Errors
+///
+/// [`KernelResultError::Refused`] with the decline the launch returns, and
+/// [`KernelResultError::NotRun`] where it returns another error or did not run.
 pub fn kernel_result(
     client: Client,
     problem: InterpolateForwardProblem,
     strategy: InterpolateStrategy,
     seed: u64,
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     let dtype = f32_elem_type();
     let input_shape = problem.input_shape().to_vec();
     let (input_handle, _input_host) = make_random_f32_host(&client, input_shape, seed);
 
     let output_handle = make_zero_handle(&client, problem.output_shape().to_vec(), dtype);
 
-    let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        interpolate(
-            c,
-            input_handle.clone().binding(),
-            output_handle.clone().binding(),
-            problem.options,
-            strategy,
-            dtype,
-        )
-        .into()
-    });
-
-    match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-            &client,
-            output_handle,
-            HostDataType::F32,
-        )),
-    }
+    interpolate(
+        &client,
+        input_handle.binding(),
+        output_handle.clone().binding(),
+        problem.options,
+        strategy,
+        dtype,
+    )?;
+    ExecutionOutcome::of_outputs(&client, &[&output_handle.handle]).into_kernel_result()?;
+    Ok(HostData::from_tensor_handle(
+        &client,
+        output_handle,
+        HostDataType::F32,
+    ))
 }
 
 pub fn cpu_reference_result(

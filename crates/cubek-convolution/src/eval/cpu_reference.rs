@@ -12,21 +12,31 @@ use cubecl::{
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
-    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, KernelResultError, Progress,
+    StridedLayout, TestInput, ValidationResult, assert_equals_approx,
 };
 
+use crate::kernels::tiled::ConvBias;
 use crate::{
     ConvolutionArgs, ConvolutionInputs, SpatialExtent, SpatialPosition, SpatialWindow, Strategy,
     TapCount, TapIndex,
-    components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
+    components::{ConvSetupError, ConvolutionOperation, ConvolutionProblem, Dimensionality},
     launch_ref,
 };
 
 const HOST_HAS_NO_TRANSPOSED: &str = "the host states no transposed forward";
 
+/// The interval a per-channel bias is drawn from, as wide as the operands'.
+const BIAS_RANGE: (f32, f32) = (-1., 1.);
+
 /// Run `strategy` against `operation` over `spec`'s geometry with seeded operands and return its
 /// output as a [`HostData`]: the forward's activation, the weight gradient or the data gradient.
+///
+/// # Errors
+///
+/// [`KernelResultError::Refused`] with the decline the launch returns, and
+/// [`KernelResultError::NotRun`] where its operands cannot be seeded, or the launch returns
+/// another error or did not run.
 pub fn strategy_result(
     client: Client,
     spec: ConvSpec,
@@ -34,20 +44,22 @@ pub fn strategy_result(
     strategy: Strategy,
     dtypes: MatmulElems,
     seeds: [u64; 2],
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     let inputs = seed_inputs(&client, &spec, operation, &dtypes, seeds)?;
     let out_handle = inputs.out.clone();
 
-    let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
+    let launched = {
         let lhs = InputBinding::new(inputs.lhs.clone().binding(), dtypes.lhs_global);
         let rhs = InputBinding::new(inputs.rhs.clone().binding(), dtypes.rhs_global);
         let out = out_handle.clone().binding();
+        let bias = (inputs.bias.as_ref())
+            .map(|(bias, _)| InputBinding::new(bias.clone().binding(), dtypes.acc_global));
         use ConvolutionOperation as Operation;
         let conv_inputs = match operation {
             Operation::Forward | Operation::ForwardTransposed => ConvolutionInputs::Forward {
                 input: lhs,
                 weight: rhs,
-                bias: None,
+                bias,
                 out,
             },
             Operation::BackwardWeight => ConvolutionInputs::BackwardWeight {
@@ -61,19 +73,25 @@ pub fn strategy_result(
                 in_grad: out,
             },
         };
-        match launch_ref::<2>(&strategy, c, conv_inputs, spec.args, dtypes.clone()) {
-            Ok(()) => ExecutionOutcome::Executed,
-            Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
-        }
-    });
+        launch_ref::<2>(&strategy, &client, conv_inputs, spec.args, dtypes.clone())
+    };
+    launched?;
+    ExecutionOutcome::of_outputs(&client, &[&out_handle.handle]).into_kernel_result()?;
+    Ok(HostData::from_tensor_handle(
+        &client,
+        out_handle,
+        HostDataType::F32,
+    ))
+}
 
-    match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-            &client,
-            out_handle,
-            HostDataType::F32,
-        )),
+/// The decline a launch returns stays a refusal, as the matmul it runs keeps it; any other error
+/// is a kernel that did not run.
+impl From<ConvSetupError> for KernelResultError {
+    fn from(error: ConvSetupError) -> Self {
+        match error {
+            ConvSetupError::Matmul(matmul) => matmul.into(),
+            other => Self::NotRun(format!("{other:?}")),
+        }
     }
 }
 
@@ -125,6 +143,8 @@ pub struct ConvSpec {
     pub out_channels: usize,
     pub args: ConvolutionArgs<2>,
     pub kernel_size: [usize; 2],
+    /// Whether the forward adds a value to each output channel.
+    pub bias: ConvBias,
 }
 
 impl ConvSpec {
@@ -198,6 +218,7 @@ struct SeededInputs {
     rhs: TensorHandle,
     rhs_data: HostData,
     out: TensorHandle,
+    bias: Option<(TensorHandle, HostData)>,
 }
 
 fn seed_inputs(
@@ -227,12 +248,23 @@ fn seed_inputs(
         .zeros()
         .generate_without_host_data();
 
+    let bias = match (operation, spec.bias) {
+        (ConvolutionOperation::Forward, ConvBias::PerChannel) => Some(
+            TestInput::builder(client.clone(), shape![spec.out_channels])
+                .dtype(dtypes.acc_global)
+                .uniform(seed_rhs.wrapping_add(1), BIAS_RANGE.0, BIAS_RANGE.1)
+                .generate_with_f32_host_data(),
+        ),
+        _ => None,
+    };
+
     Ok(SeededInputs {
         lhs,
         lhs_data,
         rhs,
         rhs_data,
         out,
+        bias,
     })
 }
 
@@ -243,7 +275,8 @@ fn forward_reference(
     progress: Option<&Progress>,
 ) -> HostData {
     let problem = build_problem(spec, dtypes, inputs);
-    conv_cpu_reference(&inputs.lhs_data, &inputs.rhs_data, &problem, progress)
+    let bias = inputs.bias.as_ref().map(|(_, host)| host);
+    ConvGeometry::from(&problem).cpu_reference(&inputs.lhs_data, &inputs.rhs_data, bias, progress)
 }
 
 fn build_problem(

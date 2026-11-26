@@ -115,9 +115,14 @@ impl AttentionBackwardLaunch for UnitAttentionBackward {
         })
     }
 
-    fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint) {
-        UnitQueryGradientRoutine.dispatch(tensors, &blueprint.queries);
-        UnitKeyGradientRoutine.dispatch(tensors, &blueprint.keys);
+    fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        blueprint: Self::Blueprint,
+    ) -> Result<(), Decline> {
+        UnitQueryGradientRoutine.dispatch(tensors, &blueprint.queries)?;
+        UnitKeyGradientRoutine.dispatch(tensors, &blueprint.keys)?;
+        Ok(())
     }
 
     fn estimates(

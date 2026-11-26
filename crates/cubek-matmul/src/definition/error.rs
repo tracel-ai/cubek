@@ -3,6 +3,7 @@ use cubek_std::{InvalidConfigError, MatrixLayout};
 use std::fmt::{Debug, Display};
 
 /// Errors that can occur during the setup phase of a matmul operation.
+#[non_exhaustive]
 pub enum MatmulSetupError {
     /// A required hardware or runtime feature is not available.
     Unavailable(MatmulAvailabilityError),
@@ -15,6 +16,11 @@ pub enum MatmulSetupError {
 
     /// An error happened during launch.
     Launch(LaunchError),
+
+    /// A launch found false what its routine prepared: a bug in the routine, never a feature the
+    /// device lacks nor a problem the routine refuses.
+    #[cfg(feature = "tiled")]
+    Broken(cubecl::tile::launch::Decline),
 }
 
 impl From<LaunchError> for MatmulSetupError {
@@ -96,8 +102,9 @@ impl From<VectorizationError> for MatmulSetupError {
 }
 
 /// A launch the tile engine refused past what the device holds is a feature the device lacks, so
-/// a caller falls back as it would without the feature; any other decline is a configuration the
-/// routine cannot run.
+/// a caller falls back as it would without the feature; a [`Broken`](cubecl::tile::launch::Decline::Broken) decline is
+/// [`MatmulSetupError::Broken`], kept as it is; any other decline is a configuration the routine
+/// cannot run.
 #[cfg(feature = "tiled")]
 impl From<cubecl::tile::launch::Decline> for MatmulSetupError {
     fn from(decline: cubecl::tile::launch::Decline) -> Self {
@@ -120,6 +127,7 @@ impl From<cubecl::tile::launch::Decline> for MatmulSetupError {
                 .into()
             }
             Decline::PlanesUnavailable => MatmulAvailabilityError::PlaneOpsUnavailable.into(),
+            decline if decline.is_broken() => Self::Broken(decline),
             decline => Self::InvalidConfig(Box::new(decline)),
         }
     }
@@ -155,6 +163,10 @@ impl Debug for MatmulSetupError {
             }
             MatmulSetupError::Launch(err) => {
                 writeln!(f, "Unable to launch matmul with err: {err:?}")
+            }
+            #[cfg(feature = "tiled")]
+            MatmulSetupError::Broken(decline) => {
+                writeln!(f, "Unable to launch matmul because a routine is {decline}")
             }
         }
     }

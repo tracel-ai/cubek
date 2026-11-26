@@ -10,16 +10,39 @@ use cubecl::tile::{Launcher, Partitioning};
 use cubecl::zspace::{Shape, Strides, Tiling};
 use cubek_microkernel::random::{Distribution, SeedsLaunch};
 use cubek_std::Hardware;
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid, Routine};
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 
 /// A routine of this kind: it prepares a launch of any distribution and launches it on an output,
 /// its kernel compiled for distribution `D`.
+///
+/// # Assumptions
+///
+/// [`dispatch`](Self::dispatch) is handed the binding [`bind`](Self::bind) returned for the same
+/// tensor, blueprint and grid.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait RandomRoutine: Routine<Problem = RandomRoutineProblem> {
-    /// Launch the kernel `blueprint` compiles for `D`, on `grid`, filling `tensor` with draws of
-    /// `args` off `seeds`.
+    /// `tensor` bound as `blueprint` states it, on `grid`.
+    ///
+    /// # Errors
+    ///
+    /// As [`RandomTensor::bind`].
+    fn bind(
+        &self,
+        tensor: &RandomTensor,
+        blueprint: &Self::Blueprint,
+        grid: &Grid,
+    ) -> Result<RandomBinding, Decline>;
+
+    /// Launch the kernel `blueprint` compiles for `D`, on `grid`, filling `binding`, `tensor` as
+    /// [`bind`](Self::bind) bound it, with draws of `args` off `seeds`.
     fn dispatch<D: Distribution>(
         &self,
         tensor: &RandomTensor,
+        binding: RandomBinding,
         args: <D::Args as LaunchArg>::RuntimeArg,
         seeds: SeedsLaunch,
         blueprint: Self::Blueprint,
@@ -41,7 +64,8 @@ pub fn launch_random_routine<R: RandomRoutine, D: Distribution>(
     seeds: SeedsLaunch,
 ) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare(hw, tensor.problem(), settings)?;
-    routine.dispatch::<D>(tensor, distribution.args(), seeds, blueprint, grid);
+    let binding = routine.bind(tensor, &blueprint, &grid)?;
+    routine.dispatch::<D>(tensor, binding, distribution.args(), seeds, blueprint, grid);
     Ok(())
 }
 
@@ -85,20 +109,29 @@ impl RandomTensor {
 
     /// The output bound on `grid` at `width`, every dim of it projected onto the values, placed
     /// by `partitioning`, which the kernel compiles with the values left to the launch.
-    pub fn bind(&self, partitioning: &Partitioning, width: usize, grid: &Grid) -> RandomBinding {
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    pub fn bind(
+        &self,
+        partitioning: &Partitioning,
+        width: usize,
+        grid: &Grid,
+    ) -> Result<RandomBinding, Decline> {
         let launcher = grid.launcher(&self.client, || {
             (
                 partitioning.clone().all_dynamic(),
                 partitioning.space().clone(),
             )
-        });
+        })?;
         let output = launcher
             .arg(self.output.clone(), self.problem.element)
             .dimensions(&vec![VALUES; self.output.shape.len()])
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        RandomBinding { launcher, output }
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(RandomBinding { launcher, output })
     }
 }
 

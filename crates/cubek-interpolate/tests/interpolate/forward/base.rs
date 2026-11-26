@@ -9,7 +9,7 @@ use cubek_interpolate::definition::{
 use cubek_interpolate::eval::cpu_reference::cpu_reference_interpolate_from_host;
 use cubek_interpolate::kernels::CubeInterpolateRoutineSettings;
 use cubek_interpolate::{InterpolateKernel, InterpolateStrategy, interpolate};
-use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, ScopeChecker, TestInput, Written};
 
 /// The geometry the tests hold the routines to: the shape the plane-derived split produced before
 /// every choice became the caller's.
@@ -111,7 +111,7 @@ impl ForwardCase {
 /// The forward interpolation on the test device.
 pub(crate) struct Forward;
 
-impl ScopeUnderTest for Forward {
+impl ScopeChecker for Forward {
     type Case = ForwardCase;
 
     /// # Panics

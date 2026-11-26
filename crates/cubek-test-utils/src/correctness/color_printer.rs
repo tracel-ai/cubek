@@ -32,6 +32,23 @@ impl From<std::ops::Range<usize>> for DimFilter {
 
 pub type TensorFilter = Vec<DimFilter>;
 
+/// The filter of one dimension `part` names: `.` for any index, `a-b` for a range, else one index.
+fn parse_dim_filter(part: &str) -> Result<DimFilter, String> {
+    if part == "." {
+        return Ok(DimFilter::Any);
+    }
+    let Some((a, b)) = part.split_once('-') else {
+        return part
+            .parse()
+            .map(DimFilter::Exact)
+            .map_err(|_| format!("Invalid filter token: {}", part));
+    };
+    Ok(DimFilter::Range {
+        start: a.parse().map_err(|_| format!("Invalid number: {}", a))?,
+        end: b.parse().map_err(|_| format!("Invalid number: {}", b))?,
+    })
+}
+
 pub fn parse_tensor_filter(s: &str) -> Result<TensorFilter, String> {
     if s.is_empty() {
         return Ok(vec![]);
@@ -40,21 +57,7 @@ pub fn parse_tensor_filter(s: &str) -> Result<TensorFilter, String> {
     let mut filters = Vec::new();
 
     for part in s.split(',') {
-        let f = if part == "." {
-            DimFilter::Any
-        } else if let Some((a, b)) = part.split_once('-') {
-            DimFilter::Range {
-                start: a.parse().map_err(|_| format!("Invalid number: {}", a))?,
-                end: b.parse().map_err(|_| format!("Invalid number: {}", b))?,
-            }
-        } else {
-            DimFilter::Exact(
-                part.parse()
-                    .map_err(|_| format!("Invalid filter token: {}", part))?,
-            )
-        };
-
-        filters.push(f);
+        filters.push(parse_dim_filter(part)?);
     }
 
     Ok(filters)

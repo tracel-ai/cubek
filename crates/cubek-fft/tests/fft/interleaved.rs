@@ -16,7 +16,7 @@ use cubek_fft::{
     ComplexTensorHandle, FftMode, FftNormalization, cfft_interleaved_launch,
     irfft_interleaved_launch_padded, rfft_interleaved_launch_padded,
 };
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, Written};
 use num_complex::Complex32;
 
 use crate::fft::SHORT;
@@ -274,7 +274,7 @@ impl InterleavedCfft {
 /// The interleaved complex transform, against a direct DFT.
 pub(crate) struct CfftInterleavedLaunch;
 
-impl ScopeUnderTest for CfftInterleavedLaunch {
+impl ScopeChecker for CfftInterleavedLaunch {
     type Case = InterleavedCfft;
 
     fn launch(&self, client: &Client, case: &InterleavedCfft) -> Result<Vec<Written>, Decline> {
@@ -387,7 +387,7 @@ impl InterleavedRfft {
 /// The interleaved real forward transform, against a direct DFT.
 pub(crate) struct RfftInterleavedLaunch;
 
-impl ScopeUnderTest for RfftInterleavedLaunch {
+impl ScopeChecker for RfftInterleavedLaunch {
     type Case = InterleavedRfft;
 
     fn launch(&self, client: &Client, case: &InterleavedRfft) -> Result<Vec<Written>, Decline> {
@@ -496,7 +496,7 @@ impl InterleavedIrfft {
 /// The interleaved real inverse transform, against a direct inverse DFT.
 pub(crate) struct IrfftInterleavedLaunch;
 
-impl ScopeUnderTest for IrfftInterleavedLaunch {
+impl ScopeChecker for IrfftInterleavedLaunch {
     type Case = InterleavedIrfft;
 
     fn launch(&self, client: &Client, case: &InterleavedIrfft) -> Result<Vec<Written>, Decline> {

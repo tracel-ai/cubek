@@ -2,7 +2,7 @@ use crate::kernels::{BATCH, REDUCED, ReduceRoutineProblem};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::TileOperand;
 use cubecl::tile::space::ComputeScope;
-use cubecl::tile::{Partitioning, Region, TileTensor};
+use cubecl::tile::{Partitioning, Region, Tile, TileTensor};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_microkernel::reduce::ReduceCarrierFamily;
 use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
@@ -11,28 +11,21 @@ use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 #[derive(CubeType, CubeLaunch, Debug, Clone, Copy)]
 pub(crate) struct ReduceSplitExtents {
     /// Parts a row is split into, a cube each.
-    pub parts: u32,
+    pub part_count: u32,
     /// Values a row holds, which a mean divides by.
-    pub values: u32,
+    pub value_count: u32,
 }
 
 impl ReduceSplitExtents {
-    /// The extents of `problem` split by `partitioning`.
-    ///
-    /// # Panics
-    ///
-    /// Where the reduced extent or its parts do not fit in 32 bits.
+    /// The extents of `problem` split by `partitioning`, as a routine prepared it: prepare declines a
+    /// row of more values than 32 bits count.
     pub fn new(problem: &ReduceRoutineProblem, partitioning: &Partitioning) -> Self {
         let part = partitioning.box_of(ComputeScope::Cube).extent(REDUCED);
         Self {
-            parts: u32_of_extent(problem.reduced_extent().div_ceil(part)),
-            values: u32_of_extent(problem.reduced_extent()),
+            part_count: problem.reduced_extent().div_ceil(part) as u32,
+            value_count: problem.reduced_extent() as u32,
         }
     }
-}
-
-fn u32_of_extent(extent: usize) -> u32 {
-    u32::try_from(extent).expect("a reduced extent fits in 32 bits")
 }
 
 /// Where `cube` sits along its row: its box of rows' counter, its part, and its part's first line
@@ -54,184 +47,44 @@ fn split_place(cube: &Region, #[comptime] row_lanes: usize) -> SplitPlace {
     }
 }
 
-/// Every cube's part of its rows, accumulated into a carrier of values alone; the last of a box of
-/// rows' cubes merges their partials and writes the rows.
-///
-/// Its operands' leaves:
-/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
-///   its place (`I`).
-/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k).
-/// - `partials`: one tensor of the input's shape, the reduced dim holding every part's carrier.
-/// - `arrivals`: one buffer of `u32` counters, one a box of rows, at zero.
-/// - `extents`: two scalars, the parts a row splits into and the values a row holds.
-#[cube(launch_unchecked)]
-pub(crate) fn hypercube_last_arrival_reduce_kernel<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    N: Size,
-    K: Size,
-    F: ReduceCarrierFamily,
-    I: TileOperand,
->(
-    input: &I::Arg,
-    out: &mut TileTensor<'_>,
-    partials: &mut TileTensor<'_>,
-    arrivals: &[Atomic<u32>],
-    partitioning: Partitioning,
-    extents: ReduceSplitExtents,
-    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
-    #[define(In, Acc, Out)] _elements: [ElemType; 3],
-) {
-    let x = I::tile::<In>(input, &partitioning);
-    let load = x.vector_tile();
-    let row_lanes = comptime!(load.extent_along(REDUCED));
-    let o = out.tile_mut(&partitioning);
-    let p = partials.tile_mut(&partitioning);
-    for cube in &partitioning {
-        let place = split_place(&cube, row_lanes);
-        let rows = x.at(&cube);
-        let mut rows_out = o.at(&cube);
-        let mut slots = p.at(&cube);
-        microkernel
-            .runtime()
-            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
-                &rows,
-                &mut rows_out,
-                &ComptimeOption::new_None(),
-                &mut slots,
-                &ComptimeOption::new_None(),
-                arrivals,
-                place.counter,
-                place.part,
-                extents.parts as usize,
-                place.first_line,
-                extents.values as usize,
-            );
+reduce_kernel! {
+    /// Every cube's part of its rows, accumulated into the carrier its operation accumulates into;
+    /// the last of a box of rows' cubes merges their partials and writes the rows.
+    ///
+    /// - `partials`: one tensor of the input's shape, the reduced dim holding every part's carrier.
+    /// - `partial_indices`: one tensor laid out as `partials`, where the carrier keeps its indices.
+    /// - `arrivals`: one buffer of `u32` counters, one a box of rows, at zero.
+    /// - `extents`: two scalars, the parts a row splits into and the values a row holds.
+    hypercube_last_arrival_reduce_kernel[
+        partials: &mut TileTensor<'_>,
+        partial_indices: ComptimeOption<&mut TileTensor<'static>>,
+        arrivals: &[Atomic<u32>],
+        extents: ReduceSplitExtents,
+    ]: HypercubeLastArrivalReduceMicrokernel,
+    |microkernel, partitioning, cube, x, o, i|
+    {
+        let load = x.vector_tile();
+        let row_lanes = comptime!(load.extent_along(REDUCED));
+        let p = partials.tile_mut(&partitioning);
+        let pi: ComptimeOption<Tile> =
+            partial_indices.map(|partial_indices| partial_indices.tile_mut(&partitioning));
     }
-}
-
-/// Every cube's part of its rows, as [`hypercube_last_arrival_reduce_kernel()`] reduces it, into a
-/// carrier of values and their indices, whose partials keep both: an argmax, an argmin or a top-k
-/// writing one half.
-///
-/// Its operands' leaves:
-/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
-///   its place (`I`).
-/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k).
-/// - `partials`, `partial_indices`: one tensor each, the input's shape with the reduced dim holding
-///   every part's carrier.
-/// - `arrivals`: one buffer of `u32` counters, one a box of rows, at zero.
-/// - `extents`: two scalars, the parts a row splits into and the values a row holds.
-#[cube(launch_unchecked)]
-pub(crate) fn hypercube_last_arrival_reduce_indexed_kernel<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    N: Size,
-    K: Size,
-    F: ReduceCarrierFamily,
-    I: TileOperand,
->(
-    input: &I::Arg,
-    out: &mut TileTensor<'_>,
-    partials: &mut TileTensor<'_>,
-    partial_indices: &mut TileTensor<'_>,
-    arrivals: &[Atomic<u32>],
-    partitioning: Partitioning,
-    extents: ReduceSplitExtents,
-    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
-    #[define(In, Acc, Out)] _elements: [ElemType; 3],
-) {
-    let x = I::tile::<In>(input, &partitioning);
-    let load = x.vector_tile();
-    let row_lanes = comptime!(load.extent_along(REDUCED));
-    let o = out.tile_mut(&partitioning);
-    let p = partials.tile_mut(&partitioning);
-    let pi = partial_indices.tile_mut(&partitioning);
-    for cube in &partitioning {
+    {
         let place = split_place(&cube, row_lanes);
-        let rows = x.at(&cube);
-        let mut rows_out = o.at(&cube);
-        let mut slots = p.at(&cube);
-        microkernel
-            .runtime()
-            .reduce::<In, Acc, Out, Out, N, F::Carrier<Acc, N, K>>(
-                &rows,
-                &mut rows_out,
-                &ComptimeOption::new_None(),
-                &mut slots,
-                &ComptimeOption::new_Some(pi.at(&cube)),
-                arrivals,
-                place.counter,
-                place.part,
-                extents.parts as usize,
-                place.first_line,
-                extents.values as usize,
-            );
-    }
-}
-
-/// Every cube's part of its rows, as [`hypercube_last_arrival_reduce_indexed_kernel()`] reduces
-/// it, the values written to `out` and their indices to `indices`, laid out as `out`.
-///
-/// Its operands' leaves:
-/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
-///   its place (`I`).
-/// - `out`: one tensor of the input's shape, the reduced dim one cell wide (`k` for a top-k).
-/// - `indices`: one tensor laid out as `out`.
-/// - `partials`, `partial_indices`: one tensor each, the input's shape with the reduced dim holding
-///   every part's carrier.
-/// - `arrivals`: one buffer of `u32` counters, one a box of rows, at zero.
-/// - `extents`: two scalars, the parts a row splits into and the values a row holds.
-#[cube(launch_unchecked)]
-pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
-    In: Numeric,
-    Acc: Numeric,
-    Out: Numeric,
-    Idx: Numeric,
-    N: Size,
-    K: Size,
-    F: ReduceCarrierFamily,
-    I: TileOperand,
->(
-    input: &I::Arg,
-    out: &mut TileTensor<'_>,
-    indices: &mut TileTensor<'_>,
-    partials: &mut TileTensor<'_>,
-    partial_indices: &mut TileTensor<'_>,
-    arrivals: &[Atomic<u32>],
-    partitioning: Partitioning,
-    extents: ReduceSplitExtents,
-    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
-    #[define(In, Acc, Out, Idx)] _elements: [ElemType; 4],
-) {
-    let x = I::tile::<In>(input, &partitioning);
-    let load = x.vector_tile();
-    let row_lanes = comptime!(load.extent_along(REDUCED));
-    let o = out.tile_mut(&partitioning);
-    let i = indices.tile_mut(&partitioning);
-    let p = partials.tile_mut(&partitioning);
-    let pi = partial_indices.tile_mut(&partitioning);
-    for cube in &partitioning {
-        let place = split_place(&cube, row_lanes);
-        let rows = x.at(&cube);
-        let mut rows_out = o.at(&cube);
-        let mut slots = p.at(&cube);
         microkernel
             .runtime()
             .reduce::<In, Acc, Out, Idx, N, F::Carrier<Acc, N, K>>(
-                &rows,
-                &mut rows_out,
-                &ComptimeOption::new_Some(i.at(&cube)),
-                &mut slots,
-                &ComptimeOption::new_Some(pi.at(&cube)),
+                &x.at(&cube),
+                &mut o.at(&cube),
+                &i.clone().map(|i| i.at(&cube)),
+                &mut p.at(&cube),
+                &pi.clone().map(|pi| pi.at(&cube)),
                 arrivals,
                 place.counter,
                 place.part,
-                extents.parts as usize,
+                extents.part_count as usize,
                 place.first_line,
-                extents.values as usize,
+                extents.value_count as usize,
             );
     }
 }
@@ -239,15 +92,18 @@ pub(crate) fn hypercube_last_arrival_reduce_with_indices_kernel<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cubecl::tile::Levels;
+    use cubek_microkernel::reduce::ReduceOperation;
 
     #[test]
-    fn an_extent_of_32_bits_is_kept() {
-        assert_eq!(u32_of_extent(u32::MAX as usize), u32::MAX);
-    }
-
-    #[test]
-    #[should_panic(expected = "a reduced extent fits in 32 bits")]
-    fn an_extent_past_32_bits_panics() {
-        u32_of_extent(u32::MAX as usize + 1);
+    fn a_row_is_split_into_as_many_parts_as_cover_it() {
+        const PART_VALUE_COUNT: usize = 128;
+        let problem = ReduceRoutineProblem::dense(&[2, 300], 1, ReduceOperation::Sum);
+        let levels = Levels::leaf(&problem.split_owner_box(1, PART_VALUE_COUNT))
+            .cubes(&[REDUCED, BATCH])
+            .build();
+        let partitioning = Partitioning::new(problem.space(), levels);
+        let extents = ReduceSplitExtents::new(&problem, &partitioning);
+        assert_eq!((extents.part_count, extents.value_count), (3, 300));
     }
 }

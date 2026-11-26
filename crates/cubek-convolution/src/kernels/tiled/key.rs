@@ -1,5 +1,5 @@
 use crate::components::ConvolutionOperation;
-use crate::kernels::tiled::{B, ConvProblem, ConvTensors, SpatialDim};
+use crate::kernels::tiled::{B, ConvBias, ConvProblem, ConvTensors, SpatialDim};
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::{self as cubecl, AutotuneKey};
@@ -21,9 +21,11 @@ pub struct CubeStagedConvTuneKey {
     pub out: ElemType,
     pub sum: ElemType,
     pub batch: usize,
+    pub groups: usize,
     pub channels_in: usize,
     pub channels_out: usize,
     pub spatial: Vec<SpatialDim>,
+    pub bias: ConvBias,
     pub lhs_width: usize,
     pub rhs_width: usize,
 }
@@ -54,9 +56,11 @@ impl CubeStagedConvTuneKey {
             out: problem.elements.out,
             sum: problem.sum,
             batch: Self::batch(problem, hw),
+            groups: problem.groups,
             channels_in: problem.channels_in,
             channels_out: problem.channels_out,
             spatial: problem.spatial.clone(),
+            bias: problem.bias,
             lhs_width: width(MatmulOperand::Lhs),
             rhs_width: width(MatmulOperand::Rhs),
         }
@@ -114,6 +118,7 @@ impl From<&CubeStagedConvTuneKey> for ConvProblem {
         Self {
             operation: key.operation,
             batch: key.batch,
+            groups: key.groups,
             channels_in: key.channels_in,
             channels_out: key.channels_out,
             spatial: key.spatial.clone(),
@@ -125,6 +130,7 @@ impl From<&CubeStagedConvTuneKey> for ConvProblem {
             sum: key.sum,
             alignments,
             start_bytes: MatmulOperands::all(0),
+            bias: key.bias,
         }
     }
 }
@@ -182,6 +188,24 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// A grouped convolution keys apart from the dense one of its channels, and its key describes
+    /// a problem keyed as the key is.
+    #[test]
+    fn a_grouped_key_describes_a_problem_keyed_as_itself() {
+        let hw = nvidia();
+        let dense = ConvProblem::from(&dense());
+        let grouped = ConvProblem {
+            groups: 2,
+            ..dense.clone()
+        };
+        let key = CubeStagedConvTuneKey::of_problem(&grouped, &hw);
+        assert_ne!(key, CubeStagedConvTuneKey::of_problem(&dense, &hw));
+        assert_eq!(
+            CubeStagedConvTuneKey::of_problem(&ConvProblem::from(&key), &hw),
+            key
+        );
     }
 
     /// Batches that fill the grid's third dimension with the positions across are keyed exactly,

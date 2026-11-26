@@ -42,7 +42,24 @@ pub trait AttentionBackwardLaunch {
     ) -> Result<Self::Blueprint, Decline>;
 
     /// Launch every routine `blueprint` holds, in order, over `tensors`.
-    fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint);
+    ///
+    /// # Assumptions
+    ///
+    /// `blueprint` is what [`prepare`](Self::prepare) gave for `tensors`' problem on their device.
+    ///
+    /// # Guarantees
+    ///
+    /// Where it errs, the routine that erred launched nothing, and the gradients hold what the
+    /// routines before it wrote, which no caller reads until another dispatch writes them whole.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what a routine prepared.
+    fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        blueprint: Self::Blueprint,
+    ) -> Result<(), Decline>;
 
     /// The estimate of every launch `blueprint` holds for `problem`, in the order they launch,
     /// each stating its own demand: what a caller that measures the strategies ranks the setting
@@ -64,7 +81,7 @@ pub trait AttentionBackwardLaunch {
         settings: &Self::Settings,
     ) -> Result<AttentionBackwardGradients, Decline> {
         let blueprint = self.prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch(&tensors, blueprint);
+        self.dispatch(&tensors, blueprint)?;
         Ok(tensors.into_gradients())
     }
 }

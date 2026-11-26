@@ -4,7 +4,7 @@
 use cubecl::zspace::shape;
 use cubek_matmul::kernels::{CubeStagedMatmulRoutineSettings, UnitRegistersMatmulRoutineSettings};
 use cubek_matmul::tiled::Strategy as Tiled;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{ByStrategy, Declines, F16, F32, Product, RhsTiles};
 

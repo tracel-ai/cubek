@@ -3,6 +3,7 @@
 
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem};
+use crate::kernels::tiled::ConvBias;
 use crate::launch::ConvolutionArgs;
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind};
@@ -62,6 +63,7 @@ pub fn dense() -> Conv2dProblem {
         },
         operation: ConvolutionOperation::Forward,
         element: Conv2dElement::F16,
+        bias: ConvBias::Absent,
     }
 }
 

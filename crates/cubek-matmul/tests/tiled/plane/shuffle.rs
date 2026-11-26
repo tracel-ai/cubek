@@ -2,7 +2,7 @@
 //! units shuffling their partial sums together. It holds at most a decode step's rows.
 
 use cubek_matmul::kernels::PlaneShuffleMatmulRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Declines, I32, Product};
 use crate::tiled::ByRoutine;

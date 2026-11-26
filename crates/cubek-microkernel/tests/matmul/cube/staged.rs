@@ -5,7 +5,7 @@ use crate::launch::matmul::{CubeStagedLaunch, MatmulElements};
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernel, CubeStagedMicrokernelSettings};
 use cubek_std::Hardware;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Matmul, MatmulSettings};
 

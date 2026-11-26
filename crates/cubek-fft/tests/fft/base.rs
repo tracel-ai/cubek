@@ -14,7 +14,7 @@ use cubek_fft::{
     CfftBindings, FftMode, cfft_launch_any_size, irfft_launch, irfft_launch_padded, rfft_launch,
     rfft_launch_padded,
 };
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
 /// What a refused or failed launch is skipped as, the policy deciding.
 const DECLINED: Decline = Decline::Unserved {
@@ -187,7 +187,7 @@ impl Rfft {
 /// The real forward transform's launch, against the host's.
 pub(crate) struct RfftLaunch;
 
-impl ScopeUnderTest for RfftLaunch {
+impl ScopeChecker for RfftLaunch {
     type Case = Rfft;
 
     /// Declines an element the device does no arithmetic in, as Metal `f64`: building the signal
@@ -313,7 +313,7 @@ impl Irfft {
 /// The real inverse transform's launch, against the host's.
 pub(crate) struct IrfftLaunch;
 
-impl ScopeUnderTest for IrfftLaunch {
+impl ScopeChecker for IrfftLaunch {
     type Case = Irfft;
 
     fn launch(&self, client: &Client, case: &Irfft) -> Result<Vec<Written>, Decline> {
@@ -372,7 +372,7 @@ impl CfftRoundTrip {
 /// scales.
 pub(crate) struct CfftRoundTripLaunch;
 
-impl ScopeUnderTest for CfftRoundTripLaunch {
+impl ScopeChecker for CfftRoundTripLaunch {
     type Case = CfftRoundTrip;
 
     fn launch(&self, client: &Client, case: &CfftRoundTrip) -> Result<Vec<Written>, Decline> {

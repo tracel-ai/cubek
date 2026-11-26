@@ -7,6 +7,7 @@ pub struct ConvBinding {
     pub input: TileTensorLaunch,
     pub rhs: TileTensorLaunch,
     pub out: TileTensorLaunch,
+    pub bias: Option<TileTensorLaunch>,
 }
 
 impl core::fmt::Debug for ConvBinding {

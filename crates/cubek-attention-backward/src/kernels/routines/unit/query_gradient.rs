@@ -82,9 +82,22 @@ impl UnitQueryGradientRoutine {
         walk.estimate(problem, &count)
     }
 
-    pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &UnitQueryGradientBlueprint) {
+    /// The units of `walk` writing `tensors`' queries' gradient and their dot products.
+    ///
+    /// # Guarantees
+    ///
+    /// Nothing is launched where it errs: binding the tensors is its only fallible step.
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
+    pub fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        walk: &UnitQueryGradientBlueprint,
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -112,5 +125,6 @@ impl UnitQueryGradientRoutine {
                 AttentionBackwardProblem::SUM,
             );
         }
+        Ok(())
     }
 }

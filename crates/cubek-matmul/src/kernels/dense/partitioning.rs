@@ -1,3 +1,4 @@
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{
     Dimension, Partitioning, Space, TileSpec,
     space::{ComputeScope, Coverage, CubeOrder, PlaneOrder},
@@ -5,6 +6,11 @@ use cubecl::tile::{
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
 use cubek_microkernel::matmul::{MatmulDimensionsKind, MatmulRowsKind, MatmulStage};
 use cubek_std::matmul_dimensions::{M, MB, MI, N, NB, NI};
+use cubek_std::routine::Breakable;
+
+/// What should hold of a tiled launch's output.
+const MASKED_ONLY_WHERE_OVERHANGING: &str =
+    "the output's writes are masked only where its tiles overhang it";
 
 /// How a matmul product places its microkernel's work items over a problem: the tile DSL's levels,
 /// which the kernel launches and walks, and the box each cube is handed. Each product builds one
@@ -16,6 +22,10 @@ use cubek_std::matmul_dimensions::{M, MB, MI, N, NB, NI};
 /// or, for a routine whose planes share nothing, the launch's planes, which a plane order groups
 /// in cubes. Either way the box one cube covers and the one a step of its walk stages are
 /// questions this answers for every routine alike.
+///
+/// # Assumptions
+///
+/// Its partitioning hands its cubes a box, or its planes the launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulPartitioning {
     partitioning: Partitioning,
@@ -117,28 +127,6 @@ impl MatmulPartitioning {
         )
     }
 
-    /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
-    /// cube's box holds where every row is held whole.
-    fn compiled_space(&self) -> Space {
-        let space = self.partitioning.space();
-        match self.rows_kind {
-            MatmulRowsKind::Tiled => space.clone(),
-            MatmulRowsKind::Whole => {
-                let rows = self.dimensions_kind.rows_dimension();
-                let held = self.cube.extent(rows);
-                Space::new(
-                    &space
-                        .extents()
-                        .into_iter()
-                        .map(|(dimension, extent)| {
-                            (dimension, if dimension == rows { held } else { extent })
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }
-        }
-    }
-
     /// The batch dimensions a cube is handed one of: the problem's longer than one.
     pub fn batch_dimensions(&self) -> &[Dimension] {
         &self.batch_dimensions
@@ -197,6 +185,11 @@ impl MatmulPartitioning {
 
     /// The order the cubes take their boxes in: where the planes span the launch, the order its
     /// blocks are taken in.
+    ///
+    /// # Panics
+    ///
+    /// Where its partitioning hands neither its cubes a box nor its planes the launch, against
+    /// the type's Assumption.
     pub fn cube_order(&self) -> CubeOrder {
         match self.partitioning.levels()[0].plane_order() {
             Some(order) => order.block_order(),
@@ -214,9 +207,13 @@ impl MatmulPartitioning {
     /// the cube's own, where it stages for all its planes, or each plane's, where the cube's
     /// planes each stage their own.
     ///
+    /// # Assumptions
+    ///
+    /// The partitioning walks `K` inside its cubes: a staged routine's.
+    ///
     /// # Panics
     ///
-    /// A partitioning that walks no `K` inside its cubes.
+    /// Where the partitioning walks no `K` inside its cubes, against its Assumption.
     pub fn stage(&self) -> MatmulStage {
         // Where the planes span the launch, the levels inside the outermost cut a plane's box.
         let mut enclosing = match self.partitioning.levels()[0].plane_order() {
@@ -264,14 +261,15 @@ impl MatmulPartitioning {
     /// cannot make, so the plane routine bounces its fragments where the tiles overhang. A launch
     /// holding every row whole stores no fragment and frees its columns, so the claim is not its.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// A tiled launch whose output is masked where its tiles do not overhang it.
-    pub fn assert_masked_where_overhanging(&self, out: &TileSpec) {
-        assert!(
-            self.rows_kind == MatmulRowsKind::Whole || !out.is_checked() || self.overhangs_output(),
-            "the output's writes are masked where its tiles do not overhang it"
-        );
+    /// [`Decline::Broken`]: a tiled launch whose output is masked where its tiles do not overhang
+    /// it.
+    pub fn check_masked_where_overhanging(&self, out: &TileSpec) -> Result<(), Decline> {
+        match self.masks_only_where_overhanging(out) {
+            true => Ok(()),
+            false => Breakable::broken(MASKED_ONLY_WHERE_OVERHANGING),
+        }
     }
 
     /// Tiles along `dimension` a level distributes its units in turns, where one does
@@ -293,6 +291,39 @@ impl MatmulPartitioning {
     /// The tile DSL's partitioning, for what it reads of it: the launch and the binding.
     pub fn as_tile(&self) -> &Partitioning {
         &self.partitioning
+    }
+}
+
+impl MatmulPartitioning {
+    /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
+    /// cube's box holds where it takes every row whole.
+    fn compiled_space(&self) -> Space {
+        let space = self.partitioning.space();
+        match self.rows_kind {
+            MatmulRowsKind::Tiled => space.clone(),
+            MatmulRowsKind::Whole => {
+                let rows = self.dimensions_kind.rows_dimension();
+                let cube_rows = self.cube.extent(rows);
+                Space::new(
+                    &space
+                        .extents()
+                        .into_iter()
+                        .map(|(dimension, extent)| {
+                            (
+                                dimension,
+                                if dimension == rows { cube_rows } else { extent },
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+        }
+    }
+
+    /// Whether `out`'s writes are masked only where the tiles overhang it, or the launch holds
+    /// every row whole, whose claim it is not.
+    fn masks_only_where_overhanging(&self, out: &TileSpec) -> bool {
+        self.rows_kind == MatmulRowsKind::Whole || !out.is_checked() || self.overhangs_output()
     }
 }
 

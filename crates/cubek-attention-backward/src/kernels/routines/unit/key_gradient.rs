@@ -82,9 +82,22 @@ impl UnitKeyGradientRoutine {
         walk.estimate(problem, &count)
     }
 
-    pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &UnitKeyGradientBlueprint) {
+    /// The units of `walk` writing `tensors`' keys' and values' gradients.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
+    pub fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        walk: &UnitKeyGradientBlueprint,
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -112,5 +125,6 @@ impl UnitKeyGradientRoutine {
                 AttentionBackwardProblem::SUM,
             );
         }
+        Ok(())
     }
 }

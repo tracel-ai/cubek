@@ -5,7 +5,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
 use cubek_swiglu::kernels::{CubeSwigluRoutine, SwigluRoutineCandidate};
-use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, HostDataType, ScopeChecker, Written};
 
 use crate::swiglu::{ELEMENTS, F32, FusedRows};
 
@@ -32,7 +32,7 @@ impl core::fmt::Debug for CubeSwigluCase {
     }
 }
 
-impl ScopeUnderTest for CubeSwiglu {
+impl ScopeChecker for CubeSwiglu {
     type Case = CubeSwigluCase;
 
     /// # Panics

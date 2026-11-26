@@ -47,27 +47,36 @@ impl CubeStagedKeyGradientSumRoutine {
         key_walk_estimate(problem, walk, KeyGradientElement::Summed)
     }
 
+    /// The cubes of `walk` adding their parts of the keys' and values' gradients into `sums`.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &CubeStagedKeyWalkBlueprint,
         sums: &KeyGradientSums,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let (key_summed, value_summed) = (
             tensors.bind_beside(
                 &binding,
                 walk,
                 &sums.key,
                 AttentionBackwardOperand::KeyGradient,
-            ),
+            )?,
             tensors.bind_beside(
                 &binding,
                 walk,
                 &sums.value,
                 AttentionBackwardOperand::ValueGradient,
-            ),
+            )?,
         );
         let operands = binding.operands;
 
@@ -98,5 +107,6 @@ impl CubeStagedKeyGradientSumRoutine {
                 problem.element,
             );
         }
+        Ok(())
     }
 }

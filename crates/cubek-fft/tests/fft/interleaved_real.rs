@@ -11,7 +11,7 @@ use cubek_fft::{
     ComplexTensorHandle, FftError, FftNormalization, irfft_interleaved_launch_padded,
     rfft_interleaved_launch_padded,
 };
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::fft::{
     InterleavedIrfft, InterleavedRfft, IrfftInterleavedLaunch, Placement, RfftInterleavedLaunch,

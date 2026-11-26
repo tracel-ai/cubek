@@ -5,7 +5,7 @@ use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::zspace::shape;
 use cubek_matmul::strategy::Strategy;
-use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
+use cubek_test_utils::{ScopeChecker, TestOutcome, ValidationResult};
 
 use crate::matmul::{Broadcast, ByStrategy, Declines, F16, F32, F64, Product};
 

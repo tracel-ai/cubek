@@ -1,5 +1,5 @@
 use super::kernel::plane_random_kernel;
-use crate::kernels::{RandomRoutine, RandomRoutineProblem, RandomTensor, VALUES};
+use crate::kernels::{RandomBinding, RandomRoutine, RandomRoutineProblem, RandomTensor, VALUES};
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
@@ -121,15 +121,24 @@ impl Routine for PlaneRandomRoutine {
 }
 
 impl RandomRoutine for PlaneRandomRoutine {
+    fn bind(
+        &self,
+        tensor: &RandomTensor,
+        blueprint: &PlaneRandomRoutineBlueprint,
+        grid: &Grid,
+    ) -> Result<RandomBinding, Decline> {
+        tensor.bind(&blueprint.partitioning, blueprint.width, grid)
+    }
+
     fn dispatch<D: Distribution>(
         &self,
         tensor: &RandomTensor,
+        binding: RandomBinding,
         args: <D::Args as LaunchArg>::RuntimeArg,
         seeds: SeedsLaunch,
         blueprint: PlaneRandomRoutineBlueprint,
         grid: Grid,
     ) {
-        let binding = tensor.bind(&blueprint.partitioning, blueprint.width, &grid);
         // SAFETY: the output is bound through the launcher, which masks the writes of a run the
         // output's end cuts short, and the kernel indexes no buffer but through its tile; it
         // holds no shared memory.

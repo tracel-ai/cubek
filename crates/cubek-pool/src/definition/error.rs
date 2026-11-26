@@ -38,3 +38,15 @@ pub enum PoolError {
         actual: Vec<usize>,
     },
 }
+
+/// The decline a launch returns stays a refusal, which a test skips where the launch is
+/// unsupported and fails on where it is broken; any other error is a kernel that did not run.
+#[cfg(feature = "cpu-reference")]
+impl From<PoolError> for cubek_test_utils::KernelResultError {
+    fn from(error: PoolError) -> Self {
+        match error {
+            PoolError::Declined(decline) => Self::Refused(decline),
+            other => Self::NotRun(other.to_string()),
+        }
+    }
+}

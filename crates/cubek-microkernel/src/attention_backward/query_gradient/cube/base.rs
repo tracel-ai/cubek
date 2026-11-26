@@ -148,7 +148,7 @@ impl Microkernel for CubeQueryGradientMicrokernel {
             .map(|plane| Self::Settings { plane, ..lead });
         // A held plane of one query fragment four along the queries, and one a head over four
         // heads of a group: a narrow plane's stage of keys read by four planes.
-        let narrow = PlaneQueryGradientMicrokernelSettings::fragments(1, 4).held();
+        let narrow = PlaneQueryGradientMicrokernelSettings::fragments(1, 4).score_in_fragments();
         let held_four = [(1, 4), (4, 1)].map(|(heads, planes)| Self::Settings {
             plane: narrow,
             heads: NonZeroUsize::new(heads).unwrap(),

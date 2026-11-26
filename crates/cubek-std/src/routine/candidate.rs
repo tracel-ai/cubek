@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 /// A routine at one of its settings, raced for the device it was listed on.
 ///
-/// The launches it prepares are held ([`PreparedLaunches`]), so a clone, and the autotune that
+/// The launches it prepares are kept ([`PreparedLaunches`]), so a clone, and the autotune that
 /// ranks it and the launch that runs it, prepare each problem once.
 #[derive(Debug, Clone)]
 pub struct RoutineCandidate<R: Routine> {

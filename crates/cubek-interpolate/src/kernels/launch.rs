@@ -15,15 +15,39 @@ use cubecl::tile::launch::{Bound, BoundaryPolicy, Decline};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Partitioning};
 use cubek_std::Hardware;
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid, Routine};
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 
 /// A routine of this kind: it prepares a launch of any filter and launches it on tensors, its
 /// kernel compiled for filter `F`.
+///
+/// # Assumptions
+///
+/// [`dispatch`](Self::dispatch) is handed the binding [`bind`](Self::bind) returned for the same
+/// tensors, blueprint and grid.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait InterpolateRoutine: Routine<Problem = InterpolateRoutineProblem> {
-    /// Launch the kernel `blueprint` compiles for `F`, on `grid`, over `tensors`.
+    /// `tensors`' operands bound as `blueprint` states them, on `grid`.
+    ///
+    /// # Errors
+    ///
+    /// As [`InterpolateTensors::bind`].
+    fn bind(
+        &self,
+        tensors: &InterpolateTensors,
+        blueprint: &Self::Blueprint,
+        grid: &Grid,
+    ) -> Result<InterpolateBinding, Decline>;
+
+    /// Launch the kernel `blueprint` compiles for `F`, on `grid`, over `binding`, `tensors`'
+    /// operands as [`bind`](Self::bind) bound them.
     fn dispatch<F: SeparableFilterFamily>(
         &self,
         tensors: &InterpolateTensors,
+        binding: InterpolateBinding,
         blueprint: Self::Blueprint,
         grid: Grid,
     );
@@ -41,11 +65,20 @@ pub fn launch_interpolate_routine<R: InterpolateRoutine>(
     settings: &R::Settings,
 ) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
+    let binding = routine.bind(tensors, &blueprint, &grid)?;
     match tensors.problem().forward.options.mode {
-        InterpolateMode::Nearest(_) => routine.dispatch::<NearestFilter>(tensors, blueprint, grid),
-        InterpolateMode::Bilinear => routine.dispatch::<BilinearFilter>(tensors, blueprint, grid),
-        InterpolateMode::Bicubic => routine.dispatch::<BicubicFilter>(tensors, blueprint, grid),
-        InterpolateMode::Lanczos3 => routine.dispatch::<Lanczos3Filter>(tensors, blueprint, grid),
+        InterpolateMode::Nearest(_) => {
+            routine.dispatch::<NearestFilter>(tensors, binding, blueprint, grid)
+        }
+        InterpolateMode::Bilinear => {
+            routine.dispatch::<BilinearFilter>(tensors, binding, blueprint, grid)
+        }
+        InterpolateMode::Bicubic => {
+            routine.dispatch::<BicubicFilter>(tensors, binding, blueprint, grid)
+        }
+        InterpolateMode::Lanczos3 => {
+            routine.dispatch::<Lanczos3Filter>(tensors, binding, blueprint, grid)
+        }
     }
     Ok(())
 }
@@ -61,6 +94,16 @@ pub struct InterpolateTensors {
 
 impl InterpolateTensors {
     /// `input` resampled into `output`, both NHWC in `element`, as `options` say.
+    ///
+    /// # Assumptions
+    ///
+    /// As [`interpolate`](crate::interpolate) checks: `input` and `output` are both of rank four,
+    /// `output` holds the input's batches and channels, both are stored in `element`, and both
+    /// live on `client`'s device.
+    ///
+    /// # Panics
+    ///
+    /// On an `input` or an `output` of another rank, against its Assumption.
     pub fn new(
         client: &Client,
         input: TensorBinding,
@@ -68,6 +111,10 @@ impl InterpolateTensors {
         options: InterpolateOptions,
         element: ElemType,
     ) -> Self {
+        assert!(
+            input.shape.len() == 4 && output.shape.len() == 4,
+            "the input and the output are NHWC, of rank four"
+        );
         let problem = InterpolateRoutineProblem {
             forward: InterpolateForwardProblem::from_input_output_shapes(
                 &input.shape,
@@ -96,16 +143,20 @@ impl InterpolateTensors {
 
     /// Both operands bound on `grid` at `width`, placed by `partitioning`: the input gathered over
     /// every output position's taps, its reads masked where `checked`.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
     pub fn bind(
         &self,
         partitioning: &Partitioning,
         width: usize,
         checked: bool,
         grid: &Grid,
-    ) -> InterpolateBinding {
+    ) -> Result<InterpolateBinding, Decline> {
         let launcher = grid.launcher(&self.client, || {
             (partitioning.clone(), partitioning.space().clone())
-        });
+        })?;
         let problem = &self.problem;
         let boundary = match checked {
             true => BoundaryPolicy::Every(mode_properties(problem.forward.options.mode).boundary),
@@ -121,18 +172,18 @@ impl InterpolateTensors {
             .boundary(boundary)
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
+            .or_broken(ADMITTED_PLAN_RUNS)?;
         let output = launcher
             .arg(self.output.clone(), problem.element)
             .dimensions(&[BATCH, OUTPUT_H, OUTPUT_W, CHANNEL])
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        InterpolateBinding {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(InterpolateBinding {
             launcher,
             input,
             output,
-        }
+        })
     }
 }
 

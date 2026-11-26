@@ -152,6 +152,24 @@ impl OperandLayout {
         dimension.map_or(Self::Strided, Self::Along)
     }
 
+    /// How an operand over `dimensions` lies, `meta` its metadata and `kind` what it is: the
+    /// dimension it is contiguous along, the tile it is stored in, the order the tile's words lie
+    /// in and how its strips are laid, so a winner elected on one layout is never served to
+    /// another, which its kernel may decline.
+    pub fn of(meta: &Metadata, kind: OperandKind, dimensions: [Dimension; 2]) -> Self {
+        let order = match kind {
+            OperandKind::Quantized(scheme) => TileOrder::of_matrix(&scheme, meta),
+            _ => None,
+        };
+        let words = order.map_or(TileWords::RowByRow, TileOrder::words);
+        let strips = order.map_or(TileStrips::BackToBack, TileStrips::of);
+        match (contiguous(meta, dimensions), layout::tile(meta)) {
+            (None, _) => Self::Strided,
+            (Some(dimension), (1, 1)) => Self::Along(dimension),
+            (Some(dimension), tile) => Self::Tiles(dimension, tile, words, strips),
+        }
+    }
+
     /// The dimension the operand is read along: the one it is contiguous along, or the one its
     /// stored pieces run along; `None` for a strided one.
     pub fn dimension(self) -> Option<Dimension> {
@@ -496,24 +514,11 @@ pub fn create_key(
     let MatmulProblem {
         m, k, n, batches, ..
     } = MatmulProblem::new((&lhs_shape, lhs_kind), (&rhs_shape, rhs_kind));
-    // An operand keys by the dimension it is contiguous along, the tile it is stored in and the
-    // order the tile's words lie in, so a winner elected on one layout is never served to another,
-    // which its kernel may decline.
     let operand = |meta: &Metadata, kind: OperandKind, operand: MatmulOperand| {
         let shape = logical(meta);
-        let order = match kind {
-            OperandKind::Quantized(scheme) => TileOrder::of_matrix(&scheme, meta),
-            _ => None,
-        };
-        let words = order.map_or(TileWords::RowByRow, TileOrder::words);
-        let strips = order.map_or(TileStrips::BackToBack, TileStrips::of);
         OperandKey {
             kind,
-            layout: match (contiguous(meta, operand.dimensions()), layout::tile(meta)) {
-                (None, _) => OperandLayout::Strided,
-                (Some(dimension), (1, 1)) => OperandLayout::Along(dimension),
-                (Some(dimension), tile) => OperandLayout::Tiles(dimension, tile, words, strips),
-            },
+            layout: OperandLayout::of(meta, kind, operand.dimensions()),
             batching: MatmulBatching::new(&shape.as_slice()[..shape.rank() - 2]),
         }
     };
@@ -534,6 +539,8 @@ mod tests {
     use super::*;
     use cubecl::ir::FloatKind;
     use cubecl::quant::scheme::QuantScheme;
+    use cubek_std::layout::tile_order;
+    use cubek_std::matmul_dimensions::{K, N};
 
     const F16: ElemType = ElemType::Float(FloatKind::F16);
 
@@ -613,5 +620,50 @@ mod tests {
             key(&packed, OperandKind::Quantized(q4)),
             "MatmulTuneKey { elem: Float(F16), k: 256, n: 64, m: 4, batches: 1, lhs: OperandKey { kind: Float, layout: K, batching: Shared }, rhs: OperandKey { kind: Quantized(QuantScheme { value: Q4S, store: PackedU32(1), mode: Symmetric, blocks: [Some(BlockScale { size: BlockSize { extents: [Values(1), Values(32), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: F16 }), None] }), layout: K, batching: Shared } }"
         );
+    }
+
+    /// NVFP4 of 256 by 24 in tiles whose words lie as `words` says, its layout as a key reads it.
+    fn in_tiles(words: TileWords) -> OperandLayout {
+        let scheme = tile_order::nvfp4_scheme();
+        let order = TileOrder::laid(&scheme, words, (64, 8)).expect("NVFP4 is tile order");
+        let matrix = tile_order::matrix_values(&order.kernel_values_read(256, (N, 24), 4));
+        OperandLayout::of(&matrix, OperandKind::Quantized(scheme), [K, N])
+    }
+
+    /// A packed matrix in tiles keys by its tile and the order of its words.
+    #[test]
+    fn a_packed_matrix_laid_row_by_row_keys_by_its_tile() {
+        assert_eq!(
+            in_tiles(TileWords::RowByRow),
+            OperandLayout::Tiles(K, (64, 8), TileWords::RowByRow, TileStrips::BackToBack)
+        );
+    }
+
+    /// A winner elected on tiles laid row by row is never served block by block ones.
+    #[test]
+    fn a_packed_matrix_laid_block_by_block_keys_by_its_words() {
+        assert_eq!(
+            in_tiles(TileWords::BlockByBlock),
+            OperandLayout::Tiles(K, (64, 8), TileWords::BlockByBlock, TileStrips::BackToBack)
+        );
+    }
+
+    /// The layout of a float `[256, 24]` at `strides`.
+    fn float(strides: [usize; 2]) -> OperandLayout {
+        OperandLayout::of(
+            &Metadata::new([256, 24], strides),
+            OperandKind::Float,
+            [K, N],
+        )
+    }
+
+    #[test]
+    fn a_col_matrix_keys_by_the_dimension_it_is_contiguous_along() {
+        assert_eq!(float([1, 256]), OperandLayout::Along(K));
+    }
+
+    #[test]
+    fn a_matrix_contiguous_along_no_dimension_keys_as_strided() {
+        assert_eq!(float([48, 2]), OperandLayout::Strided);
     }
 }

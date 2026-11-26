@@ -156,7 +156,7 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
         .into_iter()
         .flat_map(|(keys, queries, planes)| {
             let plane = PlaneKeyGradientMicrokernelSettings::fragments(keys, queries);
-            [plane, plane.held()].map(|plane| CubeKeyGradientMicrokernelSettings {
+            [plane, plane.score_in_fragments()].map(|plane| CubeKeyGradientMicrokernelSettings {
                 plane,
                 planes_along_keys: NonZeroUsize::new(planes).unwrap(),
             })

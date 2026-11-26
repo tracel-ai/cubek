@@ -1,21 +1,23 @@
-//! A routine at one of its settings, whichever routine it is ([`ReduceCandidate`]), and the launch
-//! it prepares for a key ([`ReducePrepared`]).
+//! A routine at one of its settings, whichever routine it is ([`ReduceCandidate`]).
 
 use crate::kernels::{
     CubeStagedReduceRoutine, HypercubeAtomicReduceRoutine, HypercubeLastArrivalReduceRoutine,
-    PlaneShuffleReduceRoutine, ReduceBlueprint, ReduceKey, ReduceRoutineSetting, ReduceTensors,
-    UnitDirectReduceRoutine,
+    PlaneShuffleReduceRoutine, ReduceKey, ReducePrepared, ReduceRoutineBlueprint,
+    ReduceSettingLauncher, ReduceTensors, UnitDirectReduceRoutine,
 };
 use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound};
 use cubek_std::Hardware;
 use cubek_std::microkernel::KernelEstimate;
-use cubek_std::routine::{Grid, LaunchSettings, Routine};
 
 /// A routine at one of its settings, whichever routine it is: what a caller that measures the
 /// routines identifies a candidate by, and runs again once it is found fastest, so a launch
 /// outside a round, a fused one, runs the winner.
+///
+/// # Assumptions
+///
+/// - Those of [`Reduce`](crate::kernels::Reduce), of the tensors it launches on.
 #[derive(Debug, Clone)]
 pub struct ReduceCandidate {
     launcher: ReduceCandidateLauncher,
@@ -26,11 +28,11 @@ impl ReduceCandidate {
     /// last-arrival hypercube and atomic hypercube routines, each in the order it lists its
     /// settings.
     pub fn list(hw: &Hardware) -> Vec<Self> {
-        let unit = ReduceRoutineSetting::<UnitDirectReduceRoutine>::list(hw);
-        let plane = ReduceRoutineSetting::<PlaneShuffleReduceRoutine>::list(hw);
-        let cube = ReduceRoutineSetting::<CubeStagedReduceRoutine>::list(hw);
-        let last_arrival = ReduceRoutineSetting::<HypercubeLastArrivalReduceRoutine>::list(hw);
-        let atomic = ReduceRoutineSetting::<HypercubeAtomicReduceRoutine>::list(hw);
+        let unit = ReduceSettingLauncher::<UnitDirectReduceRoutine>::list(hw);
+        let plane = ReduceSettingLauncher::<PlaneShuffleReduceRoutine>::list(hw);
+        let cube = ReduceSettingLauncher::<CubeStagedReduceRoutine>::list(hw);
+        let last_arrival = ReduceSettingLauncher::<HypercubeLastArrivalReduceRoutine>::list(hw);
+        let atomic = ReduceSettingLauncher::<HypercubeAtomicReduceRoutine>::list(hw);
         unit.into_iter()
             .map(Self::from)
             .chain(plane.into_iter().map(Self::from))
@@ -45,16 +47,16 @@ impl ReduceCandidate {
         self.launcher.name()
     }
 
-    /// `tensors` reduced at this candidate's setting, the output zeroed first where the routine
-    /// only adds into it.
+    /// `tensors` reduced at this candidate's setting.
+    ///
+    /// # Guarantees
+    ///
+    /// - The output is zeroed first where the routine only adds into it, the atomic hypercube.
     ///
     /// # Errors
     ///
-    /// Why the routine, or the zeroing before it, cannot run the problem at its setting.
-    ///
-    /// # Panics
-    ///
-    /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
+    /// Why the routine, or the zeroing before it, cannot run the problem at its setting, or a
+    /// [`Decline::Broken`] where it breaks what it prepared.
     pub fn launch(&self, tensors: &ReduceTensors) -> Result<(), Decline> {
         self.launcher.launch(tensors)
     }
@@ -74,14 +76,14 @@ impl ReduceCandidate {
 
     /// `tensors`, whose input the caller binds, reduced at this candidate's setting.
     ///
+    /// # Guarantees
+    ///
+    /// - As [`launch`](Self::launch).
+    ///
     /// # Errors
     ///
-    /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
-    /// input.
-    ///
-    /// # Panics
-    ///
-    /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
+    /// Why the routine, or the zeroing before it, cannot run the problem at its setting, or why it
+    /// cannot read the caller's input, or a [`Decline::Broken`] where it breaks what it prepared.
     pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
@@ -116,17 +118,17 @@ struct ReduceCandidateLauncher {
 /// The routine a [`ReduceCandidateLauncher`] launches through, one variant a routine.
 #[derive(Debug, Clone)]
 enum ReduceCandidateLauncherDispatch {
-    UnitDirect(ReduceRoutineSetting<UnitDirectReduceRoutine>),
-    PlaneShuffle(ReduceRoutineSetting<PlaneShuffleReduceRoutine>),
-    CubeStaged(ReduceRoutineSetting<CubeStagedReduceRoutine>),
-    HypercubeLastArrival(ReduceRoutineSetting<HypercubeLastArrivalReduceRoutine>),
+    UnitDirect(ReduceSettingLauncher<UnitDirectReduceRoutine>),
+    PlaneShuffle(ReduceSettingLauncher<PlaneShuffleReduceRoutine>),
+    CubeStaged(ReduceSettingLauncher<CubeStagedReduceRoutine>),
+    HypercubeLastArrival(ReduceSettingLauncher<HypercubeLastArrivalReduceRoutine>),
     /// Run after the output is zeroed.
-    HypercubeAtomic(ReduceRoutineSetting<HypercubeAtomicReduceRoutine>),
+    HypercubeAtomic(ReduceSettingLauncher<HypercubeAtomicReduceRoutine>),
 }
 
 impl ReduceCandidateLauncher {
     /// `tensors` reduced at the candidate's setting, zeroed first for the atomic routine.
-    fn launch(&self, tensors: &ReduceTensors) -> Result<(), Decline> {
+    pub fn launch(&self, tensors: &ReduceTensors) -> Result<(), Decline> {
         match &self.dispatch {
             ReduceCandidateLauncherDispatch::UnitDirect(candidate) => candidate.launch(tensors),
             ReduceCandidateLauncherDispatch::PlaneShuffle(candidate) => candidate.launch(tensors),
@@ -141,31 +143,35 @@ impl ReduceCandidateLauncher {
     }
 
     /// The launch the candidate prepares for `key`, its blueprint tagged with its routine.
-    fn prepared(&self, key: &ReduceKey) -> Option<ReducePrepared> {
+    pub fn prepared(&self, key: &ReduceKey) -> Option<ReducePrepared> {
         match &self.dispatch {
             ReduceCandidateLauncherDispatch::UnitDirect(candidate) => {
                 candidate.prepared(key).map(|(blueprint, grid)| {
-                    ReducePrepared::new(ReduceCompiled::UnitDirect, blueprint, grid)
+                    ReducePrepared::new(ReduceRoutineBlueprint::UnitDirect, blueprint, grid)
                 })
             }
             ReduceCandidateLauncherDispatch::PlaneShuffle(candidate) => {
                 candidate.prepared(key).map(|(blueprint, grid)| {
-                    ReducePrepared::new(ReduceCompiled::PlaneShuffle, blueprint, grid)
+                    ReducePrepared::new(ReduceRoutineBlueprint::PlaneShuffle, blueprint, grid)
                 })
             }
             ReduceCandidateLauncherDispatch::CubeStaged(candidate) => {
                 candidate.prepared(key).map(|(blueprint, grid)| {
-                    ReducePrepared::new(ReduceCompiled::CubeStaged, blueprint, grid)
+                    ReducePrepared::new(ReduceRoutineBlueprint::CubeStaged, blueprint, grid)
                 })
             }
             ReduceCandidateLauncherDispatch::HypercubeLastArrival(candidate) => {
                 candidate.prepared(key).map(|(blueprint, grid)| {
-                    ReducePrepared::new(ReduceCompiled::HypercubeLastArrival, blueprint, grid)
+                    ReducePrepared::new(
+                        ReduceRoutineBlueprint::HypercubeLastArrival,
+                        blueprint,
+                        grid,
+                    )
                 })
             }
             ReduceCandidateLauncherDispatch::HypercubeAtomic(candidate) => {
                 candidate.prepared(key).map(|(blueprint, grid)| {
-                    ReducePrepared::new(ReduceCompiled::HypercubeAtomic, blueprint, grid)
+                    ReducePrepared::new(ReduceRoutineBlueprint::HypercubeAtomic, blueprint, grid)
                 })
             }
         }
@@ -185,8 +191,8 @@ impl ReduceCandidateLauncher {
     }
 
     /// `tensors`, whose input the caller binds, reduced at the candidate's setting
-    /// ([`ReduceRoutineSetting::launch_unbound`]).
-    fn launch_unbound<I: TileOperand>(
+    /// ([`ReduceSettingLauncher::launch_unbound`]).
+    pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
@@ -211,7 +217,7 @@ impl ReduceCandidateLauncher {
     }
 
     /// The candidate's name, which the tuning cache is keyed by.
-    fn name(&self) -> &String {
+    pub fn name(&self) -> &String {
         match &self.dispatch {
             ReduceCandidateLauncherDispatch::UnitDirect(candidate) => candidate.name(),
             ReduceCandidateLauncherDispatch::PlaneShuffle(candidate) => candidate.name(),
@@ -222,109 +228,62 @@ impl ReduceCandidateLauncher {
     }
 }
 
-impl From<ReduceRoutineSetting<UnitDirectReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineSetting<UnitDirectReduceRoutine>) -> Self {
+impl From<ReduceSettingLauncher<UnitDirectReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceSettingLauncher<UnitDirectReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::UnitDirect(candidate))
     }
 }
 
-impl From<ReduceRoutineSetting<PlaneShuffleReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineSetting<PlaneShuffleReduceRoutine>) -> Self {
+impl From<ReduceSettingLauncher<PlaneShuffleReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceSettingLauncher<PlaneShuffleReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::PlaneShuffle(candidate))
     }
 }
 
-impl From<ReduceRoutineSetting<CubeStagedReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineSetting<CubeStagedReduceRoutine>) -> Self {
+impl From<ReduceSettingLauncher<CubeStagedReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceSettingLauncher<CubeStagedReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::CubeStaged(candidate))
     }
 }
 
-impl From<ReduceRoutineSetting<HypercubeLastArrivalReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineSetting<HypercubeLastArrivalReduceRoutine>) -> Self {
+impl From<ReduceSettingLauncher<HypercubeLastArrivalReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceSettingLauncher<HypercubeLastArrivalReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::HypercubeLastArrival(
             candidate,
         ))
     }
 }
 
-impl From<ReduceRoutineSetting<HypercubeAtomicReduceRoutine>> for ReduceCandidate {
-    fn from(candidate: ReduceRoutineSetting<HypercubeAtomicReduceRoutine>) -> Self {
+impl From<ReduceSettingLauncher<HypercubeAtomicReduceRoutine>> for ReduceCandidate {
+    fn from(candidate: ReduceSettingLauncher<HypercubeAtomicReduceRoutine>) -> Self {
         Self::launching(ReduceCandidateLauncherDispatch::HypercubeAtomic(candidate))
     }
-}
-
-/// The launch a [`ReduceCandidate`] prepares for a key: the grid it runs on, and what it compiles,
-/// which two candidates compile alike exactly where their prepared launches are equal.
-#[derive(Clone)]
-pub struct ReducePrepared {
-    compiled: ReduceCompiled,
-    launch: LaunchSettings,
-}
-
-impl ReducePrepared {
-    /// The cubes and units the launch spawns.
-    pub fn launch(&self) -> &LaunchSettings {
-        &self.launch
-    }
-}
-
-impl ReducePrepared {
-    /// The launch of `blueprint` on `grid`, by the routine `routine` tags it with.
-    fn new<M>(
-        routine: fn(ReduceBlueprint<M>) -> ReduceCompiled,
-        blueprint: ReduceBlueprint<M>,
-        grid: Grid,
-    ) -> Self {
-        Self {
-            compiled: routine(blueprint),
-            launch: grid.launch,
-        }
-    }
-}
-
-/// Two launches compile alike where their routine and blueprint do: the blueprint's partitioning
-/// settles the cube on the device it was listed for, and the count of cubes is a runtime value.
-impl PartialEq for ReducePrepared {
-    fn eq(&self, other: &Self) -> bool {
-        self.compiled == other.compiled
-    }
-}
-
-/// What a prepared launch compiles: its routine and its blueprint.
-#[derive(Clone, PartialEq)]
-enum ReduceCompiled {
-    UnitDirect(ReduceBlueprint<<UnitDirectReduceRoutine as Routine>::Microkernel>),
-    PlaneShuffle(ReduceBlueprint<<PlaneShuffleReduceRoutine as Routine>::Microkernel>),
-    CubeStaged(ReduceBlueprint<<CubeStagedReduceRoutine as Routine>::Microkernel>),
-    HypercubeLastArrival(
-        ReduceBlueprint<<HypercubeLastArrivalReduceRoutine as Routine>::Microkernel>,
-    ),
-    HypercubeAtomic(ReduceBlueprint<<HypercubeAtomicReduceRoutine as Routine>::Microkernel>),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::tests::{bound_back, zeros};
-    use crate::kernels::{ReduceElements, ReduceRoutine};
-    use cubecl::CubeElement;
-    use cubecl::bytes::Bytes;
-    use cubecl::ir::{ElemType, FloatKind};
-    use cubecl::std::tensor::TensorHandle;
+    use crate::kernels::ReduceRoutine;
+    use crate::kernels::testing::{
+        BufferScopeChecker, Reduction, UnboundScopeChecker, bound_back, sum_of_long_rows,
+        unbound_tensors,
+    };
+    use cubecl::client::Client;
+    use cubecl::prelude::TensorBinding;
     use cubecl::tile::launch::StoredTileOperand;
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
+    use cubek_std::routine::Routine;
+    use cubek_test_utils::ScopeChecker;
 
-    const F32: ElemType = ElemType::Float(FloatKind::F32);
     const SHAPE: [usize; 2] = [4, 8];
 
     /// Checks that `setting` made a [`ReduceCandidate`] keeps its name.
     fn keeps_its_name<R: ReduceRoutine<M> + Routine<Microkernel = M>, M>(
-        setting: &ReduceRoutineSetting<R>,
+        setting: &ReduceSettingLauncher<R>,
     ) where
-        ReduceRoutineSetting<R>: Clone,
-        ReduceCandidate: From<ReduceRoutineSetting<R>>,
+        ReduceSettingLauncher<R>: Clone,
+        ReduceCandidate: From<ReduceSettingLauncher<R>>,
     {
         let named = ReduceCandidate::from(setting.clone()).to_string();
         assert_eq!(&named, setting.name());
@@ -333,35 +292,36 @@ mod tests {
     #[test]
     fn a_unit_candidate_keeps_its_name() {
         keeps_its_name(
-            &ReduceRoutineSetting::<UnitDirectReduceRoutine>::list(&devices::m2_pro())[0],
+            &ReduceSettingLauncher::<UnitDirectReduceRoutine>::list(&devices::m2_pro())[0],
         );
     }
 
     #[test]
     fn a_plane_candidate_keeps_its_name() {
         keeps_its_name(
-            &ReduceRoutineSetting::<PlaneShuffleReduceRoutine>::list(&devices::m2_pro())[0],
+            &ReduceSettingLauncher::<PlaneShuffleReduceRoutine>::list(&devices::m2_pro())[0],
         );
     }
 
     #[test]
     fn a_cube_candidate_keeps_its_name() {
         keeps_its_name(
-            &ReduceRoutineSetting::<CubeStagedReduceRoutine>::list(&devices::m2_pro())[0],
+            &ReduceSettingLauncher::<CubeStagedReduceRoutine>::list(&devices::m2_pro())[0],
         );
     }
 
     #[test]
     fn a_last_arrival_candidate_keeps_its_name() {
         keeps_its_name(
-            &ReduceRoutineSetting::<HypercubeLastArrivalReduceRoutine>::list(&devices::m2_pro())[0],
+            &ReduceSettingLauncher::<HypercubeLastArrivalReduceRoutine>::list(&devices::m2_pro())
+                [0],
         );
     }
 
     #[test]
     fn an_atomic_candidate_keeps_its_name() {
         keeps_its_name(
-            &ReduceRoutineSetting::<HypercubeAtomicReduceRoutine>::list(&devices::m2_pro())[0],
+            &ReduceSettingLauncher::<HypercubeAtomicReduceRoutine>::list(&devices::m2_pro())[0],
         );
     }
 
@@ -384,7 +344,7 @@ mod tests {
     #[test]
     fn a_plane_candidate_declines_an_unbound_input() {
         declines_unbound(
-            ReduceRoutineSetting::<PlaneShuffleReduceRoutine>::list(&lacking_every_feature())
+            ReduceSettingLauncher::<PlaneShuffleReduceRoutine>::list(&lacking_every_feature())
                 .remove(0),
         );
     }
@@ -392,7 +352,7 @@ mod tests {
     #[test]
     fn a_cube_candidate_declines_an_unbound_input() {
         declines_unbound(
-            ReduceRoutineSetting::<CubeStagedReduceRoutine>::list(&lacking_every_feature())
+            ReduceSettingLauncher::<CubeStagedReduceRoutine>::list(&lacking_every_feature())
                 .remove(0),
         );
     }
@@ -400,7 +360,7 @@ mod tests {
     #[test]
     fn a_last_arrival_candidate_declines_an_unbound_input() {
         declines_unbound(
-            ReduceRoutineSetting::<HypercubeLastArrivalReduceRoutine>::list(
+            ReduceSettingLauncher::<HypercubeLastArrivalReduceRoutine>::list(
                 &lacking_every_feature(),
             )
             .remove(0),
@@ -410,35 +370,114 @@ mod tests {
     #[test]
     fn an_atomic_candidate_declines_an_unbound_input() {
         declines_unbound(
-            ReduceRoutineSetting::<HypercubeAtomicReduceRoutine>::list(&lacking_every_feature())
+            ReduceSettingLauncher::<HypercubeAtomicReduceRoutine>::list(&lacking_every_feature())
                 .remove(0),
         );
     }
 
-    /// Zeros summed into an output of ones.
+    /// Every setting of every routine.
+    #[test]
+    fn every_setting_of_every_routine_is_listed() {
+        let hw = devices::m2_pro();
+        let settings = UnitDirectReduceRoutine::settings(&hw).len()
+            + PlaneShuffleReduceRoutine::settings(&hw).len()
+            + CubeStagedReduceRoutine::settings(&hw).len()
+            + HypercubeLastArrivalReduceRoutine::settings(&hw).len()
+            + HypercubeAtomicReduceRoutine::settings(&hw).len();
+        assert_eq!(ReduceCandidate::list(&hw).len(), settings);
+    }
+
+    /// `reduction` launched unbound by `R`'s first candidate on `client`'s device.
+    ///
+    /// # Errors
+    ///
+    /// Why the candidate declines it.
+    fn launch_unbound_candidate<R, M>(
+        client: &Client,
+        input: TensorBinding,
+        out: TensorBinding,
+        reduction: &Reduction,
+    ) -> Result<(), Decline>
+    where
+        R: ReduceRoutine<M> + Routine<Microkernel = M, Settings: core::fmt::Display>,
+        ReduceCandidate: From<ReduceSettingLauncher<R>>,
+    {
+        let hw = Hardware::from_client(client);
+        let tensors = unbound_tensors::<R, M>(client, &input, out, reduction)?;
+        let candidate = ReduceCandidate::from(ReduceSettingLauncher::<R>::list(&hw).remove(0));
+        candidate.launch_unbound::<StoredTileOperand>(&tensors, bound_back(input))
+    }
+
+    /// `tensors` reduced by `R`'s first candidate on `hw`.
+    ///
+    /// # Errors
+    ///
+    /// Why the candidate declines them.
+    fn launch_candidate<R, M>(hw: &Hardware, tensors: &ReduceTensors) -> Result<(), Decline>
+    where
+        R: ReduceRoutine<M> + Routine<Microkernel = M, Settings: core::fmt::Display>,
+        ReduceCandidate: From<ReduceSettingLauncher<R>>,
+    {
+        ReduceCandidate::from(ReduceSettingLauncher::<R>::list(hw).remove(0)).launch(tensors)
+    }
+
     #[test]
     fn a_unit_candidate_reduces_the_input_its_caller_binds() {
-        const ROWS: usize = 4;
-        let client = cubecl::test_device().client();
-        let input = zeros(&client, &[ROWS, 8]);
-        let written = client.create(Bytes::from_elems(vec![1.0f32; ROWS]));
-        let tensors = ReduceTensors::unbound(
-            &client,
-            Geometry::from(&input),
-            1,
-            TensorHandle::new_contiguous([ROWS, 1], written.clone(), F32).binding(),
-            1,
-            ReduceOperation::Sum,
-            ReduceElements::for_operation(ReduceOperation::Sum, F32, None),
-        );
-        let hw = Hardware::from_client(&client);
-        let candidate = ReduceCandidate::from(
-            ReduceRoutineSetting::<UnitDirectReduceRoutine>::list(&hw).remove(0),
-        );
-        candidate
-            .launch_unbound::<StoredTileOperand>(&tensors, bound_back(input))
-            .expect("the unit routine serves every problem");
-        let sums = client.read_one(written).expect("the output reads back");
-        assert_eq!(f32::from_bytes(&sums), [0.0; ROWS]);
+        UnboundScopeChecker::new(launch_unbound_candidate::<UnitDirectReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn a_unit_candidate_reduces_its_buffers() {
+        BufferScopeChecker::new(launch_candidate::<UnitDirectReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn a_plane_candidate_reduces_the_input_its_caller_binds() {
+        UnboundScopeChecker::new(launch_unbound_candidate::<PlaneShuffleReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn a_plane_candidate_reduces_its_buffers() {
+        BufferScopeChecker::new(launch_candidate::<PlaneShuffleReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn a_cube_candidate_reduces_the_input_its_caller_binds() {
+        UnboundScopeChecker::new(launch_unbound_candidate::<CubeStagedReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn a_cube_candidate_reduces_its_buffers() {
+        BufferScopeChecker::new(launch_candidate::<CubeStagedReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn a_last_arrival_candidate_reduces_the_input_its_caller_binds() {
+        UnboundScopeChecker::new(launch_unbound_candidate::<HypercubeLastArrivalReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn a_last_arrival_candidate_reduces_its_buffers() {
+        BufferScopeChecker::new(launch_candidate::<HypercubeLastArrivalReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn an_atomic_candidate_reduces_the_input_its_caller_binds() {
+        UnboundScopeChecker::new(launch_unbound_candidate::<HypercubeAtomicReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
+    }
+
+    #[test]
+    fn an_atomic_candidate_reduces_its_buffers() {
+        BufferScopeChecker::new(launch_candidate::<HypercubeAtomicReduceRoutine, _>)
+            .check([sum_of_long_rows()]);
     }
 }

@@ -4,7 +4,6 @@ mod base;
 mod cube;
 mod finish;
 mod hypercube;
-mod indexed;
 mod packed;
 mod plane;
 mod storage;

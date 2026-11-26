@@ -4,10 +4,17 @@ use cubecl::tile::launch::Decline;
 /// one convolution it computes, or a setting the device cannot serve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvDecline {
-    /// A bias, which is not part of the contraction.
-    Bias,
-    /// A weight or weight gradient whose channels are not the input's.
+    /// A bias that is not one value for each output channel, as a vector of that length.
+    BiasShape,
+    /// A bias of another element than the output's.
+    BiasElement,
+    /// An output of an element that is not a float, which the bias and the sum are added in.
+    OutputElement,
+    /// Input channels that are not a whole number of groups of the weight's input channels, or
+    /// filters that the same number of groups does not divide.
     Groups,
+    /// A group of one input and one output channel, which the depthwise kernel serves.
+    Depthwise,
     /// A convolution over no spatial dim.
     NoSpatialDim,
     /// A convolution over more spatial dims than the dimension labels number.
@@ -17,10 +24,10 @@ pub enum ConvDecline {
     RankMismatch,
     /// An operand that is quantized, whose scales the binding would drop.
     Quantized,
-    /// The gradient of the input at a stride above 1, which reads the output gradient only at
-    /// every stride-th position.
-    DataBackwardStrided,
-    /// An output of other channels than the weight's filters.
+    /// The gradient of the input at a stride above 1 along a dim with a dilation above 1: the
+    /// phases of the stride would leave input cells that no phase writes.
+    DataBackwardStridedDilated,
+    /// An output of other channels than the weight's filters, or that do not split into the groups.
     OutChannels,
     /// Operands of different batches.
     Batch,
@@ -40,8 +47,8 @@ pub enum ConvDecline {
     /// An input gradient whose extent, with the taps and the window, does not yield the output
     /// gradient's.
     DataGradExtent,
-    /// A tiled tensor whose dims the view reorders, since the tiling labels the buffer's dims and
-    /// would no longer match.
+    /// A tiled tensor whose dims the view reorders or whose channels it splits by group, since the
+    /// tiling labels the buffer's dims.
     PermutedTiled,
     /// A transposed forward, which the tiled convolution states as no operation of its own.
     Transposed,
@@ -58,9 +65,16 @@ pub enum ConvDecline {
 impl ConvDecline {
     const fn why(self) -> &'static str {
         match self {
-            Self::Bias => "the tiled forward convolution adds no bias",
+            Self::BiasShape => {
+                "the tiled forward convolution's bias is a vector of its output channels"
+            }
+            Self::BiasElement => "the tiled forward convolution's bias is of the output's element",
+            Self::OutputElement => "the tiled convolution's output is a float",
             Self::Groups => {
-                "the tiled convolution contracts every input channel, so it has no groups"
+                "the tiled convolution's input channels are a whole number of groups of the weight's input channels, and its filters split into that same number of groups"
+            }
+            Self::Depthwise => {
+                "a group of one input and one output channel is a depthwise convolution, which has a kernel of its own"
             }
             Self::NoSpatialDim => "the tiled convolution has at least one spatial dimension",
             Self::TooManySpatialDims => {
@@ -72,8 +86,8 @@ impl ConvDecline {
             Self::Quantized => {
                 "the tiled convolution reads float operands, a quantized one would lose its scales"
             }
-            Self::DataBackwardStrided => {
-                "the tiled data backward convolution has a stride of 1, the gradient read at every stride-th position is not stated"
+            Self::DataBackwardStridedDilated => {
+                "the tiled data backward convolution has a dilation of 1 along a strided dimension, whose phases would leave input cells unwritten"
             }
             Self::OutChannels => "the tiled convolution's output channels are its weight's filters",
             Self::Batch => "the tiled convolution's operands share one batch",
@@ -96,7 +110,7 @@ impl ConvDecline {
                 "the output gradient's extent is (input gradient + 2 padding - dilation (taps - 1) - 1) / stride + 1 along each spatial dimension"
             }
             Self::PermutedTiled => {
-                "the tiled convolution reorders a tensor's dims, which it cannot do to a tiled one"
+                "the tiled convolution cannot reorder a tiled tensor's dims or split its channels by group"
             }
             Self::Transposed => {
                 "the tiled convolution has no transposed forward, which is its data backward at a stride"

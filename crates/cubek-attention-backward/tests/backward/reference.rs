@@ -10,7 +10,7 @@ use cubek_attention_backward::{AttentionBackwardGradients, AttentionBackwardTens
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 /// The shape of one backward pass, and how its queries see its keys.
 #[derive(Debug, Clone, Copy)]
@@ -209,7 +209,7 @@ impl Reference {
 
     /// `strategy` at `settings`, or at its lead, on `case` in `element`, against the host within
     /// `tolerance`; skipped, and said so, where the device declines it. A launch that fails on the
-    /// device fails the check: its gradients would be whatever their buffers held, which a buffer
+    /// device fails the check: its gradients would be whatever their buffers hold, which a buffer
     /// handed back by the memory pool can make look right.
     pub fn run<S: AttentionBackwardLaunch>(
         strategy: S,
@@ -229,7 +229,11 @@ impl Reference {
                 }
                 reference.check(&client, gradients, tolerance)
             }
-            Err(decline) => eprintln!("{settings}: declined on this device, {decline:?}"),
+            Err(broken) if broken.is_broken() => panic!("{settings}: {broken}"),
+            Err(decline) => TestOutcome::Validated(ValidationResult::Skipped(format!(
+                "{settings}: declined on this device, {decline}"
+            )))
+            .enforce(),
         }
     }
 

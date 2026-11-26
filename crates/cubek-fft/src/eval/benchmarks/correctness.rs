@@ -1,4 +1,4 @@
-use cubek_test_utils::{HostData, Progress};
+use cubek_test_utils::{HostData, KernelResultError, Progress};
 
 use crate::eval::benchmarks::problem::FftProblem;
 use crate::eval::benchmarks::strategy::FftStrategy;
@@ -15,7 +15,7 @@ impl cubek_test_utils::Correctness for FftCorrectness {
         _strategy: &FftStrategy,
         problem: &FftProblem,
         seeds: &[u64],
-    ) -> Result<HostData, String> {
+    ) -> Result<HostData, KernelResultError> {
         let device = cubecl::test_device();
         let client = device.client();
         let dim = problem.shape.len() - 1;

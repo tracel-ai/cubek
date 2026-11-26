@@ -8,7 +8,7 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_microkernel::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, QueryHolder};
 use cubek_std::microkernel::{StageLayout, StageRing};
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::attention::{
     Forward, PROMPT, PROMPT_HEAD_DIM_256, PROMPT_WIDE, PROMPTS, PROMPTS_HEAD_DIM_256_PAGED,

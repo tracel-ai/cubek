@@ -4,7 +4,7 @@
 use cubecl::zspace::shape;
 use cubek_matmul::kernels::{UnitRegistersMatmulRoutine, UnitRegistersMatmulRoutineSettings};
 use cubek_std::Hardware;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Broadcast, Declines, F16, F32, Product};
 use crate::tiled::ByRoutine;
