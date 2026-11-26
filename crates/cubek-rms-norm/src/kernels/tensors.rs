@@ -70,6 +70,30 @@ pub struct RmsNormOutputBuffer {
     rows: PlainTensor,
 }
 
+/// What a launch of this kind declines before preparing anything: a weight of another element
+/// than the rows'.
+pub const RMS_NORM_WEIGHT_ELEMENT_DIFFERS: Decline = Decline::Unserved {
+    why: "the weight is the rows' element",
+};
+
+/// What a launch of this kind declines before preparing anything: a weight that is not whole rows
+/// of the normalized dim.
+pub const RMS_NORM_WEIGHT_NOT_ROWS: Decline = Decline::Unserved {
+    why: "the weight spans the normalized dim, once or once a row",
+};
+
+/// What a launch of this kind declines before preparing anything: a weight a row whose rows do
+/// not divide the input's.
+pub const RMS_NORM_WEIGHT_ROWS_UNDIVIDED: Decline = Decline::Unserved {
+    why: "a weight of several rows scales whole groups of as many rows",
+};
+
+/// What a launch into a buffer its caller allocated declines: an output of another shape or
+/// element than the input's.
+pub const RMS_NORM_OUTPUT_UNREAD: Decline = Decline::Unserved {
+    why: "the output takes the input's shape and element",
+};
+
 /// What a packed or tiled launch declines before preparing anything: rows in batch entries,
 /// which a matrix of rows does not lie in.
 pub const RMS_NORM_ROWS_IN_ENTRIES: Decline = Decline::Unserved {
@@ -98,7 +122,9 @@ impl RmsNormInputs {
     ///
     /// As [`RmsNormTensors::new`].
     fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
-        assert_eq!(input.elem, weight.elem, "the weight is the rows' element");
+        if input.elem != weight.elem {
+            return Err(RMS_NORM_WEIGHT_ELEMENT_DIFFERS);
+        }
         if !matches!(input.elem, ElemType::Float(_)) {
             return Err(RMS_NORM_ELEMENT_UNVERIFIED);
         }
@@ -116,15 +142,14 @@ impl RmsNormInputs {
                 .as_batched_rows(dim)
                 .expect("dense rows are one batch entry"),
         };
-        let weight = RmsNormWeight::new(weight.into_dense_at(client, read_bytes), dim);
+        let weight = RmsNormWeight::new(weight.into_dense_at(client, read_bytes), dim)?;
         let input = match weight.rows() {
             Some(each) if input.binding.shape[1] != each => {
                 let dense = input.into_dense_at(client, read_bytes);
                 let rows = dense.binding.shape.iter().product::<usize>() / dim;
-                assert!(
-                    rows.is_multiple_of(each),
-                    "a weight of {each} rows scales whole groups of rows, got {rows} rows"
-                );
+                if !rows.is_multiple_of(each) {
+                    return Err(RMS_NORM_WEIGHT_ROWS_UNDIVIDED);
+                }
                 dense.viewed(Metadata::new(
                     [rows / each, each, dim],
                     [each * dim, dim, 1],
@@ -161,27 +186,22 @@ impl RmsNormInputs {
     /// The tensors of the norm of these operands into `out`, a contiguous buffer in the input's
     /// shape.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On an `out` of another shape or element than the input's.
-    fn into_contiguous(self, out: TensorHandle) -> RmsNormTensors {
-        assert!(
-            out.shape().iter().eq(self.shape.iter()),
-            "the output takes the input's shape"
-        );
-        assert_eq!(
-            out.dtype, self.input.elem,
-            "the output takes the input's element"
-        );
+    /// [`RMS_NORM_OUTPUT_UNREAD`].
+    fn into_contiguous(self, out: TensorHandle) -> Result<RmsNormTensors, Decline> {
+        if !out.shape().iter().eq(self.shape.iter()) || out.dtype != self.input.elem {
+            return Err(RMS_NORM_OUTPUT_UNREAD);
+        }
         let (batch, rows, dim) = (self.batch, self.rows, self.dim);
         let rows = PlainTensor::of_handle(out.clone())
             .viewed(Metadata::new([batch, rows, dim], [rows * dim, dim, 1]));
         let placement = Placement::from(&rows);
-        self.with_out(
+        Ok(self.with_out(
             RmsNormOutputBuffer { handle: out, rows },
             placement,
             RowStore::Plain,
-        )
+        ))
     }
 
     /// The tensors of the norm of these operands into `out`, which lies at `placement` and stores
@@ -227,12 +247,9 @@ impl RmsNormTensors {
     /// # Errors
     ///
     /// [`RMS_NORM_ELEMENT_UNVERIFIED`], what the routines decline whatever the device, and
-    /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run.
-    ///
-    /// # Panics
-    ///
-    /// Operands on different devices or of different elements, a weight that is not whole rows of
-    /// the normalized dim, or a weight a row whose rows do not divide the input's: no norm at all.
+    /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run. Of the weight,
+    /// [`RMS_NORM_WEIGHT_ELEMENT_DIFFERS`], [`RMS_NORM_WEIGHT_NOT_ROWS`] and
+    /// [`RMS_NORM_WEIGHT_ROWS_UNDIVIDED`].
     pub fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
         let operands = RmsNormInputs::new(client, input, weight)?;
         let (out, _) = PlainTensor::empty_contiguous(
@@ -240,7 +257,7 @@ impl RmsNormTensors {
             operands.shape.clone().into(),
             operands.input.elem,
         );
-        Ok(operands.into_contiguous(out))
+        operands.into_contiguous(out)
     }
 
     /// The output, in the input's shape.
@@ -281,18 +298,14 @@ impl RmsNormTensors {
     ///
     /// # Errors
     ///
-    /// As [`RmsNormTensors::new`].
-    ///
-    /// # Panics
-    ///
-    /// As [`RmsNormTensors::new`], and on an `out` of another shape or element than the input's.
+    /// As [`RmsNormTensors::new`], and [`RMS_NORM_OUTPUT_UNREAD`].
     pub(crate) fn contiguous(
         client: &Client,
         input: PlainTensor,
         weight: PlainTensor,
         out: TensorHandle,
     ) -> Result<Self, Decline> {
-        Ok(RmsNormInputs::new(client, input, weight)?.into_contiguous(out))
+        RmsNormInputs::new(client, input, weight)?.into_contiguous(out)
     }
 }
 
@@ -302,10 +315,6 @@ impl RmsNormTensors<Geometry> {
     /// would hold.
     ///
     /// # Errors
-    ///
-    /// As [`RmsNormTensors::new`].
-    ///
-    /// # Panics
     ///
     /// As [`RmsNormTensors::new`].
     pub fn sink(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
@@ -321,7 +330,7 @@ impl RmsNormTensors<Geometry> {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    /// As the `bind` of the tensors writing into a buffer.
     pub fn bind<M>(
         &self,
         blueprint: &RmsNormBlueprint<M>,
@@ -358,10 +367,6 @@ impl RmsNormTensors<PackedRows> {
     ///
     /// As [`RmsNormTensors::new`]; [`RMS_NORM_ROWS_IN_ENTRIES`]; and what
     /// [`PackedRows::new`] declines of `out`.
-    ///
-    /// # Panics
-    ///
-    /// As [`RmsNormTensors::new`], and on an `out` not shaped `[rows, dim]`.
     pub fn packed(
         client: &Client,
         input: PlainTensor,
@@ -379,7 +384,7 @@ impl RmsNormTensors<PackedRows> {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    /// As the `bind` of the tensors writing into a buffer.
     pub fn bind<M>(
         &self,
         blueprint: &RmsNormBlueprint<M>,
@@ -405,10 +410,6 @@ impl RmsNormTensors<TiledRows> {
     ///
     /// As [`RmsNormTensors::new`]; [`RMS_NORM_ROWS_IN_ENTRIES`]; and what [`TiledRows::new`]
     /// declines of `out`.
-    ///
-    /// # Panics
-    ///
-    /// As [`RmsNormTensors::new`].
     pub fn tiled(
         client: &Client,
         input: PlainTensor,
@@ -427,7 +428,7 @@ impl RmsNormTensors<TiledRows> {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    /// As the `bind` of the tensors writing into a buffer.
     pub fn bind<M>(
         &self,
         blueprint: &RmsNormBlueprint<M>,
@@ -501,20 +502,19 @@ impl RmsNormWeight {
     /// `weight`, dense, over the same buffer: `d` elements whatever leading dims of one they
     /// carry, or whole rows of `d`, one for each row of a batch entry.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// A weight that is not whole rows of `dim`.
-    fn new(weight: PlainTensor, dim: usize) -> Self {
+    /// [`RMS_NORM_WEIGHT_NOT_ROWS`].
+    fn new(weight: PlainTensor, dim: usize) -> Result<Self, Decline> {
         let elements = weight.binding.shape.iter().product::<usize>();
-        assert!(
-            elements > 0 && elements.is_multiple_of(dim),
-            "the weight spans the normalized dim, once or once a row"
-        );
+        if elements == 0 || !elements.is_multiple_of(dim) {
+            return Err(RMS_NORM_WEIGHT_NOT_ROWS);
+        }
         let rows = elements / dim;
-        match rows {
+        Ok(match rows {
             1 => Self::Shared(weight.viewed(Metadata::new([dim], [1]))),
             rows => Self::PerRow(weight.viewed(Metadata::new([rows, dim], [dim, 1]))),
-        }
+        })
     }
 
     /// The rows a batch entry holds under a weight a row.

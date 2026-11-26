@@ -13,6 +13,12 @@ pub const TILED_ROWS_UNSERVED: Decline = Decline::Unserved {
     why: "a tiled output is a float matrix of the producer's rows, stored in tiles, at its element",
 };
 
+/// What a packed launch declines before preparing anything: an output that is not a product's lhs
+/// (`[M, K]`) holding the producer's rows.
+pub const PACKED_ROWS_UNSERVED: Decline = Decline::Unserved {
+    why: "a packed output is a product's [M, K] lhs, the producer's rows by their width",
+};
+
 /// A matrix of a producer's rows, allocated by the caller, laid out the way a product reads its
 /// lhs: packed under block scales along each row ([`PackedRows`]), or float in the product's
 /// storage tiles ([`TiledRows`]). It is one type because a family's tuned launch writes either one
@@ -95,23 +101,13 @@ impl PackedRows {
     ///
     /// # Errors
     ///
+    /// [`PACKED_ROWS_UNSERVED`] for an `out` not over `[M, K]` or not `rows` by `width`, and
     /// [`PACKED_STORE_UNSERVED`](cubek_microkernel::row_store::PACKED_STORE_UNSERVED) for a scheme
     /// the store does not write.
-    ///
-    /// # Panics
-    ///
-    /// On an `out` not over `[M, K]` or not `rows` by `width`.
     pub fn new(out: PackedTensor, rows: usize, width: usize) -> Result<Self, Decline> {
-        assert_eq!(
-            out.dimensions(),
-            [M, K],
-            "a packed output is a product's lhs"
-        );
-        assert_eq!(
-            [out.extent(M), out.extent(K)],
-            [rows, width],
-            "a packed output holds the producer's rows"
-        );
+        if out.dimensions() != [M, K] || [out.extent(M), out.extent(K)] != [rows, width] {
+            return Err(PACKED_ROWS_UNSERVED);
+        }
         let store = RowStore::packed(&out.scheme(), width)?;
         Ok(Self { packed: out, store })
     }
