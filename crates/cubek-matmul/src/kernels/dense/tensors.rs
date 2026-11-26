@@ -928,13 +928,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         let shape = lhs.values().shape();
         let rank = shape.rank();
         let batches = table.entries.shape().to_vec();
-        let held = |dims: &[usize]| dims.iter().product();
+        let count = |dims: &[usize]| dims.iter().product();
         MatmulRoutineProblem {
             stated_rows: shape[rank - 2],
             batches_held: MatmulOperands {
-                lhs: held(&shape[..rank - 2]),
+                lhs: count(&shape[..rank - 2]),
                 rhs: 1,
-                out: held(&batches),
+                out: count(&batches),
             },
             batches,
             index: Some(table.index),

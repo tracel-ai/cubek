@@ -135,13 +135,13 @@ impl MatmulPartitioning {
             MatmulRowsKind::Tiled => space.clone(),
             MatmulRowsKind::Whole => {
                 let rows = self.dimensions_kind.rows_dimension();
-                let held = self.cube.extent(rows);
+                let cube_rows = self.cube.extent(rows);
                 Space::new(
                     &space
                         .extents()
                         .into_iter()
                         .map(|(dimension, extent)| {
-                            (dimension, if dimension == rows { held } else { extent })
+                            (dimension, if dimension == rows { cube_rows } else { extent })
                         })
                         .collect::<Vec<_>>(),
                 )
