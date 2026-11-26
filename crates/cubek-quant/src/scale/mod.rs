@@ -1,7 +1,7 @@
+mod coarser;
 mod effective;
-mod global;
 mod view;
 
+pub use coarser::*;
 pub use effective::*;
-pub use global::*;
 pub use view::*;

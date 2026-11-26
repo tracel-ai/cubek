@@ -209,33 +209,50 @@ pub type ScalesViewMut<'a, E> = ViewMut<'a, E, Coords1d>;
 /// Launch type for LinearTensorView.
 pub type ScalesViewLaunch = ViewArg<Coords1d>;
 
-/// Create a scales view from the values and scales handle, vector size and quantization scheme.
-/// `values` should be *the quantized tensor*, and will be adjusted by `num_quants`.
+/// Create a view of one level's scales, the level of blocks of `size`, from the values and scales
+/// handle, vector size and quantization scheme. `values` should be *the quantized tensor*, and will
+/// be adjusted by `num_quants`.
+///
+/// # Panics
+///
+/// As [`scales_layout`].
 pub fn scales_view(
     values: TensorBinding,
     scales: TensorBinding,
     scales_vector_size: usize,
     quant_scheme: &QuantScheme,
+    size: BlockSize,
 ) -> ScalesViewLaunch {
-    let layout = scales_layout(&values, &scales, scales_vector_size, quant_scheme);
+    let layout = scales_layout(&values, &scales, scales_vector_size, quant_scheme, size);
     // The kernel sees the whole handle: a broadcast scales tensor's shape holds more scalars
     // than its memory, so its shape's product is no length to declare.
     ScalesViewLaunch::new_array::<ScalesLayout>(scales.into_buffer_arg(), layout)
 }
 
+/// The layout of one level's scales, the level of blocks of `size`: one scale for the tensor, or
+/// a grid of one scale per block.
+///
+/// # Panics
+///
+/// Where a grid of scales is bound with another number of axes than the values: the layout walks
+/// the scales' own axes, so a flat grid of a block scheme would be read along the wrong ones.
 pub fn scales_layout(
     values: &TensorBinding,
     scales: &TensorBinding,
     scales_vector_size: usize,
     scheme: &QuantScheme,
+    size: BlockSize,
 ) -> ScalesLayoutArgs {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
 
-    // The innermost level's grid, which a two-level scheme lays out exactly like a one-level block
-    // scheme. Its global scale covers the whole tensor and rides its own binding, not this layout.
-    match scheme.finest().size {
+    match size {
         BlockSize::TENSOR => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
         block_size => {
+            assert_eq!(
+                scales.strides.len(),
+                values.shape.len(),
+                "a grid of scales should be bound on the values' axes"
+            );
             let tensor_shape = shape_divmod_quant(&values.shape, scheme.num_quants());
             let scales_strides = strides_seq(&scales.strides);
             ScalesLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(

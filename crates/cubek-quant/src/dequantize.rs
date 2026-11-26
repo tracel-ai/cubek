@@ -6,7 +6,7 @@ use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
     layout::{ScalesView, scales_view},
-    scale::{Scales, split_levels},
+    scale::{CoarserScale, Scales, split_levels},
     scheme::{QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::packed_storage_elem,
 };
@@ -30,7 +30,7 @@ pub fn dequantize_symmetric_packed_values<
 >(
     position: usize,
     values: &View<Vector<QI, NQ>, usize>,
-    scales: &Scales<'_, FS>,
+    scales: &Scales<'_, '_, FS>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
     dequantize_symmetric_packed_value_at::<F, NF, FS, QI, NQ>(
@@ -55,7 +55,7 @@ pub fn dequantize_symmetric_packed_value_at<
 >(
     position: usize,
     values: Vector<QI, NQ>,
-    scales: &Scales<'_, FS>,
+    scales: &Scales<'_, '_, FS>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
     dequantize_symmetric_packed_value::<F, NF, FS, QI, NQ>(values, scales, position, scheme)
@@ -74,7 +74,7 @@ pub fn dequantize_symmetric_packed_value<
     NQ: Size,
 >(
     values: Vector<QS, NQ>,
-    scales: &Scales<'_, FS>,
+    scales: &Scales<'_, '_, FS>,
     position: usize,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
@@ -100,7 +100,7 @@ pub fn dequantize_symmetric_packed_value<
 fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, NQ: Size>(
     input: LinearView<'_, Vector<QS, NQ>>,
     scales: ScalesView<'_, FS>,
-    global: ComptimeOption<LinearView<'_, f32>>,
+    coarser: ComptimeOption<ScalesView<'_, f32>>,
     mut output: LinearViewMut<'_, Vector<F, NF>>,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS, QS)] _dtypes: [ElemType; 3],
@@ -119,7 +119,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
     let values = input.read(ABSOLUTE_POS);
     let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
-    let scales = Scales::<FS>::new(&scales, global);
+    let scales = Scales::<FS>::new(scales, coarser);
     let out =
         dequantize_symmetric_packed_value::<F, NF, FS, QS, NQ>(values, &scales, packed_pos, scheme);
 
@@ -133,7 +133,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
 fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     input: LinearView<'_, Vector<Q, N>>,
     scale: ScalesView<'_, FS>,
-    global: ComptimeOption<LinearView<'_, f32>>,
+    coarser: ComptimeOption<ScalesView<'_, f32>>,
     mut output: LinearViewMut<'_, Vector<F, N>>,
     #[define(F, FS, Q)] _dtypes: [ElemType; 3],
 ) {
@@ -142,7 +142,7 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric
     }
 
     let native_packing = Q::packing_factor();
-    let scales = Scales::<FS>::new(&scale, global);
+    let scales = Scales::<FS>::new(scale, coarser);
     // Absolute pos is the logical position the scale is looked up by, not a layout index
     let scale = scales.read(ABSOLUTE_POS * input.vector_size() * native_packing);
 
@@ -165,7 +165,7 @@ pub fn launch_ref(
     check_scale_bindings(scheme, scales.len());
 
     let scale_dtype: ElemType = ElemType::from_scale_dtype(scheme.finest().dtype);
-    let (scale, global) = split_levels(scales);
+    let (scale, coarser) = split_levels(scales);
 
     match scheme {
         QuantScheme {
@@ -176,7 +176,7 @@ pub fn launch_ref(
             input,
             *scheme,
             scale,
-            global,
+            coarser,
             output,
             output_dtype,
             scale_dtype,
@@ -198,7 +198,7 @@ pub fn launch_ref(
                 input,
                 *scheme,
                 scale,
-                global,
+                coarser,
                 output,
                 output_dtype,
                 scale_dtype,
@@ -220,7 +220,7 @@ fn dequantize_packed(
     input: TensorBinding,
     scheme: QuantScheme,
     scale: TensorBinding,
-    global: Option<TensorBinding>,
+    coarser: Option<TensorBinding>,
     output: TensorBinding,
     output_dtype: ElemType,
     scale_dtype: ElemType,
@@ -264,8 +264,8 @@ fn dequantize_packed(
                 vector_size_out,
                 vector_size_in,
                 linear_view(input.clone()),
-                scales_view(input, scale, 1, &scheme),
-                global.map(linear_view).into(),
+                scales_view(input.clone(), scale, 1, &scheme, scheme.finest().size),
+                CoarserScale::view(input, coarser, &scheme).into(),
                 linear_view(output),
                 scheme,
                 [output_dtype, scale_dtype, input_dtype],
@@ -283,7 +283,7 @@ fn dequantize_native(
     input: TensorBinding,
     scheme: QuantScheme,
     scale: TensorBinding,
-    global: Option<TensorBinding>,
+    coarser: Option<TensorBinding>,
     output: TensorBinding,
     output_dtype: ElemType,
     scale_dtype: ElemType,
@@ -322,8 +322,8 @@ fn dequantize_native(
                     address_type,
                     vector_size,
                     linear_view(input.clone()),
-                    scales_view(input, scale, 1, &scheme),
-                    global.map(linear_view).into(),
+                    scales_view(input.clone(), scale, 1, &scheme, scheme.finest().size),
+                    CoarserScale::view(input, coarser, &scheme).into(),
                     linear_view(output),
                     [output_dtype, scale_dtype, input_dtype],
                 )
