@@ -2,8 +2,8 @@ use super::block::{BlockDepth, BlockForm};
 use super::kernel::plane_window_conv_kernel;
 use super::settings::{PlaneWindowConvSettings, UnitBlock};
 use crate::kernels::tiled::{
-    ConvBias, ConvBinding, ConvPartitioning, ConvPhasing, ConvProblem, ConvRoles, ConvRoutine,
-    ConvStaging, TileConvBlueprint,
+    ConvBinding, ConvPartitioning, ConvPhasing, ConvProblem, ConvRoles, ConvRoutine, ConvStaging,
+    TileConvBlueprint,
 };
 use core::num::NonZeroUsize;
 use cubecl::prelude::SequenceArg;
@@ -189,12 +189,6 @@ impl PlaneWindowConvRoutine {
     ) -> Vectorization<MatmulOperand> {
         let mut vectorization = Vectorization::new();
         Self::vectorize(microkernel, partitioning, &mut vectorization);
-        // The bias add reads the output one element at a time.
-        if problem.bias == ConvBias::PerChannel {
-            vectorization.require(VectorRequirement::Elementwise {
-                operand: MatmulOperand::Out,
-            });
-        }
         let roles = problem.roles();
         let dimensions = roles.dimensions();
         let runs_along = |dimension| dimensions.dim(dimension);

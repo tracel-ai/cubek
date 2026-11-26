@@ -1,10 +1,10 @@
 use super::CubeStagedConvCandidates;
 use super::kernel::cube_staged_conv_kernel;
 use crate::kernels::tiled::{
-    ConvBias, ConvBinding, ConvPartitioning, ConvProblem, ConvRoutine, ConvStaging, ConvTiles,
+    ConvBinding, ConvPartitioning, ConvProblem, ConvRoutine, ConvStaging, ConvTiles,
     CubeStagedConvSettings, TileConvBlueprint,
 };
-use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::matmul::cube::{CubeStagedBox, CubeStagedDepth, CubeStagedMicrokernel};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -91,12 +91,6 @@ impl Routine for CubeStagedConvRoutine {
         let resolved = microkernel.resolve_in(hw, &item, item.packings(), &placed)?;
         let mut vectorization = Vectorization::new();
         Self::vectorize(&resolved.microkernel, &partitioning, &mut vectorization);
-        // The bias add reads the output one element at a time.
-        if problem.bias == ConvBias::PerChannel {
-            vectorization.require(VectorRequirement::Elementwise {
-                operand: MatmulOperand::Out,
-            });
-        }
         let cube = CubeResources {
             plane_width: resolved.plane_width,
             shared_memory: resolved.shared_memory,
