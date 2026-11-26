@@ -2,7 +2,7 @@
 //! mixture of experts sums each expert's tokens. An empty run answers zeros.
 
 use cubek_matmul::kernels::CubeStagedMatmulRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Declines, skip_unless_matrix_instruction};
 use crate::tiled::ByRoutine;

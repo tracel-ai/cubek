@@ -32,20 +32,30 @@ impl HypercubeKeyGradientQuerySumRoutine {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
     }
 
+    /// The cubes of `walk` writing `tensors`' keys' and values' gradients, and adding their shares
+    /// of the queries' into `query_sum`.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &HypercubeKeyWalkBlueprint,
         query_sum: &QueryGradientSum,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let query_summed = tensors.bind_beside(
             &binding,
             walk,
             &query_sum.0,
             AttentionBackwardOperand::QueryGradient,
-        );
+        )?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -76,5 +86,6 @@ impl HypercubeKeyGradientQuerySumRoutine {
                 [AttentionBackwardProblem::SUM, problem.element],
             );
         }
+        Ok(())
     }
 }

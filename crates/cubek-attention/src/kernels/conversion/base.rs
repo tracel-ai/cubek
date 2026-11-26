@@ -16,13 +16,17 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 /// zero is repeated the same way over the converted buffer. Queries packed end to end and viewed
 /// once per sequence, the batch at stride zero, convert as the packed queries, not once per
 /// sequence.
+///
+/// # Assumptions
+///
+/// A `u32` counts the [`distinct_elements`] of `tensor`.
 pub(crate) fn converted(client: &Client, tensor: &PlainTensor, element: ElemType) -> PlainTensor {
     let (shape, strides) = (&tensor.binding.shape, &tensor.binding.strides);
-    let held = held_once(shape, strides);
-    let elements: usize = held.iter().product();
-    let (_, converted) = PlainTensor::empty_contiguous(client, held.clone().into(), element);
+    let distinct = distinct_shape(shape, strides);
+    let elements: usize = distinct.iter().product();
+    let (_, converted) = PlainTensor::empty_contiguous(client, distinct.clone().into(), element);
     if elements > 0 {
-        let source = tensor.viewed(Metadata::new(held, strides.clone()));
+        let source = tensor.viewed(Metadata::new(distinct, strides.clone()));
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = calculate_cube_count_elemwise(client, elements, cube_dim);
         // SAFETY: every unit past `elements` returns before it reads; each reads `source` at its
@@ -34,7 +38,7 @@ pub(crate) fn converted(client: &Client, tensor: &PlainTensor, element: ElemType
                 cube_dim,
                 source.binding.clone().into_tensor_arg(),
                 converted.binding.clone().into_tensor_arg(),
-                u32::try_from(elements).expect("a converted operand counts its elements in a u32"),
+                elements as u32,
                 [tensor.elem, element],
             );
         }
@@ -42,17 +46,24 @@ pub(crate) fn converted(client: &Client, tensor: &PlainTensor, element: ElemType
     let repeated = strides
         .iter()
         .zip(converted.binding.strides.iter())
-        .map(|(&stride, &held)| match stride {
+        .map(|(&stride, &distinct)| match stride {
             0 => 0,
-            _ => held,
+            _ => distinct,
         })
         .collect::<Vec<_>>();
     converted.viewed(Metadata::new(shape.clone(), repeated))
 }
 
+/// How many elements `tensor` has in memory, each counted once however often its view repeats it.
+pub(crate) fn distinct_elements(tensor: &PlainTensor) -> usize {
+    distinct_shape(&tensor.binding.shape, &tensor.binding.strides)
+        .iter()
+        .product()
+}
+
 /// The shape of what a view at `shape` and `strides` holds once: each dim at stride zero, which
 /// repeats the same values, one long.
-fn held_once(shape: &[usize], strides: &[usize]) -> Vec<usize> {
+fn distinct_shape(shape: &[usize], strides: &[usize]) -> Vec<usize> {
     shape
         .iter()
         .zip(strides)
@@ -65,7 +76,7 @@ fn held_once(shape: &[usize], strides: &[usize]) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{converted, held_once};
+    use super::{converted, distinct_shape};
     use cubecl::client::Client;
     use cubecl::prelude::*;
     use cubecl::zspace::Shape;
@@ -135,17 +146,17 @@ mod tests {
         let shape = [sequences, kv_heads, group, queries, head];
         let strides = [0, group * head, head, heads * head, 1];
         assert_eq!(shape.iter().product::<usize>(), 1 << 33);
-        let held = held_once(&shape, &strides);
-        assert_eq!(held, [1, kv_heads, group, queries, head]);
-        let elements: usize = held.iter().product();
+        let distinct = distinct_shape(&shape, &strides);
+        assert_eq!(distinct, [1, kv_heads, group, queries, head]);
+        let elements: usize = distinct.iter().product();
         assert_eq!(elements, queries * heads * head);
         assert!(u32::try_from(elements).is_ok());
     }
 
-    /// A view that repeats nothing is held whole, an empty one holding nothing.
+    /// A view that repeats nothing keeps its whole shape, an empty one holding nothing.
     #[test]
-    fn a_view_without_repeats_is_held_whole() {
-        assert_eq!(held_once(&[2, 3, 4], &[12, 4, 1]), [2, 3, 4]);
-        assert_eq!(held_once(&[0, 3], &[0, 1]), [0, 3]);
+    fn a_view_without_repeats_keeps_its_shape() {
+        assert_eq!(distinct_shape(&[2, 3, 4], &[12, 4, 1]), [2, 3, 4]);
+        assert_eq!(distinct_shape(&[0, 3], &[0, 1]), [0, 3]);
     }
 }

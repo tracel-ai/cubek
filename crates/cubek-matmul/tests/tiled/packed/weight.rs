@@ -10,7 +10,7 @@ use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlane
 use cubek_microkernel::matmul::hypercube::HypercubeStagedMicrokernelSettings;
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
 use cubek_std::microkernel::StageRing;
-use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
+use cubek_test_utils::{ScopeChecker, TestOutcome, ValidationResult};
 
 use crate::matmul::Declines;
 use crate::tiled::ByRoutine;

@@ -5,7 +5,7 @@ use crate::launch::matmul::{MatmulElements, PlaneShuffleLaunch, WholeRows};
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::plane::{PlaneShuffleMicrokernel, PlaneShuffleMicrokernelSettings};
 use cubek_std::Hardware;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Matmul, MatmulSettings};
 

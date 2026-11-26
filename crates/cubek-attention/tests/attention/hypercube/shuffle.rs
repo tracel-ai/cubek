@@ -4,7 +4,7 @@
 use cubek_attention::kernels::{
     HypercubeLastArrivalShuffleAttentionRoutine, HypercubeShufflePartialAttentionRoutine,
 };
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::attention::{
     DECODE_WINDOWED, DECODES, DECODES_WIDE_FP8, DECODES_WIDE_PER_TENSOR, Forward,

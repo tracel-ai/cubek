@@ -2,7 +2,7 @@ use super::make_problem;
 use crate::pool::{PoolForward, Pooled, Seeded};
 use cubecl::zspace::Shape;
 use cubek_pool::definition::MaxPoolOptions;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 const MAX_POOL2D_TOLERANCE: f32 = 0.0;
 

@@ -20,8 +20,6 @@ pub mod matmul;
 pub mod pool;
 #[cfg(feature = "random")]
 pub mod random;
-#[cfg(feature = "reduce")]
-pub mod reduce;
 #[cfg(feature = "rms-norm")]
 pub mod rms_norm;
 #[cfg(any(feature = "rms-norm", feature = "swiglu"))]
@@ -32,8 +30,6 @@ pub mod split_keys_merge;
 pub mod swiglu;
 #[cfg(any(feature = "pool", feature = "interpolate"))]
 mod window;
-#[cfg(feature = "zero")]
-pub mod zero;
 
 #[cfg(any(feature = "matmul", feature = "attention"))]
 pub use lines::Lines;

@@ -7,7 +7,7 @@ use cubecl::tile::launch::Decline;
 use cubek_interpolate::definition::{InterpolateError, InterpolateMode, InterpolateOptions};
 use cubek_interpolate::eval::cpu_reference::cpu_reference_interpolate_backward_from_host;
 use cubek_interpolate::interpolate_backward;
-use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, ScopeChecker, TestInput, Written};
 
 /// An output gradient of `out_gradient` (`NHWC`) taken back to an input of `input` (`H × W`)
 /// under `options`, its values drawn from `seed` over `range`.
@@ -45,7 +45,7 @@ impl BackwardCase {
 /// The backward interpolation on the test device.
 pub(crate) struct Backward;
 
-impl ScopeUnderTest for Backward {
+impl ScopeChecker for Backward {
     type Case = BackwardCase;
 
     /// # Panics

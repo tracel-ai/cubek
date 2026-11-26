@@ -8,7 +8,7 @@ use cubek_interpolate::definition::{
 };
 use cubek_interpolate::kernels::select;
 use cubek_interpolate::{InterpolateKernel, InterpolateStrategy};
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::interpolate::forward::{Forward, ForwardCase, Resampling};
 

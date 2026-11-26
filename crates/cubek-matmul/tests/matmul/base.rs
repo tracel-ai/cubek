@@ -18,7 +18,7 @@ use cubek_matmul::{
 };
 use cubek_std::config::MatmulConfig;
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, StridedLayout, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, ScopeChecker, StridedLayout, TestInput, Written};
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
 pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -418,7 +418,7 @@ impl ByStrategy {
     }
 }
 
-impl ScopeUnderTest for ByStrategy {
+impl ScopeChecker for ByStrategy {
     type Case = Product;
 
     /// # Panics
@@ -437,6 +437,9 @@ impl ScopeUnderTest for ByStrategy {
         );
         match (launched, self.declines) {
             (Ok(()), _) => Ok(Product::written(out)),
+            // A launch that broke what its routine prepared fails the test, whatever it declines.
+            #[cfg(feature = "tiled")]
+            (Err(cubek_matmul::definition::MatmulSetupError::Broken(broken)), _) => Err(broken),
             (Err(_), Declines::AsItStates) => Err(Decline::Unserved {
                 why: "the strategy serves no such product on this device",
             }),

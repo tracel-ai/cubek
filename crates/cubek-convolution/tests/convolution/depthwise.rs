@@ -15,7 +15,7 @@ use cubek_convolution::{
     ConvolutionArgs, DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling,
     DepthwiseWeightBackwardTensors, launch_depthwise, launch_depthwise_weight_backward,
 };
-use cubek_test_utils::{ScopeUnderTest, TestInput};
+use cubek_test_utils::{ScopeChecker, TestInput};
 
 use crate::convolution::{
     Conv, ConvRoutine, ConvTensors, Convolves, Declines, F32, Pass, Storage, Values,

@@ -1,8 +1,7 @@
 use super::kernel::unit_attention_kernel;
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    PACKED_QUERIES_UNREAD,
+    ATTENTION_PACKED_UNREAD, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, Vectorization};
@@ -168,16 +167,17 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: UnitAttentionRoutineBlueprint,
         grid: Grid,
-    ) {
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
-        let (key, value) = binding.cache.into_tiles();
-        // SAFETY: every operand is bound through the launcher, which masks the reads and writes
-        // of a tile the problem's edge cuts short, the keys and values are read no further than
-        // the attended length, and the kernel indexes no buffer but through its tiles and the
-        // length's first element.
+        let (key, value) = binding.cache.into_tiles()?;
+        // SAFETY: every operand is bound through the launcher, which masks the reads and writes of
+        // a tile the problem's edge cuts short, the keys and values are read no further than the
+        // attended length, capped at the keys the launch is given, the problem's positions the
+        // buffers or their table reach, and the kernel indexes no buffer but through its tiles and
+        // each sequence's entry of the lengths.
         unsafe {
             unit_attention_kernel::launch_unchecked(
                 tensors.client(),
@@ -187,10 +187,11 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 key,
                 value,
                 binding.out,
-                binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
-                binding.mask.map(|mask| mask.arg()).into(),
+                binding.logsumexp.into(),
+                binding.mask.into(),
                 binding.lengths,
                 problem.seq_q as u32,
+                problem.seq_kv as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 blueprint.microkernel,
@@ -198,6 +199,7 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 problem.work_item().sum,
             );
         }
+        Ok(())
     }
 }
 
@@ -225,7 +227,7 @@ mod tests {
     }
 
     /// A decode step, a prompt whose queries divide nothing, a wide group over a long cache, and
-    /// a head dim of 128 in `f32`, the widest the leads are held to.
+    /// a head dim of 128 in `f32`, the widest the leads are checked at.
     fn problems() -> [AttentionRoutineProblem; 4] {
         [
             AttentionRoutineProblem::dense((1, 32, 8), (1, 2048), (128, 128), F16),

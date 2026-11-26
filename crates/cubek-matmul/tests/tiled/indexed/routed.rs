@@ -14,7 +14,7 @@ use cubek_matmul::kernels::{
     CubeStagedMatmulRoutine, PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
 };
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, Written};
 
 use crate::matmul::{Declines, skip_unless_matrix_instruction};
 use crate::tiled::indexed::{Routed, Stack, values};
@@ -139,7 +139,7 @@ fn col_stack(client: &Client, routed: &Routed) -> PlainTensor {
 /// ([`RoutedMatmulCandidates::floors`]), what a caller racing the routed candidates falls back on.
 struct FlooredRouted;
 
-impl ScopeUnderTest for FlooredRouted {
+impl ScopeChecker for FlooredRouted {
     type Case = Routed;
 
     /// A cube larger than the device holds is a skip, the CPU runtime's few units; so is a packed

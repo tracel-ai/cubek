@@ -11,7 +11,7 @@ use cubecl::zspace::shape;
 use cubek_microkernel::matmul::MatmulLayout;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
 pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -167,7 +167,7 @@ impl<S: MatmulSettings> Matmul<S> {
     }
 }
 
-impl<S: MatmulSettings> ScopeUnderTest for Matmul<S> {
+impl<S: MatmulSettings> ScopeChecker for Matmul<S> {
     type Case = MatmulCase<S>;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

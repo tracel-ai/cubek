@@ -23,7 +23,8 @@
 
 use crate::test_mode::base::decide;
 use cubecl::prelude::Client;
-use std::fmt::Display;
+use cubecl::tile::launch::Decline;
+use std::fmt::{Debug, Display};
 
 /// CPU-only routines (e.g. `cpu_gemm`, where a plane is a thread) compute the wrong result
 /// on a GPU backend. Records a `Skipped` outcome and returns `true` when `client` is not a
@@ -33,38 +34,6 @@ pub fn skip_unless_cpu(client: &Client) -> bool {
     if client.properties().hardware.num_cpu_cores.is_none() {
         TestOutcome::Validated(ValidationResult::Skipped(
             "needs a CPU backend; this runtime reports no CPU cores".to_string(),
-        ))
-        .enforce();
-        return true;
-    }
-    false
-}
-
-/// A kernel whose levels cut down to units needs a plane wide enough to hold them: a unit level
-/// must partition the plane exactly, so a plane of one unit (what the CPU runtime always reports)
-/// leaves such a partitioning with nothing to cut. Records a `Skipped` outcome and returns `true`
-/// when `client`'s plane is narrower than `units`, so the caller can bail out of the test.
-#[track_caller]
-pub fn skip_unless_plane_holds(client: &Client, units: u32) -> bool {
-    let plane = client.properties().hardware.plane_size_max;
-    if plane < units {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "needs a plane of at least {units} units; this runtime reports {plane}"
-        )))
-        .enforce();
-        return true;
-    }
-    false
-}
-
-/// A test in a half-precision element needs a device that computes in it. Records a `Skipped`
-/// outcome and returns `true` when `client`'s device has no `f16` arithmetic, so the caller can
-/// bail out of the test.
-#[track_caller]
-pub fn skip_unless_f16_arithmetic(client: &Client) -> bool {
-    if !crate::supports_f16_arithmetic(client) {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "needs f16 arithmetic; this device has none".to_string(),
         ))
         .enforce();
         return true;
@@ -95,6 +64,40 @@ pub enum ValidationResult {
     Skipped(String),
 }
 
+/// Why a kernel gave no result to check against its reference.
+#[derive(Debug)]
+pub enum KernelResultError {
+    /// Its routine refused the problem for this reason.
+    Refused(Decline),
+    /// It did not run for the reason given: it did not compile, or its inputs could not be built.
+    NotRun(String),
+}
+
+impl Display for KernelResultError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Refused(why) => write!(f, "declined: {why}"),
+            Self::NotRun(why) => f.write_str(why),
+        }
+    }
+}
+
+impl ExecutionOutcome {
+    /// `Ok` where the kernel ran, else [`KernelResultError::NotRun`] with why it did not.
+    pub fn into_kernel_result(self) -> Result<(), KernelResultError> {
+        match self {
+            Self::Executed => Ok(()),
+            Self::CompileError(why) => Err(KernelResultError::NotRun(why)),
+        }
+    }
+}
+
+impl From<String> for KernelResultError {
+    fn from(why: String) -> Self {
+        Self::NotRun(why)
+    }
+}
+
 #[derive(Debug)]
 /// The overall outcome of a test, combining execution and validation.
 /// Either the kernel was validated or failed to compile.
@@ -106,6 +109,25 @@ pub enum TestOutcome {
 }
 
 impl TestOutcome {
+    /// The outcome of a launch of `case` its scope refused for `why`: a skip, or a failure where
+    /// the scope claims the launch and finds it broken ([`Decline::Broken`]).
+    pub fn refused(case: &impl Debug, why: &Decline) -> Self {
+        let reason = format!("{case:?}: {why}");
+        match why.is_broken() {
+            true => TestOutcome::Validated(ValidationResult::Fail(reason)),
+            false => TestOutcome::Validated(ValidationResult::Skipped(reason)),
+        }
+    }
+
+    /// The outcome of a check of `case` whose kernel gave no result: [`refused`](Self::refused)
+    /// for a refusal, else a compile error.
+    pub fn unrun(case: &impl Debug, error: KernelResultError) -> Self {
+        match error {
+            KernelResultError::Refused(why) => Self::refused(case, &why),
+            KernelResultError::NotRun(why) => TestOutcome::CompileError(why),
+        }
+    }
+
     /// Apply the current test mode to this outcome and fail the test if rejected.
     ///
     /// Convenience wrapper for `decide(self).enforce()`: applies the
@@ -164,14 +186,5 @@ impl ValidationResult {
     /// Convert a `ValidationResult` into a `TestOutcome`.
     pub fn as_test_outcome(self) -> TestOutcome {
         TestOutcome::Validated(self)
-    }
-}
-
-impl<E: Display> From<Result<(), E>> for ExecutionOutcome {
-    fn from(result: Result<(), E>) -> Self {
-        match result {
-            Ok(_) => ExecutionOutcome::Executed,
-            Err(err) => ExecutionOutcome::CompileError(format!("Test did not run: {}", err)),
-        }
     }
 }

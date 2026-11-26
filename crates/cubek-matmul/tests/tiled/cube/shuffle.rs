@@ -2,7 +2,7 @@
 //! splitting the contraction between them. It holds at most a decode step's rows.
 
 use cubek_matmul::kernels::CubeShuffleMatmulRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Declines, Product};
 use crate::tiled::ByRoutine;

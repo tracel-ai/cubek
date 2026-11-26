@@ -5,16 +5,17 @@
 //! rows must hold at least `k` values.
 
 use cubecl::zspace::{Shape, Strides};
+use cubek_test_utils::ScopeChecker;
 
-use crate::reduce::it::test_case::{RULE, TestCase};
+use crate::reduce::it::test_case::{Op, RULE, ReduceScopeChecker, TestCase};
 
 #[test]
 pub fn a_mean_over_rows_one_value_long() {
-    TestCase::new::<f32>(
+    ReduceScopeChecker.check([TestCase::new::<f32>(
         Shape::new([128, 1, 1]),
         Strides::new(&[1, 1, 1]),
         Some(2),
         RULE,
     )
-    .test_mean();
+    .reduced_by(Op::Mean)]);
 }

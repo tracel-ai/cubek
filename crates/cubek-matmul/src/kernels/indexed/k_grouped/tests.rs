@@ -1,7 +1,8 @@
 //! The K-grouped launch against a host reference.
 
-use super::{KGroupedMatmulTensors, launch};
+use super::{K_GROUPED_SHAPES_DISAGREE, KGroupedMatmulTensors, launch};
 use crate::kernels::indexed::m_grouped::upload;
+use crate::kernels::indexed::stack::GROUP_ENDS_UNREAD;
 use crate::kernels::tensor::PlainTensor;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
@@ -106,4 +107,29 @@ fn each_group_contracts_its_own_rows_into_its_slab() {
             }
         }
     }
+}
+
+#[test]
+fn operands_of_other_rows_decline() {
+    let client = client();
+    let (lhs, rhs) = (
+        f32s(&client, [4, 2], &[1.0; 8]),
+        f32s(&client, [3, 2], &[1.0; 6]),
+    );
+
+    let declined = launch_grouped(&client, lhs, rhs, &[2, 4]).err();
+
+    assert_eq!(declined, Some(K_GROUPED_SHAPES_DISAGREE));
+}
+
+#[test]
+fn float_ends_decline() {
+    let client = client();
+    let operand = || f32s(&client, [4, 2], &[1.0; 8]);
+    let handle = client.create_from_slice(f32::as_bytes(&[2.0, 4.0]));
+    let ends = PlainTensor::of_handle(TensorHandle::new_contiguous([2], handle, F32));
+
+    let declined = KGroupedMatmulTensors::new(&client, operand(), operand(), ends).err();
+
+    assert_eq!(declined, Some(GROUP_ENDS_UNREAD));
 }

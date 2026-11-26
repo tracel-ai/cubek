@@ -58,7 +58,8 @@ fn the_backward_pass_reads_the_forward_it_follows() {
         },
     )
     .expect("the case's tensors are verified")
-    .with_logsumexp();
+    .with_logsumexp()
+    .expect("a float cache's attention writes its logsumexp");
     let logsumexp = tensors.logsumexp().expect("asked for");
     let out = DirectAttention(UnitAttentionRoutine)
         .launch_lead_on(&hw, tensors)

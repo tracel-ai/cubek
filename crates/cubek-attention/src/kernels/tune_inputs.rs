@@ -42,7 +42,7 @@ impl AttentionTuneInputs {
     /// Attention of `query` (`[b, h, q, d]`) over each sequence's first `lengths[b]` of `key`
     /// (`[b, kv, s, d]`) and `value` (`[b, kv, s, dv]`), or of the keys and values `pages` lays
     /// out in two pools of pages ([`AttentionTensors::paged`]), the output allocated. `arrivals`
-    /// are the counters the cubes of a box count themselves in at, held across launches.
+    /// are the counters the cubes of a box count themselves in at, kept by the caller across launches.
     ///
     /// `depth` is how many keys the call attends, at least as many as its deepest sequence, as its
     /// caller buckets it: the lengths live on device so that every call of one bucket is the same
@@ -133,18 +133,26 @@ impl AttentionTuneInputs {
 
     /// The same attention, each query not seeing the keys `mask` hides
     /// ([`AttentionTensors::with_mask`]).
-    pub fn with_mask(mut self, mask: PlainTensor) -> Self {
-        self.tensors = self.tensors.with_mask(mask.clone());
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionTensors::with_mask`].
+    pub fn with_mask(mut self, mask: PlainTensor) -> Result<Self, Decline> {
+        self.tensors = self.tensors.with_mask(mask.clone())?;
         self.mask = Some(mask);
-        self
+        Ok(self)
     }
 
     /// The same attention, writing beside its output each query's logsumexp
     /// ([`AttentionTensors::with_logsumexp`]): every candidate writes it, so the winner's is the
     /// call's.
-    pub fn with_logsumexp(mut self) -> Self {
-        self.tensors = self.tensors.with_logsumexp();
-        self
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionTensors::with_logsumexp`].
+    pub fn with_logsumexp(mut self) -> Result<Self, Decline> {
+        self.tensors = self.tensors.with_logsumexp()?;
+        Ok(self)
     }
 
     /// Each query's logsumexp, `[b, h, q]`, where the attention writes it.
@@ -152,6 +160,39 @@ impl AttentionTuneInputs {
         self.tensors.logsumexp()
     }
 
+    /// The key many query positions are tuned under: the call's queries over its depth.
+    pub fn many_queries_key(&self) -> AttentionKey {
+        self.key_of(self.queries(), self.depth)
+    }
+
+    /// The key a decode step is tuned under: one query over the call's depth. The single position
+    /// sees the whole attended prefix, or its window's end of it, so a causal mask is no part of
+    /// the key.
+    pub fn one_query_key(&self) -> AttentionKey {
+        self.key_of(1, self.depth)
+    }
+
+    /// What a decode step costs: one query over the positions the call can read, which the round
+    /// runs on, each key and value read once.
+    pub fn one_query_work(&self) -> Work {
+        let batch = self.sequences();
+        let (heads, head_dim) = self.heads_and_dim();
+        let keys = self.positions_read();
+        let kv_bytes =
+            2 * batch * self.kv_heads() * keys * self.key.shape()[3] * self.key.elem.size();
+        Work {
+            // **Two** contractions over the same scores, `q · kᵀ` and `p · v`, each one
+            // multiply-accumulate, two operations, per key and dim: the minimum the problem needs,
+            // which is what a roofline is measured against. One query position, and no mask: the
+            // single query sits at the end of the prefix, so every position it scores is one it
+            // attends.
+            compute_ops: 4 * batch * heads * keys * head_dim,
+            bytes: self.query.binding.handle.size() as usize * 2 + kv_bytes,
+        }
+    }
+}
+
+impl AttentionTuneInputs {
     fn kv_heads(&self) -> usize {
         self.key.shape()[1]
     }
@@ -182,18 +223,6 @@ impl AttentionTuneInputs {
         self.pages.as_ref().map(|_| self.key.shape()[2])
     }
 
-    /// The key many query positions are tuned under: the call's queries over its depth.
-    pub fn many_queries_key(&self) -> AttentionKey {
-        self.key_of(self.queries(), self.depth)
-    }
-
-    /// The key a decode step is tuned under: one query over the call's depth. The single position
-    /// sees the whole attended prefix, or its window's end of it, so a causal mask is no part of
-    /// the key.
-    pub fn one_query_key(&self) -> AttentionKey {
-        self.key_of(1, self.depth)
-    }
-
     /// The key of this call's heads, elements and scoring, `queries` positions over `keys`, each at
     /// its bucket.
     fn key_of(&self, queries: usize, keys: usize) -> AttentionKey {
@@ -222,30 +251,11 @@ impl AttentionTuneInputs {
     /// where a caller's rounding takes the depth past them.
     fn positions_read(&self) -> usize {
         let positions = self.key.shape()[2];
-        let held = match &self.pages {
+        let reachable = match &self.pages {
             Some(pages) => pages.shape()[1] * positions,
             None => positions,
         };
-        self.depth.min(held)
-    }
-
-    /// What a decode step costs: one query over the positions the call can read, which the round
-    /// runs on, each key and value read once.
-    pub fn one_query_work(&self) -> Work {
-        let batch = self.sequences();
-        let (heads, head_dim) = self.heads_and_dim();
-        let keys = self.positions_read();
-        let kv_bytes =
-            2 * batch * self.kv_heads() * keys * self.key.shape()[3] * self.key.elem.size();
-        Work {
-            // **Two** contractions over the same scores, `q · kᵀ` and `p · v`, each one
-            // multiply-accumulate, two operations, per key and dim: the minimum the problem needs,
-            // which is what a roofline is measured against. One query position, and no mask: the
-            // single query sits at the end of the prefix, so every position it scores is one it
-            // attends.
-            compute_ops: 4 * batch * heads * keys * head_dim,
-            bytes: self.query.binding.handle.size() as usize * 2 + kv_bytes,
-        }
+        self.depth.min(reachable)
     }
 }
 
@@ -448,7 +458,7 @@ mod tests {
         }
 
         /// **Both contractions, and nothing between them.** A roofline that counted one would be
-        /// half the ceiling every candidate is held to, and the round would stop on a candidate
+        /// half the ceiling every candidate is measured against, and the round would stop on a candidate
         /// at half the device.
         #[test]
         fn a_decode_costs_two_contractions() {

@@ -2,7 +2,7 @@
 //! batched, at sizes past a cube's shared memory and past the four-step split, and virtually
 //! padded past a spectrum's last bin.
 
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::fft::{Irfft, IrfftLaunch, IrfftPadding};
 

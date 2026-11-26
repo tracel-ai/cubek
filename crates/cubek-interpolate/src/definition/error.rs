@@ -41,6 +41,18 @@ pub enum InterpolateError {
     },
 }
 
+/// The decline a launch returns stays a refusal, which a test skips where the launch is
+/// unsupported and fails on where it is broken; any other error is a kernel that did not run.
+#[cfg(feature = "cpu-reference")]
+impl From<InterpolateError> for cubek_test_utils::KernelResultError {
+    fn from(error: InterpolateError) -> Self {
+        match error {
+            InterpolateError::Declined(decline) => Self::Refused(decline),
+            other => Self::NotRun(other.to_string()),
+        }
+    }
+}
+
 impl From<InterpolateError> for String {
     fn from(error: InterpolateError) -> Self {
         error.to_string()

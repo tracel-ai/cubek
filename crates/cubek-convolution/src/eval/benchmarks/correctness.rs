@@ -3,7 +3,7 @@ use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems},
     definition::{MatmulPrecision, MatrixPrecision},
 };
-use cubek_test_utils::{HostData, Progress};
+use cubek_test_utils::{HostData, KernelResultError, Progress};
 
 use crate::{
     Strategy,
@@ -28,7 +28,7 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
         strategy: &Strategy,
         problem: &Conv2dProblem,
         seeds: &[u64],
-    ) -> Result<HostData, String> {
+    ) -> Result<HostData, KernelResultError> {
         let device = cubecl::test_device();
         let client = device.client();
         let (spec, dtypes) = spec_and_dtypes(problem);

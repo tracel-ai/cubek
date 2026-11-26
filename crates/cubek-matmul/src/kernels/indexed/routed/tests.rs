@@ -6,11 +6,12 @@ use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::*;
 use cubecl::server::CopyDescriptor;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Decline;
 use cubek_std::{Hardware, devices};
 use cubek_test_utils::client;
 
-use super::{RoutedFloors, RoutedMatmulTensors};
-use crate::kernels::indexed::stack::SlabDimension;
+use super::{ROUTED_SHAPES_DISAGREE, ROUTES_NOT_U32, RoutedFloors, RoutedMatmulTensors};
+use crate::kernels::indexed::stack::{MATMUL_STACK_NOT_WHOLE_SLABS, SlabDimension};
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
     CubeStagedMatmulRoutineSettings, PlaneShuffleMatmulRoutineSettings, UnitRegistersMatmulRoutine,
@@ -195,4 +196,54 @@ fn no_rows_return_an_empty_output() {
         )
         .expect("no row declines nothing");
     assert_eq!(out.shape().to_vec(), vec![0, slots, n]);
+}
+
+/// What two rows of `k` against a stack of `experts` slabs of four columns, eight deep, decline
+/// under `routes`.
+fn declined(k: usize, experts: usize, routes: PlainTensor) -> Option<Decline> {
+    let client = client();
+    RoutedMatmulTensors::new(
+        &client,
+        f32s(&client, [2, k], [k, 1], &vec![1.0; 2 * k]),
+        StoredTensor::Plain(f32s(&client, [8, 16], [16, 1], &[1.0; 128])),
+        routes,
+        experts,
+        SlabDimension::Output,
+    )
+    .err()
+}
+
+#[test]
+fn rows_of_another_contraction_decline() {
+    let routes = u32s(&client(), [2, 1], &[0; 2]);
+
+    assert_eq!(declined(6, 4, routes), Some(ROUTED_SHAPES_DISAGREE));
+}
+
+#[test]
+fn routes_of_other_rows_decline() {
+    let routes = u32s(&client(), [3, 1], &[0; 3]);
+
+    assert_eq!(declined(8, 4, routes), Some(ROUTED_SHAPES_DISAGREE));
+}
+
+#[test]
+fn float_routes_decline() {
+    let routes = f32s(&client(), [2, 1], [1, 1], &[0.0; 2]);
+
+    assert_eq!(declined(8, 4, routes), Some(ROUTES_NOT_U32));
+}
+
+#[test]
+fn a_stack_of_parts_of_slabs_declines() {
+    let routes = u32s(&client(), [2, 1], &[0; 2]);
+
+    assert_eq!(declined(8, 3, routes), Some(MATMUL_STACK_NOT_WHOLE_SLABS));
+}
+
+#[test]
+fn a_stack_of_no_slab_declines() {
+    let routes = u32s(&client(), [2, 1], &[0; 2]);
+
+    assert_eq!(declined(8, 0, routes), Some(MATMUL_STACK_NOT_WHOLE_SLABS));
 }

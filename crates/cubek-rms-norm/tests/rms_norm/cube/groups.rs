@@ -4,7 +4,7 @@ use cubecl::zspace::shape;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_rms_norm::kernels::{CubeGroupsRmsNormRoutine, RmsNormCall, RmsNormRoutineCandidate};
 use cubek_std::Hardware;
-use cubek_test_utils::{ScopeUnderTest, TestInput};
+use cubek_test_utils::{ScopeChecker, TestInput};
 
 use crate::rms_norm::{Declines, EPSILON, F32, RmsNorm};
 

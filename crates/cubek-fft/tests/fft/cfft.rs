@@ -1,7 +1,7 @@
 use cubecl::prelude::Scalar;
 use cubek_fft::{FftMode, cfft};
 use cubek_test_utils::{
-    HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, ValidationResult,
+    HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, ValidationResult,
     assert_equals_approx,
 };
 

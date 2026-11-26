@@ -6,7 +6,7 @@ use cubek_matmul::kernels::{
     CubeStagedTmaFillerMatmulRoutine, CubeStagedTmaMatmulRoutine, CubeStagedTmaStoredMatmulRoutine,
     PlaneShuffleMatmulRoutine,
 };
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::Declines;
 use crate::tiled::ByRoutine;
