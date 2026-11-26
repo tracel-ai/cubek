@@ -240,11 +240,11 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             &microkernel.cube.contracted(&item),
             item.packings(),
             &view
-                .shared_partitioning(microkernel.cube.tiling(), &dimensions, target)
+                .shared_partitioning(microkernel.cube.tiling(), &dimensions, target)?
                 .cube_space(),
         )?;
         let partitioning =
-            view.shared_partitioning(resolved.microkernel.launch_tiling(), &dimensions, target);
+            view.shared_partitioning(resolved.microkernel.launch_tiling(), &dimensions, target)?;
         let past_k = || {
             [KB, KI]
                 .into_iter()

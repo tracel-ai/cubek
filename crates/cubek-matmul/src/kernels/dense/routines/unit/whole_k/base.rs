@@ -233,7 +233,7 @@ impl Routine for UnitWholeKMatmulRoutine {
                 .units_distributed(N, settings.blocks_per_plane.get()),
             &[M, N],
             PlaneOrder::new(&[(N, planes)], CubeOrder::RowMajor),
-        );
+        )?;
         let mut vectorization = Vectorization::new();
         Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =

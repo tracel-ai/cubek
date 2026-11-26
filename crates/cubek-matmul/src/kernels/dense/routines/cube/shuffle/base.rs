@@ -219,7 +219,7 @@ impl CubeShuffleMatmulRoutine {
             &[M, N],
             CubeOrder::RowMajor,
             MatmulView::ONE_CUBE_A_BOX,
-        );
+        )?;
         let mut vectorization = Vectorization::new();
         CubeShuffleMatmulRoutine::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
@@ -268,14 +268,14 @@ impl CubeShuffleMatmulRoutine {
                     microkernel.tiling(),
                     &[columns],
                     NonZeroUsize::new(cubes).expect("at least one box"),
-                )
+                )?
             }
             _ => view.partitioning(
                 microkernel.tiling(),
                 &[columns],
                 CubeOrder::RowMajor,
                 MatmulView::ONE_CUBE_A_BOX,
-            ),
+            )?,
         };
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,

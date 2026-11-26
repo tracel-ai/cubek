@@ -24,6 +24,8 @@ pub struct MatmulPartitioning {
     batch_dimensions: Vec<Dimension>,
     rows_kind: MatmulRowsKind,
     dimensions_kind: MatmulDimensionsKind,
+    /// The dimension a table cuts the output's tile to a run along, whose end masks a write.
+    output_run: Option<Dimension>,
 }
 
 impl MatmulPartitioning {
@@ -42,7 +44,13 @@ impl MatmulPartitioning {
             batch_dimensions,
             rows_kind,
             dimensions_kind,
+            output_run: None,
         }
+    }
+
+    /// This placement with the output's tile cut to a run along `output_run`, where a table does.
+    pub fn with_output_run(self, output_run: Option<Dimension>) -> Self {
+        Self { output_run, ..self }
     }
 
     /// `partitioning`, its cubes each handed the box its cube level cuts.
@@ -102,10 +110,13 @@ impl MatmulPartitioning {
                 .iter()
                 .chain(self.rows_kind.dynamic_dimensions())
                 .copied()
-                .filter(|dimension| !compiled.contains(dimension))
+                .filter(|dimension| {
+                    !compiled.contains(dimension) && Some(*dimension) != self.output_run
+                })
                 .collect(),
             MatmulDimensionsKind::BlockSplit => {
                 let rows_free = self.rows_kind.dynamic_dimensions().contains(&M)
+                    && self.output_run.is_none()
                     && self.partitioning.space().extent(MB) == 1
                     && !compiled.contains(&MI);
                 rows_free.then_some(MI).into_iter().collect()
@@ -250,13 +261,15 @@ impl MatmulPartitioning {
         self.partitioning.space()
     }
 
-    /// Whether the tiles overhang the output: a tile the output's edge cuts short, which a write
-    /// that cannot be masked would reach past.
+    /// Whether the tiles overhang the output: a tile the output's edge cuts short, or a run a
+    /// table ends inside it, which a write that cannot be masked would reach past.
     pub fn overhangs_output(&self) -> bool {
-        self.dimensions_kind
-            .output_dimensions()
-            .into_iter()
-            .any(|dimension| self.overhangs(dimension))
+        self.output_run.is_some()
+            || self
+                .dimensions_kind
+                .output_dimensions()
+                .into_iter()
+                .any(|dimension| self.overhangs(dimension))
     }
 
     /// Checks that the engine masks `out`'s writes exactly where the tiles overhang it, which is

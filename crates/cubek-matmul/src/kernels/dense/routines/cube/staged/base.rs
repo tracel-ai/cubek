@@ -7,8 +7,9 @@
 use super::kernel::cube_staged_matmul_kernel;
 use crate::kernels::{
     CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
-    MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
-    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    MATMUL_PACKED_WALK_PAST_K, MATMUL_ROW_RUNS_SWIZZLED, MatmulBinding, MatmulBlueprint,
+    MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors,
+    MatmulView,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
@@ -85,7 +86,7 @@ impl<'a> CubeStagedPlacement<'a> {
                 &[item.dimensions.m, item.dimensions.n],
                 cube_order,
                 MatmulView::ONE_CUBE_A_BOX,
-            )
+            )?
             .cube_space();
         if store == CubeStagedStore::Tma {
             check_tma_store(hw, problem, &contracted, &cube_space, &microkernel)?;
@@ -213,12 +214,16 @@ impl<'a> CubeStagedPlacement<'a> {
             microkernel.block_scales(),
             microkernel.fill.delivery == CubeStagedDelivery::Tma,
         )?;
+        if problem.cuts_rows_to_runs() && !matches!(cube_order.canonicalize(), CubeOrder::RowMajor)
+        {
+            return Err(MATMUL_ROW_RUNS_SWIZZLED);
+        }
         let partitioning = view.partitioning(
             microkernel.launch_tiling(),
             &[item.dimensions.m, item.dimensions.n],
             cube_order,
             MatmulView::ONE_CUBE_A_BOX,
-        );
+        )?;
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
         let past_k = || {

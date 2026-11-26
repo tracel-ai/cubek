@@ -2,12 +2,13 @@
 //! stacked rhs its entry names, or over its run of `K`. An entry past the stack, or an empty run,
 //! answers zeros. Each product holds its own host reference.
 
+use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
-use cubek_matmul::kernels::{MatmulIndex, MatmulIndexTable, MatmulRoutine};
+use cubek_matmul::kernels::{MatmulIndexTable, MatmulRoutine, MatmulRowRuns, TileRows};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataVec};
@@ -208,8 +209,8 @@ impl RoutineProduct for Routed {
                 &values(self.slabs * k * self.n, 2),
             )),
         };
-        let table = MatmulIndexTable {
-            index: MatmulIndex::Slab { slabs: self.slabs },
+        let table = MatmulIndexTable::Slab {
+            slabs: self.slabs,
             entries: upload(client, &[tokens, picks], &self.routes()),
         };
         let shape = Shape::from(vec![tokens, picks, 1, self.n]);
@@ -225,6 +226,143 @@ impl RoutineProduct for Routed {
 
     fn tolerance(&self) -> f32 {
         Routed::tolerance(self)
+    }
+}
+
+/// A group of rows against one slab of a packed stack, one past it naming no slab.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RowGroup {
+    pub rows: usize,
+    pub slab: usize,
+}
+
+/// A flat, unpadded activation `[rows, k]` cut into tiles of at most `tile_rows` rows, each group
+/// in whole tiles but its last and an empty group in one empty tile, then `sentinels` empty tiles
+/// past the groups and `trailing` rows no tile covers. The output is the flat `[rows, n]`, poisoned:
+/// only the rows a tile's run covers are written.
+#[derive(Debug, Clone)]
+pub(crate) struct RowRuns {
+    pub tile_rows: usize,
+    pub groups: Vec<RowGroup>,
+    pub sentinels: usize,
+    pub trailing: usize,
+    pub k: usize,
+    pub format: PackedFormat,
+}
+
+impl RowRuns {
+    const SLABS: usize = 4;
+    const N: usize = 96;
+
+    /// An empty group first, a group ending mid-tile, an empty one, a last tile whose slab is one
+    /// past the stack, two sentinel tiles and seven trailing rows, against a stack in `format`.
+    pub(crate) fn ragged(tile_rows: usize, k: usize, format: PackedFormat) -> Self {
+        let groups = [
+            (0, 0),
+            (2 * tile_rows + tile_rows / 2, 1),
+            (0, 2),
+            (3, Self::SLABS),
+        ];
+        Self {
+            tile_rows,
+            groups: groups
+                .iter()
+                .map(|&(rows, slab)| RowGroup { rows, slab })
+                .collect(),
+            sentinels: 2,
+            trailing: 7,
+            k,
+            format,
+        }
+    }
+
+    /// Each tile's run `(start, end)` and slab.
+    fn tiles(&self) -> Vec<(usize, usize, u32)> {
+        let mut tiles = Vec::new();
+        let mut start = 0;
+        for group in &self.groups {
+            let slab = group.slab as u32;
+            if group.rows == 0 {
+                tiles.push((start, start, slab));
+            }
+            for first in (0..group.rows).step_by(self.tile_rows) {
+                let rows = self.tile_rows.min(group.rows - first);
+                tiles.push((start + first, start + first + rows, slab));
+            }
+            start += group.rows;
+        }
+        tiles.extend((0..self.sentinels).map(|_| (start, start, Self::SLABS as u32)));
+        tiles
+    }
+
+    fn rows(&self) -> usize {
+        self.groups.iter().map(|group| group.rows).sum::<usize>() + self.trailing
+    }
+
+    fn packed_slabs(&self) -> PackedSlabsSpec {
+        PackedSlabsSpec {
+            format: self.format,
+            operand: MatmulOperand::Rhs,
+            slabs: Self::SLABS,
+            rows: Self::N,
+            k: self.k,
+            seed: 2,
+        }
+    }
+}
+
+impl RoutineProduct for RowRuns {
+    fn launch<R, M, SM>(
+        &self,
+        routine: &R,
+        hw: &Hardware,
+        client: &Client,
+        settings: &R::Settings,
+    ) -> Result<TensorHandle, Decline>
+    where
+        R: MatmulRoutine<M, SM>,
+        M: MatmulMicrokernel,
+    {
+        let stack = Stack::Packed(self.format);
+        let (lhs, _) = stack.activation(client, &[self.rows(), self.k], 1);
+        let tiles = self.tiles();
+        let entries: Vec<u32> = tiles.iter().map(|&(_, _, slab)| slab).collect();
+        let ends: Vec<u32> = tiles.iter().map(|&(_, end, _)| end as u32).collect();
+        let table = MatmulIndexTable::RowRuns(Box::new(MatmulRowRuns {
+            slabs: Self::SLABS,
+            tile_rows: TileRows(NonZeroUsize::new(self.tile_rows).expect("tiles hold rows")),
+            entries: upload(client, &[tiles.len()], &entries),
+            runs: upload(client, &[tiles.len()], &ends),
+        }));
+        let shape = Shape::from(vec![self.rows(), Self::N]);
+        let (out, bound) = Self::poisoned(client, shape, lhs.elem);
+        let rhs = PackedSlabs::new(client, self.packed_slabs()).stack();
+        routine.launch_indexed_into(hw, client, lhs, rhs, table, bound, settings)?;
+        Ok(out)
+    }
+
+    fn reference(&self) -> HostData {
+        let (k, n) = (self.k, Self::N);
+        let lhs = Stack::Packed(self.format).activation_values(self.rows() * k, 1);
+        let stack = self.packed_slabs().dequantized();
+        let mut out = vec![f32::NAN; self.rows() * n];
+        for (start, end, slab) in self.tiles() {
+            for row in start..end {
+                for j in 0..n {
+                    out[row * n + j] = match slab as usize >= Self::SLABS {
+                        true => 0.,
+                        false => (0..k)
+                            .map(|kk| lhs[row * k + kk] * stack.cell(slab as usize, kk, j))
+                            .sum(),
+                    };
+                }
+            }
+        }
+        HostData::row_major(HostDataVec::F32(out), Shape::from(vec![self.rows(), n]))
+    }
+
+    fn tolerance(&self) -> f32 {
+        HALF_TOLERANCE
     }
 }
 
@@ -281,9 +419,8 @@ impl RoutineProduct for RunsOfK {
         let (m, n, rows) = (self.m, self.n, self.rows());
         let lhs = upload(client, &[m, rows], &values(m * rows, 3));
         let rhs = upload(client, &[rows, n], &values(rows * n, 4));
-        let table = MatmulIndexTable {
-            index: MatmulIndex::RunOfK,
-            entries: upload(client, &[self.ends.len()], &self.ends),
+        let table = MatmulIndexTable::RunOfK {
+            ends: upload(client, &[self.ends.len()], &self.ends),
         };
         let shape = Shape::from(vec![self.ends.len(), m, n]);
         let (out, bound) = Self::poisoned(client, shape, lhs.elem);
@@ -366,8 +503,8 @@ impl RoutineProduct for Chunked {
         } = *self;
         let lhs = upload(client, &[chunks, rows, k], &values(chunks * rows * k, 5));
         let stack = upload(client, &[slabs, k, n], &values(slabs * k * n, 6));
-        let table = MatmulIndexTable {
-            index: MatmulIndex::Slab { slabs },
+        let table = MatmulIndexTable::Slab {
+            slabs,
             entries: upload(client, &[chunks], &self.slab_of_each()),
         };
         let shape = Shape::from(vec![chunks, rows, n]);

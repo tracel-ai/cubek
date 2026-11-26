@@ -346,7 +346,7 @@ impl PlaneShuffleMatmulRoutine {
                 &[(N, Self::float_planes(problem, &microkernel, settings))],
                 CubeOrder::RowMajor,
             ),
-        );
+        )?;
         let blueprint = Self::blueprint(hw, problem, microkernel, partitioning)?;
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
@@ -387,7 +387,7 @@ impl PlaneShuffleMatmulRoutine {
             (Some(_), None) => return Err(Self::PERSISTENT_UNSIZED),
             (None, _) => order,
         };
-        let partitioning = view.plane_partitioning(microkernel.tiling(), &[columns], order);
+        let partitioning = view.plane_partitioning(microkernel.tiling(), &[columns], order)?;
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,

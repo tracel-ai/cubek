@@ -1043,7 +1043,8 @@ mod base {
                 &[M, N],
                 settings.cube_order,
                 MatmulView::ONE_CUBE_A_BOX,
-            );
+            )
+            .expect("the routine placed it");
         let launched = &blueprint.partitioning;
         assert_eq!(launched.cube_space().space, placed.cube_space().space);
         assert_eq!(launched.stage(), placed.stage());

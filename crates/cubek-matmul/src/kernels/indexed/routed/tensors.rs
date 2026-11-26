@@ -4,8 +4,8 @@ use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable,
-    MatmulInputs, MatmulRoutine, MatmulTensors,
+    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndexTable, MatmulInputs,
+    MatmulRoutine, MatmulTensors,
 };
 use crate::kernels::{MatmulTuneKey, OperandLayout};
 use cubecl::client::Client;
@@ -24,7 +24,7 @@ use cubek_std::matmul_dimensions::{K, N};
 /// each row's routes, `out[r, s] = lhs[r] · rhs[routes[r, s]]`.
 ///
 /// It is a dense product: each row's slot is a batch of one row, `[rows, slots]` batches, and the
-/// stack is read through the routes, one entry a batch ([`MatmulIndex::Slab`]), so a dense
+/// stack is read through the routes, one entry a batch ([`MatmulIndex::Slab`](crate::kernels::MatmulIndex::Slab)), so a dense
 /// routine serves it ([`launch`](Self::launch)).
 #[derive(Clone)]
 pub struct RoutedMatmulTensors {
@@ -310,10 +310,8 @@ impl RoutedMatmulTensors {
             .lhs
             .as_rows(rows, k)
             .viewed(Metadata::new([rows, 1, 1, k], [k, k, k, 1]));
-        let table = MatmulIndexTable {
-            index: MatmulIndex::Slab {
-                slabs: self.experts,
-            },
+        let table = MatmulIndexTable::Slab {
+            slabs: self.experts,
             entries: self.routes.as_rows(rows, slots),
         };
         Ok((lhs, self.along.read_slabs(&self.rhs, self.experts)?, table))

@@ -9,7 +9,7 @@ use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulRowsKind};
 use cubek_std::Hardware;
 
 use crate::kernels::{
-    MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
+    MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors, RunStored,
 };
 use cubecl::tile::{
     Geometry, TileTensorLaunch,
@@ -63,10 +63,17 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
     ) -> Result<(), Decline> {
-        let binding = tensors
-            .bind(&blueprint, &grid)?
-            .map_out(|out| (out, Write::Replace));
-        self.dispatch::<Buffered, _>(tensors, binding, blueprint, grid);
+        let binding = tensors.bind(&blueprint, &grid)?;
+        match tensors.indexes_output() {
+            false => {
+                let binding = binding.map_out(|out| (out, Write::Replace));
+                self.dispatch::<Buffered, _>(tensors, binding, blueprint, grid);
+            }
+            true => {
+                let binding = binding.map_out(|out| tensors.output_through_table(out));
+                self.dispatch::<RunStored, _>(tensors, binding, blueprint, grid);
+            }
+        }
         Ok(())
     }
 

@@ -207,7 +207,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
                 &[columns],
                 CubeOrder::RowMajor,
                 MatmulView::ONE_CUBE_A_BOX,
-            );
+            )?;
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,

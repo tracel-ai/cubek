@@ -273,6 +273,7 @@ impl Routine for UnitRegistersMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_plain()?;
+        problem.check_rows_uncut_by_runs()?;
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         let microkernel = UnitRegistersMicrokernel::best(hw, &item, &settings.microkernel)?;
@@ -288,7 +289,7 @@ impl Routine for UnitRegistersMatmulRoutine {
             microkernel.tiling().units_distributed(N, blocks_per_plane),
             &[M, N],
             PlaneOrder::new(&planes.counts(), settings.cube_order),
-        );
+        )?;
         let cube = CubeResources {
             plane_width,
             shared_memory: 0,

@@ -6,8 +6,8 @@ use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable,
-    MatmulInputs, MatmulRoutine, MatmulRoutineProblem,
+    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndexTable, MatmulInputs,
+    MatmulRoutine, MatmulRoutineProblem,
 };
 use crate::kernels::{MatmulTuneKey, OperandLayout};
 use cubecl::client::Client;
@@ -24,7 +24,7 @@ use cubek_std::matmul_dimensions::{K, N};
 /// cumulative end row.
 ///
 /// It is a dense product once the groups are padded to whole chunks of rows: each chunk a batch,
-/// against the slab of the group it holds, read through the chunks' table ([`MatmulIndex::Slab`]),
+/// against the slab of the group it holds, read through the chunks' table ([`MatmulIndex::Slab`](crate::kernels::MatmulIndex::Slab)),
 /// so a dense routine serves it ([`launch`](Self::launch)). A chunk past the groups' names no slab
 /// and sums nothing.
 #[derive(Clone)]
@@ -263,10 +263,8 @@ impl MGroupedMatmulTensors {
                 [chunks, chunk_rows, k],
                 [chunk_rows * k, k, 1],
             ));
-        let table = MatmulIndexTable {
-            index: MatmulIndex::Slab {
-                slabs: self.groups(),
-            },
+        let table = MatmulIndexTable::Slab {
+            slabs: self.groups(),
             entries: PlainTensor::of_handle(layout.table()),
         };
         let (out, bound) =

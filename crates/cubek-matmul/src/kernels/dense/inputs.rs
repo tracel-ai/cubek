@@ -1,5 +1,5 @@
 use crate::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
-use crate::kernels::{MATMUL_ELEMENT_UNVERIFIED, MatmulIndex};
+use crate::kernels::{MATMUL_ELEMENT_UNVERIFIED, MatmulIndex, MatmulTableBuffer, TileRows};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::tile::launch::Decline;
@@ -65,7 +65,54 @@ impl MatmulInputs {
 /// A table a product's inputs read one entry of per batch, and what its entries say: `u32`
 /// entries, its dims the product's batches.
 #[derive(Debug, Clone)]
-pub struct MatmulIndexTable {
-    pub index: MatmulIndex,
+pub enum MatmulIndexTable {
+    /// Each batch's slab of a stack of `slabs` ([`MatmulIndex::Slab`]).
+    Slab { slabs: usize, entries: PlainTensor },
+    /// Each batch's run of `K`, as the ends of the runs ([`MatmulIndex::RunOfK`]).
+    RunOfK { ends: PlainTensor },
+    /// Each tile's rows of a flat lhs and output, and its slab ([`MatmulIndex::RowRunsOnSlab`]).
+    RowRuns(Box<MatmulRowRuns>),
+}
+
+/// The tables of rows cut to runs: each tile's slab and where its rows end. Every run is at most
+/// `tile_rows` long, which the launch does not check.
+#[derive(Debug, Clone)]
+pub struct MatmulRowRuns {
+    pub slabs: usize,
+    pub tile_rows: TileRows,
     pub entries: PlainTensor,
+    pub runs: PlainTensor,
+}
+
+impl MatmulIndexTable {
+    /// What the table says of each batch to the product.
+    pub fn index(&self) -> MatmulIndex {
+        match self {
+            Self::Slab { slabs, .. } => MatmulIndex::Slab { slabs: *slabs },
+            Self::RunOfK { .. } => MatmulIndex::RunOfK,
+            Self::RowRuns(runs) => MatmulIndex::RowRunsOnSlab { slabs: runs.slabs },
+        }
+    }
+
+    /// The entries, one per batch.
+    pub fn entries(&self) -> &PlainTensor {
+        match self {
+            Self::Slab { entries, .. } => entries,
+            Self::RunOfK { ends } => ends,
+            Self::RowRuns(runs) => &runs.entries,
+        }
+    }
+
+    /// The buffer `buffer` names.
+    ///
+    /// # Panics
+    ///
+    /// On [`MatmulTableBuffer::Runs`] of a table that cuts no rows to runs, which no index reads.
+    pub fn buffer(&self, buffer: MatmulTableBuffer) -> &PlainTensor {
+        match (buffer, self) {
+            (MatmulTableBuffer::Entries, _) => self.entries(),
+            (MatmulTableBuffer::Runs, Self::RowRuns(runs)) => &runs.runs,
+            (MatmulTableBuffer::Runs, _) => panic!("only rows cut to runs hold runs"),
+        }
+    }
 }

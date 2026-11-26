@@ -1,6 +1,6 @@
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
+    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndexTable, MatmulInputs, MatmulRoutine,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -15,7 +15,7 @@ use cubek_std::Hardware;
 /// sets and each group's cumulative end row.
 ///
 /// It is a dense product: each group a batch, contracting both operands over its run of rows, the
-/// ends the table both read ([`MatmulIndex::RunOfK`]), and each batch's output one slab of the
+/// ends the table both read ([`MatmulIndex::RunOfK`](crate::kernels::MatmulIndex::RunOfK)), and each batch's output one slab of the
 /// stack the groups' slabs lie side by side in, so a dense routine serves it
 /// ([`launch`](Self::launch)).
 #[derive(Clone)]
@@ -118,9 +118,8 @@ impl KGroupedMatmulTensors {
         let (groups, n) = (self.ends.shape().num_elements(), self.rhs.shape()[1]);
         // The lhs read transposed, `[m, rows]`, so the grouped rows are its contraction.
         let lhs = self.lhs.transposed();
-        let table = MatmulIndexTable {
-            index: MatmulIndex::RunOfK,
-            entries: self.ends.clone(),
+        let table = MatmulIndexTable::RunOfK {
+            ends: self.ends.clone(),
         };
         let (out, bound) = PlainTensor::empty_contiguous(&self.client, Shape::from(shape), elem);
         // Batch `g` of the `[groups, m, n]` view is group `g`'s slab of the stack.
