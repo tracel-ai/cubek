@@ -111,7 +111,8 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
             .collect();
         let narrow_keys = [(2, 2), (2, 4), (4, 2), (4, 4), (8, 4)].map(|(queries, planes)| {
             CubeKeyGradientMicrokernelSettings {
-                plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries).held(),
+                plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries)
+                    .score_in_fragments(),
                 planes_along_keys: NonZeroUsize::new(planes).unwrap(),
             }
         });
