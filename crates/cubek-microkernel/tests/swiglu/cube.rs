@@ -4,7 +4,7 @@ use crate::launch::RowBatch;
 use cubek_microkernel::swiglu::cube::CubeSwigluMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::swiglu::{F16, F32, Swiglu, SwigluCase};
 

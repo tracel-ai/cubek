@@ -6,7 +6,7 @@ use crate::kernels::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, DestinationLaunch, VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{BaseRegion, Space, TileTensorLaunch, VectorRegion};
+use cubecl::tile::{BaseRegion, Launcher, Space, TileTensorLaunch, VectorRegion};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
@@ -303,10 +303,22 @@ impl MatmulRoutine<UnitRegistersMicrokernel> for UnitRegistersMatmulRoutine {
     /// A unit owns a block of the rows.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Tiled;
 
+    type Extras = ();
+
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        _: &MatmulTensors<Out>,
+        _: &Launcher,
+        _: &UnitRegistersMatmulRoutineBlueprint,
+    ) -> Result<(), Decline> {
+        Ok(())
+    }
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        _: (),
         blueprint: UnitRegistersMatmulRoutineBlueprint,
         grid: Grid,
     ) {

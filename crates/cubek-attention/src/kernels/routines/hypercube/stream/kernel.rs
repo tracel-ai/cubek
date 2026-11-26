@@ -16,6 +16,10 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// rows do not see, past a shorter sequence's keys or under a causal mask, are walked by no one,
 /// so every run but the last holds the same steps whatever the keys. A cube whose run is empty
 /// touches no box and leaves at once.
+///
+/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `len`, `queries`, `keys`, `scale`: as
+///   `unit_attention_kernel`'s.
+/// - `slot_out`, `slot_max`, `slot_sum`, `arrivals`: as `hypercube_attention_arrival_kernel`'s.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "the query and keys' stage element is defined from them at launch, which the kernel \
@@ -35,6 +39,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
@@ -59,7 +64,8 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     let mut longest = 1usize;
 
     for b in 0..len.shape(0) {
-        longest = longest.max((len[b * len.stride(0)] as usize).div_ceil(keys_per_step));
+        let attended = VisibleKeys::attended_length(len, b, keys) as usize;
+        longest = longest.max(attended.div_ceil(keys_per_step));
     }
 
     let portion = partitioning.walk().portion_of(longest);
@@ -74,6 +80,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
             &ComptimeOption::new_None(),
             &cube,
             queries,
+            keys,
             &mask,
             visibility,
         );

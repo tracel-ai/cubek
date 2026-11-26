@@ -4,9 +4,9 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
+use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -373,10 +373,22 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
     /// Its planes each hold every row.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
+    type Extras = ();
+
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        _: &MatmulTensors<Out>,
+        _: &Launcher,
+        _: &CubeShuffleMatmulRoutineBlueprint,
+    ) -> Result<(), Decline> {
+        Ok(())
+    }
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        _: (),
         blueprint: CubeShuffleMatmulRoutineBlueprint,
         grid: Grid,
     ) {

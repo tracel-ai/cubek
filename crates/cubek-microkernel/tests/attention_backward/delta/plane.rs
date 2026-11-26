@@ -12,7 +12,7 @@ use cubek_microkernel::attention_backward::delta::plane::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
 const F16: ElemType = ElemType::Float(FloatKind::F16);
 const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -56,7 +56,7 @@ impl PlaneDelta {
     }
 }
 
-impl ScopeUnderTest for PlaneDelta {
+impl ScopeChecker for PlaneDelta {
     type Case = PlaneDeltaCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

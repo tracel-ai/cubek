@@ -170,7 +170,7 @@ impl ConvTensors {
         let roles = problem.roles();
         let launcher = grid.launcher(&self.client, || {
             (partitioning.kernel(&roles), partitioning.space().clone())
-        });
+        })?;
         let widths = blueprint.widths;
         let input = launcher
             .arg(self.input, problem.elements.lhs)

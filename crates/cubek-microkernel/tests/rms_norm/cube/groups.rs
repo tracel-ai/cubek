@@ -4,7 +4,7 @@ use crate::launch::rms_norm::RmsNormSettings;
 use cubek_microkernel::rms_norm::cube::CubeGroupsRmsNormMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::rms_norm::{RmsNorm, RmsNormCase};
 

@@ -25,18 +25,10 @@ impl<R: Routine> MGroupedMatmulCandidate<R> {
     /// The grouped product `tensors` states, by this candidate's routine at its setting, on the
     /// device the operands live on, handed back padded to the setting's chunks.
     ///
-    /// # Assumptions
-    ///
-    /// The product has a row at least.
-    ///
     /// # Errors
     ///
     /// A stack of a kind the setting is not listed for, declined before compiling anything, and
     /// what [`MGroupedMatmulTensors::launch`] declines, each named with the setting.
-    ///
-    /// # Panics
-    ///
-    /// On no row, which breaks the assumption.
     pub fn launch<Mk, SM>(&self, tensors: &MGroupedMatmulTensors) -> Result<PaddedRows, String>
     where
         Mk: MatmulMicrokernel,

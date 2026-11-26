@@ -100,48 +100,84 @@ fn render_table(
         }
     };
 
-    if rank == 1 {
-        let col_filter = filter.and_then(|f| f.first());
-        let cols = axis_indices(col_filter, a.shape[0]);
-        let rows = vec![0usize];
-        print_table(&rows, &cols, |_, c| cell(&[c]));
-    } else if rank == 2 {
-        let row_filter = filter.and_then(|f| f.first());
-        let col_filter = filter.and_then(|f| f.get(1));
-        let rows = axis_indices(row_filter, a.shape[0]);
-        let cols = axis_indices(col_filter, a.shape[1]);
-        print_table(&rows, &cols, |r, c| cell(&[r, c]));
-    } else {
-        let leading_dims = rank - 2;
-        let row_dim = a.shape[rank - 2];
-        let col_dim = a.shape[rank - 1];
-        let row_indices = axis_indices(filter.and_then(|f| f.get(rank - 2)), row_dim);
-        let col_indices = axis_indices(filter.and_then(|f| f.get(rank - 1)), col_dim);
-
-        let mut leading = vec![0usize; leading_dims];
-        let mut first = true;
-        loop {
-            let print_this = filter
-                .map(|f| leading_indices_match(&leading, f))
-                .unwrap_or(true);
-            if print_this {
-                if !first {
-                    println!();
-                }
-                println!("{}:", format_leading_label(&leading, rank));
-                print_table(&row_indices, &col_indices, |r, c| {
-                    let mut full = leading.clone();
-                    full.push(r);
-                    full.push(c);
-                    cell(&full)
-                });
-                first = false;
-            }
-            if !increment_lex(&mut leading, &a.shape.as_slice()[..leading_dims]) {
-                break;
-            }
-        }
+    match rank {
+        1 => render_vector(a, filter, &cell),
+        2 => render_matrix(a, filter, &cell),
+        _ => render_batched_matrices(a, filter, &cell),
     }
+}
+
+/// `a`, of rank one, as one row of the table.
+fn render_vector(a: &HostData, filter: Option<&TensorFilter>, cell: &dyn Fn(&[usize]) -> String) {
+    let col_filter = filter.and_then(|f| f.first());
+    let cols = axis_indices(col_filter, a.shape[0]);
+    let rows = vec![0usize];
+    print_table(&rows, &cols, |_, c| cell(&[c]));
+}
+
+/// `a`, of rank two, as one table.
+fn render_matrix(a: &HostData, filter: Option<&TensorFilter>, cell: &dyn Fn(&[usize]) -> String) {
+    let row_filter = filter.and_then(|f| f.first());
+    let col_filter = filter.and_then(|f| f.get(1));
+    let rows = axis_indices(row_filter, a.shape[0]);
+    let cols = axis_indices(col_filter, a.shape[1]);
+    print_table(&rows, &cols, |r, c| cell(&[r, c]));
+}
+
+/// `a`, of rank three or more, as one table per index of its leading axes.
+fn render_batched_matrices(
+    a: &HostData,
+    filter: Option<&TensorFilter>,
+    cell: &dyn Fn(&[usize]) -> String,
+) {
+    let rank = a.shape.rank();
+    let leading_dims = rank - 2;
+    let row_dim = a.shape[rank - 2];
+    let col_dim = a.shape[rank - 1];
+    let row_indices = axis_indices(filter.and_then(|f| f.get(rank - 2)), row_dim);
+    let col_indices = axis_indices(filter.and_then(|f| f.get(rank - 1)), col_dim);
+
+    let leading = leading_indices(&a.shape.as_slice()[..leading_dims]);
+    let shown = leading
+        .iter()
+        .filter(|leading| filter.is_none_or(|f| leading_indices_match(leading, f)));
+    for (position, leading) in shown.enumerate() {
+        print_slice(
+            position > 0,
+            leading,
+            rank,
+            &row_indices,
+            &col_indices,
+            cell,
+        );
+    }
+}
+
+/// The matrix at `leading` as one table under its label, a blank line before it where it is
+/// `separated` from the one above.
+fn print_slice(
+    separated: bool,
+    leading: &[usize],
+    rank: usize,
+    rows: &[usize],
+    cols: &[usize],
+    cell: &dyn Fn(&[usize]) -> String,
+) {
+    if separated {
+        println!();
+    }
+    println!("{}:", format_leading_label(leading, rank));
+    print_table(rows, cols, |r, c| cell(&[leading, &[r, c]].concat()));
+}
+
+/// Every index of leading axes of `bounds`, in row-major order, the first all zeros.
+fn leading_indices(bounds: &[usize]) -> Vec<Vec<usize>> {
+    let mut leading = vec![0usize; bounds.len()];
+    let mut all = vec![leading.clone()];
+    while increment_lex(&mut leading, bounds) {
+        all.push(leading.clone());
+    }
+    all
 }
 
 // ---------- lines view ----------

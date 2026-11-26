@@ -9,7 +9,10 @@ mod padded_rows;
 #[cfg(test)]
 mod tests;
 
-pub use layout::{GroupedRows, RouteSort};
+pub use layout::{
+    COMBINED_ROUTES_UNREAD, GATED_ROWS_UNREAD, GROUPED_ROWS_UNREAD, GROUPED_TILE_OF_NO_ROW,
+    GroupedRows, ROUTE_SORT_UNREAD, RouteSort,
+};
 pub use padded_rows::PaddedRows;
 
 pub(crate) use layout::upload;

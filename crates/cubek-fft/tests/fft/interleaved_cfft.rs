@@ -9,7 +9,7 @@ use cubek_fft::{
     ComplexTensorHandle, FftError, FftMode, FftNormalization, cfft_interleaved,
     cfft_interleaved_launch,
 };
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::fft::{CfftInterleavedLaunch, InterleavedCfft, Placement, Values, longest_shared};
 

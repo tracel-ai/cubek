@@ -2,15 +2,12 @@ use cubecl::ir::ElemType;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{AccumulateArg, TileOperand};
 use cubecl::{self as cubecl, cube, prelude::*};
-use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernel;
+use cubek_microkernel::reduce::hypercube::HypercubeAtomicReduceMicrokernel;
 
-/// Every cube of the launch, reducing its part of its rows as the cube microkernel reduces a row,
-/// its total added into `out`, which holds zero before the launch.
+/// Every cube of the launch, its part of its rows added into `out`.
 ///
-/// Its operands' leaves:
-/// - `input`: the rows, one tensor of any rank read at its own strides, or what the caller binds in
-///   its place (`I`).
-/// - `out`: one tensor of the input's shape, the reduced dim one cell wide, at zero.
+/// - `input`: the rows, as every reduce kernel reads them.
+/// - `out`: one tensor of a cell a row, at zero before the launch, which only receives atomic adds.
 #[cube(launch_unchecked)]
 pub(crate) fn hypercube_atomic_reduce_kernel<
     In: Numeric,
@@ -22,7 +19,7 @@ pub(crate) fn hypercube_atomic_reduce_kernel<
     input: &I::Arg,
     out: &mut AccumulateArg<'_, Out>,
     partitioning: Partitioning,
-    #[comptime] microkernel: CubeStagedReduceMicrokernel,
+    #[comptime] microkernel: HypercubeAtomicReduceMicrokernel,
     #[define(In, Acc, Out)] _elements: [ElemType; 3],
 ) {
     let x = I::tile::<In>(input, &partitioning);
@@ -30,11 +27,6 @@ pub(crate) fn hypercube_atomic_reduce_kernel<
     for cube in &partitioning {
         microkernel
             .runtime()
-            .reduce::<In, Acc, Out, Out, N, Vector<Acc, N>>(
-                &cube,
-                &x,
-                &o,
-                &ComptimeOption::new_None(),
-            );
+            .reduce::<In, Acc, Out, N, Vector<Acc, N>>(&cube, &x, &o);
     }
 }

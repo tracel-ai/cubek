@@ -133,7 +133,8 @@ impl Microkernel for CubeKeyGradientMicrokernel {
         let narrow =
             [(2, 4), (2, 8), (4, 4), (4, 8), (8, 2), (8, 4), (8, 8)].map(|(queries, planes)| {
                 Self::Settings {
-                    plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries).held(),
+                    plane: PlaneKeyGradientMicrokernelSettings::fragments(1, queries)
+                        .score_in_fragments(),
                     planes_along_keys: NonZeroUsize::new(planes).unwrap(),
                 }
             });

@@ -2,7 +2,7 @@
 //! a fixed grid of cubes, the last cube to arrive at a tile writing it.
 
 use cubek_matmul::kernels::HypercubeLastArrivalMatmulRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::matmul::{Declines, Product};
 use crate::tiled::ByRoutine;

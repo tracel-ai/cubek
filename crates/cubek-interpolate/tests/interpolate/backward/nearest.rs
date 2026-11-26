@@ -2,7 +2,7 @@
 //! under both roundings.
 
 use cubek_interpolate::definition::{InterpolateMode, InterpolateOptions, NearestMode};
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::interpolate::backward::{Backward, BackwardCase};
 

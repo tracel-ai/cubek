@@ -1,6 +1,5 @@
 use crate::kernels::{
-    AttentionBinding, AttentionBlueprint, AttentionRoutineProblem, AttentionSplitSlots,
-    AttentionTensors,
+    AttentionBlueprint, AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
@@ -14,17 +13,32 @@ use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 ///
 /// A routine states what is its own, how it places its microkernel's work items and the kernel it
 /// dispatches. The launch around those is written once, in [`DirectAttention`].
+///
+/// # Assumptions
+///
+/// The blueprint and the grid a dispatch launches are what the routine's `prepare` gave for its
+/// tensors' problem on their device.
+///
+/// # Guarantees
+///
+/// A dispatch that errs has launched nothing but a conversion of the query
+/// ([`AttentionTensors::bind`]).
 pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
 {
-    /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`.
+    /// Launch the kernel `blueprint` compiles, on `grid`, over `tensors` bound as `blueprint`
+    /// states them ([`AttentionTensors::bind`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared, or a routine
+    /// that stages its keys meets a QJL fix-up.
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: AttentionBlueprint<M, SM>,
         grid: Grid,
-    );
+    ) -> Result<(), Decline>;
 }
 
 /// What writes the attention at each of its routine's settings: a routine alone ([`DirectAttention`]),
@@ -94,8 +108,7 @@ where
         settings: &R::Settings,
     ) -> Result<TensorHandle, Decline> {
         let (blueprint, grid) = R::prepare(hw, &tensors.problem(), settings)?;
-        let binding = tensors.bind(&blueprint, &grid);
-        self.0.dispatch(&tensors, binding, blueprint, grid);
+        self.0.dispatch(&tensors, blueprint, grid)?;
         Ok(tensors.into_out())
     }
 }
@@ -120,16 +133,28 @@ pub trait PartialAttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     /// The width of the lines the slots' outputs are stored at.
     fn slot_width(&self, blueprint: &AttentionBlueprint<M, SM>) -> usize;
 
-    /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its partials left in
-    /// `slots`.
+    /// Launch the kernel `blueprint` compiles, on `grid`, over `tensors` bound as `blueprint`
+    /// states them, its partials left in `slots`.
+    ///
+    /// # Assumptions
+    ///
+    /// As [`AttentionRoutine`]'s, and `slots` are the tensors'
+    /// [`split_slots`](AttentionTensors::split_slots) for the merge of `blueprint`.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`AttentionRoutine`]'s.
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionRoutine::dispatch`].
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: AttentionBlueprint<M, SM>,
         grid: Grid,
         slots: &AttentionSplitSlots,
-    );
+    ) -> Result<(), Decline>;
 }
 
 #[cfg(test)]

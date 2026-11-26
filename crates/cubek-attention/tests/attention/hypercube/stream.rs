@@ -2,7 +2,7 @@
 //! holding a box whole writing it, and the runs sharing one leaving partials the last merges.
 
 use cubek_attention::kernels::HypercubeStreamFragmentAttentionRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::attention::{Forward, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR};
 

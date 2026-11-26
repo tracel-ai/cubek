@@ -1,6 +1,6 @@
 use cubecl::{ir::AddressType, zspace::Shape};
 use cubek_std::MatrixLayout as KernelMatrixLayout;
-use cubek_test_utils::{HostData, Progress};
+use cubek_test_utils::{HostData, KernelResultError, Progress};
 
 use crate::definition::{MatmulElems, MatmulProblem};
 use crate::eval::benchmarks::gemm::problem::{GemmProblem, Precision};
@@ -18,7 +18,7 @@ impl cubek_test_utils::Correctness for GemmCorrectness {
         strategy: &Strategy,
         problem: &GemmProblem,
         seeds: &[u64],
-    ) -> Result<HostData, String> {
+    ) -> Result<HostData, KernelResultError> {
         let device = cubecl::test_device();
         let client = device.client();
         strategy_result(

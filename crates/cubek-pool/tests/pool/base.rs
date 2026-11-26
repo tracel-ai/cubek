@@ -17,7 +17,19 @@ use cubek_pool::{
     pool2d, pool2d_backward, pool2d_with_indices, pool2d_with_indices_backward, pool3d,
     pool3d_backward,
 };
-use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, ScopeChecker, TestInput, Written};
+
+/// The decline of `case`'s launch, which its test skips or fails on.
+///
+/// # Panics
+///
+/// Where the launch returns an error other than a decline: every case lies in the pool's Domain.
+fn declined(case: &impl core::fmt::Debug, error: PoolError) -> Decline {
+    match error {
+        PoolError::Declined(decline) => decline,
+        other => panic!("{case:?}: {other}"),
+    }
+}
 
 /// The element the indices of a max pool are written in.
 pub(crate) const INDICES: ElemType = ElemType::Int(IntKind::I32);
@@ -221,7 +233,7 @@ impl<const N: usize> Pooled<N> {
 /// the case asks for them.
 pub(crate) struct PoolForward<const N: usize>;
 
-impl<const N: usize> ScopeUnderTest for PoolForward<N>
+impl<const N: usize> ScopeChecker for PoolForward<N>
 where
     Entries: PoolEntry<N>,
 {
@@ -242,7 +254,7 @@ where
             indices.as_ref(),
             case.problem.mode.clone(),
         )
-        .unwrap_or_else(|why| panic!("{case:?} refused: {why:?}"));
+        .map_err(|error| declined(case, error))?;
         let mut written = vec![Written {
             name: "output",
             tensor: output,
@@ -313,7 +325,7 @@ impl<const N: usize> Unpooled<N> {
 /// indices the forward pool wrote for it where the case reads them.
 pub(crate) struct PoolBackward<const N: usize>;
 
-impl<const N: usize> ScopeUnderTest for PoolBackward<N>
+impl<const N: usize> ScopeChecker for PoolBackward<N>
 where
     Entries: PoolEntry<N>,
 {
@@ -330,11 +342,12 @@ where
             let indices = Seeded::poisoned(client, &grad_shape, INDICES);
             let pooled = Seeded::poisoned(client, &grad_shape, input.dtype);
             Entries::forward(client, &input, &pooled, Some(&indices), mode.clone())
-                .unwrap_or_else(|why| panic!("{case:?}: the forward pool refused: {why:?}"));
-            indices
+                .map(|()| indices)
+                .map_err(|error| declined(case, error))
         });
+        let indices = indices.transpose()?;
         Entries::backward(client, &input, &out_grad, indices.as_ref(), &in_grad, mode)
-            .unwrap_or_else(|why| panic!("{case:?} refused: {why:?}"));
+            .map_err(|error| declined(case, error))?;
         let mut written = vec![Written {
             name: "input gradient",
             tensor: in_grad,

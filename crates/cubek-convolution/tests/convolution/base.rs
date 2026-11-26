@@ -19,9 +19,9 @@ use cubek_convolution::components::{
     ConvSetupError, ConvolutionOperation, ConvolutionProblem, Dimensionality,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
-use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulSetupError};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, Written};
 use half::{bf16, f16};
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -645,7 +645,7 @@ impl<R, const N: usize> Convolves<R, N> {
     }
 }
 
-impl<R: ConvRoutine<N>, const N: usize> ScopeUnderTest for Convolves<R, N> {
+impl<R: ConvRoutine<N>, const N: usize> ScopeChecker for Convolves<R, N> {
     type Case = ConvCase<N>;
 
     /// # Panics
@@ -662,6 +662,7 @@ impl<R: ConvRoutine<N>, const N: usize> ScopeUnderTest for Convolves<R, N> {
                 tensor: tensors.written,
                 host: HostDataType::F32,
             }]),
+            (Err(ConvSetupError::Matmul(MatmulSetupError::Broken(broken))), _) => Err(broken),
             (Err(_), Declines::AsItStates) => Err(Decline::Unserved {
                 why: "the routine runs no such pass on this device",
             }),

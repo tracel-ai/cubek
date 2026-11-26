@@ -7,17 +7,21 @@ pub(crate) use nearest::reference_nearest_backward;
 use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::definition::{InterpolateBackwardProblem, InterpolateMode, InterpolateOptions};
 use cubecl::client::Client;
-use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
-};
+use cubek_test_utils::{ExecutionOutcome, HostData, HostDataType, KernelResultError, Progress};
 
 use crate::interpolate_backward;
 
+/// The input gradient of `problem`'s launch on seeded input and output gradient.
+///
+/// # Errors
+///
+/// [`KernelResultError::Refused`] with the decline the launch returns, and
+/// [`KernelResultError::NotRun`] where it returns another error or did not run.
 pub fn kernel_result(
     client: Client,
     problem: InterpolateBackwardProblem,
     seed: u64,
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     let dtype = f32_elem_type();
 
     let out_grad_shape = problem.out_grad_shape.to_vec();
@@ -36,26 +40,20 @@ pub fn kernel_result(
     let input_grad_shape = input_shape;
     let input_grad_handle = make_zero_handle(&client, input_grad_shape, dtype);
 
-    let outcome = launch_and_capture_outcome(&client, &[&input_grad_handle.handle], |c| {
-        interpolate_backward(
-            c,
-            input_handle.clone().binding(),
-            out_grad_handle.clone().binding(),
-            input_grad_handle.clone().binding(),
-            problem.options,
-            dtype,
-        )
-        .into()
-    });
-
-    match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-            &client,
-            input_grad_handle,
-            HostDataType::F32,
-        )),
-    }
+    interpolate_backward(
+        &client,
+        input_handle.binding(),
+        out_grad_handle.binding(),
+        input_grad_handle.clone().binding(),
+        problem.options,
+        dtype,
+    )?;
+    ExecutionOutcome::of_outputs(&client, &[&input_grad_handle.handle]).into_kernel_result()?;
+    Ok(HostData::from_tensor_handle(
+        &client,
+        input_grad_handle,
+        HostDataType::F32,
+    ))
 }
 
 pub fn cpu_reference_result(

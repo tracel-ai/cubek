@@ -9,7 +9,7 @@ use cubecl::prelude::Scalar;
 use cubecl::std::tensor::TensorHandle;
 #[cfg(feature = "heavy")]
 use cubek_fft::rfft_launch;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 #[cfg(feature = "heavy")]
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, TestInput, TestOutcome,
@@ -187,7 +187,10 @@ fn rfft_nyquist_bin_large_sizes() {
 
         let outcome =
             launch_and_capture_outcome(&client, &[&spectrum_re.handle, &spectrum_im.handle], |c| {
-                rfft_launch(c, signal_binding, re_binding, im_binding, 1, dtype).into()
+                match rfft_launch(c, signal_binding, re_binding, im_binding, 1, dtype) {
+                    Ok(()) => ExecutionOutcome::Executed,
+                    Err(error) => ExecutionOutcome::CompileError(error.to_string()),
+                }
             });
 
         let outcome = match outcome {

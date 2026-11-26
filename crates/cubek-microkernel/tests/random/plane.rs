@@ -4,7 +4,7 @@
 use cubek_microkernel::random::plane::PlaneRandomMicrokernel;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::random::{Random, RandomCase, RandomScope};
 

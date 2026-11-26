@@ -1,7 +1,7 @@
 //! The input's gradient through a multi-level algorithm.
 
 use cubek_convolution::ConvAlgorithm;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::convolution::multi_level::Forced;
 use crate::convolution::{Conv, Convolves, Declines, F16, Pass, Values};

@@ -3,13 +3,17 @@
 //! and what a row accumulates into.
 //!
 //! A reduction reduces the values of a row under a monoid, each value mapped as it is read
-//! ([`ReduceOperation`]). The values accumulate into a carrier ([`ReduceAccumulator`]): the values themselves, a
+//! ([`ReduceOperation`]). The values accumulate into a carrier ([`Accumulable`]): the values themselves, a
 //! value with its index for an argmax, or the `k` best for a top-k, with their indices where it
 //! writes them. An owner
 //! reads its lines through its window of the input and accumulates each as it lands, never holding the
 //! row, so a row as long as a vocabulary costs registers for one line; what tells the scopes apart
 //! is only where the partials meet. Each ends on one unit writing its carrier, or one a column where
 //! its units spread across lines of rows ([`write`](mod@write)).
+
+#[cfg(test)]
+#[macro_use]
+mod testing;
 
 mod accumulator;
 mod columns;

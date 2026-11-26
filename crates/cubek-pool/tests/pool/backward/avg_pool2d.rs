@@ -5,8 +5,8 @@ use cubecl::zspace::Shape;
 use cubek_pool::{
     definition::AvgPoolOptions, eval::cpu_reference::cpu_reference_pool_backward, pool2d_backward,
 };
-use cubek_test_utils::ScopeUnderTest;
-use cubek_test_utils::TestInput;
+use cubek_test_utils::ScopeChecker;
+use cubek_test_utils::{TestInput, assert_equals_approx};
 
 const AVG_POOL2D_BACKWARD_TOLERANCE: f32 = 0.000001;
 
@@ -127,27 +127,28 @@ fn test_avg_pool2d_backward_ceil_mode() {
                 .custom(expected)
                 .f32_host_data();
             let output = build_output_tensor(&client, shape.to_vec(), input.dtype);
-            pool2d_backward(
+            let launched = pool2d_backward(
                 &client,
                 input.clone().binding(),
                 grad.binding(),
                 output.clone().binding(),
                 problem.mode.clone(),
                 input.dtype,
-            )
-            .unwrap();
+            );
             validate_test(
-                Ok(()),
+                &problem,
+                launched,
                 output_host_f32(&client, output),
                 expected.clone(),
                 AVG_POOL2D_BACKWARD_TOLERANCE,
             );
-            validate_test(
-                Ok(()),
-                cpu_reference_pool_backward(&grad_data, &input_data, problem),
-                expected,
+            assert_equals_approx(
+                &cpu_reference_pool_backward(&grad_data, &input_data, problem),
+                &expected,
                 AVG_POOL2D_BACKWARD_TOLERANCE,
-            );
+            )
+            .as_test_outcome()
+            .enforce();
         }
     }
 }

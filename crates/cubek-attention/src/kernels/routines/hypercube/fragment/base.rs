@@ -1,8 +1,8 @@
 use super::kernel::hypercube_fragment_attention_kernel;
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors,
-    HypercubeMerge, PACKED_QUERIES_UNREAD, PartialAttentionRoutine, QueryOrder,
+    ATTENTION_PACKED_UNREAD, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
+    AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors, HypercubeMerge,
+    PACKED_QUERIES_UNREAD, PartialAttentionRoutine, QueryOrder,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
@@ -116,7 +116,7 @@ impl Routine for HypercubeFragmentPartialAttentionRoutine {
 
     /// The best hypercube of plane fragments at the settings, its settings' cubes on every box
     /// whatever the keys ([`AttentionPartitioning::new`]), each holding its planes along the keys
-    /// and the shared memory its microkernel asks for, its stages held as its planes read them.
+    /// and the shared memory its microkernel asks for, its stages laid out as its planes read them.
     /// Serves a cache of any length, at any device fill: neither is a call's to decline, since an
     /// autotune key prepares its candidates at one representative for every call of its bucket.
     /// The merge after it is prepared by the strategy that launches it.
@@ -183,25 +183,27 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: HypercubeFragmentPartialAttentionRoutineBlueprint,
         grid: Grid,
         slots: &AttentionSplitSlots,
-    ) {
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let shape = self.merge_shape(&problem, &blueprint);
         let microkernel = blueprint.microkernel;
-        let (key, value) = binding.cache.into_tiles();
+        let (key, value) = binding.cache.into_tiles()?;
         // Its planes keep their sums in the first, read the query and the keys' stage in the
         // second and cast their probabilities to the values' element in the last; they leave
         // their rows in the slots, and the output is read for its shape alone.
         let [sum, _, staged, probabilities] = microkernel
             .served(&problem.work_item())
             .served_kernel_elements();
+        let [slot_out, slot_max, slot_sum] = slots.to_args();
         // SAFETY: every operand is bound through the launcher, which masks the reads of a tile the
         // problem's edge cuts short, the keys and values are read no further than the attended
-        // length, and the output is read for its shape alone. A plane writes no slot but its own,
-        // for the rows of its box the problem holds.
+        // length, capped at the keys the launch is given, the problem's positions the buffers or
+        // their table reach, and the output is read for its shape alone. A plane writes no slot but
+        // its own, for the rows of its box the problem holds.
         unsafe {
             hypercube_fragment_attention_kernel::launch_unchecked(
                 tensors.client(),
@@ -211,12 +213,13 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 key,
                 value,
                 binding.out,
-                slots.out.clone().binding().into_tensor_arg(),
-                slots.max.clone().binding().into_tensor_arg(),
-                slots.sum.clone().binding().into_tensor_arg(),
-                binding.mask.map(|mask| mask.arg()).into(),
+                slot_out,
+                slot_max,
+                slot_sum,
+                binding.mask.into(),
                 binding.lengths,
                 problem.seq_q as u32,
+                problem.seq_kv as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),
                 microkernel,
@@ -226,5 +229,6 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 [sum, staged, probabilities],
             );
         }
+        Ok(())
     }
 }

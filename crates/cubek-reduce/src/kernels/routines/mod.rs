@@ -1,5 +1,9 @@
 //! The reduce routines, one folder each, named for the routine: its scope, how it moves its data,
-//! and its operation; and the trait they implement, in a module of its own.
+//! and its operation; the trait they implement, and the macros that write what they share, each in a
+//! module of its own.
+
+#[macro_use]
+mod macros;
 
 mod cube_staged_reduce;
 mod hypercube_atomic_reduce;
