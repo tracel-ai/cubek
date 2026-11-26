@@ -332,28 +332,6 @@ impl MatmulTensors {
         }
     }
 
-    /// Whether the runs of rows cut to runs are one `u32` end per tile, as the entries are one
-    /// slab; any other table has none.
-    ///
-    /// # Errors
-    ///
-    /// [`MATMUL_TABLE_NOT_U32`] and [`MATMUL_RUNS_NOT_THE_ENTRIES`].
-    fn admit_runs(table: &MatmulIndexTable) -> Result<(), Decline> {
-        match table {
-            MatmulIndexTable::RowRuns(runs) => Self::admit_run_buffer(runs),
-            _ => Ok(()),
-        }
-    }
-
-    /// [`admit_runs`](Self::admit_runs) of `runs`.
-    fn admit_run_buffer(runs: &MatmulRowRuns) -> Result<(), Decline> {
-        match (runs.runs.elem, runs.runs.shape() == runs.entries.shape()) {
-            (ElemType::UInt(UIntKind::U32), true) if runs.entries.shape().rank() == 1 => Ok(()),
-            (ElemType::UInt(UIntKind::U32), _) => Err(MATMUL_RUNS_NOT_THE_ENTRIES),
-            _ => Err(MATMUL_TABLE_NOT_U32),
-        }
-    }
-
     /// `tensor`, a float operand over `dimensions`, as a product beside a packed input reads it:
     /// dense rows of an element the packed routines are verified at, a copy where it is not dense.
     ///
@@ -451,6 +429,16 @@ impl MatmulTensors<Geometry> {
 }
 
 impl MatmulTensors<MatmulOutputBuffer> {
+    /// The output, bound, as the argument of a launch whose table places it
+    /// ([`indexes_output`](Self::indexes_output)).
+    ///
+    /// # Errors
+    ///
+    /// Why the tile engine refuses to place the output by its table.
+    pub fn output_through_table(&self, out: Bound) -> Result<TileTensorLaunch, Decline> {
+        self.read_through_table(MatmulOperand::Out, out.arg())
+    }
+
     /// The output as a launch wrote it, laid out as the runtime pads it, where the launch
     /// allocated it; `None` where the caller handed its own ([`writing_into`](Self::writing_into)).
     pub fn into_out(self) -> Option<TensorHandle> {
@@ -459,6 +447,12 @@ impl MatmulTensors<MatmulOutputBuffer> {
 }
 
 impl<Out> MatmulTensors<Out> {
+    /// Whether a table places the output: its rows are cut to runs, which a write masks past the
+    /// end of.
+    pub fn indexes_output(&self) -> bool {
+        matches!(self.table, Some(MatmulIndexTable::RowRuns(_)))
+    }
+
     /// Whether the tensors were read for a launch holding its rows as `rows_kind` says: float
     /// ones read for that way of holding the rows, and packed ones, which every launch reads
     /// alike, always.
@@ -499,6 +493,28 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 }
 
 impl MatmulTensors {
+    /// Whether the runs of rows cut to runs are one `u32` end per tile, as the entries are one
+    /// slab; any other table has none.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_TABLE_NOT_U32`] and [`MATMUL_RUNS_NOT_THE_ENTRIES`].
+    fn admit_runs(table: &MatmulIndexTable) -> Result<(), Decline> {
+        match table {
+            MatmulIndexTable::RowRuns(runs) => Self::admit_run_buffer(runs),
+            _ => Ok(()),
+        }
+    }
+
+    /// [`admit_runs`](Self::admit_runs) of `runs`.
+    fn admit_run_buffer(runs: &MatmulRowRuns) -> Result<(), Decline> {
+        match (runs.runs.elem, runs.runs.shape() == runs.entries.shape()) {
+            (ElemType::UInt(UIntKind::U32), true) if runs.entries.shape().rank() == 1 => Ok(()),
+            (ElemType::UInt(UIntKind::U32), _) => Err(MATMUL_RUNS_NOT_THE_ENTRIES),
+            _ => Err(MATMUL_TABLE_NOT_U32),
+        }
+    }
+
     /// [`indexed`](Self::indexed) against a float rhs, holding the rows as `rows_kind` says.
     fn indexed_float(
         client: &Client,
@@ -1712,22 +1728,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         bound
             .indexed(entries, indexing)
             .or_broken(ADMITTED_PLAN_RUNS)
-    }
-
-    /// The output, bound, as the argument of a launch whose table places it
-    /// ([`indexes_output`](Self::indexes_output)).
-    ///
-    /// # Errors
-    ///
-    /// Why the tile engine refuses to place the output by its table.
-    pub fn output_through_table(&self, out: Bound) -> Result<TileTensorLaunch, Decline> {
-        self.read_through_table(MatmulOperand::Out, out.arg())
-    }
-
-    /// Whether a table places the output: its rows are cut to runs, which a write masks past the
-    /// end of.
-    pub fn indexes_output(&self) -> bool {
-        matches!(self.table, Some(MatmulIndexTable::RowRuns(_)))
     }
 
     /// Whether `operand` holds flat rows, one run of them a tile, and so no batch axis.

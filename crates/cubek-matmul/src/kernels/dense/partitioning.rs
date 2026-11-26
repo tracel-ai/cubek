@@ -130,19 +130,6 @@ impl MatmulPartitioning {
         )
     }
 
-    /// The dimensions a plain space frees, but those `compiled` compiles in and the rows a table
-    /// cuts to runs, which stay compiled in.
-    fn dynamic_plain(&self, compiled: &[Dimension]) -> Vec<Dimension> {
-        self.batch_dimensions
-            .iter()
-            .chain(self.rows_kind.dynamic_dimensions())
-            .copied()
-            .filter(|dimension| {
-                !compiled.contains(dimension) && Some(*dimension) != self.output_run
-            })
-            .collect()
-    }
-
     /// The batch dimensions a cube is handed one of: the problem's longer than one.
     pub fn batch_dimensions(&self) -> &[Dimension] {
         &self.batch_dimensions
@@ -313,6 +300,19 @@ impl MatmulPartitioning {
 }
 
 impl MatmulPartitioning {
+    /// The dimensions a plain space frees, but those `compiled` compiles in and the rows a table
+    /// cuts to runs, which stay compiled in.
+    fn dynamic_plain(&self, compiled: &[Dimension]) -> Vec<Dimension> {
+        self.batch_dimensions
+            .iter()
+            .chain(self.rows_kind.dynamic_dimensions())
+            .copied()
+            .filter(|dimension| {
+                !compiled.contains(dimension) && Some(*dimension) != self.output_run
+            })
+            .collect()
+    }
+
     /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
     /// cube's box holds where it takes every row whole.
     fn compiled_space(&self) -> Space {
