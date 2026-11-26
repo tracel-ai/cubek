@@ -137,6 +137,7 @@ impl ReduceTensors<TensorBinding> {
     /// - The operation's carrier keeps indices: not a sum's, nor a max's, whose pair an argmax
     ///   writes.
     /// - `indices` has `values`' shape.
+    /// - `index_element` counts every position of the reduced axis.
     ///
     /// # Panics
     ///
@@ -242,6 +243,7 @@ impl ReduceTensors<Geometry> {
     /// # Assumptions
     ///
     /// - Those of [`new`](ReduceTensors::new), of `input`'s geometry.
+    /// - The caller binds an input laid out as `input`, read at exactly `lane_count`.
     ///
     /// # Panics
     ///

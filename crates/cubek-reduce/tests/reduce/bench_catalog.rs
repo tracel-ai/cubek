@@ -2,7 +2,9 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubek_reduce::eval::benchmarks::{ReduceBenchPrecision, ReduceCategory, ReduceProblem};
+use cubek_reduce::eval::benchmarks::{
+    BROKEN_LAUNCH, ReduceBenchPrecision, ReduceCategory, ReduceProblem,
+};
 use cubek_reduce::kernels::ReduceOpStrategy;
 use cubek_test_utils::{
     CatalogEntry, Category as _, TestOutcome, ValidationResult, assert_equals_approx,
@@ -60,6 +62,7 @@ impl CatalogChecker {
             .expect("the reduce catalogue checks its problems");
         let actual = match correctness.kernel_result(&strategy, &problem, &SEEDS) {
             Ok(host) => host,
+            Err(broken) if broken.contains(BROKEN_LAUNCH) => panic!("{problem_id}: {broken}"),
             Err(e) => return TestOutcome::CompileError(e).enforce(),
         };
         let expected = correctness

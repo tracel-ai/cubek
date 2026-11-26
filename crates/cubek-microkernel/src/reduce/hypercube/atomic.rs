@@ -78,7 +78,8 @@ impl Microkernel for HypercubeAtomicReduceMicrokernel {
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the atomic hypercube runs where its cube reduce runs";
+    /// The cube's: a device that runs the cube runs the hypercube built on it.
+    const DECLINE: &'static str = CubeStagedReduceMicrokernel::DECLINE;
 
     /// As the cube it is built from.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
@@ -90,7 +91,10 @@ impl Microkernel for HypercubeAtomicReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        CubeStagedReduceMicrokernel::candidates(hw, item, settings).map(Self::new)
+        let admitted = Self::admits(item).is_ok();
+        CubeStagedReduceMicrokernel::candidates(hw, item, settings)
+            .filter(move |_| admitted)
+            .map(Self::new)
     }
 
     fn admits(item: &ReduceWorkItem) -> Result<(), Decline> {
@@ -100,7 +104,8 @@ impl Microkernel for HypercubeAtomicReduceMicrokernel {
         }
     }
 
-    /// The hypercube of the cube's best, the cube's own Decline coming through where it has none.
+    /// The hypercube of the cube's best where `item` is a sum, the cube's own Decline coming through
+    /// where the device runs no cube.
     fn best(
         hw: &Hardware,
         item: &ReduceWorkItem,
@@ -162,6 +167,17 @@ mod tests {
         assert_eq!(
             HypercubeAtomicReduceMicrokernel::best(&hw, &item, &settings),
             Err(ONLY_SUMS)
+        );
+    }
+
+    #[test]
+    fn it_lists_no_candidate_for_a_max() {
+        let hw = devices::m2_pro();
+        let settings = HypercubeAtomicReduceMicrokernel::settings(&hw)[0];
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Max);
+        assert_eq!(
+            HypercubeAtomicReduceMicrokernel::candidates(&hw, &item, &settings).count(),
+            0
         );
     }
 

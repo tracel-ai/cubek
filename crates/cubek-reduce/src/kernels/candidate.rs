@@ -46,17 +46,17 @@ impl ReduceCandidate {
         self.launcher.name()
     }
 
-    /// `tensors` reduced at this candidate's setting, the output zeroed first where the routine
-    /// only adds into it.
+    /// `tensors` reduced at this candidate's setting.
+    ///
+    /// # Guarantees
+    ///
+    /// - The output is zeroed first where the routine only adds into it, the atomic hypercube.
     ///
     /// # Errors
     ///
     /// Why the routine, or the zeroing before it, cannot run the problem at its setting, or a
     /// [`Decline::Broken`] where it breaks what it prepared.
-    ///
-    /// # Panics
-    ///
-    /// Where an Assumption of [`ReduceCandidate`] is broken.
+
     pub fn launch(&self, tensors: &ReduceTensors) -> Result<(), Decline> {
         self.launcher.launch(tensors)
     }
@@ -73,10 +73,7 @@ impl ReduceCandidate {
     ///
     /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
     /// input, or a [`Decline::Broken`] where it breaks what it prepared.
-    ///
-    /// # Panics
-    ///
-    /// Where an Assumption of [`ReduceCandidate`] is broken.
+
     pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,

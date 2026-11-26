@@ -9,11 +9,11 @@ use crate::TileInput;
 /// plus the exact numbers behind both for host references.
 pub struct QuantizedTileInput {
     pub tile: TileInput,
-    pub(super) scales: TensorHandle,
-    pub(super) scheme: QuantScheme,
+    scales: TensorHandle,
+    scheme: QuantScheme,
     /// A lookup scheme's table, present exactly under `QuantMode::Lookup`
     /// ([`lookup_arange`](QuantizedTileInputBuilder::lookup_arange) mints it).
-    pub(super) table: Option<TensorHandle>,
+    table: Option<TensorHandle>,
     /// The quant values, row-major in the logical shape. Table indices under a lookup scheme.
     pub q: Vec<i32>,
     /// One scale per block, row-major over the scheme's block grid.
@@ -45,7 +45,7 @@ impl QuantizedTileInput {
     pub fn values_arg(&self, width: usize, spec: CubekTileSpec) -> TileTensorLaunch {
         TileTensorLaunch::new(
             self.tile.tensor_arg(1),
-            self.tile.handle.dtype,
+            self.tile.handle().dtype,
             width,
             spec.packed(self.field()),
         )
@@ -64,9 +64,13 @@ impl QuantizedTileInput {
 
     /// A lookup scheme's table as an operand over its one dimension, the positions.
     ///
+    /// # Assumptions
+    ///
+    /// - The scheme is a lookup one, which indexes a table.
+    ///
     /// # Panics
     ///
-    /// Unless the scheme is a lookup one.
+    /// Where its Assumption is broken.
     pub fn table_arg(&self, width: usize, dimension: Dimension) -> TileTensorLaunch {
         let table = self
             .table
@@ -78,5 +82,33 @@ impl QuantizedTileInput {
             width,
             CubekTileSpec::direct(&[dimension]),
         )
+    }
+}
+
+impl QuantizedTileInput {
+    /// The input whose packed values `tile` holds, scaled by `scales` and decoded under `scheme`
+    /// through `table` where it is a lookup one, with the exact numbers behind them.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the stored tensors and the host numbers behind them, as the builder mints them"
+    )]
+    pub(super) fn new(
+        tile: TileInput,
+        scales: TensorHandle,
+        scheme: QuantScheme,
+        table: Option<TensorHandle>,
+        q: Vec<i32>,
+        scale_values: Vec<f32>,
+        table_values: Vec<f32>,
+    ) -> Self {
+        Self {
+            tile,
+            scales,
+            scheme,
+            table,
+            q,
+            scale_values,
+            table_values,
+        }
     }
 }

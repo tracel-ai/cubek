@@ -145,9 +145,13 @@ impl HostDataVec {
 impl HostData {
     /// `data` laid row-major over `shape`: what a reference computes on the host.
     ///
+    /// # Assumptions
+    ///
+    /// - `data` holds one value per index of `shape`.
+    ///
     /// # Panics
     ///
-    /// When `data` does not hold one value per index of `shape`.
+    /// Where its Assumption is broken.
     pub fn row_major(data: HostDataVec, shape: Shape) -> Self {
         assert_eq!(
             data.len(),

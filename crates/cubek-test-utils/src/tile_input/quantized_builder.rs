@@ -14,9 +14,9 @@ use crate::{QuantizedTileInput, TestInput, TileInput};
 /// finalizer fills it and mints the values tile and its scales together: a quantized
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
-    pub(super) client: Client,
-    pub(super) space: Space,
-    pub(super) scheme: QuantScheme,
+    client: Client,
+    space: Space,
+    scheme: QuantScheme,
 }
 
 impl QuantizedTileInputBuilder {
@@ -62,19 +62,19 @@ impl QuantizedTileInputBuilder {
             .custom(scale_values.clone())
             .generate_without_host_data();
 
-        QuantizedTileInput {
-            tile: TileInput::new(
+        QuantizedTileInput::new(
+            TileInput::new(
                 TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 self.space,
                 0,
             ),
             scales,
-            scheme: self.scheme,
-            table: None,
+            self.scheme,
+            None,
             q,
             scale_values,
-            table_values: Vec::new(),
-        }
+            Vec::new(),
+        )
     }
 
     /// [`arange`](Self::arange) for a lookup scheme: the packed fields walk the table indices
@@ -119,18 +119,29 @@ impl QuantizedTileInputBuilder {
             .custom(table.to_vec())
             .generate_without_host_data();
 
-        QuantizedTileInput {
-            tile: TileInput::new(
+        QuantizedTileInput::new(
+            TileInput::new(
                 TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 self.space,
                 0,
             ),
             scales,
-            scheme: self.scheme,
-            table: Some(table_handle),
+            self.scheme,
+            Some(table_handle),
             q,
             scale_values,
-            table_values: table.to_vec(),
+            table.to_vec(),
+        )
+    }
+}
+
+impl QuantizedTileInputBuilder {
+    /// The quantized builder of a tile over `space` on `client`, in `scheme`.
+    pub(super) fn new(client: Client, space: Space, scheme: QuantScheme) -> Self {
+        Self {
+            client,
+            space,
+            scheme,
         }
     }
 }

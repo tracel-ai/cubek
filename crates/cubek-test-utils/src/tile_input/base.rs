@@ -14,7 +14,7 @@ use crate::TileInputBuilder;
 /// viewed in. The sub-tile sizes live in the buffer's trailing dims, so the view
 /// reads them from there.
 pub struct TileInput {
-    pub(super) handle: TensorHandle,
+    handle: TensorHandle,
     space: Space,
     /// The dimensions the tile spans, in buffer order.
     dimensions: Vec<Dimension>,
@@ -29,11 +29,7 @@ impl TileInput {
     /// finalizer ([`arange`](TileInputBuilder::arange) /
     /// [`zeros`](TileInputBuilder::zeros)).
     pub fn builder(client: &Client, space: Space) -> TileInputBuilder {
-        TileInputBuilder {
-            client: client.clone(),
-            space,
-            levels: None,
-        }
+        TileInputBuilder::new(client.clone(), space)
     }
 
     /// Launch arg for this tile's view: the buffer seen in its logical space.
@@ -121,9 +117,14 @@ impl TileInput {
     /// The launch derives its spec: the dimensions its tiles reach past are masked, and a stored
     /// tiling is read as the buffer lays it out.
     ///
+    /// # Assumptions
+    ///
+    /// - `launcher` serves the tile `width` wide over its space: the test states a launch that
+    ///   binds it.
+    ///
     /// # Panics
     ///
-    /// Where the launch refuses the binding.
+    /// Where its Assumption is broken.
     pub fn arg(&self, launcher: &Launcher, width: usize) -> TileTensorLaunch {
         self.bind(launcher)
             .vectorize(width)

@@ -17,9 +17,9 @@ pub(super) enum TileLevel {
 /// levels (each a [`split`](Self::split) or [`tile`](Self::tile)), and a data
 /// finalizer that fills the `[grid…, level…, finest…]` buffer.
 pub struct TileInputBuilder {
-    pub(super) client: Client,
-    pub(super) space: Space,
-    pub(super) levels: Option<Vec<TileLevel>>,
+    client: Client,
+    space: Space,
+    levels: Option<Vec<TileLevel>>,
 }
 
 impl TileInputBuilder {
@@ -88,11 +88,7 @@ impl TileInputBuilder {
             levels.is_empty(),
             "TileInput::packed: a packed input is untiled"
         );
-        QuantizedTileInputBuilder {
-            client: self.client,
-            space: self.space,
-            scheme: *scheme,
-        }
+        QuantizedTileInputBuilder::new(self.client, self.space, *scheme)
     }
 
     /// Build the `[grid…, level…, finest…]` device buffer, filled by `fill` (a
@@ -150,5 +146,16 @@ impl TileInputBuilder {
             self.space,
             levels.len(),
         )
+    }
+}
+
+impl TileInputBuilder {
+    /// A builder of a tile over `space` on `client`, with no level stated yet.
+    pub(super) fn new(client: Client, space: Space) -> Self {
+        Self {
+            client,
+            space,
+            levels: None,
+        }
     }
 }

@@ -53,10 +53,7 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Assumptions
     ///
-    /// - `indices` holds a tile exactly where the item writes the indices beside the values
-    ///   ([`ReduceWrites::Both`](crate::reduce::ReduceWrites::Both)).
-    /// - `partial_indices` holds a tile exactly where the carrier keeps indices
-    ///   ([`ReduceCarrier::carries_indices`](crate::reduce::ReduceCarrier::carries_indices)).
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     /// - `arrivals[counter]` holds zero when the launch starts, and exactly `parts` cubes of the
     ///   launch count themselves in at it, each once, each with its own `part` below `parts`.
     /// - No other row's cubes write the slots of `partials` and `partial_indices` this row's
@@ -69,8 +66,8 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where an Assumption, or one of
-    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
+    /// When the kernel compiles, where one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s
+    /// Assumptions is broken.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"
@@ -157,7 +154,8 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
             .map(Self::new)
     }
 
-    /// The hypercube of the cube's best, the cube's own Decline coming through where it has none.
+    /// The hypercube of the cube's best where the cubes meet in device memory, the cube's own
+    /// Decline coming through where the device runs no cube.
     fn best(
         hw: &Hardware,
         item: &ReduceWorkItem,
@@ -194,11 +192,9 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
 /// carrier's lines a slot apart, and the cube counts itself in at the row's `counter` of
 /// `arrivals`. The row's last cube to count merges every partial and writes the
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
-/// a row, a mean dividing by `values`, the values the whole row holds.
+/// a row, a mean dividing by `values`, the values the whole row holds. The row's last cube sets
+/// its counter back to zero once it has merged.
 ///
-/// `arrivals` holds a counter for every row, or box of rows, its caller counts apart, at zero; the
-/// row's last cube sets it back to zero once it has merged, so the caller's counters serve its
-/// next launch.
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.
 #[cube]

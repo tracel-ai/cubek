@@ -20,13 +20,13 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
+/// [`launch_zeroed_atomic`](crate::kernels::launch_zeroed_atomic) and its unbound twin zero the
+/// output with [`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine) first.
+///
 /// # Assumptions
 ///
 /// - The output holds zero before [`launch`](ReduceRoutine::launch) or
-///   [`dispatch`](ReduceRoutine::dispatch) runs, since it only ever adds: only
-///   [`launch_zeroed_atomic`](crate::kernels::launch_zeroed_atomic) and its unbound twin, which
-///   zero it with [`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
-///   first, ensure it.
+///   [`dispatch`](ReduceRoutine::dispatch) runs, since it only ever adds.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HypercubeAtomicReduceRoutine;
 
@@ -93,6 +93,7 @@ impl Routine for HypercubeAtomicReduceRoutine {
         problem: &ReduceRoutineProblem,
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
+        HypercubeAtomicReduceMicrokernel::admits(&problem.work_item())?;
         if !hw
             .properties
             .atomic_type_usage(Type::atomic(problem.elements.out))
@@ -209,6 +210,19 @@ mod tests {
         HypercubeAtomicReduceRoutine,
         ReduceRoutineProblem::work_item
     );
+
+    /// A max declines for the item, before the device is asked for an atomic add it may lack.
+    #[test]
+    fn declines_a_max_for_the_item_first() {
+        let hw = devices::lacking_every_feature(devices::m2_pro());
+        let problem = ReduceRoutineProblem::dense(&[4, 4096], 1, ReduceOperation::Max);
+        let settings = HypercubeAtomicReduceRoutine::settings(&devices::m2_pro())[0];
+        let prepared = HypercubeAtomicReduceRoutine::prepare(&hw, &problem, &settings).map(|_| ());
+        assert_eq!(
+            prepared,
+            HypercubeAtomicReduceMicrokernel::admits(&problem.work_item())
+        );
+    }
 
     /// An M2 Pro adds floats atomically, so it is the max that declines.
     #[test]

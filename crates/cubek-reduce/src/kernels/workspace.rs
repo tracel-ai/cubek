@@ -23,6 +23,7 @@ pub(crate) const WORKSPACE_LOST: Decline = Decline::Broken {
 ///
 /// # Assumptions
 ///
+/// - Its buffers live on the client the tensors it is given with launch on.
 /// - Every counter of `arrivals` holds zero when the caller first gives the workspace.
 /// - The launches given one workspace run one after another, each once the one before it ends.
 /// - Its three buffers alias neither each other nor the input or the outputs of a launch given

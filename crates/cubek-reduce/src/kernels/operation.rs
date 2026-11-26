@@ -14,8 +14,9 @@ use cubek_microkernel::reduce::ReduceOperation;
 ///
 /// # Assumptions
 ///
-/// - The input has fewer than 256 axes.
 /// - The outputs alias neither the input nor each other.
+/// - An output of indices, `elements.out` for an `ArgMax`, `ArgMin` or `ArgTopK` and the index
+///   element beside the values, counts every position of the reduced axis.
 ///
 /// # Guarantees
 ///
@@ -42,8 +43,7 @@ impl Reduce {
     ///
     /// # Assumptions
     ///
-    /// - Those of [`ReduceWorkspace`]: its counters at zero when first given, its launches one
-    ///   after another, its buffers aliasing no operand nor each other.
+    /// - Those of [`ReduceWorkspace`].
     pub fn with_workspace(&self, workspace: ReduceWorkspace) -> Self {
         Self {
             workspace: Some(workspace),
@@ -65,10 +65,6 @@ impl Reduce {
     /// [`Specific`](ReduceOpStrategy::Specific) one, or the unit kernel the rule falls back to. A
     /// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) in it is a bug of the routine
     /// that ran, not a problem it cannot run.
-    ///
-    /// # Panics
-    ///
-    /// Where an Assumption of [`Reduce`] is broken: an input of 256 axes or more.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -95,10 +91,7 @@ impl Reduce {
     /// # Errors
     ///
     /// Every [`ReduceError`].
-    ///
-    /// # Panics
-    ///
-    /// Where an Assumption of [`Reduce`] is broken.
+
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -137,10 +130,7 @@ impl Reduce {
     /// cannot run the problem on the client's device, or a
     /// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) where it breaks what it
     /// prepared.
-    ///
-    /// # Panics
-    ///
-    /// Where an Assumption of [`Reduce`] is broken.
+
     pub fn launch(&self, tensors: ReduceTensors) -> Result<(), ReduceError> {
         launch_by_strategy(self.strategy, given(self, tensors))
     }

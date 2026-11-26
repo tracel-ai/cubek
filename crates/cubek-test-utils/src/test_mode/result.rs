@@ -41,38 +41,6 @@ pub fn skip_unless_cpu(client: &Client) -> bool {
     false
 }
 
-/// A kernel whose levels cut down to units needs a plane wide enough to hold them: a unit level
-/// must partition the plane exactly, so a plane of one unit (what the CPU runtime always reports)
-/// leaves such a partitioning with nothing to cut. Records a `Skipped` outcome and returns `true`
-/// when `client`'s plane is narrower than `units`, so the caller can bail out of the test.
-#[track_caller]
-pub fn skip_unless_plane_holds(client: &Client, units: u32) -> bool {
-    let plane = client.properties().hardware.plane_size_max;
-    if plane < units {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "needs a plane of at least {units} units; this runtime reports {plane}"
-        )))
-        .enforce();
-        return true;
-    }
-    false
-}
-
-/// A test in a half-precision element needs a device that computes in it. Records a `Skipped`
-/// outcome and returns `true` when `client`'s device has no `f16` arithmetic, so the caller can
-/// bail out of the test.
-#[track_caller]
-pub fn skip_unless_f16_arithmetic(client: &Client) -> bool {
-    if !crate::supports_f16_arithmetic(client) {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "needs f16 arithmetic; this device has none".to_string(),
-        ))
-        .enforce();
-        return true;
-    }
-    false
-}
-
 #[derive(Debug)]
 /// Whether a kernel was executed (without regard to correctness)
 /// or failed to compile.

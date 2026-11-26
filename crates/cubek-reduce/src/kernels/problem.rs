@@ -561,7 +561,7 @@ impl EstimatedProblem for ReduceRoutineProblem {
     ///
     /// # Panics
     ///
-    /// Where `axis` is not an axis of `shape`.
+    /// Where an Assumption of [`ReduceRoutineProblem`] is broken.
     fn demand(&self) -> Work {
         let values: usize = self.shape.iter().product();
         let cells = self.row_count() * self.operation.written_per_row();

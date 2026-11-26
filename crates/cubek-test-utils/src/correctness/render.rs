@@ -137,29 +137,47 @@ fn render_batched_matrices(
     let row_indices = axis_indices(filter.and_then(|f| f.get(rank - 2)), row_dim);
     let col_indices = axis_indices(filter.and_then(|f| f.get(rank - 1)), col_dim);
 
-    let mut leading = vec![0usize; leading_dims];
-    let mut first = true;
-    loop {
-        let print_this = filter
-            .map(|f| leading_indices_match(&leading, f))
-            .unwrap_or(true);
-        if print_this {
-            if !first {
-                println!();
-            }
-            println!("{}:", format_leading_label(&leading, rank));
-            print_table(&row_indices, &col_indices, |r, c| {
-                let mut full = leading.clone();
-                full.push(r);
-                full.push(c);
-                cell(&full)
-            });
-            first = false;
-        }
-        if !increment_lex(&mut leading, &a.shape.as_slice()[..leading_dims]) {
-            break;
-        }
+    let leading = leading_indices(&a.shape.as_slice()[..leading_dims]);
+    let shown = leading
+        .iter()
+        .filter(|leading| filter.is_none_or(|f| leading_indices_match(leading, f)));
+    for (position, leading) in shown.enumerate() {
+        print_slice(
+            position > 0,
+            leading,
+            rank,
+            &row_indices,
+            &col_indices,
+            cell,
+        );
     }
+}
+
+/// The matrix at `leading` as one table under its label, a blank line before it where it is
+/// `separated` from the one above.
+fn print_slice(
+    separated: bool,
+    leading: &[usize],
+    rank: usize,
+    rows: &[usize],
+    cols: &[usize],
+    cell: &dyn Fn(&[usize]) -> String,
+) {
+    if separated {
+        println!();
+    }
+    println!("{}:", format_leading_label(leading, rank));
+    print_table(rows, cols, |r, c| cell(&[leading, &[r, c]].concat()));
+}
+
+/// Every index of leading axes of `bounds`, in row-major order, the first all zeros.
+fn leading_indices(bounds: &[usize]) -> Vec<Vec<usize>> {
+    let mut leading = vec![0usize; bounds.len()];
+    let mut all = vec![leading.clone()];
+    while increment_lex(&mut leading, bounds) {
+        all.push(leading.clone());
+    }
+    all
 }
 
 // ---------- lines view ----------

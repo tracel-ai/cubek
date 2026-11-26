@@ -13,7 +13,9 @@ use crate::ReduceOperation;
 use crate::eval::EvalWorkspace;
 use crate::eval::benchmarks::correctness::ReduceVerifier;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
-use crate::eval::benchmarks::results::{compared_elements, output_dtype_for, reduce_given};
+use crate::eval::benchmarks::results::{
+    compared_elements, launch_error, output_dtype_for, reduce_given,
+};
 use crate::eval::cpu_reference::output_shape_for;
 use crate::kernels::{ReduceElements, ReduceOpStrategy, ReduceWorkspace};
 
@@ -196,7 +198,7 @@ impl ReduceBenchmark {
                 operation,
                 elements,
             )
-            .map_err(|err| format!("{err}"))
+            .map_err(|err| launch_error(&err))
     }
 
     /// What a caller needing both halves does without the fused launch: `input` reduced twice,
@@ -271,7 +273,7 @@ impl Benchmark for ReduceBenchmark {
                     elements(value_dtype),
                     index_dtype,
                 )
-                .map_err(|err| format!("{err}"))?,
+                .map_err(|err| launch_error(&err))?,
         }
 
         Ok(())

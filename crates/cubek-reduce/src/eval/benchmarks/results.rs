@@ -75,10 +75,14 @@ fn ramp_of_elem_count(elem_count: usize) -> Vec<f32> {
 /// `Reduce::execute_with_indices` path where `with_indices`, so the path a fused benchmark times is
 /// the one checked, and by `Reduce::execute` otherwise.
 ///
+/// # Errors
+///
+/// Why the launch did not run, a [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) marked
+/// by [`BROKEN_LAUNCH`] ([`launch_error`]).
+///
 /// # Panics
 ///
-/// Where `shape` has fewer axes than `axis` counts, or the routine that runs returns a
-/// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken).
+/// Where `shape` has fewer axes than `axis` counts.
 pub(crate) fn strategy_result(
     client: Client,
     shape: Vec<usize>,
@@ -124,25 +128,27 @@ pub(crate) fn strategy_result(
                 elements,
             ),
         };
-        unbroken(launched).into()
+        match launched {
+            Ok(()) => ExecutionOutcome::Executed,
+            Err(why) => ExecutionOutcome::CompileError(launch_error(&why)),
+        }
     });
     read_back(&client, outcome, values)
 }
 
-/// `launched`, which a routine that breaks what it prepared fails rather than leaves for the
-/// caller to read as a launch it cannot run.
-///
-/// # Panics
-///
-/// Where `launched` is a [`Decline::Broken`](cubecl::tile::launch::Decline::Broken): a bug of the
-/// routine.
-fn unbroken(launched: Result<(), ReduceError>) -> Result<(), ReduceError> {
-    if let Err(ReduceError::Declined(broken)) = &launched
-        && broken.is_broken()
-    {
-        panic!("{broken}");
+/// What marks a launch whose routine broke what it prepared, in the error the harness reports:
+/// a bug the check fails on, not a launch the device cannot run.
+pub const BROKEN_LAUNCH: &str = "a routine broke what it prepared: ";
+
+/// Why a launch erred, as the harness reports it: a
+/// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) marked by [`BROKEN_LAUNCH`].
+pub(crate) fn launch_error(why: &ReduceError) -> String {
+    match why {
+        ReduceError::Declined(decline) if decline.is_broken() => {
+            format!("{BROKEN_LAUNCH}{decline}")
+        }
+        other => other.to_string(),
     }
-    launched
 }
 
 /// What an output holds before its launch: a value no comparison's result comes near, so a kernel
@@ -248,6 +254,21 @@ mod tests {
     use crate::kernels::ReduceKernel;
     use cubecl::ir::{FloatKind, UIntKind};
     use cubek_test_utils::assert_equals_approx;
+
+    #[test]
+    fn a_broken_launch_is_marked() {
+        let broken = cubecl::tile::launch::Decline::broken_by(
+            "the cube holds units",
+            cubecl::tile::launch::Decline::NoUnits,
+        );
+        assert!(launch_error(&ReduceError::Declined(broken)).starts_with(BROKEN_LAUNCH));
+    }
+
+    #[test]
+    fn a_launch_the_device_cannot_run_is_not_marked() {
+        let refused = ReduceError::Declined(cubecl::tile::launch::Decline::NoUnits);
+        assert!(!launch_error(&refused).contains(BROKEN_LAUNCH));
+    }
 
     #[test]
     fn a_ramp_lies_within_its_range() {

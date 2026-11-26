@@ -299,7 +299,7 @@ mod tests {
     use cubek_microkernel::reduce::ReduceOperation;
     use cubek_std::devices;
     use cubek_std::routine::ROUTINE_LISTS_NO_SETTING;
-    use cubek_test_utils::{TestOutcome, ValidationResult};
+    use cubek_test_utils::TestOutcome;
 
     prepares_more_row_axes_than_the_grid_holds!(HypercubeLastArrivalReduceRoutine);
     declines_lacking_every_feature!(HypercubeLastArrivalReduceRoutine);
@@ -428,13 +428,8 @@ mod tests {
         let tensors = ReduceTensors::zeros(&reduction.shape, reduction.axis, reduction.operation)
             .with_workspace(workspace.clone());
         let hw = Hardware::from_client(&client);
-        match launch_shortest_parts(&hw, &tensors) {
-            Err(broken) if broken.is_broken() => panic!("{broken}"),
-            Err(refused) => {
-                return TestOutcome::Validated(ValidationResult::Skipped(refused.to_string()))
-                    .enforce();
-            }
-            Ok(()) => {}
+        if let Err(refused) = launch_shortest_parts(&hw, &tensors) {
+            return TestOutcome::refused(&reduction, &refused).enforce();
         }
         assert!(
             arrivals_of(&client, workspace)

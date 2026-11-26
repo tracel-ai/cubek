@@ -35,8 +35,8 @@ pub struct Written {
 ///
 /// # Guarantees
 ///
-/// - A case the scope refuses is a skip, unless the refusal is a [`Decline::Broken`], which fails;
-///   a case it launches is checked against its reference.
+/// - A case the scope refuses as a [`Decline::Broken`] fails, and so does a case it launches whose
+///   output differs from its reference or that the device then fails to run.
 pub trait ScopeChecker {
     /// One problem the scope runs on, named in every failure.
     type Case: Debug;
@@ -45,12 +45,11 @@ pub trait ScopeChecker {
     ///
     /// # Errors
     ///
-    /// Why the device runs no such scope at `case`: a skip, not a failure, unless it is
-    /// [`Decline::Broken`].
+    /// Why the device runs no such scope at `case`, or a [`Decline::Broken`] where the scope
+    /// breaks what it claimed.
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline>;
 
-    /// What the scope must write for `case`, computed on the host: one value per output
-    /// [`launch`](Self::launch) returns, in its order.
+    /// What the scope must write for `case`, computed on the host.
     fn reference(&self, case: &Self::Case) -> Vec<HostData>;
 
     /// The largest difference from the reference accepted at `case`, relative to the reference's
@@ -65,12 +64,12 @@ pub trait ScopeChecker {
     }
 
     /// Launch the scope on every case and fail the test, through the active policy, at the first
-    /// case whose output differs from the reference.
+    /// case whose outcome it rejects: that rejection is the panic the test fails by. Each case the
+    /// scope refuses for the device is reported as a skip.
     ///
     /// # Panics
     ///
-    /// Where the active policy rejects a case's outcome, which is how the test fails, or an
-    /// Assumption of [`ScopeChecker`] is broken.
+    /// Where an Assumption of [`ScopeChecker`] is broken.
     #[track_caller]
     fn check(&self, cases: impl IntoIterator<Item = Self::Case>) {
         let client = cubecl::test_device().client();
@@ -79,12 +78,13 @@ pub trait ScopeChecker {
         }
     }
 
-    /// [`check`](Self::check), reporting one skip where no case launches rather than one a case:
-    /// for cases most of which the device refuses, as every setting a routine lists.
+    /// [`check`](Self::check), for cases most of which the device refuses, as every setting a
+    /// routine lists: a case refused for the device is passed over without a word where another
+    /// case launches, and one skip is reported where none does.
     ///
     /// # Panics
     ///
-    /// As [`check`](Self::check).
+    /// Where an Assumption of [`ScopeChecker`] is broken.
     #[track_caller]
     fn check_some(&self, cases: impl IntoIterator<Item = Self::Case>) {
         let client = cubecl::test_device().client();
@@ -114,10 +114,9 @@ pub trait ScopeChecker {
             .unwrap_or_else(|why| TestOutcome::refused(case, &why))
     }
 
-    /// The outcome of one case the scope launched, or why it refused the case. Only a refusal
-    /// is a skip: a launch the scope accepted and the device then failed, compiling it, short of
-    /// a resource or running it, fails, since the scope promised what it could not keep. One it
-    /// refuses as [`Decline::Broken`] fails as well: it is a bug in the scope.
+    /// The outcome of one case the scope launched, or why it refused the case for the device. A
+    /// launch the device failed to compile, to give resources to or to run fails, since the scope
+    /// promised what it could not keep.
     ///
     /// # Panics
     ///
