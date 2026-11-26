@@ -118,8 +118,8 @@ impl Routine for CubeStagedAttentionRoutine {
 
     /// The best cube at the settings, a cube a box, holding a plane for every
     /// head it holds along every plane of its queries and of their keys, each as many units as
-    /// the device's plane, and the shared memory the cube microkernel asks for, its stages held as
-    /// its planes read them, the cubes taking the boxes in the settings' order. Its planes read
+    /// the device's plane, and the shared memory the cube microkernel asks for, its stages laid out
+    /// as its planes read them, the cubes taking the boxes in the settings' order. Its planes read
     /// the stage as it is laid out, and merge their queries where they split the keys.
     fn prepare(
         hw: &Hardware,
@@ -170,14 +170,15 @@ impl Routine for CubeStagedAttentionRoutine {
 }
 
 impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAttentionRoutine {
-    /// Every cube staging its keys and values once for its planes, which read the stage, held as
-    /// the blueprint's storage.
+    /// Every cube staging its keys and values once for its planes, which read the stage, laid
+    /// out as the blueprint's storage.
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
         blueprint: CubeStagedAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        tensors.admit_one_tile_of_keys()?;
         let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
@@ -202,11 +203,11 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAtte
                 key,
                 value,
                 binding.out,
-                binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
-                binding.mask.map(|mask| mask.arg()).into(),
+                binding.logsumexp.into(),
+                binding.mask.into(),
                 binding.lengths,
                 binding.query_ends.into(),
-                problem.seq_q as u32,
+                binding.queries,
                 problem.seq_kv as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),

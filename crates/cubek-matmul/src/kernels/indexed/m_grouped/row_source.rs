@@ -89,7 +89,7 @@ impl MGroupedRowSource {
     ///
     /// # Assumptions
     ///
-    /// As [`GroupedRows::new`], and the places of a routed source name each of its routes once.
+    /// The places of a routed source name each of its routes once.
     ///
     /// # Guarantees
     ///

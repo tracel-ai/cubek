@@ -1,15 +1,16 @@
 use crate::kernels::PackedCacheBinding;
 use cubecl::prelude::TensorArg;
-use cubecl::tile::launch::{Bound, Decline};
+use cubecl::tile::launch::Decline;
 use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_std::routine::Breakable;
 
 /// What a routine that stages its keys rests on: a packed cache whose keys carry the QJL fix-up
 /// reaches no such routine.
-const A_STAGE_IS_ONE_TILE: &str = "a stage of keys should be one tile, and a fix-up is a second";
+pub(crate) const A_STAGE_IS_ONE_TILE: &str =
+    "a stage of keys should be one tile, and a fix-up is a second";
 
 /// A QJL fix-up reaching a routine that stages its keys.
-const FIXUP_IN_A_STAGE: Decline = Decline::Broken {
+pub(crate) const FIXUP_IN_A_STAGE: Decline = Decline::Broken {
     condition: A_STAGE_IS_ONE_TILE,
     cause: None,
 };
@@ -24,15 +25,18 @@ pub struct AttentionBinding {
     pub cache: AttentionCacheBinding,
     /// The output, `[b, kv, g, q, dv]`.
     pub out: TileTensorLaunch,
-    /// Each query's logsumexp, where the tensors ask for it.
-    pub logsumexp: Option<Bound>,
+    /// Each query's logsumexp, `[b, kv, g, q]`, where the tensors ask for it.
+    pub logsumexp: Option<TileTensorLaunch>,
     /// Which keys each query does not see, over `[B, KV, G, Q, S]`, where the tensors carry a
     /// mask.
-    pub mask: Option<Bound>,
+    pub mask: Option<TileTensorLaunch>,
     /// The attended length of each sequence.
     pub lengths: TensorArg,
     /// Where every sequence's queries lie end to end, their cumulative counts, one a sequence.
     pub query_ends: Option<TensorArg>,
+    /// The queries a sequence has, or, where they lie end to end, all of them: what caps their
+    /// ends.
+    pub queries: u32,
 }
 
 /// How a launch's keys and values are bound.

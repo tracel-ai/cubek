@@ -73,7 +73,7 @@ impl PlaneDeltaRoutine {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`], nothing launched, where the tile engine refuses what `walk` prepared.
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

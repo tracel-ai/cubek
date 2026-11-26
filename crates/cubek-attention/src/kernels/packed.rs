@@ -322,6 +322,7 @@ const CHECKED_BY_ATTENTION: &str =
 
 #[cfg(test)]
 mod tests {
+    use crate::kernels::queries::tests::{LeadLaunch, assert_past_reads_as_within};
     use crate::kernels::*;
     use cubecl::client::Client;
     use cubecl::prelude::*;
@@ -731,49 +732,57 @@ mod tests {
     /// A length past the keys a sequence's row of the table reaches attends as a length of those
     /// keys, for every reader of every case: the staged cube, and both hypercube shuffles decoding
     /// their keys at a decode step, round-only and under the QJL fix-up, and causal runs of
-    /// queries end to end. A reader that declines on this device is a skip, and a broken one
-    /// fails.
+    /// queries end to end.
     #[test]
     fn a_length_past_the_pages_attends_the_pages() {
+        let keys = (ROW_PAGES_COUNT * PAGE_POSITIONS_COUNT) as u32;
+        check_past_reads(|client, kind, past| {
+            let length = match past {
+                true => 3 * keys,
+                false => keys,
+            };
+            attention_attending(client, &PagedPool::new(), kind, &[length; SEQUENCES_COUNT])
+        });
+    }
+
+    /// A page of a sequence's row of the table past the pool reads the pool's last page, for every
+    /// reader of every case: the same as an entry naming that page.
+    #[test]
+    fn a_page_past_the_pool_reads_its_last_page() {
+        check_past_reads(|client, kind, past| {
+            let mut pool = PagedPool::new();
+            pool.table[0] = match past {
+                true => 100 * POOL_PAGES_COUNT as u32,
+                false => POOL_PAGES_COUNT as u32 - 1,
+            };
+            paged_attention(client, &pool, kind)
+        });
+    }
+
+    /// Every reader of every case on the tensors `attend` states with a value past its range where
+    /// told so, against the same within range
+    /// ([`assert_past_reads_as_within`](crate::kernels::queries::tests::assert_past_reads_as_within)).
+    /// A device without the committed plane width every packed reader runs on reports a skip.
+    fn check_past_reads(attend: impl Fn(&Client, PagedCaseKind, bool) -> AttentionTensors) {
         let client: Client = cubecl::test_device().client();
-        let hw = Hardware::from_client(&client);
-        if let Err(decline) = hw.plane_dim() {
+        if let Err(decline) = Hardware::from_client(&client).plane_dim() {
             let why = format!("no packed reader runs on this device: {decline:?}");
             return TestOutcome::Validated(ValidationResult::Skipped(why)).enforce();
         }
-        let pool = PagedPool::new();
-        let keys = (ROW_PAGES_COUNT * PAGE_POSITIONS_COUNT) as u32;
-        let (mut compared, mut wrong, mut declined) = (0, Vec::new(), Vec::new());
         for kind in PagedCaseKind::ALL {
-            for &kernel in kind.readers() {
-                let attend = |length: u32| {
-                    let tensors =
-                        attention_attending(&client, &pool, kind, &[length; SEQUENCES_COUNT]);
-                    kernel
-                        .launch_lead_on(&hw, tensors)
-                        .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
-                };
-                let case = format!("{kernel:?} on {kind:?}");
-                match (attend(keys), attend(3 * keys)) {
-                    (Ok(expected), Ok(actual)) => {
-                        compared += 1;
-                        let checked =
-                            cubek_test_utils::assert_equals_approx(&actual, &expected, TOLERANCE);
-                        if !matches!(checked, ValidationResult::Pass) {
-                            wrong.push(format!("{case}: {checked:?}"));
-                        }
-                    }
-                    (Err(decline), _) | (_, Err(decline)) => declined.push((case, decline)),
-                }
-            }
-        }
-
-        let broken: Vec<_> = declined.iter().filter(|(_, why)| why.is_broken()).collect();
-        assert!(broken.is_empty(), "{broken:#?}");
-        assert!(wrong.is_empty(), "{wrong:#?}");
-        assert!(compared > 0, "no reader ran on this device: {declined:#?}");
-        for (case, why) in declined {
-            TestOutcome::Validated(ValidationResult::Skipped(format!("{case}: {why}"))).enforce();
+            let readers: Vec<(String, LeadLaunch)> = kind
+                .readers()
+                .iter()
+                .map(|&kernel| {
+                    let launch: LeadLaunch =
+                        Box::new(move |hw, tensors| kernel.launch_lead_on(hw, tensors));
+                    (format!("{kernel:?}"), launch)
+                })
+                .collect();
+            assert_past_reads_as_within(&readers, &[kind], |launch, kind, past| {
+                launch(&Hardware::from_client(&client), attend(&client, kind, past))
+                    .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+            });
         }
     }
 

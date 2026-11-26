@@ -139,7 +139,7 @@ pub struct KeyBlocks {
 #[derive(Debug, Clone)]
 #[expect(
     clippy::large_enum_variant,
-    reason = "one per launch, held by value as the launch's other operands are; both arms are tensors"
+    reason = "one per launch, kept by value as the launch's other operands are; both arms are tensors"
 )]
 pub enum AttentionCache {
     /// Float keys `[·, kv, s, d]` and values `[·, kv, s, dv]`.
@@ -193,6 +193,12 @@ impl KvSource {
     /// group reads the keys of its head, and a block's positions are read as they lie, contiguous
     /// within it. A source that lists no blocks is as it is.
     ///
+    /// # Guarantees
+    ///
+    /// Whatever the tables hold, the composed table names no block past the view: a listed block
+    /// past its sequence's pages lies in their last page, and a page past the pool is its last
+    /// page. A decline comes before anything is allocated or launched.
+    ///
     /// # Errors
     ///
     /// [`INDEXED_KEYS_UNREAD`] over a packed cache, [`INDEXED_VISIBILITY_UNREAD`] at any visibility
@@ -200,8 +206,7 @@ impl KvSource {
     /// straddles a page or the key and value buffers place their blocks apart,
     /// [`KEY_BLOCKS_UNPLACED`] where a buffer leaves a block no place of its own, and
     /// [`CACHE_SHAPES_DISAGREE`], [`PACKED_CACHE_UNREAD`], [`PACKED_WIDTH_UNREAD`],
-    /// [`PAGE_TABLE_UNREAD`] and [`CACHE_SCALE_UNREAD`] for buffers no source holds. Each is
-    /// returned before anything is allocated or launched.
+    /// [`PAGE_TABLE_UNREAD`] and [`CACHE_SCALE_UNREAD`] for buffers no source holds.
     pub fn read_as_block_pages(
         self,
         client: &Client,
@@ -248,7 +253,6 @@ impl KvSource {
             key: key_pool,
             value: value_pool,
             table: blocks.table.clone(),
-            sequences: key.shape()[0],
         }))
     }
 
@@ -259,7 +263,7 @@ impl KvSource {
             return self;
         };
         let pages = self.pages.unwrap_or_else(|| {
-            let sequences = pools.sequences;
+            let sequences = pools.key.pages;
             let pages: Vec<u32> = (0..sequences as u32).collect();
             PlainTensor::of_u32s(client, &[sequences, 1], &pages)
         });
@@ -413,23 +417,23 @@ pub(crate) fn page_table(pages: &PlainTensor) -> TileTensorLaunch {
 /// A source's key and value buffers each viewed as a pool of pages of one block each
 /// ([`KvSource::block_pools`]), with the listed blocks they read.
 pub(crate) struct BlockPools {
-    key: BlockPool,
-    value: BlockPool,
+    pub key: BlockPool,
+    pub value: BlockPool,
     /// The `u32` blocks `[b, n]` each sequence reads ([`KeyBlocks::table`]).
-    table: PlainTensor,
-    /// The sequences or pages the cache's buffers hold.
-    sequences: usize,
+    pub table: PlainTensor,
 }
 
 /// One buffer of a cache viewed as a pool of pages of one block each: `[blocks, kv, size, ·]`,
 /// its first dim stepping a block of positions of the cache's first key head, its key heads a
 /// stride on, so a block and a key head name the block's positions of that head.
-struct BlockPool {
-    view: PlainTensor,
+pub(crate) struct BlockPool {
+    pub view: PlainTensor,
     /// Blocks a page of the cache holds.
-    blocks_per_page: usize,
+    pub blocks_per_page: usize,
     /// Blocks the view steps from the start of one page of the cache to the next.
-    page_blocks: usize,
+    pub page_blocks: usize,
+    /// Pages, or sequences, the buffer holds.
+    pub pages: usize,
 }
 
 impl BlockPool {
@@ -462,6 +466,7 @@ impl BlockPool {
             view,
             blocks_per_page,
             page_blocks,
+            pages: shape[0],
         })
     }
 
@@ -484,6 +489,7 @@ impl BlockPool {
             shape[1] as u32,
             self.blocks_per_page as u32,
             self.page_blocks as u32,
+            self.pages as u32 - 1,
         );
         table
     }

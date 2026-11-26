@@ -15,18 +15,13 @@ use cubek_microkernel::split_keys_merge::hypercube::{
 /// the sum, `EA`: the query in `EQ`, the keys in `EK`, the values in `EV`; the output is written in
 /// `EO`.
 ///
-/// - `query`: the query, `[b, kv, g, q, d]`.
-/// - `key`, `value`: the keys and the values, read no further than each sequence's attended length.
+/// - `query`, `key`, `value`, `logsumexp`, `mask`, `len`, `queries`, `keys`, `scale`: as
+///   `unit_attention_kernel`'s.
 /// - `out`: the output, `[b, kv, g, q, dv]`, written by each box's last arrival.
-/// - `logsumexp`: each query's logsumexp, `[b, kv, g, q]`, where the launch binds one.
 /// - `slot_out`, `slot_max`, `slot_sum`: each cube's partial output, running max and running sum, a
 ///   slot for every cube sharing its box
 ///   ([`AttentionSplitSlots`](crate::kernels::AttentionSplitSlots)).
 /// - `arrivals`: a `u32` counter a box, at zero, where its cubes count themselves in.
-/// - `mask`: which keys each query does not see, `[b, kv, g, q, s]`, where the launch binds one.
-/// - `len`: each sequence's attended length, `[b]`, read by stride.
-/// - `queries`, `keys`: queries and keys a sequence; a length past `keys` attends as `keys`.
-/// - `scale`: what each dot product is scaled by before the softmax.
 #[cube(launch_unchecked)]
 pub fn hypercube_attention_arrival_kernel<
     EA: Float,

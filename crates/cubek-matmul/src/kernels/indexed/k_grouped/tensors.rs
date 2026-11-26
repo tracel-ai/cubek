@@ -37,14 +37,11 @@ impl KGroupedMatmulTensors {
     /// `lhs[rows, m]` and `rhs[rows, n]` on `client`'s device, their rows grouped by `ends`, each
     /// group's cumulative end row as a `u32`, one group a slab.
     ///
-    /// # Assumptions
-    ///
-    /// The ends never decrease, and the last is the rows' count.
-    ///
     /// # Guarantees
     ///
-    /// No row past the rows' count is read, and a group whose end is below the one before it sums
-    /// no row.
+    /// Where the ends never decrease and the last is the rows' count, group `g`'s slab is
+    /// `lhs[rows of g]ᵀ · rhs[rows of g]`. Whatever the ends hold, no row past the rows' count is
+    /// read, and a group whose end is below the one before it sums no row.
     ///
     /// # Errors
     ///

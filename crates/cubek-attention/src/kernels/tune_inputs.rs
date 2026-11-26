@@ -42,7 +42,7 @@ impl AttentionTuneInputs {
     /// Attention of `query` (`[b, h, q, d]`) over each sequence's first `lengths[b]` of `key`
     /// (`[b, kv, s, d]`) and `value` (`[b, kv, s, dv]`), or of the keys and values `pages` lays
     /// out in two pools of pages ([`AttentionTensors::paged`]), the output allocated. `arrivals`
-    /// are the counters the cubes of a box count themselves in at, held across launches.
+    /// are the counters the cubes of a box count themselves in at, kept by the caller across launches.
     ///
     /// `depth` is how many keys the call attends, at least as many as its deepest sequence, as its
     /// caller buckets it: the lengths live on device so that every call of one bucket is the same
@@ -251,11 +251,11 @@ impl AttentionTuneInputs {
     /// where a caller's rounding takes the depth past them.
     fn positions_read(&self) -> usize {
         let positions = self.key.shape()[2];
-        let held = match &self.pages {
+        let reachable = match &self.pages {
             Some(pages) => pages.shape()[1] * positions,
             None => positions,
         };
-        self.depth.min(held)
+        self.depth.min(reachable)
     }
 }
 
@@ -458,7 +458,7 @@ mod tests {
         }
 
         /// **Both contractions, and nothing between them.** A roofline that counted one would be
-        /// half the ceiling every candidate is held to, and the round would stop on a candidate
+        /// half the ceiling every candidate is measured against, and the round would stop on a candidate
         /// at half the device.
         #[test]
         fn a_decode_costs_two_contractions() {

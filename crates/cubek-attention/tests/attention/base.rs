@@ -216,7 +216,7 @@ pub(crate) const DECODE_MASKED: AttentionCase = AttentionCase {
     ..DECODE
 };
 
-/// Every prompt case a routine of many positions is held to.
+/// Every prompt case a routine of many positions is checked on.
 pub(crate) const PROMPTS: [AttentionCase; 4] = [
     PROMPT,
     PROMPT_PLACED_FIRST,
@@ -224,7 +224,7 @@ pub(crate) const PROMPTS: [AttentionCase; 4] = [
     PROMPT_MASKED_PLACED_FIRST,
 ];
 
-/// Every decode case a routine of single positions is held to.
+/// Every decode case a routine of single positions is checked on.
 pub(crate) const DECODES: [AttentionCase; 2] = [DECODE, DECODE_MASKED];
 
 impl AttentionCase {

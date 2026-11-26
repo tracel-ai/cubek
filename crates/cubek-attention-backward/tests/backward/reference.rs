@@ -209,7 +209,7 @@ impl Reference {
 
     /// `strategy` at `settings`, or at its lead, on `case` in `element`, against the host within
     /// `tolerance`; skipped, and said so, where the device declines it. A launch that fails on the
-    /// device fails the check: its gradients would be whatever their buffers held, which a buffer
+    /// device fails the check: its gradients would be whatever their buffers hold, which a buffer
     /// handed back by the memory pool can make look right.
     pub fn run<S: AttentionBackwardLaunch>(
         strategy: S,

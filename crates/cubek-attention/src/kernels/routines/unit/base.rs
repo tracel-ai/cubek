@@ -170,6 +170,7 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
         blueprint: UnitAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        tensors.admit_one_tile_of_keys()?;
         let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
@@ -186,8 +187,8 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 key,
                 value,
                 binding.out,
-                binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
-                binding.mask.map(|mask| mask.arg()).into(),
+                binding.logsumexp.into(),
+                binding.mask.into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 problem.seq_kv as u32,
@@ -226,7 +227,7 @@ mod tests {
     }
 
     /// A decode step, a prompt whose queries divide nothing, a wide group over a long cache, and
-    /// a head dim of 128 in `f32`, the widest the leads are held to.
+    /// a head dim of 128 in `f32`, the widest the leads are checked at.
     fn problems() -> [AttentionRoutineProblem; 4] {
         [
             AttentionRoutineProblem::dense((1, 32, 8), (1, 2048), (128, 128), F16),

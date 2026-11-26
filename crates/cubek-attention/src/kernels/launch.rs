@@ -13,6 +13,16 @@ use cubek_std::routine::{Grid, ROUTINE_LISTS_NO_SETTING, Routine};
 ///
 /// A routine states what is its own, how it places its microkernel's work items and the kernel it
 /// dispatches. The launch around those is written once, in [`DirectAttention`].
+///
+/// # Assumptions
+///
+/// The blueprint and the grid a dispatch launches are what the routine's `prepare` gave for its
+/// tensors' problem on their device.
+///
+/// # Guarantees
+///
+/// A dispatch that errs has launched nothing but a conversion of the query
+/// ([`AttentionTensors::bind`]).
 pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
 {
@@ -21,9 +31,8 @@ pub trait AttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`], nothing launched, where the tile engine refuses what the routine
-    /// prepared, or a routine that stages its keys meets a QJL fix-up
-    /// ([`AttentionCacheBinding::into_tiles`](crate::kernels::AttentionCacheBinding::into_tiles)).
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared, or a routine
+    /// that stages its keys meets a QJL fix-up.
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
@@ -111,6 +120,15 @@ where
 /// It writes no output. The split-keys merge
 /// ([`PlaneSplitKeysMergeRoutine`](crate::kernels::PlaneSplitKeysMergeRoutine)) merges the slots
 /// into it, and a strategy launches the two ([`SplitKeysAttention`](crate::kernels::SplitKeysAttention)).
+///
+/// # Assumptions
+///
+/// As [`AttentionRoutine`]'s, and the slots a dispatch leaves its partials in are the tensors'
+/// [`split_slots`](AttentionTensors::split_slots) for the merge of its blueprint.
+///
+/// # Guarantees
+///
+/// As [`AttentionRoutine`]'s.
 pub trait PartialAttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
 {

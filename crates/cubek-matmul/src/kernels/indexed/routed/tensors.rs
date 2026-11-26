@@ -185,8 +185,12 @@ impl RoutedMatmulTensors {
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
+        if self.rows() == 0 {
+            return Ok(self.output());
+        }
+        let operands = self.operands()?;
         let out = self.output();
-        self.launch_into(hw, routine, settings, &out)?;
+        self.launch_operands_into(hw, routine, settings, operands, &out)?;
         Ok(out)
     }
 
@@ -210,9 +214,8 @@ impl RoutedMatmulTensors {
         if self.rows() == 0 {
             return Ok(());
         }
-        let (lhs, stack, table) = self.operands()?;
-        let bound = self.batched(out);
-        routine.launch_indexed_into(hw, &self.client, lhs, stack, table, bound, settings)
+        let operands = self.operands()?;
+        self.launch_operands_into(hw, routine, settings, operands, out)
     }
 
     /// Whether `R` at `settings` prepares the product on `hw`, of a row at least.
@@ -323,6 +326,28 @@ impl RoutedMatmulTensors {
             entries: self.routes.as_rows(rows, slots),
         };
         Ok((lhs, self.along.read_slabs(&self.rhs, self.experts)?, table))
+    }
+
+    /// The product of `operands`, this product's ([`operands`](Self::operands)), on `routine`
+    /// at `settings`, prepared for `hw`, into `out`.
+    ///
+    /// # Errors
+    ///
+    /// As [`launch`](Self::launch).
+    fn launch_operands_into<Mk, SM, R>(
+        &self,
+        hw: &Hardware,
+        routine: &R,
+        settings: &R::Settings,
+        (lhs, stack, table): (PlainTensor, StoredTensor, MatmulIndexTable),
+        out: &TensorHandle,
+    ) -> Result<(), Decline>
+    where
+        Mk: MatmulMicrokernel,
+        R: MatmulRoutine<Mk, SM>,
+    {
+        let bound = self.batched(out);
+        routine.launch_indexed_into(hw, &self.client, lhs, stack, table, bound, settings)
     }
 
     /// `out`, the product's `[rows, slots, n]`, as the dense routines write it: each row's slot a

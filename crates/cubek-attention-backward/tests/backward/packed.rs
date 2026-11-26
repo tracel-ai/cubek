@@ -6,7 +6,6 @@ use super::reference::Case;
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_attention::kernels::{
     AttentionLaunch, AttentionScoring, AttentionTensors, CubeStagedAttentionRoutine,
@@ -16,7 +15,9 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
-use cubek_test_utils::{HostAttention, HostData, HostDataType, PackedVectors, TestInput};
+use cubek_test_utils::{
+    HostAttention, HostData, HostDataType, PackedVectors, TestInput, TestOutcome, ValidationResult,
+};
 
 /// Bits per coordinate of the codes, keys and values alike.
 const BITS: u32 = 4;
@@ -129,8 +130,8 @@ impl PackedSide {
 }
 
 /// Every setting of the staged cube on `case` over a packed cache, against the host's attention
-/// over the decoded rows; a setting this device declines is skipped, and says so, but at least one
-/// reads the cache.
+/// over the decoded rows: a broken setting fails, and a device on which every setting declines
+/// reports a skip.
 fn check_packed(case: Case) {
     let client: Client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
@@ -183,7 +184,7 @@ fn check_packed(case: Case) {
         }
     }
 
-    let mut read = 0;
+    let (mut read, mut declined) = (0, Vec::new());
     for settings in CubeStagedAttentionRoutine::settings(&hw) {
         let lengths = TestInput::builder(client.clone(), Shape::new([1]))
             .dtype(u32::elem_type_native())
@@ -227,15 +228,13 @@ fn check_packed(case: Case) {
                 read += 1;
             }
             Err(broken) if broken.is_broken() => panic!("{settings}: {broken}"),
-            Err(Decline::Unserved { why }) => eprintln!("{settings}: declined, {why}"),
-            Err(decline) => eprintln!("{settings}: declined, {decline:?}"),
+            Err(decline) => declined.push(format!("{settings}: {decline}")),
         }
     }
-    assert!(
-        read > 0,
-        "no setting of the staged cube read the packed cache"
-    );
-    eprintln!("{read} settings read the packed cache");
+    if read == 0 {
+        let why = format!("every setting of the staged cube declines: {declined:#?}");
+        TestOutcome::Validated(ValidationResult::Skipped(why)).enforce();
+    }
 }
 
 #[test]

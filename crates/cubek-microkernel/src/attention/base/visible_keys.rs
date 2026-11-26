@@ -32,16 +32,21 @@ pub struct VisibleKeys {
 impl VisibleKeys {
     /// What the queries of `owner`'s sequence and key head see: its sequence's attended length
     /// ([`attended_length`](Self::attended_length)); `queries` of them, or, where every sequence's
-    /// queries lie end to end, the count of its run of `query_ends`, their cumulative counts; and
-    /// the cells of `mask`, over `[B, KV, G, Q, S]`, where there is one.
+    /// queries lie end to end, the count of its run of `query_ends`, their cumulative counts, over
+    /// `queries` in all; and the cells of `mask`, over `[B, KV, G, Q, S]`, where there is one.
     ///
     /// # Assumptions
     ///
-    /// `keys` is at most the positions the key and value buffers hold.
+    /// `keys` is at most the positions a sequence reaches in the key and value buffers: its
+    /// table's pages times their positions where they lie in pages, the buffers' positions
+    /// otherwise.
     ///
     /// # Guarantees
     ///
-    /// No key at or past `keys` is seen, whatever `len` holds.
+    /// Where the ends never decrease and the last is `queries`, a run holds the queries its ends
+    /// count. Whatever `len` and `query_ends` hold, no key at or past `keys` is seen, and a run
+    /// holds no query past the `queries` there are: an end is read as at most `queries`, and a
+    /// start as at most its end.
     #[allow(
         clippy::clone_on_copy,
         reason = "the cube macro expands no dereference of a comptime option, only its clone"
@@ -60,11 +65,12 @@ impl VisibleKeys {
         let queries = query_ends
             .clone()
             .map::<u32, _>(|ends| {
+                let end = ends[sequence].min(queries);
                 let mut start = 0u32;
                 if sequence > 0 {
-                    start = ends[sequence - 1];
+                    start = ends[sequence - 1].min(end);
                 }
-                ends[sequence] - start
+                end - start
             })
             .unwrap_or(queries);
         // A box that starts past its sequence's run holds no query, so it attends no key.
@@ -87,8 +93,15 @@ impl VisibleKeys {
     }
 
     /// The keys sequence `sequence` attends: its entry of `len`, read by stride, so a single
-    /// length bound at stride zero is every sequence's, and no more than the `keys` there are, so
-    /// a length past them attends as a length of the keys there are.
+    /// length bound at stride zero is every sequence's.
+    ///
+    /// # Assumptions
+    ///
+    /// `sequence` names an entry of `len`: one a sequence, or one at stride zero.
+    ///
+    /// # Guarantees
+    ///
+    /// At most `keys`: a length past them attends as a length of the keys there are.
     pub fn attended_length(len: &Tensor<u32>, sequence: usize, keys: u32) -> u32 {
         len[sequence * len.stride(0)].min(keys)
     }
@@ -129,21 +142,6 @@ impl VisibleKeys {
             partitioning,
             comptime!(partitioning.space().subspace(&[G, S, Q])),
         )
-    }
-
-    /// The bias over `space`, laid out as the scores it is summed into.
-    fn bias_over<E: Numeric>(&self, partitioning: &Partitioning, #[comptime] space: Space) -> Tile {
-        Procedural::new::<E, VisibleKeys>(
-            space,
-            VisibleKeys {
-                attended: self.attended,
-                seq_q: self.seq_q,
-                queries_end: self.queries_end,
-                mask: self.mask.clone(),
-                visibility: comptime!(self.visibility),
-            },
-        )
-        .tile_in::<E>(partitioning)
     }
 
     /// The biases a walk over `region`'s keys sums its steps' scores with, over `partitioning`'s
@@ -268,6 +266,24 @@ impl VisibleKeys {
         }
 
         seen
+    }
+}
+
+#[cube]
+impl VisibleKeys {
+    /// The bias over `space`, laid out as the scores it is summed into.
+    fn bias_over<E: Numeric>(&self, partitioning: &Partitioning, #[comptime] space: Space) -> Tile {
+        Procedural::new::<E, VisibleKeys>(
+            space,
+            VisibleKeys {
+                attended: self.attended,
+                seq_q: self.seq_q,
+                queries_end: self.queries_end,
+                mask: self.mask.clone(),
+                visibility: comptime!(self.visibility),
+            },
+        )
+        .tile_in::<E>(partitioning)
     }
 }
 

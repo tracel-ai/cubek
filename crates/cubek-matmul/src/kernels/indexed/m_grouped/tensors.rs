@@ -49,6 +49,14 @@ pub const M_GROUPED_NO_ROW: Decline = Decline::Unserved {
 /// against the slab of the group it holds, read through the chunks' table ([`MatmulIndex::Slab`]),
 /// so a dense routine serves it ([`launch`](Self::launch)). A chunk past the groups' names no slab
 /// and sums nothing.
+///
+/// # Assumptions
+///
+/// As [`MGroupedRowSource::pad`].
+///
+/// # Guarantees
+///
+/// As [`MGroupedRowSource::pad`].
 #[derive(Clone)]
 pub struct MGroupedMatmulTensors {
     client: Client,
@@ -63,14 +71,6 @@ impl MGroupedMatmulTensors {
     /// cumulative end row as a `u32`, one group a slab), the slabs laid along `along`. A float
     /// stack is read where it lies, and copied only where it overlaps itself or is contiguous
     /// along neither dimension.
-    ///
-    /// # Assumptions
-    ///
-    /// As [`MGroupedRowSource::pad`].
-    ///
-    /// # Guarantees
-    ///
-    /// As [`MGroupedRowSource::pad`].
     ///
     /// # Errors
     ///
@@ -128,7 +128,7 @@ impl MGroupedMatmulTensors {
     /// gated source's layout is built on the spread ends.
     ///
     /// The sort that makes the call's `ends` and route places can be discarded, as a process mode
-    /// that discards launches does, leaving whatever the buffers held, which a kernel reading
+    /// that discards launches does, leaving whatever the buffers hold, which a kernel reading
     /// them as a layout runs on as garbage. These are uploaded rather than launched, so such a
     /// mode keeps them.
     pub fn with_spread_rows(&self) -> Self {

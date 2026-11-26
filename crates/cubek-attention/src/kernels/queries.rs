@@ -18,7 +18,7 @@ pub const PACKED_QUERIES_UNREAD: Decline = Decline::Unserved {
 #[derive(Debug, Clone)]
 #[expect(
     clippy::large_enum_variant,
-    reason = "one per launch, held by value as the launch's other operands are; both arms are tensors"
+    reason = "one per launch, kept by value as the launch's other operands are; both arms are tensors"
 )]
 pub enum AttentionQueries {
     /// Every sequence's `q` queries, `[b, h, q, d]`.
@@ -39,7 +39,7 @@ pub enum AttentionQueries {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::kernels::*;
     use core::num::NonZeroUsize;
     use cubecl::client::Client;
@@ -153,7 +153,8 @@ mod tests {
         assert!(failures.is_empty(), "{failures:#?}");
     }
 
-    /// `launch` at its lead, or `None` where it declines on this device.
+    /// `launch` at its lead, or `None` where it declines on this device, which reports a skip. A
+    /// broken launch fails.
     fn lead(
         launch: impl AttentionLaunch,
         client: &Client,
@@ -163,10 +164,15 @@ mod tests {
     ) -> Option<TensorHandle> {
         let tensors = AttentionTensors::attention(client, queries, kv, scoring)
             .expect("the case's tensors are verified");
-        launch
-            .launch_lead_on(&Hardware::from_client(client), tensors)
-            .map_err(|decline: Decline| eprintln!("declined on this device: {decline:?}"))
-            .ok()
+        match launch.launch_lead_on(&Hardware::from_client(client), tensors) {
+            Ok(out) => Some(out),
+            Err(broken) if broken.is_broken() => panic!("{broken}"),
+            Err(decline) => {
+                let why = format!("declined on this device: {decline}");
+                TestOutcome::Validated(ValidationResult::Skipped(why)).enforce();
+                None
+            }
+        }
     }
 
     /// Where `launch` writes another value for `case`'s packed queries than for a launch per
@@ -327,8 +333,8 @@ mod tests {
 
         let client: Client = cubecl::test_device().client();
         if let Err(refusal) = Hardware::from_client(&client).plane_dim() {
-            eprintln!("declined on this device: {refusal:?}");
-            return;
+            let why = format!("no plane on this device: {refusal}");
+            return TestOutcome::Validated(ValidationResult::Skipped(why)).enforce();
         }
         let (f16, u32) = (half::f16::elem_type_native(), u32::elem_type_native());
         let tensor = |shape: &[usize], element, data: Vec<f32>| {
@@ -488,9 +494,50 @@ mod tests {
         });
     }
 
+    /// A listed block past its sequence's pages lies in their last page, and a page of the table
+    /// past the pool is its last page, on every kernel that reads listed blocks: the same as the
+    /// block or the page in range there.
+    #[test]
+    fn a_listed_block_past_the_pages_reads_the_last_page() {
+        const BLOCK: usize = 16;
+        const BLOCKS: u32 = (KEYS / BLOCK) as u32;
+        let client: Client = cubecl::test_device().client();
+        let cache_shape = [1, KV_HEADS, KEYS, HEAD_DIM];
+        let cases = ["a block past the pages", "a page past the pool"];
+        assert_past_reads_as_within(&every_launch(), &cases, |launch, case, past| {
+            let mut blocks: Vec<u32> = (0..BLOCKS).collect();
+            let mut page = 0;
+            match (case, past) {
+                ("a block past the pages", true) => blocks[0] = 1000 * BLOCKS + BLOCKS - 1,
+                ("a block past the pages", false) => blocks[0] = BLOCKS - 1,
+                (_, true) => page = 100,
+                (_, false) => {}
+            }
+            let kv = KvSource::new(AttentionCache::Float {
+                key: random(&client, &cache_shape, 2),
+                value: random(&client, &cache_shape, 3),
+            })
+            .paged(PlainTensor::of_u32s(&client, &[1, 1], &[page]))
+            .indexed(
+                PlainTensor::of_u32s(&client, &[1, BLOCKS as usize], &blocks),
+                NonZeroUsize::new(BLOCK).expect("a block holds keys"),
+            );
+            let queries = AttentionQueries::Dense {
+                query: random(&client, &[1, HEADS, 1, HEAD_DIM], 1),
+                lengths: PlainTensor::of_u32s(&client, &[1], &[KEYS as u32]),
+            };
+            let scoring = AttentionScoring::standard(AttentionVisibility::Attended, HEAD_DIM);
+            let tensors = AttentionTensors::attention(&client, queries, kv, scoring)
+                .expect("the case's tensors are verified");
+            launch(&Hardware::from_client(&client), tensors)
+                .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+        });
+    }
+
     /// Queries lying end to end whose last end is past their count read and write no query past
-    /// them: every query there is is written as under ends that stop at the count, by the cube
-    /// routines, the only ones that read queries end to end.
+    /// them, and count no query past them: every query there is is written as under ends that stop
+    /// at the count, all seeing every key and under a causal visibility the count places, by the
+    /// cube routines, the only ones that read queries end to end.
     #[test]
     fn query_ends_past_the_queries_read_the_queries_there_are() {
         const RUNS: [u32; 2] = [3, 2];
@@ -512,7 +559,10 @@ mod tests {
                 }),
             ),
         ];
-        let cases = [AttentionVisibility::Attended];
+        let cases = [
+            AttentionVisibility::Attended,
+            AttentionVisibility::new(true, None, QueryPlacement::Last),
+        ];
         assert_past_reads_as_within(&launches, &cases, |launch, visibility, past| {
             let last = match past {
                 true => END_PAST_THE_QUERIES,
@@ -541,7 +591,8 @@ mod tests {
     }
 
     /// A launch of the tensors at its lead on a device.
-    type LeadLaunch = Box<dyn Fn(&Hardware, AttentionTensors) -> Result<TensorHandle, Decline>>;
+    pub(crate) type LeadLaunch =
+        Box<dyn Fn(&Hardware, AttentionTensors) -> Result<TensorHandle, Decline>>;
 
     /// Every kernel at its lead, and the hypercube stream routine, which no kernel names.
     fn every_launch() -> Vec<(String, LeadLaunch)> {
@@ -574,19 +625,18 @@ mod tests {
 
     /// Each of `launches` on each of `cases`, `attend` writing the attention of its operands with a
     /// value past its range where told so, against the same within range. A launch that declines
-    /// on this device is a skip and a broken one fails, as does a device on which none ran.
-    fn assert_past_reads_as_within<C: core::fmt::Debug + Copy>(
+    /// on this device is a skip, and a broken one fails.
+    pub(crate) fn assert_past_reads_as_within<C: core::fmt::Debug + Copy>(
         launches: &[(String, LeadLaunch)],
         cases: &[C],
         attend: impl Fn(&LeadLaunch, C, bool) -> Result<HostData, Decline>,
     ) {
-        let (mut compared, mut wrong, mut declined) = (0, Vec::new(), Vec::new());
+        let (mut wrong, mut declined) = (Vec::new(), Vec::new());
         for (name, launch) in launches {
             for &case in cases {
                 let case_name = format!("{name}, {case:?}");
                 match (attend(launch, case, false), attend(launch, case, true)) {
                     (Ok(expected), Ok(actual)) => {
-                        compared += 1;
                         let checked =
                             cubek_test_utils::assert_equals_approx(&actual, &expected, 1e-4);
                         if !matches!(checked, ValidationResult::Pass) {
@@ -600,7 +650,6 @@ mod tests {
         let broken: Vec<_> = declined.iter().filter(|(_, why)| why.is_broken()).collect();
         assert!(broken.is_empty(), "{broken:#?}");
         assert!(wrong.is_empty(), "{wrong:#?}");
-        assert!(compared > 0, "no launch ran on this device: {declined:#?}");
         for (case, why) in declined {
             TestOutcome::Validated(ValidationResult::Skipped(format!("{case}: {why}"))).enforce();
         }

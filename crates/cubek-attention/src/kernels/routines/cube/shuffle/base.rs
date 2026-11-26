@@ -152,6 +152,7 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
         blueprint: CubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        tensors.admit_one_tile_of_keys()?;
         let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
@@ -170,11 +171,11 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
                 key,
                 value,
                 binding.out,
-                binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
-                binding.mask.map(|mask| mask.arg()).into(),
+                binding.logsumexp.into(),
+                binding.mask.into(),
                 binding.lengths,
                 binding.query_ends.into(),
-                problem.seq_q as u32,
+                binding.queries,
                 problem.seq_kv as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),

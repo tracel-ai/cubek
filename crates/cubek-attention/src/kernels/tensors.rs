@@ -4,16 +4,17 @@
 use crate::kernels::CACHE_SEQUENCES_DISAGREE;
 use crate::kernels::conversion::{converted, distinct_elements};
 use crate::kernels::{
-    AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
-    AttentionRoutineProblem, AttentionScoring, KvSource, PackedAttentionCache, QueryDimension,
-    SCALED_PACKED_UNREAD, page_table,
+    A_STAGE_IS_ONE_TILE, AttentionBinding, AttentionBlueprint, AttentionCache,
+    AttentionCacheBinding, AttentionQueries, AttentionRoutineProblem, AttentionScoring,
+    FIXUP_IN_A_STAGE, KvSource, PackedAttentionCache, QueryDimension, SCALED_PACKED_UNREAD,
+    page_table,
 };
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
 use cubecl::prelude::TensorArg;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Decline, Delivery};
+use cubecl::tile::launch::{Bound, Decline, Delivery};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::layout::PhysicalAxisMap;
 use cubecl::tile::{
@@ -104,7 +105,7 @@ pub struct AttentionTensors {
     out_view: PlainTensor,
     scoring: AttentionScoring,
     dimension: QueryDimension,
-    /// The `u32` counters the cubes of a box count themselves in at, held by the caller across
+    /// The `u32` counters the cubes of a box count themselves in at, kept by the caller across
     /// launches ([`with_arrivals`](Self::with_arrivals)); `None` where each launch makes its own.
     arrivals: Option<PlainTensor>,
     /// Each query's logsumexp, `[b, h, q]`, and the same buffer as the kernel writes it,
@@ -148,15 +149,18 @@ impl AttentionTensors {
     ///
     /// # Assumptions
     ///
-    /// Each entry of a page or block table names a page or block there is, and the ends of queries
-    /// lying end to end never decrease, the last their count and no run longer than `longest`.
+    /// No run of queries lying end to end is longer than `longest`.
     ///
     /// # Guarantees
     ///
-    /// An attended length past the keys a sequence holds attends as a length of the keys there
-    /// are. No launch reads or writes past an operand's buffer, whatever the lengths, the tables'
-    /// entries and the queries' ends hold: an entry past the pool reads the pool's last page, and a
-    /// run of queries past their count stops at it.
+    /// Where every entry of a page or block table names a page or block there is, and the ends of
+    /// queries lying end to end never decrease and end at their count, a launch writes the
+    /// attention the operands state, an attended length past the keys a sequence holds attending as
+    /// a length of the keys there are. Whatever the lengths, the entries and the ends hold, no
+    /// launch reads or writes past an operand's buffer: an entry past the pool reads its last page,
+    /// a listed block past its sequence's pages lies in their last page, an end past the queries'
+    /// count is read as the count, and a start past its end as an empty run. A decline comes before
+    /// anything is allocated or launched.
     ///
     /// # Errors
     ///
@@ -166,7 +170,7 @@ impl AttentionTensors {
     /// [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does not run; and
     /// [`ATTENTION_QUERIES_UNREAD`], [`ATTENTION_QUERIES_UNCOUNTED`],
     /// [`ATTENTION_LENGTHS_UNREAD`] and [`CACHE_SEQUENCES_DISAGREE`]: operands that state no
-    /// attention. Each is returned before anything is allocated or launched.
+    /// attention.
     pub fn attention(
         client: &Client,
         queries: AttentionQueries,
@@ -473,6 +477,11 @@ impl AttentionTensors {
     /// ([`KvSource::scales`]). A packed cache binds no tile: its kernel decodes it as it reads it
     /// ([`AttentionCacheBinding::Packed`]).
     ///
+    /// # Guarantees
+    ///
+    /// A Broken binding launches nothing but a conversion of the query, read at another element,
+    /// where the query's own binding is the one refused.
+    ///
     /// # Errors
     ///
     /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
@@ -515,13 +524,6 @@ impl AttentionTensors {
                 Some(kind)
             }
             _ => None,
-        };
-        let query_read = read.get(AttentionOperand::Query);
-        let query = match query_read != problem.elements.get(AttentionOperand::Query)
-            && words(AttentionOperand::Query).is_none()
-        {
-            true => converted(&self.client, &self.query, query_read),
-            false => self.query.clone(),
         };
         let delivery = |operand: AttentionOperand, planned: Delivery| match words(operand) {
             Some(_) => Delivery::SyncPerUnit,
@@ -568,18 +570,6 @@ impl AttentionTensors {
                 .or_broken(ADMITTED_PLAN_RUNS),
             None => Ok(bound),
         };
-        let query = runs(
-            read_operand(
-                &query,
-                &[B, KV, G, Q, D],
-                widths.query,
-                AttentionOperand::Query,
-            )
-            .delivery(query_delivery)
-            .build()
-            .or_broken(ADMITTED_PLAN_RUNS)?
-            .arg(),
-        )?;
         let planned = blueprint
             .microkernel
             .delivery(&widths, &problem.work_item());
@@ -622,6 +612,7 @@ impl AttentionTensors {
                 arg(view, &[B, KV, G, Q], 1, AttentionRoutineProblem::SUM)
                     .build()
                     .or_broken(ADMITTED_PLAN_RUNS)
+                    .map(Bound::arg)
             })
             .transpose()?;
         // A cell a read: a mask broadcast over a dim lies there at stride zero.
@@ -632,8 +623,30 @@ impl AttentionTensors {
                 arg(mask, &[B, KV, G, Q, S], 1, mask.elem)
                     .build()
                     .or_broken(ADMITTED_PLAN_RUNS)
+                    .map(Bound::arg)
             })
             .transpose()?;
+        // The query last: one read at another element is converted into a buffer of its own, the
+        // one launch a binding makes.
+        let query_read = read.get(AttentionOperand::Query);
+        let query = match query_read != problem.elements.get(AttentionOperand::Query)
+            && words(AttentionOperand::Query).is_none()
+        {
+            true => converted(&self.client, &self.query, query_read),
+            false => self.query.clone(),
+        };
+        let query = runs(
+            read_operand(
+                &query,
+                &[B, KV, G, Q, D],
+                widths.query,
+                AttentionOperand::Query,
+            )
+            .delivery(query_delivery)
+            .build()
+            .or_broken(ADMITTED_PLAN_RUNS)?
+            .arg(),
+        )?;
         Ok(AttentionBinding {
             launcher,
             query,
@@ -646,6 +659,7 @@ impl AttentionTensors {
                 .query_runs
                 .as_ref()
                 .map(|(ends, _)| ends.binding.clone().into_tensor_arg()),
+            queries: self.query_count() as u32,
         })
     }
 
@@ -839,6 +853,29 @@ impl AttentionTensors {
         }
     }
 
+    /// Whether the keys are read as one tile a stage, as a routine that stages them reads them:
+    /// a packed cache's keys under the QJL fix-up are two.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`]: a routine that stages its keys declines the fix-up in its `prepare`.
+    pub(crate) fn admit_one_tile_of_keys(&self) -> Result<(), Decline> {
+        match &self.kv.cache {
+            AttentionCache::Packed(cache) if cache.fixup.is_some() => {
+                Err(FIXUP_IN_A_STAGE).or_broken(A_STAGE_IS_ONE_TILE)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The queries a sequence has, or, where they lie end to end, all of them.
+    fn query_count(&self) -> usize {
+        match &self.query_runs {
+            Some(_) => self.out.shape()[0],
+            None => self.problem().seq_q,
+        }
+    }
+
     /// The float `key` and `value` bound as `blueprint` states them, each side read by `read_side`
     /// over the dimensions its buffer steps, or with its keys innermost where its microkernel reads
     /// it so, under its per-tensor scale where it has one, and through the page table where the
@@ -990,6 +1027,13 @@ pub struct AttentionSplitSlots {
     pub max: TensorHandle,
     /// Each query's running sum of probabilities in every slot, beside the max.
     pub sum: TensorHandle,
+}
+
+impl AttentionSplitSlots {
+    /// The outputs, the maxes and the sums, as a kernel's launch arguments.
+    pub fn args(&self) -> [TensorArg; 3] {
+        [&self.out, &self.max, &self.sum].map(|slot| slot.clone().binding().into_tensor_arg())
+    }
 }
 
 #[cfg(test)]

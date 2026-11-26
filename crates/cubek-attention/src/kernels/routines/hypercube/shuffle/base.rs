@@ -1,14 +1,15 @@
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutineProblem, HypercubeMerge, PACKED_QUERIES_UNREAD,
-    PLANE_SHUFFLE_ONE_WIDTH, PLANE_SHUFFLE_WIDTHS_DIFFER, QueryOrder,
+    AttentionPartitioning, AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors,
+    HypercubeMerge, PACKED_QUERIES_UNREAD, PLANE_SHUFFLE_ONE_WIDTH, PLANE_SHUFFLE_WIDTHS_DIFFER,
+    QueryOrder,
 };
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
-use cubecl::prelude::TensorArg;
-use cubecl::tile::launch::{Bound, Decline, Vectorization};
+use cubecl::client::Client;
+use cubecl::prelude::{CubeCount, CubeDim, TensorArg};
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::{Launcher, StageStorage, TileTensorLaunch};
-use cubek_microkernel::attention::AttentionOperand;
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
 };
@@ -16,6 +17,7 @@ use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::plane::PlaneShuffleAttentionMicrokernelSettings;
+use cubek_microkernel::attention::{AttentionOperand, AttentionVisibility};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -45,35 +47,57 @@ pub trait HypercubeShuffleMerge: core::fmt::Debug + Copy + Eq + core::hash::Hash
 }
 
 /// What a hypercube shuffle's kernel takes alike whether it reads its keys and values as tiles or
-/// decodes a packed cache: the operands bound beside the cache, under their launcher, and the
-/// launch's grid.
-pub(crate) struct HypercubeShuffleOperands {
+/// decodes a packed cache, each built once: the launch's grid, the operands bound beside the cache
+/// under their launcher, the slots, and the problem's scalars.
+pub(crate) struct HypercubeShuffleLaunch<'a> {
+    pub client: &'a Client,
+    pub cube_count: CubeCount,
+    pub cube_dim: CubeDim,
+    pub width: usize,
     pub launcher: Launcher,
     pub query: TileTensorLaunch,
-    pub mask: Option<Bound>,
+    pub mask: Option<TileTensorLaunch>,
     pub lengths: TensorArg,
-    pub grid: Grid,
+    pub slots: [TensorArg; 3],
+    pub queries: u32,
+    pub keys: u32,
+    pub scale: f32,
+    pub microkernel: HypercubeAttentionMicrokernel,
+    pub shape: HypercubeMergeShape,
+    pub visibility: AttentionVisibility,
 }
 
-impl HypercubeShuffleOperands {
-    /// `binding`'s operands beside its cache, on `grid`, and the cache.
-    pub(crate) fn of(binding: AttentionBinding, grid: Grid) -> (Self, AttentionCacheBinding) {
-        let AttentionBinding {
-            launcher,
-            query,
-            cache,
-            mask,
-            lengths,
-            ..
-        } = binding;
-        let operands = Self {
-            launcher,
-            query,
-            mask,
-            lengths,
-            grid,
+impl<'a> HypercubeShuffleLaunch<'a> {
+    /// The launch `blueprint` prepared on `grid` over `tensors`, bound as `binding`, its cubes
+    /// leaving their partials in `slots` laid out as `shape`; and the cache, which each kernel
+    /// reads its own way.
+    pub(crate) fn new(
+        tensors: &'a AttentionTensors,
+        binding: AttentionBinding,
+        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
+        grid: Grid,
+        shape: HypercubeMergeShape,
+        slots: &AttentionSplitSlots,
+    ) -> (Self, AttentionCacheBinding) {
+        let problem = tensors.problem();
+        let launch = Self {
+            client: tensors.client(),
+            cube_count: grid.launch.cube_count,
+            cube_dim: grid.launch.cube_dim,
+            width: blueprint.widths.query,
+            launcher: binding.launcher,
+            query: binding.query,
+            mask: binding.mask,
+            lengths: binding.lengths,
+            slots: slots.args(),
+            queries: problem.seq_q as u32,
+            keys: problem.seq_kv as u32,
+            scale: tensors.scale(),
+            microkernel: blueprint.microkernel,
+            shape,
+            visibility: problem.visibility,
         };
-        (operands, cache)
+        (launch, binding.cache)
     }
 }
 

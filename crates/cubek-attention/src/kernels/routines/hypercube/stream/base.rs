@@ -176,7 +176,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// The best hypercube of plane fragments at the settings, its grid the device's workers times
     /// the setting's count, sharing the line of every box's steps
     /// ([`AttentionPartitioning::shared`]), each cube holding the shared memory its microkernel
-    /// asks for, its stages held as its planes read them, and the word it learns it came last in.
+    /// asks for, its stages laid out as its planes read them, and the word it learns it came last in.
     /// Declines a cache of pages, which a run would walk across, and a packed one.
     fn prepare(
         hw: &Hardware,
@@ -240,12 +240,13 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         blueprint: HypercubeStreamFragmentAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        tensors.admit_one_tile_of_keys()?;
         let binding = tensors.bind(&blueprint, &grid)?;
         let microkernel = blueprint.microkernel;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
         let splits = Self::splits(&problem, &blueprint.partitioning);
-        let slots = tensors.split_slots(splits);
+        let [slot_out, slot_max, slot_sum] = tensors.split_slots(splits).args();
         let arrivals = tensors.box_arrivals(microkernel.cube.seq_q());
         // Its planes keep their sums in the first, write the output in the second, read the
         // query and the keys' stage in the third and cast their probabilities to the values'
@@ -270,12 +271,12 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 key,
                 value,
                 binding.out,
-                binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
-                slots.out.binding().into_tensor_arg(),
-                slots.max.binding().into_tensor_arg(),
-                slots.sum.binding().into_tensor_arg(),
+                binding.logsumexp.into(),
+                slot_out,
+                slot_max,
+                slot_sum,
                 arrivals.binding.into_tensor_arg().into_buffer_arg(),
-                binding.mask.map(|mask| mask.arg()).into(),
+                binding.mask.into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 problem.seq_kv as u32,

@@ -1411,7 +1411,6 @@ dependencies = [
  "cubek-std",
  "cubek-test-utils",
  "half",
- "log",
  "serde",
 ]
 

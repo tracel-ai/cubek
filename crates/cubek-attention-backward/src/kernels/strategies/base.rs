@@ -15,6 +15,17 @@ use cubek_std::routine::Grid;
 /// What autotune races is a strategy at one of its settings. A setting holds each routine's, and
 /// which routines run can depend on it: the strategy's blueprint holds one routine blueprint per
 /// kernel it launches.
+///
+/// # Assumptions
+///
+/// A blueprint [`dispatch`](Self::dispatch) launches is the one [`prepare`](Self::prepare) gave
+/// for its tensors' problem on their device.
+///
+/// # Guarantees
+///
+/// A dispatch that errs has launched the routines before the one that erred, and allocated the
+/// sums they add into; the gradients hold nothing a caller may read until another strategy
+/// writes them.
 pub trait AttentionBackwardLaunch {
     /// The knobs a measurement settles: each routine's, and which routines run.
     type Settings: core::fmt::Debug + Clone + core::fmt::Display + PartialEq;
@@ -45,9 +56,7 @@ pub trait AttentionBackwardLaunch {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what a routine prepared: the routines
-    /// before the one that errs have launched, and the gradients hold nothing a caller may read
-    /// until another strategy writes them.
+    /// [`Decline::Broken`] where the tile engine refuses what a routine prepared.
     fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

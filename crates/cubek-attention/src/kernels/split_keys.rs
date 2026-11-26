@@ -49,9 +49,14 @@ where
     /// Both launches in order over `tensors`: the partial routine's `blueprint` on `grid`, then
     /// `merge` over the slots it leaves.
     ///
+    /// # Guarantees
+    ///
+    /// Where it errs, the slots are allocated and nothing is launched but a conversion of the
+    /// query; the merge is not launched.
+    ///
     /// # Errors
     ///
-    /// As [`PartialAttentionRoutine::dispatch`], neither launched.
+    /// As [`PartialAttentionRoutine::dispatch`].
     pub fn dispatch(
         &self,
         tensors: &AttentionTensors,

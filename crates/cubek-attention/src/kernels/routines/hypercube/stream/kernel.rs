@@ -17,18 +17,9 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// so every run but the last holds the same steps whatever the keys. A cube whose run is empty
 /// touches no box and leaves at once.
 ///
-/// - `query`: the query, `[b, kv, g, q, d]`.
-/// - `key`, `value`: the keys and the values, read no further than each sequence's attended length.
-/// - `out`: the output, `[b, kv, g, q, dv]`.
-/// - `logsumexp`: each query's logsumexp, `[b, kv, g, q]`, where the launch binds one.
-/// - `slot_out`, `slot_max`, `slot_sum`: each cube's partial output, running max and running sum, a
-///   slot for every cube sharing its box
-///   ([`AttentionSplitSlots`](crate::kernels::AttentionSplitSlots)).
-/// - `arrivals`: a `u32` counter a box, at zero, where its cubes count themselves in.
-/// - `mask`: which keys each query does not see, `[b, kv, g, q, s]`, where the launch binds one.
-/// - `len`: each sequence's attended length, `[b]`, read by stride.
-/// - `queries`, `keys`: queries and keys a sequence; a length past `keys` attends as `keys`.
-/// - `scale`: what each dot product is scaled by before the softmax.
+/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `len`, `queries`, `keys`, `scale`: as
+///   `unit_attention_kernel`'s.
+/// - `slot_out`, `slot_max`, `slot_sum`, `arrivals`: as `hypercube_attention_arrival_kernel`'s.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "the query and keys' stage element is defined from them at launch, which the kernel \

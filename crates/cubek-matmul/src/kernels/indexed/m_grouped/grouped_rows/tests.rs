@@ -62,7 +62,7 @@ fn starts_name_each_groups_first_tile() {
 
 /// The layout laid out on the host is the one `group_tiles` lays out on the device: ragged
 /// groups, an empty one, ends that run backwards, a last end short of the rows and one past
-/// them. Held through what reads it: the table, the starts, the rows it pads, and a gate
+/// them. Checked through what reads it: the table, the starts, the rows it pads, and a gate
 /// reading them from it.
 #[test]
 fn an_uploaded_layout_is_the_launched_one() {
@@ -127,7 +127,7 @@ const SPREAD: Spread = Spread {
 const ALIGN: usize = 4;
 
 /// Tokens routed to experts and sorted by expert stably, as the host computes it: the
-/// reference every routed kernel here is held to.
+/// reference every routed kernel here is checked against.
 struct Routing {
     tokens: usize,
     slots: usize,

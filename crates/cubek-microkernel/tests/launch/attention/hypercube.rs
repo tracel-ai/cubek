@@ -103,7 +103,9 @@ impl HypercubeAttentionLaunch {
             plane_width: hw.plane_dim()?,
         })
     }
+}
 
+impl HypercubeAttentionLaunch {
     /// The box one cube of `partitioning` covers: its queries, and the run of the keys it walks,
     /// as long as the longest cube's, as the routine's partitioning states it.
     fn cube_space(partitioning: &Partitioning) -> Space {
