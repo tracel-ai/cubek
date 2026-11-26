@@ -125,7 +125,8 @@ impl Strategy {
 
 /// `first`, or `fallback` where `first` refuses the problem or the device
 /// ([`MatmulSetupError::Unavailable`], [`MatmulSetupError::InvalidConfig`]), the fallback run on the
-/// `dtypes` the caller passed, whatever `first` made of them. Any other error is `first`'s answer.
+/// `dtypes` the caller passed, whatever `first` made of them. Any other error is `first`'s answer,
+/// a broken launch among them.
 #[allow(clippy::result_large_err)]
 fn launch_with_fallback(
     dtypes: &mut MatmulElems,

@@ -141,7 +141,10 @@ impl MatmulPartitioning {
                         .extents()
                         .into_iter()
                         .map(|(dimension, extent)| {
-                            (dimension, if dimension == rows { cube_rows } else { extent })
+                            (
+                                dimension,
+                                if dimension == rows { cube_rows } else { extent },
+                            )
                         })
                         .collect::<Vec<_>>(),
                 )
