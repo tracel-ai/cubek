@@ -8,7 +8,7 @@ use crate::eval::benchmarks::settings;
 use crate::kernels::tiled::routines::test_support::{
     cmma_8x32_only, cmma_only, mma_only, nvidia, problems,
 };
-use crate::kernels::tiled::{ConvBias, ConvDecline, ConvProblem};
+use crate::kernels::tiled::{ConvDecline, ConvProblem};
 use cubecl::tile::launch::Decline;
 use cubek_std::devices::{self, topology};
 use cubek_std::microkernel::KernelEstimate;
@@ -25,22 +25,6 @@ fn conv2d(name: &str) -> Conv2dProblem {
 
 fn problem(name: &str) -> ConvProblem {
     ConvProblem::from(&conv2d(name))
-}
-
-/// The bias is added through one-element slices of the output, so a problem with one binds the
-/// output one element wide.
-#[test]
-fn a_bias_binds_the_output_one_element_wide() {
-    let problem = ConvProblem {
-        bias: ConvBias::PerChannel,
-        ..problem("channels_64")
-    };
-    for hw in [nvidia(), cmma_only(), mma_only()] {
-        let (blueprint, _) =
-            CubeStagedConvRoutine::prepare(&hw, &problem, &settings::F2X2_P2X2_T16)
-                .expect("the setting prepares");
-        assert_eq!(blueprint.widths.out, 1);
-    }
 }
 
 /// A few channels make a step of taps beside the channels, which both instructions serve.

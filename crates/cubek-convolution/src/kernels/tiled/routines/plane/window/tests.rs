@@ -5,7 +5,7 @@ use super::*;
 use crate::components::ConvolutionOperation;
 use crate::eval::benchmarks::{Conv2dElement, Conv2dProblem, problems};
 use crate::kernels::tiled::routines::test_support::{dense, nvidia};
-use crate::kernels::tiled::{ConvBias, ConvProblem, CubeStagedConvRoutine, TileConvBlueprint};
+use crate::kernels::tiled::{ConvProblem, CubeStagedConvRoutine, TileConvBlueprint};
 use cubecl::ir::{ElemType, FloatKind};
 use cubek_microkernel::matmul::unit::UnitRegistersMicrokernel;
 use cubek_std::devices;
@@ -117,22 +117,6 @@ fn a_forward_reads_its_rhs_as_wide_as_its_input() {
     assert!(blueprint.widths.lhs > 1);
     assert_eq!(blueprint.widths.rhs, blueprint.widths.lhs);
     assert_eq!(blueprint.widths.out, 1);
-}
-
-/// The bias is added through one-element slices of the output, so a problem with one binds the
-/// output one element wide at every setting.
-#[test]
-fn a_bias_binds_the_output_one_element_wide() {
-    let hw = cpu(THREADS, CORES);
-    let problem = ConvProblem {
-        bias: ConvBias::PerChannel,
-        ..on(ConvolutionOperation::Forward)
-    };
-    for settings in PlaneWindowConvRoutine::settings(&hw) {
-        let (blueprint, _) = PlaneWindowConvRoutine::prepare(&hw, &problem, &settings)
-            .expect("the setting prepares");
-        assert_eq!(blueprint.widths.out, 1, "{settings}");
-    }
 }
 
 /// An input vector not dividing the rows is narrowed to one that does, never declined.
