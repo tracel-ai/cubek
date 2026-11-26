@@ -1,16 +1,13 @@
 //! The K-grouped launch against a host reference.
 
 use super::{K_GROUPED_SHAPES_DISAGREE, KGroupedMatmulTensors, launch};
-use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::GROUP_ENDS_UNREAD;
 use crate::kernels::tensor::PlainTensor;
-use crate::tiled::storage::{StorageLevels, tile};
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
 use cubek_std::{Hardware, Instructions};
 use cubek_test_utils::client;
@@ -110,31 +107,6 @@ fn each_group_contracts_its_own_rows_into_its_slab() {
             }
         }
     }
-}
-
-/// An operand stored in tiles is refused rather than read as rows: each group's rows are a
-/// range of the buffer's rows, which a tile's strides do not state.
-#[test]
-fn an_operand_stored_in_tiles_is_refused() {
-    let client = client();
-    let (row_dimension, col_dimension) = (Dimension(0), Dimension(1));
-    let ones = || f32s(&client, [32, 32], &[1.0; 32 * 32]);
-    let storage = StorageLevels::new(&[(col_dimension, 16), (row_dimension, 16)])
-        .grid(&[col_dimension, row_dimension]);
-    let tiled = tile(
-        &client,
-        ones().binding,
-        &[row_dimension, col_dimension],
-        F32,
-        None,
-        storage,
-    )
-    .expect("the operand tiles");
-    let declined = launch_grouped(&client, PlainTensor::of_handle(tiled), ones(), &[16, 32]);
-    assert!(
-        matches!(declined, Err(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
-        "{declined:?}"
-    );
 }
 
 #[test]

@@ -6,7 +6,7 @@ use super::{
     M_GROUPED_SHAPES_DISAGREE, MGroupedFloors, MGroupedMatmulCandidates, MGroupedMatmulTensors,
     MGroupedRowSource, MGroupedSettings, PaddedRows, ROUTE_SORT_UNREAD, RouteSort,
 };
-use crate::kernels::MATMUL_SLABS_TAKE_NO_STORED_TILES;
+use crate::kernels::MATMUL_SLABS_TAKE_NO_FLOAT_TILES;
 use crate::kernels::indexed::m_grouped::upload;
 use crate::kernels::indexed::stack::SlabDimension;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
@@ -156,7 +156,7 @@ fn a_stack_stored_in_tiles_is_refused() {
     )
     .err();
     assert!(
-        matches!(declined, Some(MATMUL_SLABS_TAKE_NO_STORED_TILES)),
+        matches!(declined, Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)),
         "{declined:?}"
     );
 }

@@ -12,7 +12,7 @@ use crate::kernels::indexed::stack::{SlabDimension, SlabView, admit_ends};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable,
+    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_FLOAT_TILES, MatmulIndex, MatmulIndexTable,
     MatmulInputs, MatmulRoutine, MatmulRoutineProblem,
 };
 use crate::kernels::{MatmulTuneKey, OperandLayout};
@@ -22,7 +22,6 @@ use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::{MatmulLayout, MatmulMicrokernel, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
-use cubek_std::layout::contiguous;
 use cubek_std::matmul_dimensions::{K, N};
 use cubek_std::routine::Breakable;
 
@@ -74,8 +73,8 @@ impl MGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an
-    /// operand stored in tiles, [`GROUPED_ROWS_UNREAD`], [`ROUTE_SORT_UNREAD`] or
+    /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_FLOAT_TILES`] for
+    /// rows or a float stack stored in tiles, [`GROUPED_ROWS_UNREAD`], [`ROUTE_SORT_UNREAD`] or
     /// [`GATED_ROWS_UNREAD`] for the rows, [`MATMUL_STACK_NOT_WHOLE_SLABS`],
     /// [`GROUP_ENDS_UNREAD`], and [`M_GROUPED_SHAPES_DISAGREE`].
     pub fn new(
@@ -95,8 +94,8 @@ impl MGroupedMatmulTensors {
             return Err(M_GROUPED_SHAPES_DISAGREE);
         }
         let rows = source.buffer();
-        if rows.is_tiled() || rhs.values().is_tiled() {
-            return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
+        if rows.is_tiled() || matches!(&rhs, StoredTensor::Plain(rhs) if rhs.is_tiled()) {
+            return Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES);
         }
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),
@@ -211,7 +210,7 @@ impl MGroupedMatmulTensors {
             self.groups(),
             MatmulTuneKey::anchored(self.source.rows(), Self::ROWS_KEYED),
             self.stack_kind(),
-            OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
+            OperandLayout::of(&self.rhs.values().meta(), self.rhs.kind(), [K, N]),
             self.along,
             self.source.kind(),
         )
@@ -388,5 +387,53 @@ impl MGroupedMatmulTensors {
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_test_utils::client;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// Operands' side, whole tiles ([`PlainTensor::zeros_in_tiles`]).
+    const SIDE: usize = 32;
+
+    /// A row-major `[SIDE, SIDE]`.
+    fn in_rows(client: &Client) -> PlainTensor {
+        PlainTensor::zeros(client, &[SIDE, SIDE], vec![SIDE, 1], F32)
+    }
+
+    /// A `[SIDE, SIDE]` stored in tiles.
+    fn in_tiles(client: &Client) -> PlainTensor {
+        PlainTensor::zeros_in_tiles(client, SIDE, F32)
+    }
+
+    /// Why the grouped product of `rows` against the float `stack` is declined.
+    fn declined(client: &Client, rows: PlainTensor, stack: PlainTensor) -> Option<Decline> {
+        let ends = PlainTensor::of_u32s(client, &[2], &[16, 32]);
+        let stack = StoredTensor::Plain(stack);
+        MGroupedMatmulTensors::new(client, rows, stack, ends, SlabDimension::Output).err()
+    }
+
+    #[test]
+    fn rows_stored_in_tiles_are_refused() {
+        let client = client();
+        assert_eq!(
+            declined(&client, in_tiles(&client), in_rows(&client)),
+            Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)
+        );
+    }
+
+    /// A float stack is bound as one batch a slab, whose strides state no tile.
+    #[test]
+    fn a_float_stack_stored_in_tiles_is_refused() {
+        let client = client();
+        assert_eq!(
+            declined(&client, in_rows(&client), in_tiles(&client)),
+            Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)
+        );
     }
 }

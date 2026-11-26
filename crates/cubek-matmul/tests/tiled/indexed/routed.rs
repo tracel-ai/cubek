@@ -6,16 +6,19 @@ use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
+use cubek_matmul::kernels::indexed::m_grouped::MGroupedSettings;
 use cubek_matmul::kernels::indexed::routed::{RoutedMatmulCandidates, RoutedMatmulTensors};
 use cubek_matmul::kernels::indexed::stack::SlabDimension;
 use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
-use cubek_matmul::kernels::{PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine};
+use cubek_matmul::kernels::{
+    CubeStagedMatmulRoutine, PlaneShuffleMatmulRoutine, UnitRegistersMatmulRoutine,
+};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, Written};
 
-use crate::matmul::Declines;
+use crate::matmul::{Declines, skip_unless_matrix_instruction};
 use crate::tiled::indexed::{Routed, Stack, values};
-use crate::tiled::packed::{PackedFormat, PackedSlabs};
+use crate::tiled::packed::PackedFormat;
 use crate::tiled::{ByRoutine, upload};
 
 #[test]
@@ -47,6 +50,42 @@ fn every_packed_plane_shuffle_setting_reads_each_route_s_packed_slab() {
     shuffle.check_some(shuffle.at(PlaneShuffleMatmulRoutine::packed_settings(), &products));
 }
 
+/// The routed products of a stack laid in each tile order: a slab of several strips, its `n` a
+/// multiple of the column tile and not, and a slab of one strip.
+fn in_tile_order() -> Vec<Routed> {
+    Stack::IN_TILES
+        .into_iter()
+        .flat_map(|stack| {
+            [Routed::MOE, Routed::NARROW, Routed::ONE_STRIP].map(|routed| routed.stored(stack))
+        })
+        .collect()
+}
+
+/// Every packed setting of the plane shuffle against a stack in tile order: each route's slab a
+/// fixed run of whole strips, the table moving the window by it.
+#[test]
+fn every_packed_plane_shuffle_setting_reads_each_route_s_slab_of_a_stack_in_tile_order() {
+    let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
+    shuffle.check_some(shuffle.at(
+        PlaneShuffleMatmulRoutine::packed_settings(),
+        &in_tile_order(),
+    ));
+}
+
+/// Every packed setting of the cube staged routine against a stack in tile order: skipped on a
+/// device with no matrix instruction, which it stages a packed input for.
+#[test]
+fn every_packed_cube_staged_setting_reads_each_route_s_slab_of_a_stack_in_tile_order() {
+    if skip_unless_matrix_instruction() {
+        return;
+    }
+    let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
+    let settings = MGroupedSettings::cube_staged_packed(staged.hw())
+        .into_iter()
+        .map(|settings| settings.routine);
+    staged.check_some(staged.at(settings, &in_tile_order()));
+}
+
 /// The routed floors, against a stack laid either way they take: a col float stack, its buffer
 /// `[slabs · n, k]` behind the `[k, slabs · n]` view, and a stack packed in each format.
 #[test]
@@ -58,6 +97,8 @@ fn the_routed_floors_read_each_route_s_slab() {
             Stack::Packed(PackedFormat::Q4),
             Stack::Packed(PackedFormat::Nvfp4),
             Stack::Packed(PackedFormat::Mxfp4),
+            Stack::IN_TILES[0],
+            Stack::IN_TILES[1],
         ]
         .map(|stack| Routed {
             stack,
@@ -76,6 +117,22 @@ fn the_routed_floors_read_an_nvfp4_stack_whose_k_is_no_whole_number_of_words() {
         ..Routed::MOE
     }
     .packed(PackedFormat::Nvfp4)]);
+}
+
+/// `routed`'s float stack as its `[k, slabs · n]` view, its buffer `[slabs · n, k]`.
+fn col_stack(client: &Client, routed: &Routed) -> PlainTensor {
+    let Routed { slabs, k, n, .. } = *routed;
+    let values = values(slabs * k * n, 2);
+    let col: Vec<f32> = (0..slabs * n)
+        .flat_map(|row| (0..k).map(move |kk| (row, kk)))
+        .map(|(row, kk)| values[((row / n) * k + kk) * n + row % n])
+        .collect();
+    PlainTensor::of_handle(TensorHandle::new(
+        client.create(Bytes::from_elems(col)),
+        [k, slabs * n],
+        [1, k],
+        f32::elem_type_native(),
+    ))
 }
 
 /// The routed product through the first of its floors that serves it
@@ -100,21 +157,9 @@ impl ScopeChecker for FlooredRouted {
             n,
             stack,
         } = *routed;
-        let stored = match routed.packed_slabs() {
-            Some(spec) => StoredTensor::Packed(PackedSlabs::new(client, spec).matrix()),
-            None => {
-                let values = values(slabs * k * n, 2);
-                let col: Vec<f32> = (0..slabs * n)
-                    .flat_map(|row| (0..k).map(move |kk| (row, kk)))
-                    .map(|(row, kk)| values[((row / n) * k + kk) * n + row % n])
-                    .collect();
-                StoredTensor::Plain(PlainTensor::of_handle(TensorHandle::new(
-                    client.create(Bytes::from_elems(col)),
-                    [k, slabs * n],
-                    [1, k],
-                    f32::elem_type_native(),
-                )))
-            }
+        let stored = match routed.packed_matrix(client) {
+            Some(matrix) => StoredTensor::Packed(matrix),
+            None => StoredTensor::Plain(col_stack(client, routed)),
         };
         let tensors = RoutedMatmulTensors::new(
             client,

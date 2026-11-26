@@ -6,7 +6,7 @@ use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable,
+    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_FLOAT_TILES, MatmulIndex, MatmulIndexTable,
     MatmulInputs, MatmulRoutine, MatmulTensors,
 };
 use crate::kernels::{MatmulTuneKey, OperandLayout};
@@ -19,7 +19,6 @@ use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
-use cubek_std::layout::contiguous;
 use cubek_std::matmul_dimensions::{K, N};
 
 /// Operands of a routed product whose shapes are no `[rows, k]` against slabs of `k` rows, each
@@ -76,8 +75,8 @@ impl RoutedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for a
-    /// stack stored in tiles, [`MATMUL_STACK_NOT_WHOLE_SLABS`], [`ROUTED_SHAPES_DISAGREE`] and
+    /// As [`MatmulInputs::new`] for a float stack, [`MATMUL_SLABS_TAKE_NO_FLOAT_TILES`] for a
+    /// float stack stored in tiles, [`MATMUL_STACK_NOT_WHOLE_SLABS`], [`ROUTED_SHAPES_DISAGREE`] and
     /// [`ROUTES_NOT_U32`].
     pub fn new(
         client: &Client,
@@ -87,8 +86,8 @@ impl RoutedMatmulTensors {
         experts: usize,
         along: SlabDimension,
     ) -> Result<Self, Decline> {
-        if rhs.values().is_tiled() {
-            return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
+        if matches!(&rhs, StoredTensor::Plain(rhs) if rhs.is_tiled()) {
+            return Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES);
         }
         along.admit(&rhs, experts)?;
         let lhs_shape = lhs.shape();
@@ -158,7 +157,7 @@ impl RoutedMatmulTensors {
             MatmulTuneKey::anchored(self.rows(), Self::ROWS_KEYED),
             self.slots,
             self.stack_kind(),
-            OperandLayout::along(contiguous(&self.rhs.values().meta(), [K, N])),
+            OperandLayout::of(&self.rhs.values().meta(), self.rhs.kind(), [K, N]),
             self.along,
         )
     }
@@ -366,5 +365,39 @@ impl RoutedMatmulTensors {
     /// One slab's `[k, n]`.
     fn slab_shape(&self) -> [usize; 2] {
         self.along.slab_shape(&self.rhs, self.experts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::FloatKind;
+    use cubek_test_utils::client;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// Operands' side, whole tiles ([`PlainTensor::zeros_in_tiles`]).
+    const SIDE: usize = 32;
+
+    /// A row-major `[SIDE, SIDE]`.
+    fn in_rows(client: &Client) -> PlainTensor {
+        PlainTensor::zeros(client, &[SIDE, SIDE], vec![SIDE, 1], F32)
+    }
+
+    /// A `[SIDE, SIDE]` stored in tiles.
+    fn in_tiles(client: &Client) -> PlainTensor {
+        PlainTensor::zeros_in_tiles(client, SIDE, F32)
+    }
+
+    /// A float stack is bound as one batch a slab, whose strides state no tile.
+    #[test]
+    fn a_float_stack_stored_in_tiles_is_refused() {
+        let client = client();
+        let routes = PlainTensor::of_u32s(&client, &[SIDE, 1], &[0; SIDE]);
+        let stack = StoredTensor::Plain(in_tiles(&client));
+        let rows = in_rows(&client);
+        let declined =
+            RoutedMatmulTensors::new(&client, rows, stack, routes, 2, SlabDimension::Output);
+        assert_eq!(declined.err(), Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES));
     }
 }

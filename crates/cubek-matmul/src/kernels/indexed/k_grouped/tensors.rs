@@ -3,7 +3,7 @@ use crate::kernels::indexed::stack::GROUP_ENDS_UNREAD;
 use crate::kernels::indexed::stack::admit_ends;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
+    MATMUL_SLABS_TAKE_NO_FLOAT_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
 };
 use cubecl::client::Client;
 use cubecl::std::tensor::TensorHandle;
@@ -45,7 +45,7 @@ impl KGroupedMatmulTensors {
     ///
     /// # Errors
     ///
-    /// [`MATMUL_SLABS_TAKE_NO_STORED_TILES`] for an operand stored in tiles,
+    /// [`MATMUL_SLABS_TAKE_NO_FLOAT_TILES`] for an operand stored in tiles,
     /// [`K_GROUPED_SHAPES_DISAGREE`], [`GROUP_ENDS_UNREAD`], each before anything is copied, and as
     /// [`MatmulInputs::new`].
     pub fn new(
@@ -55,7 +55,7 @@ impl KGroupedMatmulTensors {
         ends: PlainTensor,
     ) -> Result<Self, Decline> {
         if lhs.is_tiled() || rhs.is_tiled() {
-            return Err(MATMUL_SLABS_TAKE_NO_STORED_TILES);
+            return Err(MATMUL_SLABS_TAKE_NO_FLOAT_TILES);
         }
         let (lhs_shape, rhs_shape) = (lhs.shape(), rhs.shape());
         if lhs_shape.rank() != 2 || rhs_shape.rank() != 2 || rhs_shape[0] != lhs_shape[0] {
@@ -125,5 +125,52 @@ impl KGroupedMatmulTensors {
             settings,
         )?;
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_test_utils::client;
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// Operands' side, whole tiles ([`PlainTensor::zeros_in_tiles`]).
+    const SIDE: usize = 32;
+
+    /// A row-major `[SIDE, SIDE]`.
+    fn in_rows(client: &Client) -> PlainTensor {
+        PlainTensor::zeros(client, &[SIDE, SIDE], vec![SIDE, 1], F32)
+    }
+
+    /// A `[SIDE, SIDE]` stored in tiles.
+    fn in_tiles(client: &Client) -> PlainTensor {
+        PlainTensor::zeros_in_tiles(client, SIDE, F32)
+    }
+
+    /// Why the grouped product of `lhs` and `rhs` is declined.
+    fn declined(client: &Client, lhs: PlainTensor, rhs: PlainTensor) -> Option<Decline> {
+        let ends = PlainTensor::of_u32s(client, &[2], &[16, 32]);
+        KGroupedMatmulTensors::new(client, lhs, rhs, ends).err()
+    }
+
+    /// Each group's rows are a range of the buffer's rows, which a tile's strides do not state.
+    #[test]
+    fn an_lhs_stored_in_tiles_is_refused() {
+        let client = client();
+        assert_eq!(
+            declined(&client, in_tiles(&client), in_rows(&client)),
+            Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)
+        );
+    }
+
+    #[test]
+    fn an_rhs_stored_in_tiles_is_refused() {
+        let client = client();
+        assert_eq!(
+            declined(&client, in_rows(&client), in_tiles(&client)),
+            Some(MATMUL_SLABS_TAKE_NO_FLOAT_TILES)
+        );
     }
 }
