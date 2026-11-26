@@ -189,6 +189,8 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
                 binding.out,
                 binding.logsumexp.into(),
                 binding.mask.into(),
+                binding.sinks.into(),
+                binding.relative.into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 problem.seq_kv as u32,

@@ -512,6 +512,25 @@ impl CubeAttentionMicrokernel {
 
         sync_cube();
 
+        // Each row's sink opens its softmax on the plane holding the first key of the walk's first
+        // step, the unmasked one where there is one; the other planes hold no first key.
+        #[comptime]
+        match &bias.sinks {
+            ComptimeOption::Some(sinks) =>
+            {
+                #[comptime]
+                match &unmasked {
+                    ComptimeOption::Some(unmasked) => {
+                        Self::fragment_sinks::<EA, EV>(&mut planes, &unmasked.region(0), sinks)
+                    }
+                    ComptimeOption::None => {
+                        Self::fragment_sinks::<EA, EV>(&mut planes, &walk.region(0), sinks)
+                    }
+                }
+            }
+            ComptimeOption::None => {}
+        }
+
         let in_flight = microkernel.ring.stages_in_flight.get();
         let decoded = microkernel.plane.decoded_stage();
         // The stages hold the keys and values as stored, without the scales the planes' sums take
@@ -558,6 +577,21 @@ impl CubeAttentionMicrokernel {
         sync_cube();
 
         planes
+    }
+
+    /// The rows' sinks taken in by the plane of `first`, the walk's first step, that holds its
+    /// first key ([`PlaneFragmentAttention::take_in_sinks`]), under `sinks`; no other plane holds
+    /// one.
+    fn fragment_sinks<EA: Float, EV: Float>(
+        planes: &mut PlaneFragmentAttention<EA, EV>,
+        first: &Region,
+        sinks: &Tile,
+    ) {
+        for plane in first {
+            if plane.origin(S) == 0 {
+                planes.take_in_sinks(&plane, sinks);
+            }
+        }
     }
 
     /// Every plane's rows of `cube` normalized and written into `out`, `cube`'s window of the
@@ -610,6 +644,20 @@ impl CubeAttentionMicrokernel {
                 unreachable!("a cube whose planes read its stage walks it staged")
             }
         };
+
+        // Each row's sink opens its softmax on the plane holding the first key of the walk's first
+        // step, read inside the first page where the walk is one of pages.
+        if comptime!(visible.sinks.is_some()) {
+            if comptime!(microkernel.page_steps.is_some()) {
+                for plane in walk.region(0).walk().region(0) {
+                    planes.take_in_sinks(&plane, visible);
+                }
+            } else {
+                for plane in walk.region(0) {
+                    planes.take_in_sinks(&plane, visible);
+                }
+            }
+        }
 
         if microkernel.page_steps.is_some() {
             // Each page's keys and values cut once, and the steps its rows see cut from them.

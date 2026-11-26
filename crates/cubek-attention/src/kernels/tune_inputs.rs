@@ -33,6 +33,10 @@ pub struct AttentionTuneInputs {
     /// The `[b, h, q, s]` mask hiding keys from the call's queries
     /// ([`with_mask`](Self::with_mask)).
     mask: Option<PlainTensor>,
+    /// Whether each row's softmax weighs a sink ([`with_sinks`](Self::with_sinks)).
+    sinks: bool,
+    /// Whether the scores take a relative bias ([`with_relative_bias`](Self::with_relative_bias)).
+    relative_bias: bool,
     /// How deep the call attends, as its caller buckets it: the keys its key holds.
     depth: usize,
     pub(crate) tensors: AttentionTensors,
@@ -116,6 +120,8 @@ impl AttentionTuneInputs {
             pages,
             scoring,
             mask: None,
+            sinks: false,
+            relative_bias: false,
             depth,
             tensors,
         })
@@ -140,6 +146,30 @@ impl AttentionTuneInputs {
     pub fn with_mask(mut self, mask: PlainTensor) -> Result<Self, Decline> {
         self.tensors = self.tensors.with_mask(mask.clone())?;
         self.mask = Some(mask);
+        Ok(self)
+    }
+
+    /// The same attention, each row's softmax also weighing its sink
+    /// ([`AttentionTensors::with_sinks`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionTensors::with_sinks`].
+    pub fn with_sinks(mut self, sinks: PlainTensor) -> Result<Self, Decline> {
+        self.tensors = self.tensors.with_sinks(sinks)?;
+        self.sinks = true;
+        Ok(self)
+    }
+
+    /// The same attention, its scores taking a relative bias by distance
+    /// ([`AttentionTensors::with_relative_bias`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionTensors::with_relative_bias`].
+    pub fn with_relative_bias(mut self, bias: PlainTensor) -> Result<Self, Decline> {
+        self.tensors = self.tensors.with_relative_bias(bias)?;
+        self.relative_bias = true;
         Ok(self)
     }
 
@@ -243,6 +273,8 @@ impl AttentionTuneInputs {
             self.scoring.scale,
             self.page_size(),
             self.mask.is_some(),
+            self.sinks,
+            self.relative_bias,
             self.query_runs.is_some(),
         )
     }

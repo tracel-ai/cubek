@@ -45,7 +45,35 @@ pub(crate) struct AttentionCase {
     /// The positions a page holds where the cache lies in pools of pages, its sequences' pages in
     /// another order than their positions. `None` where each sequence lies whole.
     pub page_size: Option<NonZeroUsize>,
+    /// Each row's sink, where the case has sinks: row `i` of head `h` in sequence `b` also weighs
+    /// `sink([b, h, i])` at a value of zero.
+    pub sinks: Option<fn([usize; 3]) -> f32>,
+    /// A relative bias by distance, where the case has one.
+    pub relative: Option<RelativeCase>,
+    /// Positions the cache's buffers hold past the attended keys: a partly filled cache, whose
+    /// spare positions no attention may read.
+    pub spare: usize,
 }
+
+/// A relative bias by distance: a score query `i` of head `h` in sequence `b` takes of a key it
+/// sees `δ` positions back takes `bias([b, h, i, δ])` where `δ < extent`, nothing otherwise.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RelativeCase {
+    pub extent: usize,
+    pub bias: fn([usize; 4]) -> f32,
+}
+
+/// A relative bias of an extent shorter than the attended keys, so the farthest keys take none.
+pub(crate) const RELATIVE_SHORT: RelativeCase = RelativeCase {
+    extent: 7,
+    bias: AttentionCase::relative_pattern,
+};
+
+/// A relative bias of an extent past every distance a query reaches.
+pub(crate) const RELATIVE_LONG: RelativeCase = RelativeCase {
+    extent: 50,
+    bias: AttentionCase::relative_pattern,
+};
 
 /// The scale over every key, and the one over every value, a cache quantized per tensor is
 /// stored under.
@@ -78,6 +106,9 @@ pub(crate) const PROMPT: AttentionCase = AttentionCase {
     values: FloatKind::F16,
     scales: None,
     page_size: None,
+    sinks: None,
+    relative: None,
+    spare: 0,
 };
 
 /// A causal prompt chunk at a head dim of 128, the one a model's prefill runs: four query heads to
@@ -227,7 +258,110 @@ pub(crate) const PROMPTS: [AttentionCase; 4] = [
 /// Every decode case a routine of single positions is checked on.
 pub(crate) const DECODES: [AttentionCase; 2] = [DECODE, DECODE_MASKED];
 
+/// `case` with both score terms, a sink a row and the short relative bias, over a cache holding
+/// eleven positions past its attended keys.
+pub(crate) const fn scored(case: AttentionCase) -> AttentionCase {
+    AttentionCase {
+        sinks: Some(AttentionCase::sink_pattern),
+        relative: Some(RELATIVE_SHORT),
+        spare: 11,
+        ..case
+    }
+}
+
+/// The prompt under a sliding window, its queries the last positions.
+pub(crate) const PROMPT_WINDOWED: AttentionCase = AttentionCase {
+    visibility: AttentionVisibility::Windowed {
+        window: match NonZeroUsize::new(9) {
+            Some(window) => window,
+            None => unreachable!(),
+        },
+        queries: QueryPlacement::Last,
+    },
+    ..PROMPT
+};
+
+/// The prompt with one row of one head hidden from every key: it writes zeros whatever its sink,
+/// and its logsumexp is its sink.
+pub(crate) const PROMPT_ROW_HIDDEN: AttentionCase = AttentionCase {
+    hidden: Some(AttentionCase::one_row),
+    sinks: Some(AttentionCase::sink_pattern),
+    ..PROMPT
+};
+
+/// Every prompt case a routine of many positions is held to under the score terms: a chunk over a
+/// partly filled cache, its queries placed first, under a window and under a mask with both terms,
+/// each term alone, and a row that sees no key.
+pub(crate) const SCORED_PROMPTS: [AttentionCase; 7] = [
+    scored(PROMPT),
+    scored(PROMPT_PLACED_FIRST),
+    scored(PROMPT_WINDOWED),
+    scored(PROMPT_MASKED),
+    AttentionCase {
+        relative: None,
+        ..scored(PROMPT)
+    },
+    AttentionCase {
+        sinks: None,
+        ..scored(PROMPT)
+    },
+    PROMPT_ROW_HIDDEN,
+];
+
+/// Every decode case a routine of single positions is held to under the score terms: a step over
+/// a partly filled cache, through a window, under a mask, and with a relative bias reaching past
+/// every key.
+pub(crate) const SCORED_DECODES: [AttentionCase; 4] = [
+    scored(DECODE),
+    scored(DECODE_WINDOWED),
+    scored(DECODE_MASKED),
+    AttentionCase {
+        relative: Some(RELATIVE_LONG),
+        ..scored(DECODE)
+    },
+];
+
+/// The wide prompt and decode step over a paged cache with both score terms: what serving runs.
+pub(crate) const SCORED_PAGED: [AttentionCase; 2] = [
+    scored(PROMPTS_WIDE_PAGED[0]),
+    scored(AttentionCase {
+        seq_q: 1,
+        visibility: AttentionVisibility::Attended,
+        ..PROMPTS_WIDE_PAGED[0]
+    }),
+];
+
 impl AttentionCase {
+    /// A sink that differs from row to row and head to head.
+    fn sink_pattern([batch, head, query]: [usize; 3]) -> f32 {
+        ((batch + 3 * head + 7 * query) % 11) as f32 / 4. - 1.
+    }
+
+    /// A relative bias that differs from row to row, head to head and distance to distance.
+    fn relative_pattern([batch, head, query, distance]: [usize; 4]) -> f32 {
+        ((batch + 2 * head + 3 * query + 5 * distance) % 13) as f32 / 8. - 0.75
+    }
+
+    /// A mask hiding every key from row 2 of head 1.
+    fn one_row([_batch, head, query, _key]: [usize; 4]) -> bool {
+        head == 1 && query == 2
+    }
+
+    /// Positions the cache's buffers hold a sequence: its attended keys and its spare ones.
+    fn positions(&self) -> usize {
+        self.seq_kv + self.spare
+    }
+
+    /// The key position query `i` sits at: placed among the keys by a causal visibility, at the
+    /// last attended key otherwise.
+    fn query_position(&self, i: usize) -> usize {
+        match self.visibility.queries() {
+            Some(QueryPlacement::First) => i,
+            Some(QueryPlacement::Last) => i + self.seq_kv - self.seq_q,
+            None => self.seq_kv - 1,
+        }
+    }
+
     fn scale(&self) -> f64 {
         1. / (self.head_dim as f64).sqrt()
     }
@@ -285,12 +419,12 @@ impl AttentionCase {
                 FloatKind::F16,
             ),
             input(
-                [self.batch, self.kv_heads, self.seq_kv, self.head_dim],
+                [self.batch, self.kv_heads, self.positions(), self.head_dim],
                 2,
                 self.keys,
             ),
             input(
-                [self.batch, self.kv_heads, self.seq_kv, self.val_dim],
+                [self.batch, self.kv_heads, self.positions(), self.val_dim],
                 3,
                 self.values,
             ),
@@ -299,7 +433,7 @@ impl AttentionCase {
 
     /// The page of the pool sequence `b` holds its `i`-th page of positions in: the last first.
     fn page(&self, b: usize, i: usize, page_size: NonZeroUsize) -> usize {
-        let per_sequence = self.seq_kv.div_ceil(page_size.get());
+        let per_sequence = self.positions().div_ceil(page_size.get());
         self.batch * per_sequence - 1 - (b * per_sequence + i)
     }
 
@@ -329,8 +463,9 @@ impl AttentionCase {
     }
 
     /// The output `[b, q, h, dv]` and the logsumexp `[b, h, q]` on the host, in `f64`, from the
-    /// inputs as the device holds them, the keys and values times their side's scale. A query
-    /// that sees no key writes zeros.
+    /// inputs as the device holds them, the keys and values times their side's scale, each seen
+    /// score plus its relative bias and each row's softmax weighing its sink at a value of zero,
+    /// where the case has them. A query that sees no key writes zeros.
     fn reference(&self) -> [HostData; 2] {
         let Self {
             batch,
@@ -343,6 +478,7 @@ impl AttentionCase {
             ..
         } = *self;
         let group = heads / kv_heads;
+        let positions = self.positions();
         let [(q, _), (k, _), (v, _)] = self.inputs();
         let scale = self.scale();
         let KvScales {
@@ -363,24 +499,41 @@ impl AttentionCase {
                     let scores: Vec<Option<f64>> = (0..seq_kv)
                         .map(|j| {
                             self.sees(b, h, i, j).then(|| {
-                                let key =
-                                    &k[((b * kv_heads + kv) * seq_kv + j) * head_dim..][..head_dim];
+                                let key = &k[((b * kv_heads + kv) * positions + j) * head_dim..]
+                                    [..head_dim];
+                                let distance = self.query_position(i).checked_sub(j);
+                                let relative = match (self.relative, distance) {
+                                    (Some(RelativeCase { extent, bias }), Some(distance))
+                                        if distance < extent =>
+                                    {
+                                        bias([b, h, i, distance]) as f64
+                                    }
+                                    _ => 0.0,
+                                };
                                 query
                                     .iter()
                                     .zip(key)
                                     .map(|(x, y)| *x as f64 * *y as f64 * key_scale)
                                     .sum::<f64>()
                                     * scale
+                                    + relative
                             })
                         })
                         .collect();
+                    let sink = self.sinks.map(|sink| sink([b, h, i]) as f64);
                     let max = scores
                         .iter()
                         .flatten()
                         .copied()
+                        .chain(sink)
                         .reduce(f64::max)
                         .unwrap_or(f64::NEG_INFINITY);
-                    let total: f64 = scores.iter().flatten().map(|s| (s - max).exp()).sum();
+                    let total: f64 = scores
+                        .iter()
+                        .flatten()
+                        .chain(&sink)
+                        .map(|s| (s - max).exp())
+                        .sum();
                     logsumexp[(b * heads + h) * seq_q + i] = (max + total.ln()) as f32;
                     for c in 0..val_dim {
                         let value: f64 = scores
@@ -389,7 +542,7 @@ impl AttentionCase {
                             .filter_map(|(j, s)| s.map(|s| (j, s)))
                             .map(|(j, s)| {
                                 (s - max).exp()
-                                    * v[((b * kv_heads + kv) * seq_kv + j) * val_dim + c] as f64
+                                    * v[((b * kv_heads + kv) * positions + j) * val_dim + c] as f64
                                     * value_scale
                             })
                             .sum();
@@ -443,7 +596,7 @@ impl AttentionCase {
         let source = KvSource::new(AttentionCache::Float { key, value }).scaled(scales);
         let source = match self.page_size {
             Some(page_size) => {
-                let per_sequence = self.seq_kv.div_ceil(page_size.get());
+                let per_sequence = self.positions().div_ceil(page_size.get());
                 let table = (0..self.batch)
                     .flat_map(|b| (0..per_sequence).map(move |i| (b, i)))
                     .map(|(b, i)| self.page(b, i, page_size) as f32)
@@ -468,10 +621,37 @@ impl AttentionCase {
         .expect("the case's tensors are verified")
         .with_logsumexp()
         .expect("a float cache's attention writes its logsumexp");
+        let (batch, heads, queries) = (self.batch, self.heads, self.seq_q);
+        let rows = || {
+            (0..batch).flat_map(move |b| {
+                (0..heads).flat_map(move |h| (0..queries).map(move |i| [b, h, i]))
+            })
+        };
+        let tensors = match self.sinks {
+            Some(sink) => tensors
+                .with_sinks(upload(
+                    rows().map(sink).collect(),
+                    shape![batch, heads, queries],
+                    f32::elem_type_native(),
+                ))
+                .expect("the sinks are a float a row"),
+            None => tensors,
+        };
+        let tensors = match self.relative {
+            Some(RelativeCase { extent, bias }) => tensors
+                .with_relative_bias(upload(
+                    rows()
+                        .flat_map(|[b, h, i]| (0..extent).map(move |d| bias([b, h, i, d])))
+                        .collect(),
+                    shape![batch, heads, queries, extent],
+                    f32::elem_type_native(),
+                ))
+                .expect("the relative bias is a float a row and distance, over placed queries"),
+            None => tensors,
+        };
         match self.hidden {
             Some(hidden) => {
-                let (batch, heads, queries, keys) =
-                    (self.batch, self.heads, self.seq_q, self.seq_kv);
+                let keys = self.positions();
                 let mut cells = Vec::with_capacity(batch * heads * queries * keys);
                 for b in 0..batch {
                     for h in 0..heads {

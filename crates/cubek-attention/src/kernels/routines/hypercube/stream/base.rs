@@ -277,6 +277,8 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 slot_sum,
                 arrivals.binding.into_tensor_arg().into_buffer_arg(),
                 binding.mask.into(),
+                binding.sinks.into(),
+                binding.relative.into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 problem.seq_kv as u32,

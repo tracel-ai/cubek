@@ -7,8 +7,22 @@ use cubek_attention::kernels::{
 use cubek_test_utils::ScopeChecker;
 
 use crate::attention::{
-    DECODE_WINDOWED, DECODES, DECODES_WIDE_FP8, DECODES_WIDE_PER_TENSOR, Forward,
+    DECODE_WINDOWED, DECODES, DECODES_WIDE_FP8, DECODES_WIDE_PER_TENSOR, Forward, SCORED_DECODES,
+    SCORED_PAGED,
 };
+
+/// Every setting of the split-keys partial and of the last arrival under both score terms on every
+/// decode case, and their leads over a paged decode step: the cube whose run holds a row's first
+/// key opens it at its sink, so each merge counts it once.
+#[test]
+fn every_hypercube_shuffle_setting_takes_sinks_and_a_relative_bias() {
+    let partial = Forward::split_keys(HypercubeShufflePartialAttentionRoutine::new());
+    partial.check(partial.at_every_setting(&SCORED_DECODES));
+    partial.check(partial.at_its_lead(&SCORED_PAGED[1..]));
+    let last_arrival = Forward::new(HypercubeLastArrivalShuffleAttentionRoutine::new());
+    last_arrival.check(last_arrival.at_every_setting(&SCORED_DECODES));
+    last_arrival.check(last_arrival.at_its_lead(&SCORED_PAGED[1..]));
+}
 
 /// The partial routine's lead, merged by a second launch, on every decode case.
 #[test]

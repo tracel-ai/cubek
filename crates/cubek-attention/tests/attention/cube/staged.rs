@@ -12,8 +12,24 @@ use cubek_test_utils::ScopeChecker;
 
 use crate::attention::{
     Forward, PROMPT, PROMPT_HEAD_DIM_256, PROMPT_WIDE, PROMPTS, PROMPTS_HEAD_DIM_256_PAGED,
-    PROMPTS_WIDE_FP8, PROMPTS_WIDE_PAGED, PROMPTS_WIDE_PER_TENSOR,
+    PROMPTS_WIDE_FP8, PROMPTS_WIDE_PAGED, PROMPTS_WIDE_PER_TENSOR, SCORED_PAGED, SCORED_PROMPTS,
 };
+
+/// The cube staged routine's lead under both score terms, and each alone, on every prompt case and
+/// over a paged prompt, and planes that split the same rows' keys under both: the plane holding a
+/// row's first key opens it at its sink, once.
+#[test]
+fn the_cube_staged_routine_takes_sinks_and_a_relative_bias() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    forward.check(forward.at_its_lead(&SCORED_PROMPTS));
+    forward.check(forward.at_its_lead(&SCORED_PAGED[..1]));
+    let split = forward
+        .settings()
+        .into_iter()
+        .filter(|settings| settings.microkernel.planes_along_keys.get() > 1)
+        .take(1);
+    forward.check(forward.at(split, &SCORED_PROMPTS[..1]));
+}
 
 /// The cube staged routine's lead on every prompt case.
 #[test]

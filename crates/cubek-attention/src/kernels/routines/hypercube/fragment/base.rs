@@ -217,6 +217,8 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 slot_max,
                 slot_sum,
                 binding.mask.into(),
+                binding.sinks.into(),
+                binding.relative.into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 problem.seq_kv as u32,

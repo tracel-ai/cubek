@@ -17,8 +17,8 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// so every run but the last holds the same steps whatever the keys. A cube whose run is empty
 /// touches no box and leaves at once.
 ///
-/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `len`, `queries`, `keys`, `scale`: as
-///   `unit_attention_kernel`'s.
+/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `sinks`, `relative`, `len`, `queries`,
+///   `keys`, `scale`: as `unit_attention_kernel`'s.
 /// - `slot_out`, `slot_max`, `slot_sum`, `arrivals`: as `hypercube_attention_arrival_kernel`'s.
 #[allow(
     clippy::extra_unused_type_parameters,
@@ -37,6 +37,8 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     slot_sum: &mut Tensor<EA>,
     arrivals: &[Atomic<u32>],
     mask: ComptimeOption<&TileTensor<'static>>,
+    sinks: ComptimeOption<&TileTensor<'static>>,
+    relative: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     keys: u32,
@@ -49,6 +51,8 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
     #[define(EA, E, ES, EV)] _elements: [ElemType; 4],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+    let sinks = sinks.map(|sinks| sinks.tile(&partitioning));
+    let relative = relative.map(|relative| relative.tile(&partitioning));
 
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
@@ -83,7 +87,8 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
             keys,
             &mask,
             visibility,
-        );
+        )
+        .with_terms(&sinks, &relative, &cube);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.step_bias::<EA>(&partitioning, &cube);

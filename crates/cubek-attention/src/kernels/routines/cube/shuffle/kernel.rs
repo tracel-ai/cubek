@@ -11,8 +11,8 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 /// launch binds one. Each operand is read in its own element and widened into the sum, `EA`:
 /// the query in `EQ`, the keys in `EK`, the values in `EV`; the output is written in `EO`.
 ///
-/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `len`, `query_ends`, `queries`, `keys`,
-///   `scale`: as `cube_staged_attention_kernel`'s.
+/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `sinks`, `relative`, `len`, `query_ends`,
+///   `queries`, `keys`, `scale`: as `cube_staged_attention_kernel`'s.
 #[cube(launch_unchecked)]
 pub fn cube_shuffle_attention_kernel<
     EA: Float,
@@ -28,6 +28,8 @@ pub fn cube_shuffle_attention_kernel<
     out: &mut TileTensor<'_>,
     logsumexp: ComptimeOption<&mut TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
+    sinks: ComptimeOption<&TileTensor<'static>>,
+    relative: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     query_ends: ComptimeOption<&Tensor<u32>>,
     queries: u32,
@@ -40,6 +42,8 @@ pub fn cube_shuffle_attention_kernel<
     #[define(EA, EQ, EK, EV, EO)] _elements: [ElemType; 5],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+    let sinks = sinks.map(|sinks| sinks.tile(&partitioning));
+    let relative = relative.map(|relative| relative.tile(&partitioning));
 
     let q = query.tile(&partitioning);
     let k = TileStepReads::<EK>::new(&key.tile(&partitioning));
@@ -51,7 +55,8 @@ pub fn cube_shuffle_attention_kernel<
     for sequence in &partitioning {
         for cube in sequence {
             let visible =
-                VisibleKeys::new(len, &query_ends, &cube, queries, keys, &mask, visibility);
+                VisibleKeys::new(len, &query_ends, &cube, queries, keys, &mask, visibility)
+                    .with_terms(&sinks, &relative, &cube);
             let steps = visible.steps(
                 &cube,
                 microkernel.seq_q(),

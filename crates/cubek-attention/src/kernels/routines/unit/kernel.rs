@@ -12,6 +12,9 @@ use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 /// - `out`: the output, `[b, kv, g, q, dv]`.
 /// - `logsumexp`: each query's logsumexp, `[b, kv, g, q]`, where the launch binds one.
 /// - `mask`: which keys each query does not see, `[b, kv, g, q, s]`, where the launch binds one.
+/// - `sinks`: each query's sink logit, `[b, kv, g, q]`, where the launch binds them.
+/// - `relative`: each query's relative bias, `[b, kv, g, q, s]`, its `s` axis the distance back
+///   from the query, where the launch binds one.
 /// - `len`: each sequence's attended length, `[b]`, read by stride.
 /// - `queries`, `keys`: queries and keys a sequence; a length past `keys` attends as `keys`.
 /// - `scale`: what each dot product is scaled by before the softmax.
@@ -23,6 +26,8 @@ pub fn unit_attention_kernel<EA: Float>(
     out: &mut TileTensor<'_>,
     logsumexp: ComptimeOption<&mut TileTensor<'static>>,
     mask: ComptimeOption<&TileTensor<'static>>,
+    sinks: ComptimeOption<&TileTensor<'static>>,
+    relative: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     keys: u32,
@@ -33,6 +38,8 @@ pub fn unit_attention_kernel<EA: Float>(
     #[define(EA)] _sum: ElemType,
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+    let sinks = sinks.map(|sinks| sinks.tile(&partitioning));
+    let relative = relative.map(|relative| relative.tile(&partitioning));
 
     let q = query.tile(&partitioning);
     let key = key.tile(&partitioning);
@@ -50,10 +57,12 @@ pub fn unit_attention_kernel<EA: Float>(
             keys,
             &mask,
             visibility,
-        );
+        )
+        .with_terms(&sinks, &relative, &unit);
         let k = key.within(S, 0, visible.attended as usize);
         let v = value.within(S, 0, visible.attended as usize);
         let bias = visible.bias::<EA>(&partitioning);
+        let sink_bias = visible.sink_bias::<EA>(&partitioning);
         let steps = visible.steps(
             &unit,
             microkernel.settings.seq_q.get(),
@@ -69,6 +78,7 @@ pub fn unit_attention_kernel<EA: Float>(
             &k.at(&unit),
             &v.at(&unit),
             &bias.at(&unit),
+            &sink_bias.map(|sinks| sinks.at(&unit)),
             steps,
             EA::cast_from(scale),
             microkernel,
