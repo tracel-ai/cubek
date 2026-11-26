@@ -28,6 +28,12 @@ const ALLOCATED: &str = "a launch allocating its output hands it back";
 /// dispatches, and the launch around those is written once, here, whether the microkernel holds
 /// every row whole or tiles them, and however each input is stored: its kernel reads each input
 /// as the tile it is bound as. A routine declines a problem whose inputs it does not read.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever [`MatmulTensors::bind`] and
+/// [`bind_extras`](Self::bind_extras) bound: every refusal of a launch is met while binding,
+/// before anything launches.
 pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>
 {

@@ -22,6 +22,10 @@ const MASKED_ONLY_WHERE_OVERHANGING: &str =
 /// or, for a routine whose planes share nothing, the launch's planes, which a plane order groups
 /// in cubes. Either way the box one cube covers and the one a step of its walk stages are
 /// questions this answers for every routine alike.
+///
+/// # Assumptions
+///
+/// Its partitioning hands its cubes a box, or its planes the launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatmulPartitioning {
     partitioning: Partitioning,
@@ -203,6 +207,11 @@ impl MatmulPartitioning {
 
     /// The order the cubes take their boxes in: where the planes span the launch, the order its
     /// blocks are taken in.
+    ///
+    /// # Panics
+    ///
+    /// Where its partitioning hands neither its cubes a box nor its planes the launch, against
+    /// the type's Assumption.
     pub fn cube_order(&self) -> CubeOrder {
         match self.partitioning.levels()[0].plane_order() {
             Some(order) => order.block_order(),
@@ -220,9 +229,13 @@ impl MatmulPartitioning {
     /// the cube's own, where it stages for all its planes, or each plane's, where the cube's
     /// planes each stage their own.
     ///
+    /// # Assumptions
+    ///
+    /// The partitioning walks `K` inside its cubes: a staged routine's.
+    ///
     /// # Panics
     ///
-    /// A partitioning that walks no `K` inside its cubes.
+    /// Where the partitioning walks no `K` inside its cubes, against its Assumption.
     pub fn stage(&self) -> MatmulStage {
         // Where the planes span the launch, the levels inside the outermost cut a plane's box.
         let mut enclosing = match self.partitioning.levels()[0].plane_order() {

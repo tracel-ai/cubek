@@ -149,10 +149,14 @@ impl PackedTensor {
     /// parts off however it stores a packed tensor, and states `operand` as
     /// [`read_in_tiles`](Self::read_in_tiles) returns it for a matrix in tiles.
     ///
+    /// # Assumptions
+    ///
+    /// `global_scale` is given where `scheme` has two levels, and only there.
+    ///
     /// # Panics
     ///
-    /// A per-tensor scale given for a one-level scheme, or none for a two-level one: it would
-    /// bind none and drop it.
+    /// A per-tensor scale given for a one-level scheme, or none for a two-level one, against its
+    /// Assumption: it would bind none and drop it.
     pub fn new(
         words: PlainTensor,
         block_scales: PlainTensor,
@@ -530,9 +534,13 @@ impl PackedTensor {
 
     /// What `dimension` of the matrix measures.
     ///
+    /// # Assumptions
+    ///
+    /// `dimension` is one of the matrix's two.
+    ///
     /// # Panics
     ///
-    /// On a dimension the matrix does not have.
+    /// On a dimension the matrix does not have, against its Assumption.
     pub fn extent(&self, dimension: Dimension) -> usize {
         self.dimensions
             .iter()
