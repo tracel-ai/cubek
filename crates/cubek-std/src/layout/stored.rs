@@ -9,10 +9,10 @@ use crate::TMA_ROW_BYTES;
 use crate::layout::tile_order::{TileOrder, scales_dimensions, values_dimensions};
 use crate::matmul_dimensions::{K, blocked};
 use cubecl::ir::ElemType;
-use cubecl::quant::scheme::{QuantScheme, QuantStore};
+use cubecl::quant::scheme::{BlockExtent, BlockScale, QuantScheme, QuantStore};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::{Run, VectorTile};
-use cubecl::tile::{Dimension, MicroTile, OperandReads, Space, kind::Field};
+use cubecl::tile::{Dimension, Instruction, MicroTile, OperandReads, Space, kind::Field};
 
 /// How an operand is read and how it is scaled, as tiles of its own dimensions.
 ///
@@ -66,24 +66,53 @@ impl Operand {
     /// `dimensions` names the tensor's dims in the order the scheme's block shape
     /// counts them.
     ///
-    /// `None` where the block spans both dimensions, or where a read would straddle
-    /// two scales: neither is a form this kernel streams.
+    /// `None` where the finest block spans both dimensions or a whole one, where a read would
+    /// straddle two scales, or under a coarser level whose scales vary along `dimension`: none is a
+    /// form this kernel streams.
     pub fn of_scheme(
         scheme: &QuantScheme,
         dimension: Dimension,
         dimensions: [Dimension; 2],
     ) -> Option<Self> {
-        let dims = scheme.block_size()?.to_dim_vec(2);
+        let finest = scheme.finest();
+        let extents = finest.size.extents_in::<2>();
         let position = dimensions.iter().position(|&a| a == dimension)?;
-        if dims[1 - position] != 1 {
+        let (BlockExtent::VALUE, BlockExtent::Values(scale), true) = (
+            extents[1 - position],
+            extents[position],
+            Self::outer_constant_along(scheme, position),
+        ) else {
             return None;
-        }
-        let scale = dims[position] as usize;
+        };
+        let scale = scale.get() as usize;
         let read = scheme.num_quants();
-        let scales_per_word = Field::of_scale(scheme.block_scale()?.dtype).per_word();
+        let scales_per_word = Field::of_scale(finest.dtype).per_word();
         scale
             .is_multiple_of(read)
             .then(|| Operand::packed(dimension, read, dimension, scale, scales_per_word))
+    }
+
+    /// Whether the scales of `scheme`'s coarser level, where it has one, are each over the whole of
+    /// dimension `position`, and over one position or all of the other.
+    fn outer_constant_along(scheme: &QuantScheme, position: usize) -> bool {
+        scheme
+            .levels()
+            .nth(1)
+            .is_none_or(|outer| Self::constant_along(&outer, position).is_some())
+    }
+
+    /// Where the scales of `level`, over a matrix, are each constant along the whole of its
+    /// dimension `whole` and over one position or all of the other: the position of the other
+    /// where they vary along it, `None` where one scale covers the matrix. `None` outside, a level
+    /// that varies otherwise.
+    pub fn constant_along(level: &BlockScale, whole: usize) -> Option<Option<usize>> {
+        let extents = level.size.extents_in::<2>();
+        let other = 1 - whole;
+        match (extents[whole], extents[other]) {
+            (BlockExtent::WholeAxis, BlockExtent::WholeAxis) => Some(None),
+            (BlockExtent::WholeAxis, BlockExtent::VALUE) => Some(Some(other)),
+            _ => None,
+        }
     }
 
     /// This operand read a scale block at a time: one read the whole block of one row, its scale
@@ -662,6 +691,39 @@ pub enum BlockScales {
     Words,
 }
 
+/// Where the outer scales of a packed operand, each over its whole contraction, are multiplied in,
+/// which the operand is bound for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OuterScale {
+    /// Into the sum, once: the kernel factors them out of the operand
+    /// ([`Tile::factor`](cubecl::tile::Tile::factor)).
+    Factored,
+    /// Into each value as it is read, beside its block scale, which is lossless where the element
+    /// it is read in holds the product.
+    Kept,
+}
+
+impl OuterScale {
+    /// Where it is multiplied in for a sum `instruction` contracts: into the sum where each unit
+    /// holds its cells, and into the values where a sum would reach its scale only through shared
+    /// memory.
+    pub fn of(instruction: Instruction) -> Self {
+        match instruction.scales_its_sum_in_place() {
+            true => Self::Factored,
+            false => Self::Kept,
+        }
+    }
+
+    /// Where they are multiplied in where this is what the sum prefers and the values are read in
+    /// `element`: into the sum in any case for an 8-bit one, which holds no value under them.
+    pub fn read_in(self, element: ElemType) -> Self {
+        match element.size() {
+            1 => Self::Factored,
+            _ => self,
+        }
+    }
+}
+
 /// A matmul input's values as they lie: elements of one type, or codes packed under a
 /// quantization scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -813,11 +875,9 @@ impl Packing {
     /// Whether each of its block scales is whole bytes, which a unit loads alone: every scale type
     /// a scheme states, `ue4m3` and `ue8m0` a byte, `f16` two, `f32` four.
     fn scales_read_alone(&self) -> bool {
-        self.scheme.block_scale().is_some_and(|block| {
-            ElemType::from_scale_dtype(block.dtype)
-                .size_bits()
-                .is_multiple_of(u8::BITS as usize)
-        })
+        ElemType::from_scale_dtype(self.scheme.finest().dtype)
+            .size_bits()
+            .is_multiple_of(u8::BITS as usize)
     }
 
     /// Bits one value holds, packed.
@@ -833,13 +893,11 @@ impl Packing {
     /// Bytes a matrix of `values` values holds: its words and its block scales. The per-tensor
     /// scale is one word and left out.
     pub fn bytes(&self, values: usize) -> usize {
-        let scales = match (self.operand.scaled_along(), self.scheme.block_scale()) {
-            (Some(dimension), Some(block)) => {
-                let covered = self.operand.scale(dimension).unwrap_or(1);
-                (values / covered) * 4 / Field::of_scale(block.dtype).per_word()
-            }
-            _ => 0,
-        };
+        let scales_per_word = Field::of_scale(self.scheme.finest().dtype).per_word();
+        let scales = self.operand.scaled_along().map_or(0, |dimension| {
+            let covered = self.operand.scale(dimension).unwrap_or(1);
+            (values / covered) * 4 / scales_per_word
+        });
         self.values_bytes(values) + scales
     }
 }
@@ -1163,5 +1221,37 @@ mod tests {
         };
         assert_eq!(reads(Run::Transaction), Some(128 / read_bytes));
         assert_eq!(reads(Run::StoredTile), None);
+    }
+
+    /// One scale a row of a `[rows, k]` matrix is constant along `k`, position 1, and varies
+    /// along the rows, position 0.
+    #[test]
+    fn a_scale_a_row_is_constant_along_the_contraction() {
+        let scheme = cubecl::quant::scheme::QuantScheme::fp8_per_row();
+        assert_eq!(Operand::constant_along(&scheme.finest(), 1), Some(Some(0)));
+    }
+
+    #[test]
+    fn one_scale_for_the_matrix_varies_along_nothing() {
+        let scheme = cubecl::quant::scheme::QuantScheme::default()
+            .per_tensor(cubecl::quant::scheme::ScaleDtype::F32);
+        assert_eq!(Operand::constant_along(&scheme.finest(), 1), Some(None));
+    }
+
+    #[test]
+    fn blocks_along_the_contraction_are_not_constant_along_it() {
+        let scheme = cubecl::quant::scheme::QuantScheme::default()
+            .per_block([32], cubecl::quant::scheme::ScaleDtype::UE8M0);
+        assert_eq!(Operand::constant_along(&scheme.finest(), 1), None);
+    }
+
+    /// Values read in an 8-bit float hold no product with an outer scale, so it goes into the sum.
+    #[test]
+    fn an_outer_scale_over_8_bit_values_is_taken_in_the_sum() {
+        let e4m3 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::E4M3);
+        assert_eq!(
+            super::OuterScale::Kept.read_in(e4m3),
+            super::OuterScale::Factored
+        );
     }
 }

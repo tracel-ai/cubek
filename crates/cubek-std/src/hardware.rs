@@ -337,6 +337,21 @@ impl Hardware {
         Delivery::Tma.runs_on(&self.properties).is_ok()
     }
 
+    /// Whether the device contracts 8-bit floats through its manual matrix instruction, whose units
+    /// load the values they hold.
+    pub fn contracts_fp8_in_registers(&self) -> bool {
+        let fp8 = |element| {
+            matches!(
+                element,
+                ElemType::Float(FloatKind::E4M3) | ElemType::Float(FloatKind::E5M2)
+            )
+        };
+        let calls = &self.properties.features.matmul.mma;
+        calls
+            .iter()
+            .any(|call| fp8(call.a_type) && fp8(call.b_type))
+    }
+
     /// Whether a stage may be filled by the units' async copies: the copy engine, and the
     /// barriers its copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn unit_async_copy(&self) -> bool {
@@ -506,13 +521,11 @@ impl BlockScaledMma {
             false => self.form.rhs,
         };
         let register_codes = Self::REGISTER_BYTES * BlockScaledOperands::values_per_element(kind);
-        let scales = scheme
-            .block_scale()
-            .map(|scale| ElemType::from_scale_dtype(scale.dtype));
+        let scales = ElemType::from_scale_dtype(scheme.finest().dtype);
         value_element(scheme.value).is_some_and(|values| self.holds(lhs, values, block))
             && scheme.mode == QuantMode::Symmetric
             && scheme.num_quants() == register_codes
-            && scales == Some(ElemType::Float(self.form.scales))
+            && scales == ElemType::Float(self.form.scales)
     }
 }
 
@@ -928,5 +941,30 @@ mod tests {
             None,
             "an e2m1 operand of the 8-bit instruction is one code a byte, not eight a word"
         );
+    }
+
+    /// A device whose manual matrix instruction takes 8-bit floats on both sides contracts them in
+    /// registers; one that takes `f16` alone does not.
+    #[test]
+    fn eight_bit_floats_are_contracted_in_registers_where_an_instruction_takes_them() {
+        let e4m3 = ElemType::Float(FloatKind::E4M3);
+        let mut hw = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
+        let config = MmaConfig {
+            a_type: e4m3,
+            b_type: e4m3,
+            ..shape(16, 16, 16)
+        };
+        devices::features(&mut hw).matmul.mma.insert(config);
+        assert!(hw.contracts_fp8_in_registers());
+    }
+
+    #[test]
+    fn half_floats_alone_are_no_8_bit_contraction() {
+        let mut hw = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
+        devices::features(&mut hw)
+            .matmul
+            .mma
+            .insert(shape(16, 16, 16));
+        assert!(!hw.contracts_fp8_in_registers());
     }
 }

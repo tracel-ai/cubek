@@ -12,6 +12,7 @@ use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, LaneMap, Levels, SoftwareMatmul, Space};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::matmul_dimensions::{K, blocked};
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
@@ -565,6 +566,14 @@ impl MatmulMicrokernel for CubeShuffleMicrokernel {
         match self.plane {
             CubeShufflePlane::Shuffle(plane) => plane.orders,
             CubeShufflePlane::Fragment(_) => MatmulOperands::all(BindingOrder::Stated),
+        }
+    }
+
+    /// Its planes'.
+    fn outer_scale(&self) -> OuterScale {
+        match self.plane {
+            CubeShufflePlane::Shuffle(plane) => plane.outer_scale(),
+            CubeShufflePlane::Fragment(plane) => plane.outer_scale(),
         }
     }
 

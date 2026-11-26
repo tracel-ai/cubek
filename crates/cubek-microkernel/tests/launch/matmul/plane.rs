@@ -3,6 +3,7 @@
 use cubecl::prelude::*;
 use cubecl::tile::launch::{Decline, Delivery, Grid, Vectorization};
 use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
+use cubecl::tile::stage::StagedOperands;
 use cubecl::tile::{
     Launcher, Partitioning, Region, Scratch, Semiring, SoftwareMatmul, Space, StageStorage, Stages,
     Tile, TileTensor,
@@ -62,11 +63,12 @@ impl PlaneFragmentLaunch {
         let plane_width = microkernel.instruction.units(hw)?;
         // The launch stages the plane's operands itself, as a cube staged fill would.
         let mut vectorization = Vectorization::new();
-        stage.require_runs(microkernel.orders, &mut vectorization);
+        stage.require_runs(StagedOperands::Both, microkernel.orders, &mut vectorization);
         microkernel.vectorize(&(), &mut vectorization);
         let ring = StageRing::SINGLE.resolve(
             hw,
             &stage.operands(
+                StagedOperands::Both,
                 item.elements,
                 microkernel.orders,
                 MatmulOperands::all(MatmulRead::AsBound),

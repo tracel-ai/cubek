@@ -4,6 +4,7 @@ use cubecl::{
     ir::{AddressType, DeviceProperties},
     server::LaunchError,
 };
+use cubecl_common::quant::scheme::BlockExtent;
 use cubek_std::MatrixLayout;
 
 use crate::{
@@ -138,13 +139,11 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.lhs_scheme
-            && scheme.num_levels() == 1
-            && let Some(block_size) = scheme.block_size()
+            && scheme.levels().count() == 1
+            && let [_, BlockExtent::Values(block_width)] = scheme.finest().size.extents_in()
         {
             let vector_size = vector_sizes.lhs * scheme.num_quants();
-            let block_size = block_size.to_dim_vec(2.max(block_size.len()));
-            let block_width = block_size[block_size.len() - 1] as usize;
-            if !block_width.is_multiple_of(vector_size) {
+            if !(block_width.get() as usize).is_multiple_of(vector_size) {
                 return Err(MatmulSetupError::InvalidConfig(Box::new(
                     "Block size isn't a multiple of load size on lhs",
                 )));
@@ -152,13 +151,11 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.rhs_scheme
-            && scheme.num_levels() == 1
-            && let Some(block_size) = scheme.block_size()
+            && scheme.levels().count() == 1
+            && let [BlockExtent::Values(block_width), _] = scheme.finest().size.extents_in()
         {
             let vector_size = vector_sizes.rhs * scheme.num_quants();
-            let block_size = block_size.to_dim_vec(2.max(block_size.len()));
-            let block_width = block_size[block_size.len() - 2] as usize;
-            if !block_width.is_multiple_of(vector_size) {
+            if !(block_width.get() as usize).is_multiple_of(vector_size) {
                 return Err(MatmulSetupError::InvalidConfig(Box::new(
                     "Block size isn't a multiple of load size on rhs",
                 )));

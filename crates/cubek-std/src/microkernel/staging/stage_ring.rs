@@ -54,6 +54,14 @@ impl StageRing {
         prefetch: Prefetch::InRegisters,
     };
 
+    /// This ring with the next stage waiting in its own slot.
+    pub fn in_slots(self) -> Self {
+        Self {
+            prefetch: Prefetch::InSlots,
+            ..self
+        }
+    }
+
     /// Bytes of shared memory the ring holds, one stage holding `stage_bytes`.
     pub fn bytes(&self, stage_bytes: usize) -> usize {
         self.stages_in_flight.get() * stage_bytes
@@ -91,10 +99,7 @@ impl StageRing {
             .iter()
             .any(|operand| operand.fill == StageFill::Converted)
         {
-            return Self {
-                prefetch: Prefetch::InSlots,
-                ..self
-            };
+            return self.in_slots();
         }
         let held = operands
             .iter()
@@ -102,10 +107,7 @@ impl StageRing {
             .sum();
         let admitted = self.stages_in_flight.get() <= 2 && Prefetch::fits(held);
         match (self.prefetch, admitted) {
-            (Prefetch::InRegisters, false) => Self {
-                prefetch: Prefetch::InSlots,
-                ..self
-            },
+            (Prefetch::InRegisters, false) => self.in_slots(),
             (Prefetch::InRegisters, true) | (Prefetch::InSlots, _) => self,
         }
     }
