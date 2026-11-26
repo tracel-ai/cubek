@@ -249,6 +249,11 @@ impl MatmulTensors {
         };
         // The output is checked off the shapes before a launch copies an operand.
         let out_shape = Operands::out_shape(&lhs, &rhs, rows_kind)?;
+        // A leading axis of extent 1 steps nowhere, so its stride says nothing about the rows.
+        let out = match rows_kind {
+            MatmulRowsKind::Whole => Operands::with_lone_axes_restrided(&out),
+            MatmulRowsKind::Tiled => out,
+        };
         let rows_unmerged = rows_kind == MatmulRowsKind::Whole && !Operands::merges_into_rows(&out);
         if out.shape().as_slice() != out_shape.as_slice()
             || !MatmulInputs::VERIFIED.contains(&out.elem)
@@ -1687,6 +1692,19 @@ impl Operands {
         }
     }
 
+    /// `tensor` with every leading axis of extent 1 stepping by the axes inside it, outward from
+    /// its rows: the same elements, its leading dims then merging wherever the others do.
+    fn with_lone_axes_restrided(tensor: &PlainTensor) -> PlainTensor {
+        let shape = tensor.binding.shape.to_vec();
+        let mut strides = tensor.binding.strides.to_vec();
+        for dim in (0..shape.len().saturating_sub(2)).rev() {
+            if shape[dim] == 1 {
+                strides[dim] = shape[dim + 1] * strides[dim + 1];
+            }
+        }
+        tensor.viewed(Metadata::new(shape, strides))
+    }
+
     /// Whether `tensor`'s leading dims merge into rows of its last at one step, its last one
     /// element a step, untiled: what a launch reading every row whole binds as rows.
     fn merges_into_rows(tensor: &PlainTensor) -> bool {
@@ -1971,6 +1989,34 @@ mod tests {
         .err();
 
         assert_eq!(declined, Some(MATMUL_OUTPUT_UNREAD));
+    }
+
+    /// What a product of `[.., 4, 8]` rows against an `[8, 16]` weight, holding every row whole,
+    /// declines of an `out` of `shape` at `strides`.
+    fn declined_output(shape: &[usize], strides: &[usize]) -> Option<Decline> {
+        let lhs = [&shape[..shape.len() - 1], &[8]].concat();
+        let out = zeros(shape, F32).viewed(Metadata::new(shape.to_vec(), strides.to_vec()));
+        MatmulTensors::writing_into(
+            &client(),
+            StoredTensor::Plain(zeros(&lhs, F32)),
+            StoredTensor::Plain(zeros(&[8, 16], F32)),
+            out,
+            MatmulRowsKind::Whole,
+        )
+        .err()
+    }
+
+    #[test]
+    fn a_dense_output_whose_lone_batch_carries_any_stride_is_served() {
+        assert_eq!(declined_output(&[1, 4, 16], &[16, 16, 1]), None);
+    }
+
+    #[test]
+    fn an_output_whose_batches_overlap_declines() {
+        assert_eq!(
+            declined_output(&[2, 1, 16], &[16, 1, 1]),
+            Some(MATMUL_OUTPUT_UNREAD)
+        );
     }
 
     #[test]
