@@ -11,10 +11,11 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::ReduceOperation;
 use crate::eval::EvalWorkspace;
-use crate::eval::benchmarks::correctness::ReduceCorrectness;
+use crate::eval::benchmarks::correctness::ReduceVerifier;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
-use crate::eval::benchmarks::results::{accumulation_dtype, output_dtype_for};
-use crate::kernels::{self, ReduceElements, ReduceOpStrategy, ReduceWorkspace};
+use crate::eval::benchmarks::results::{compared_elements, output_dtype_for, reduce_given};
+use crate::eval::cpu_reference::output_shape_for;
+use crate::kernels::{ReduceElements, ReduceOpStrategy, ReduceWorkspace};
 
 /// `problem` reduced by `strategy` `num_samples` times on the test device, once its result is
 /// checked against the reference.
@@ -27,7 +28,7 @@ pub(crate) fn bench(
     problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    ReduceCorrectness::verify(strategy, problem)?;
+    ReduceVerifier::verify(strategy, problem)?;
 
     let device = cubecl::test_device();
     let client = device.client();
@@ -39,11 +40,10 @@ pub(crate) fn bench(
         &problem.shape,
         problem.axis,
         problem.operation,
-        ReduceElements {
-            input: value_dtype,
-            accumulator: accumulation_dtype(),
-            out: output_dtype_for(problem.operation, value_dtype),
-        },
+        compared_elements(
+            value_dtype,
+            output_dtype_for(problem.operation, value_dtype),
+        ),
         problem.kind != ReduceBenchKind::Single,
     )
     .workspace;
@@ -187,8 +187,7 @@ impl ReduceBenchmark {
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Result<(), String> {
-        kernels::Reduce::new(self.strategy)
-            .with_workspace(self.workspace.clone())
+        reduce_given(self.strategy, self.workspace.clone())
             .execute(
                 &self.client,
                 input.binding(),
@@ -237,8 +236,7 @@ impl Benchmark for ReduceBenchmark {
             order => builder.custom(order.data(&self.shape, self.axis)),
         }
         .generate_without_host_data();
-        let mut shape_out = self.shape.clone();
-        shape_out[self.axis] = self.operation.written_per_row();
+        let shape_out = output_shape_for(&self.shape, self.axis, self.operation);
         let out = TensorHandle::empty(&client, shape_out.clone(), output_elem);
         let indices = TensorHandle::empty(&client, shape_out, u32::elem_type_native());
 
@@ -248,11 +246,7 @@ impl Benchmark for ReduceBenchmark {
     fn execute(&self, (input, out, indices): Self::Input) -> Result<(), String> {
         let value_dtype = self.value_dtype;
         let index_dtype = u32::elem_type_native();
-        let elements = |out: ElemType| ReduceElements {
-            input: value_dtype,
-            accumulator: accumulation_dtype(),
-            out,
-        };
+        let elements = |out| compared_elements(value_dtype, out);
 
         match self.kind {
             ReduceBenchKind::Single => self.reduce(
@@ -266,8 +260,7 @@ impl Benchmark for ReduceBenchmark {
                 [out, indices],
                 [elements(value_dtype), elements(index_dtype)],
             )?,
-            ReduceBenchKind::Fused => kernels::Reduce::new(self.strategy)
-                .with_workspace(self.workspace.clone())
+            ReduceBenchKind::Fused => reduce_given(self.strategy, self.workspace.clone())
                 .execute_with_indices(
                     &self.client,
                     input.binding(),

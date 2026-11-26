@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
 use super::benchmark::bench;
-use super::correctness::ReduceCorrectness;
+use super::correctness::ReduceVerifier;
 use super::problem::{ReduceBenchKind, ReduceProblem, problems};
 use super::strategy::strategies;
 use crate::eval::benchmarks::results::{accumulation_dtype, output_dtype_for};
@@ -11,9 +11,9 @@ use crate::kernels::ReduceOpStrategy;
 
 /// The reduce family's entry in the benchmark catalogue: its problems, its strategies, and what
 /// one run reads, writes and computes.
-pub struct Category;
+pub struct ReduceCategory;
 
-impl cubek_test_utils::Category for Category {
+impl cubek_test_utils::Category for ReduceCategory {
     type Problem = ReduceProblem;
     type Strategy = ReduceOpStrategy;
 
@@ -56,7 +56,7 @@ impl cubek_test_utils::Category for Category {
     ) -> Option<
         &dyn cubek_test_utils::Correctness<Problem = ReduceProblem, Strategy = ReduceOpStrategy>,
     > {
-        Some(&ReduceCorrectness)
+        Some(&ReduceVerifier)
     }
 
     /// # Panics
@@ -113,33 +113,36 @@ mod tests {
 
     #[test]
     fn its_id_is_the_one_the_history_holds() {
-        assert_eq!(Category.id(), "reduce");
+        assert_eq!(ReduceCategory.id(), "reduce");
     }
 
     #[test]
     fn its_label_is_the_familys() {
-        assert_eq!(Category.label(), "Reduce");
+        assert_eq!(ReduceCategory.label(), "Reduce");
     }
 
     #[test]
     fn it_lists_problems() {
-        assert!(!Category.problems().is_empty());
+        assert!(!ReduceCategory.problems().is_empty());
     }
 
     #[test]
     fn it_lists_every_strategy() {
-        assert_eq!(Category.strategies().len(), ReduceOpStrategy::ALL.len());
+        assert_eq!(
+            ReduceCategory.strategies().len(),
+            ReduceOpStrategy::ALL.len()
+        );
     }
 
     #[test]
     fn it_times_on_the_device() {
         let device = cubek_test_utils::timing_method(TimingMethod::Device);
-        assert_eq!(Category.timing_method(), device);
+        assert_eq!(ReduceCategory.timing_method(), device);
     }
 
     #[test]
     fn it_checks_its_problems() {
-        assert!(Category.correctness().is_some());
+        assert!(ReduceCategory.correctness().is_some());
     }
 
     #[test]
@@ -168,7 +171,7 @@ mod tests {
         const SAMPLE_COUNT: usize = 10;
         let unit = ReduceOpStrategy::Specific(ReduceKernel::Unit);
         let problem = problem(ReduceOperation::Sum, ReduceBenchKind::Single);
-        let samples = Category
+        let samples = ReduceCategory
             .bench(&unit, &problem, SAMPLE_COUNT)
             .expect("the unit kernel serves every problem");
         assert_eq!(samples.durations.len(), SAMPLE_COUNT);

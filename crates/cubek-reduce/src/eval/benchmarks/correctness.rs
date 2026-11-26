@@ -9,9 +9,9 @@ use crate::eval::benchmarks::results::{
 use crate::kernels::ReduceOpStrategy;
 
 /// Proves and checks the reductions the catalogue times, against the CPU reference.
-pub(crate) struct ReduceCorrectness;
+pub(crate) struct ReduceVerifier;
 
-impl ReduceCorrectness {
+impl ReduceVerifier {
     /// Proves `strategy` correct on a small shape before it's timed, so a wrong
     /// kernel can't win a benchmark by being fast.
     ///
@@ -45,7 +45,7 @@ impl ReduceCorrectness {
     }
 }
 
-impl ReduceCorrectness {
+impl ReduceVerifier {
     /// Validate the path that is actually benchmarked. The two-launch kind runs
     /// the same `Reduce::execute` as `Single` for its values half, so only the fused kind
     /// needs the dedicated entrypoint.
@@ -108,7 +108,7 @@ fn proof_shape(shape: &[usize], axis: usize) -> Vec<usize> {
     proof
 }
 
-impl cubek_test_utils::Correctness for ReduceCorrectness {
+impl cubek_test_utils::Correctness for ReduceVerifier {
     type Problem = ReduceProblem;
     type Strategy = ReduceOpStrategy;
 
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn a_right_kernel_is_proved() {
-        let proved = ReduceCorrectness::verify(&UNIT, &small_problem(ReduceBenchKind::Single));
+        let proved = ReduceVerifier::verify(&UNIT, &small_problem(ReduceBenchKind::Single));
         assert_eq!(proved, Ok(()));
     }
 
@@ -205,10 +205,10 @@ mod tests {
     #[test]
     fn a_fused_kernels_values_are_the_references() {
         let problem = small_problem(ReduceBenchKind::Fused);
-        let written = ReduceCorrectness
+        let written = ReduceVerifier
             .kernel_result(&UNIT, &problem, &[7])
             .expect("the unit kernel serves every problem");
-        let expected = ReduceCorrectness
+        let expected = ReduceVerifier
             .reference_result(&problem, &[7], None)
             .expect("the reference reduces every problem");
         assert_equals_approx(&written, &expected, problem.tolerance())

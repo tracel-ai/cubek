@@ -2,7 +2,7 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubek_reduce::eval::benchmarks::{Category, ReduceBenchPrecision, ReduceProblem};
+use cubek_reduce::eval::benchmarks::{ReduceBenchPrecision, ReduceCategory, ReduceProblem};
 use cubek_reduce::kernels::ReduceOpStrategy;
 use cubek_test_utils::{
     CatalogEntry, Category as _, TestOutcome, ValidationResult, assert_equals_approx,
@@ -52,10 +52,10 @@ impl CatalogChecker {
 
 impl CatalogChecker {
     fn check_problem(&self, problem_id: &str) {
-        let strategy: ReduceOpStrategy = lookup(Category.strategies(), self.strategy_id);
-        let problem: ReduceProblem = lookup(Category.problems(), problem_id);
+        let strategy: ReduceOpStrategy = lookup(ReduceCategory.strategies(), self.strategy_id);
+        let problem: ReduceProblem = lookup(ReduceCategory.problems(), problem_id);
 
-        let correctness = Category
+        let correctness = ReduceCategory
             .correctness()
             .expect("the reduce catalogue checks its problems");
         let actual = match correctness.kernel_result(&strategy, &problem, &SEEDS) {

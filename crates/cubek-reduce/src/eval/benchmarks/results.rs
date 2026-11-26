@@ -9,7 +9,7 @@ use cubek_test_utils::{
 
 use crate::eval::EvalWorkspace;
 use crate::eval::cpu_reference::{ReduceReference, output_shape_for};
-use crate::kernels::{self, ReduceElements, ReduceOpStrategy};
+use crate::kernels::{self, ReduceElements, ReduceOpStrategy, ReduceWorkspace};
 use crate::{ReduceError, ReduceOperation};
 
 /// The bits a comparison runs on: the kernel launch and the CPU reference each
@@ -89,14 +89,11 @@ pub(crate) fn strategy_result(
     with_indices: bool,
 ) -> Result<HostData, String> {
     let index_dtype = u32::elem_type_native();
-    let elements = ReduceElements {
-        input: input.dtype,
-        accumulator: accumulation_dtype(),
-        out: match with_indices {
-            true => input.dtype,
-            false => output_dtype_for(operation, input.dtype),
-        },
+    let out_dtype = match with_indices {
+        true => input.dtype,
+        false => output_dtype_for(operation, input.dtype),
     };
+    let elements = compared_elements(input.dtype, out_dtype);
     let input_handle = input
         .tensor(client.clone(), shape.clone())
         .generate_without_host_data();
@@ -105,7 +102,7 @@ pub(crate) fn strategy_result(
     let indices = unwritten(&client, out_shape, index_dtype);
     let workspace =
         EvalWorkspace::new(&client, &shape, axis, operation, elements, with_indices).workspace;
-    let reduce = kernels::Reduce::new(strategy).with_workspace(workspace);
+    let reduce = reduce_given(strategy, workspace);
     let outcome = launch_and_capture_outcome(&client, &[&values.handle, &indices.handle], |c| {
         let launched = match with_indices {
             true => reduce.execute_with_indices(
@@ -224,6 +221,24 @@ pub(crate) fn output_dtype_for(operation: ReduceOperation, input_dtype: ElemType
 /// output element.
 pub(crate) fn accumulation_dtype() -> ElemType {
     f32::elem_type_native()
+}
+
+/// The elements of a launch the harness compares or times: `input` read, written in `out`,
+/// accumulated in [`accumulation_dtype`].
+pub(crate) fn compared_elements(input: ElemType, out: ElemType) -> ReduceElements {
+    ReduceElements {
+        input,
+        accumulator: accumulation_dtype(),
+        out,
+    }
+}
+
+/// A reduction by `strategy` given `workspace`, as every launch the harness makes is.
+pub(crate) fn reduce_given(
+    strategy: ReduceOpStrategy,
+    workspace: ReduceWorkspace,
+) -> kernels::Reduce {
+    kernels::Reduce::new(strategy).with_workspace(workspace)
 }
 
 #[cfg(test)]
