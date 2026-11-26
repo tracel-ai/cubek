@@ -4,9 +4,7 @@
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::{client::Client, prelude::*};
-use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, Progress, TestInput, launch_and_capture_outcome,
-};
+use cubek_test_utils::{ExecutionOutcome, HostData, HostDataType, Progress, TestInput};
 
 use crate::eval::EvalWorkspace;
 use crate::eval::cpu_reference::{ReduceReference, output_shape_for};
@@ -78,12 +76,13 @@ fn ramp_of_elem_count(elem_count: usize) -> Vec<f32> {
 ///
 /// # Errors
 ///
-/// [`ReduceRunError::Declined`] with the kernel's decline, and
-/// [`ReduceRunError::DidNotRun`] where the call or the launch failed otherwise.
+/// [`ReduceRunError::Declined`] with the kernel's decline,
+/// [`ReduceRunError::OutsideDomain`] where the call lies outside the reduction's Domain, and
+/// [`ReduceRunError::DidNotRun`] where the launch the kernel accepted did not run.
 ///
 /// # Panics
 ///
-/// Where `shape` has fewer axes than `axis` counts.
+/// Where `axis` is not an axis of `shape`.
 pub(crate) fn strategy_result(
     client: Client,
     shape: Vec<usize>,
@@ -108,33 +107,28 @@ pub(crate) fn strategy_result(
     let workspace =
         EvalWorkspace::new(&client, &shape, axis, operation, elements, with_indices).workspace;
     let reduce = reduce_given(strategy, workspace);
-    let mut failed = None;
-    let outcome = launch_and_capture_outcome(&client, &[&values.handle, &indices.handle], |c| {
-        let launched = match with_indices {
-            true => reduce.execute_with_indices(
-                c,
-                input_handle.clone().binding(),
-                values.clone().binding(),
-                indices.clone().binding(),
-                axis,
-                operation,
-                elements,
-                index_dtype,
-            ),
-            false => reduce.execute(
-                c,
-                input_handle.clone().binding(),
-                values.clone().binding(),
-                axis,
-                operation,
-                elements,
-            ),
-        };
-        outcome_of(launched, &mut failed)
-    });
-    if let Some(why) = failed {
-        return Err(ReduceRunError::from(why));
-    }
+    let launched = match with_indices {
+        true => reduce.execute_with_indices(
+            &client,
+            input_handle.binding(),
+            values.clone().binding(),
+            indices.clone().binding(),
+            axis,
+            operation,
+            elements,
+            index_dtype,
+        ),
+        false => reduce.execute(
+            &client,
+            input_handle.binding(),
+            values.clone().binding(),
+            axis,
+            operation,
+            elements,
+        ),
+    };
+    launched.map_err(ReduceRunError::from)?;
+    let outcome = ExecutionOutcome::of_outputs(&client, &[&values.handle, &indices.handle]);
     read_back(&client, outcome, values)
 }
 
@@ -144,7 +138,9 @@ pub(crate) enum ReduceRunError {
     /// The kernel declined the problem, for the device or as a bug of its own
     /// ([`Decline::Broken`](cubecl::tile::launch::Decline::Broken)).
     Declined(Decline),
-    /// The call lay outside the reduction's Domain, or the launch it accepted did not run.
+    /// The call lay outside the reduction's Domain.
+    OutsideDomain(ReduceError),
+    /// The launch the kernel accepted did not run.
     DidNotRun(String),
 }
 
@@ -152,7 +148,7 @@ impl From<ReduceError> for ReduceRunError {
     fn from(why: ReduceError) -> Self {
         match why {
             ReduceError::Declined(decline) => Self::Declined(decline),
-            other => Self::DidNotRun(other.to_string()),
+            other => Self::OutsideDomain(other),
         }
     }
 }
@@ -161,22 +157,10 @@ impl core::fmt::Display for ReduceRunError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Declined(decline) => write!(f, "declined: {decline}"),
+            Self::OutsideDomain(why) => write!(f, "outside the reduction's Domain: {why}"),
             Self::DidNotRun(why) => write!(f, "did not run: {why}"),
         }
     }
-}
-
-/// The outcome the capture reads of `launched`, its error kept in `failed` for the caller.
-fn outcome_of(
-    launched: Result<(), ReduceError>,
-    failed: &mut Option<ReduceError>,
-) -> ExecutionOutcome {
-    let Err(why) = launched else {
-        return ExecutionOutcome::Executed;
-    };
-    let outcome = ExecutionOutcome::CompileError(why.to_string());
-    *failed = Some(why);
-    outcome
 }
 
 /// What an output holds before its launch: a value no comparison's result comes near, so a kernel
@@ -214,7 +198,7 @@ fn read_back(
 ///
 /// # Panics
 ///
-/// Where `shape` has fewer axes than `axis` counts.
+/// Where `axis` is not an axis of `shape`.
 pub(crate) fn cpu_reference_result(
     client: Client,
     shape: Vec<usize>,

@@ -70,12 +70,12 @@ impl ReduceCandidate {
     ///
     /// # Guarantees
     ///
-    /// - The output is zeroed first where the routine only adds into it, the atomic hypercube.
+    /// - As [`launch`](Self::launch).
     ///
     /// # Errors
     ///
-    /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
-    /// input, or a [`Decline::Broken`] where it breaks what it prepared.
+    /// Why the routine, or the zeroing before it, cannot run the problem at its setting, or why it
+    /// cannot read the caller's input, or a [`Decline::Broken`] where it breaks what it prepared.
     pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,

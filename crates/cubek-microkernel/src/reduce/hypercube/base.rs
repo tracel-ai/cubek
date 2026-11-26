@@ -66,9 +66,11 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where it is handed a tile of `indices` or `partial_indices` its
-    /// item writes nothing to, or none where it writes one, or its item writes indices its carrier
-    /// does not keep.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices` (a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep) or on `partial_indices` (a tile handed where its carrier keeps no
+    /// indices, or none where it keeps them).
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"

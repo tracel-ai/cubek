@@ -33,9 +33,9 @@ impl CubePartialReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where it is handed a tile of `indices` or `partial_indices` its
-    /// item writes nothing to, or none where it writes one, or its item writes indices its carrier
-    /// does not keep.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumption on `partial_indices`: a tile
+    /// handed where its carrier keeps no indices, or none where it keeps them.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         input: &Tile,

@@ -109,9 +109,8 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// - `axis` is an axis of `input`, which has one at least.
     /// - `out` has `input`'s shape, `axis` one wide, or `k` wide for a top-k.
-    /// - The element indices are written in, `elements.out` for an `ArgMax`, `ArgMin` or
-    ///   `ArgTopK` and the index element of [`with_indices`](Self::with_indices), counts every
-    ///   position of the reduced axis.
+    /// - `elements.out`, for an `ArgMax`, `ArgMin` or `ArgTopK`, counts every position of the
+    ///   reduced axis.
     ///
     /// # Panics
     ///
@@ -144,6 +143,7 @@ impl ReduceTensors<TensorBinding> {
     /// - The operation's carrier keeps indices: not a sum's, nor a max's, whose pair an argmax
     ///   writes.
     /// - `indices` has `values`' shape.
+    /// - `index_element` counts every position of the reduced axis.
     ///
     /// # Panics
     ///
@@ -183,7 +183,8 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// # Assumptions
     ///
-    /// - That of [`new`](Self::new) its checks leave: the element indices are written in.
+    /// - That of [`new`](Self::new) its checks leave: `elements.out`, for an `ArgMax`, `ArgMin` or
+    ///   `ArgTopK`, counts every position of the reduced axis.
     ///
     /// # Errors
     ///
@@ -208,7 +209,8 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// # Assumptions
     ///
-    /// - That of [`with_indices`](Self::with_indices) its checks leave: the element indices are written in.
+    /// - That of [`with_indices`](Self::with_indices) its checks leave: `index_element` counts
+    ///   every position of the reduced axis.
     ///
     /// # Errors
     ///

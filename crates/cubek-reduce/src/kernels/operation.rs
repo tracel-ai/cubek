@@ -15,7 +15,8 @@ use cubek_microkernel::reduce::ReduceOperation;
 /// # Assumptions
 ///
 /// - The outputs alias neither the input nor each other.
-/// - Those of [`ReduceTensors::new`] that its checks leave: the element indices are written in.
+/// - Those of [`ReduceTensors::new`] and [`ReduceTensors::with_indices`] that its checks leave:
+///   the element indices are written in counts every position of the reduced axis.
 ///
 /// # Guarantees
 ///

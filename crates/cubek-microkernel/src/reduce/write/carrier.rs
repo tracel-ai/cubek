@@ -36,9 +36,10 @@ impl UnitCarrierWriteMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where it is handed a tile of `indices` or `partial_indices` its
-    /// item writes nothing to, or none where it writes one, or its item writes indices its carrier
-    /// does not keep.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn write<Out: Numeric, Idx: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         acc: C,

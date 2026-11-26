@@ -250,6 +250,9 @@ mod tests {
                 Err(ReduceRunError::Declined(why)) => {
                     return TestOutcome::refused(&problem_id, &why).enforce();
                 }
+                Err(ReduceRunError::OutsideDomain(why)) => {
+                    panic!("{problem_id} lies outside the reduction's Domain: {why}")
+                }
                 Err(ReduceRunError::DidNotRun(why)) => {
                     return TestOutcome::CompileError(why).enforce();
                 }
