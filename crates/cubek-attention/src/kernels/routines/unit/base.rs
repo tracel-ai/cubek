@@ -5,8 +5,10 @@ use crate::kernels::{
     PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::space::UnitCube;
+use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::attention::unit::{
     UnitAttentionMicrokernel, UnitAttentionMicrokernelSettings,
 };
@@ -116,6 +118,8 @@ impl Routine for UnitAttentionRoutine {
                 value: row_readers,
                 out: 1,
             },
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         }
         .count(&item, &cube, estimate);
         blueprint

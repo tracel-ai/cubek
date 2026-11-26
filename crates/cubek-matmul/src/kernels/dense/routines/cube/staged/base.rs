@@ -16,6 +16,7 @@ use cubecl::tile::launch::{
 };
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
+use cubecl::tile::stage::Prefetch;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
@@ -454,6 +455,8 @@ fn estimate_in_blocks(
         stages: k.div_ceil(stage_depth * blueprint.microkernel.planes_along_k.get()) as u64,
         stages_in_flight: blueprint.microkernel.ring.stages_in_flight.get() as u32,
         drain_atomics: 0,
+        delivery: Delivery::SyncPerUnit,
+        prefetch: Prefetch::InSlots,
     });
     blueprint.microkernel.count_shared(estimate);
     blueprint

@@ -4,8 +4,10 @@ use crate::kernels::{
     MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Dimension, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
@@ -259,6 +261,8 @@ impl PlaneShuffleMatmulRoutine {
             stages: k.div_ceil(k_per_stage as u64),
             stages_in_flight: Self::STAGES_IN_FLIGHT,
             drain_atomics: 0,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         });
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
@@ -310,6 +314,8 @@ impl PlaneShuffleMatmulRoutine {
             stages: k.div_ceil(step_k) * walks,
             stages_in_flight: 1,
             drain_atomics: 0,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         });
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }

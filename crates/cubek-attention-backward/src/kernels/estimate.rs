@@ -3,7 +3,9 @@
 
 use crate::kernels::AttentionBackwardProblem;
 use cubecl::ir::ElemType;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::space::ComputeScope;
+use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Dimension, Partitioning, Space};
 use cubecl::tune::Work;
 use cubek_microkernel::attention::{D, DV, G, Q, S};
@@ -371,6 +373,8 @@ impl WalkCount {
             drain_atomics,
             shared_reads,
             shared_writes,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         });
     }
 }

@@ -1,3 +1,5 @@
+use cubecl::tile::launch::Delivery;
+use cubecl::tile::stage::Prefetch;
 use cubecl::tune::Work;
 
 /// A kernel's performance, estimated: what the kernel a routine prepared asks of a device,
@@ -58,6 +60,29 @@ pub struct CubeStaging {
     /// Bytes one cube writes into shared memory over its walk: what it stages there, and what
     /// its units exchange through it.
     pub shared_writes: u64,
+    /// The engine that moves what the cube reads into its stages, or into its units' registers
+    /// where it stages nothing: the units' own loads for every kernel that does not choose.
+    pub delivery: Delivery,
+    /// Where the next stage waits while this one computes.
+    pub prefetch: Prefetch,
+}
+
+impl CubeStaging {
+    /// The share of the time a worker's streams of work could hide behind one another that this
+    /// walk's loads let them hide ([`delivery`](Self::delivery), [`prefetch`](Self::prefetch)):
+    /// an engine moving memory to memory runs beside the units' arithmetic; the units' own loads
+    /// overlap only as far as the scheduler and the compiler interleave them, and a stage
+    /// prefetched into registers is one the compiler is told to load ahead.
+    ///
+    /// Provisional: the two loads by units are fit on f16 matmuls of one NVIDIA (L4) and one AMD
+    /// (Radeon 8060S) device; the engines are not yet measured and stand at full overlap.
+    pub fn overlap(&self) -> f64 {
+        match (self.delivery, self.prefetch) {
+            (Delivery::SyncPerUnit, Prefetch::InSlots) => 0.3,
+            (Delivery::SyncPerUnit, Prefetch::InRegisters) => 0.9,
+            (Delivery::AsyncPerUnit | Delivery::Tma, _) => 1.0,
+        }
+    }
 }
 
 /// Bytes one cube moves through one operand, and the stretch of them a plane touches contiguously.

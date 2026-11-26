@@ -1,5 +1,7 @@
 use crate::matmul::{MatmulOperand, MatmulOperands, MatmulStage, MatmulWorkItem};
 use cubecl::tile::Space;
+use cubecl::tile::launch::Delivery;
+use cubecl::tile::stage::Prefetch;
 use cubek_std::layout::BindingOrder;
 use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, StageRing};
@@ -24,13 +26,18 @@ pub struct MatmulStagingCount {
     pub readers: MatmulOperands<u64>,
     /// Atomic adds into shared memory one cube issues as it drains.
     pub drain_atomics: u64,
+    /// The engine that fills the stages: the units' own loads unless the cube chooses another.
+    pub delivery: Delivery,
+    /// Where the next stage waits while this one is contracted: the ring's.
+    pub prefetch: Prefetch,
 }
 
 impl MatmulStagingCount {
     /// What a cube staging the space `cube_space` through `ring` a step of `stage` at a time
     /// counts, bound in the order `orders` says: both operands read once a cube, in runs along
     /// their contiguous dimension over the whole walk, and the output written once in runs of
-    /// `out_run` elements.
+    /// `out_run` elements, its stages filled by the units' own loads, prefetched as the ring
+    /// says.
     pub fn new(
         cube_space: &Space,
         stage: &MatmulStage,
@@ -52,6 +59,8 @@ impl MatmulStagingCount {
                 out: 1,
             },
             drain_atomics: 0,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: ring.prefetch,
         }
     }
 
@@ -85,6 +94,8 @@ impl MatmulStagingCount {
             stages,
             stages_in_flight: self.stages_in_flight,
             drain_atomics: self.drain_atomics,
+            delivery: self.delivery,
+            prefetch: self.prefetch,
         });
     }
 }

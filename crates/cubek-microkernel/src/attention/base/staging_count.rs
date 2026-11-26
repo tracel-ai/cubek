@@ -1,5 +1,7 @@
 use crate::attention::{AttentionOperand, AttentionOperands, AttentionWorkItem, G, Q, S};
 use cubecl::tile::Space;
+use cubecl::tile::launch::Delivery;
+use cubecl::tile::stage::Prefetch;
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate};
 
 /// How the cubes of a kernel of this kind walk the keys, as the component that places the
@@ -19,6 +21,10 @@ pub struct AttentionStagingCount {
     /// Times one cube reads each element of its box of each operand: once where it stages the box
     /// for all its units, once per plane or unit that reads its own; for the output, once.
     pub readers: AttentionOperands<u64>,
+    /// The engine that fills the stages: the units' own loads unless the cube chooses another.
+    pub delivery: Delivery,
+    /// Where the next stage waits while this one is computed.
+    pub prefetch: Prefetch,
 }
 
 impl AttentionStagingCount {
@@ -55,6 +61,8 @@ impl AttentionStagingCount {
             stages: keys.div_ceil(self.seq_kv.max(1) as u64),
             stages_in_flight: self.stages_in_flight,
             drain_atomics: 0,
+            delivery: self.delivery,
+            prefetch: self.prefetch,
         });
     }
 }

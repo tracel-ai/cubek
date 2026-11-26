@@ -5,8 +5,10 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
+use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -145,6 +147,8 @@ impl CubeShuffleMatmulRoutine {
             stages: k.div_ceil(k_per_stage),
             stages_in_flight: Self::STAGES_IN_FLIGHT,
             drain_atomics: planes_along_k * rows * columns,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         });
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }
@@ -201,6 +205,8 @@ impl CubeShuffleMatmulRoutine {
                 CubeMeet::Atomic => planes * rows * columns,
                 CubeMeet::InSlots => 0,
             },
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         });
         microkernel.estimate(&item, &(), grid.planes(), estimate);
     }

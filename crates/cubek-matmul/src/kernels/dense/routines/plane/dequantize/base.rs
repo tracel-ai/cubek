@@ -10,8 +10,10 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
+use cubecl::tile::stage::Prefetch;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
@@ -182,6 +184,8 @@ impl Routine for PlaneDequantizeMatmulRoutine {
             stages: 1,
             stages_in_flight: 1,
             drain_atomics: 0,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         });
         blueprint
             .microkernel

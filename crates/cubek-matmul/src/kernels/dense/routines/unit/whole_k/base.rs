@@ -5,8 +5,10 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::TileTensorLaunch;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::stage::Prefetch;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_microkernel::matmul::{
@@ -203,6 +205,8 @@ impl Routine for UnitWholeKMatmulRoutine {
                 out: 1,
             },
             drain_atomics: 0,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         };
         staging.count(&item, &cube, estimate);
         blueprint

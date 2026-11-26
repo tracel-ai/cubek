@@ -948,6 +948,7 @@ impl Microkernel for CubeStagedMicrokernel {
         };
         let mut staging = MatmulStagingCount {
             drain_atomics,
+            delivery: self.fill.delivery.fills(),
             ..MatmulStagingCount::new(
                 &cube_space.space,
                 stage,

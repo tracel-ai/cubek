@@ -2,7 +2,9 @@
 
 use cubecl::ir::ElemType;
 use cubecl::tile::Space;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::layout::ElemAlignment;
+use cubecl::tile::stage::Prefetch;
 use cubecl::tune::Work;
 use cubek_microkernel::rms_norm::{B, RmsNormOperands, RmsNormWorkItem};
 use cubek_microkernel::row_store::RowStore;
@@ -65,6 +67,8 @@ impl RmsNormRoutineProblem {
             stages: 1,
             stages_in_flight: 1,
             drain_atomics: 0,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         }
     }
 

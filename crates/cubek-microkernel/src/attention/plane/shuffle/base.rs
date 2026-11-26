@@ -3,7 +3,9 @@ use crate::attention::{
     AttentionWorkItem, CacheOrder, G, Q, S,
 };
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Levels, Space};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{
@@ -171,6 +173,8 @@ impl Microkernel for PlaneShuffleAttentionMicrokernel {
         AttentionStagingCount {
             seq_kv: self.seq_kv(),
             stages_in_flight: 1,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
             runs: AttentionOperands {
                 query: item.head_dim,
                 key: item.head_dim,

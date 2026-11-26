@@ -4,8 +4,10 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
 use core::num::NonZeroUsize;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::{Decline, DestinationLaunch, VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{BaseRegion, Space, TileTensorLaunch, VectorRegion};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -256,6 +258,8 @@ impl Routine for UnitRegistersMatmulRoutine {
                 out: 1,
             },
             drain_atomics: 0,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         };
         staging.count(&item, &cube, estimate);
         blueprint

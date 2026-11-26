@@ -9,6 +9,7 @@ use crate::matmul::cube::CubeStagedDelivery;
 use crate::split_keys_merge::SlotShape;
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Delivery, Vectorization};
+use cubecl::tile::stage::Prefetch;
 use cubecl::tile::{Dimension, Levels, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::stored::OuterScale;
@@ -215,13 +216,25 @@ impl CubeAttentionMicrokernel {
     /// walk, once for all its planes where it stages them, once for every group of planes holding
     /// different rows where each plane reads its own.
     fn staging(&self, item: &AttentionWorkItem) -> AttentionStagingCount {
-        let (key, stages_in_flight) = match self.plane.reads() {
-            CubePlaneReads::Stage => (1, self.ring.stages_in_flight.get() as u32),
-            CubePlaneReads::Global => (self.layout().row_groups() as u64, 1),
+        let (key, stages_in_flight, delivery, prefetch) = match self.plane.reads() {
+            CubePlaneReads::Stage => (
+                1,
+                self.ring.stages_in_flight.get() as u32,
+                self.delivery.fills(),
+                self.ring.prefetch,
+            ),
+            CubePlaneReads::Global => (
+                self.layout().row_groups() as u64,
+                1,
+                Delivery::SyncPerUnit,
+                Prefetch::InSlots,
+            ),
         };
         AttentionStagingCount {
             seq_kv: self.seq_kv(),
             stages_in_flight,
+            delivery,
+            prefetch,
             runs: AttentionOperands {
                 query: item.head_dim,
                 key: item.head_dim,

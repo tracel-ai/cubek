@@ -1,8 +1,10 @@
 use super::{ConvBlock, ConvTiles};
 use crate::kernels::tiled::{ConvProblem, ConvRoles};
 use cubecl::ir::ElemType;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::PlaneOrder;
+use cubecl::tile::stage::Prefetch;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{Dimension, Partitioning, Space, StageStorage};
 use cubek_microkernel::matmul::unit::UnitRegistersMicrokernel;
@@ -199,6 +201,8 @@ impl ConvPartitioning {
             stages: self.stages() as u64,
             stages_in_flight: ring.stages_in_flight.get() as u32,
             drain_atomics: 0,
+            delivery: Delivery::SyncPerUnit,
+            prefetch: Prefetch::InSlots,
         }
     }
 
