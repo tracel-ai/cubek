@@ -11,7 +11,11 @@ use cubek_matmul::definition::{MatmulCost, MatmulGlobalElems};
 #[derive(Debug, Clone)]
 pub struct ConvCost {
     pub batch: usize,
+    /// The blocks of channels, each a convolution of its own.
+    pub groups: usize,
+    /// The input channels of one group.
     pub channels_in: usize,
+    /// The output channels of one group.
     pub channels_out: usize,
     /// The extents along each spatial dim.
     pub spatial: Vec<ConvCostDim>,
@@ -54,9 +58,10 @@ impl ConvCost {
     /// re-read every overlapping window, which is the implementation's choice
     /// rather than the convolution's cost.
     pub fn traffic(&self) -> (usize, usize) {
-        let input = self.batch * self.channels_in * self.positions(|dim| dim.input);
-        let filter = self.channels_out * self.channels_in * self.positions(|dim| dim.kernel);
-        let output = self.batch * self.channels_out * self.positions(|dim| dim.out);
+        let input = self.batch * self.groups * self.channels_in * self.positions(|dim| dim.input);
+        let filter =
+            self.groups * self.channels_out * self.channels_in * self.positions(|dim| dim.kernel);
+        let output = self.batch * self.groups * self.channels_out * self.positions(|dim| dim.out);
 
         (
             input * self.elems.lhs.size()
@@ -89,7 +94,7 @@ impl ConvCost {
     /// from here.
     fn gemm(&self) -> MatmulCost {
         MatmulCost {
-            batches: 1,
+            batches: self.groups,
             m: self.batch * self.positions(|dim| dim.out),
             n: self.channels_out,
             k: self.channels_in * self.positions(|dim| dim.kernel),
@@ -167,6 +172,7 @@ mod tests {
 
         ConvCost {
             batch: 2,
+            groups: 1,
             channels_in: 3,
             channels_out: 4,
             spatial: vec![

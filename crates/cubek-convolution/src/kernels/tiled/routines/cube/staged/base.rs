@@ -121,6 +121,7 @@ impl ConvRoutine<CubeStagedMicrokernel> for CubeStagedConvRoutine {
             input,
             rhs,
             out,
+            bias,
         } = binding;
         // SAFETY: every operand is a tile bound through the launcher, which masks the accesses a
         // box reaches past its tensor; the kernel indexes no buffer but through those tiles.
@@ -132,9 +133,11 @@ impl ConvRoutine<CubeStagedMicrokernel> for CubeStagedConvRoutine {
                 input,
                 rhs,
                 out,
+                bias.into(),
                 launcher.partitioning_arg(),
                 walk,
                 blueprint.partitioning.storage(),
+                problem.roles().bias_dimensions(),
                 problem.kernel_elements(),
             );
         }

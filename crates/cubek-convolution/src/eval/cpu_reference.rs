@@ -16,6 +16,7 @@ use cubek_test_utils::{
     StridedLayout, TestInput, ValidationResult, assert_equals_approx,
 };
 
+use crate::kernels::tiled::ConvBias;
 use crate::{
     ConvolutionArgs, ConvolutionInputs, SpatialExtent, SpatialPosition, SpatialWindow, Strategy,
     TapCount, TapIndex,
@@ -24,6 +25,9 @@ use crate::{
 };
 
 const HOST_HAS_NO_TRANSPOSED: &str = "the host states no transposed forward";
+
+/// The interval a per-channel bias is drawn from, as wide as the operands'.
+const BIAS_RANGE: (f32, f32) = (-1., 1.);
 
 /// Run `strategy` against `operation` over `spec`'s geometry with seeded operands and return its
 /// output as a [`HostData`]: the forward's activation, the weight gradient or the data gradient.
@@ -48,12 +52,14 @@ pub fn strategy_result(
         let lhs = InputBinding::new(inputs.lhs.clone().binding(), dtypes.lhs_global);
         let rhs = InputBinding::new(inputs.rhs.clone().binding(), dtypes.rhs_global);
         let out = out_handle.clone().binding();
+        let bias = (inputs.bias.as_ref())
+            .map(|(bias, _)| InputBinding::new(bias.clone().binding(), dtypes.acc_global));
         use ConvolutionOperation as Operation;
         let conv_inputs = match operation {
             Operation::Forward | Operation::ForwardTransposed => ConvolutionInputs::Forward {
                 input: lhs,
                 weight: rhs,
-                bias: None,
+                bias,
                 out,
             },
             Operation::BackwardWeight => ConvolutionInputs::BackwardWeight {
@@ -137,6 +143,8 @@ pub struct ConvSpec {
     pub out_channels: usize,
     pub args: ConvolutionArgs<2>,
     pub kernel_size: [usize; 2],
+    /// Whether the forward adds a value to each output channel.
+    pub bias: ConvBias,
 }
 
 impl ConvSpec {
@@ -210,6 +218,7 @@ struct SeededInputs {
     rhs: TensorHandle,
     rhs_data: HostData,
     out: TensorHandle,
+    bias: Option<(TensorHandle, HostData)>,
 }
 
 fn seed_inputs(
@@ -239,12 +248,23 @@ fn seed_inputs(
         .zeros()
         .generate_without_host_data();
 
+    let bias = match (operation, spec.bias) {
+        (ConvolutionOperation::Forward, ConvBias::PerChannel) => Some(
+            TestInput::builder(client.clone(), shape![spec.out_channels])
+                .dtype(dtypes.acc_global)
+                .uniform(seed_rhs.wrapping_add(1), BIAS_RANGE.0, BIAS_RANGE.1)
+                .generate_with_f32_host_data(),
+        ),
+        _ => None,
+    };
+
     Ok(SeededInputs {
         lhs,
         lhs_data,
         rhs,
         rhs_data,
         out,
+        bias,
     })
 }
 
@@ -255,7 +275,8 @@ fn forward_reference(
     progress: Option<&Progress>,
 ) -> HostData {
     let problem = build_problem(spec, dtypes, inputs);
-    conv_cpu_reference(&inputs.lhs_data, &inputs.rhs_data, &problem, progress)
+    let bias = inputs.bias.as_ref().map(|(_, host)| host);
+    ConvGeometry::from(&problem).cpu_reference(&inputs.lhs_data, &inputs.rhs_data, bias, progress)
 }
 
 fn build_problem(
