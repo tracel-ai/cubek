@@ -12,7 +12,7 @@ pub const PACKED_QUERIES_UNREAD: Decline = Decline::Unserved {
 /// The queries of an attention's sequences, and each sequence's attended length `lengths`, `u32`
 /// `[b]` on the device, or `[1]` for every sequence: sequence `b` attends its first `lengths[b]`
 /// keys, and its `q_b` queries are the last `q_b` of them, at positions `lengths[b] - q_b ..
-/// lengths[b]`, causal from there. A length past the keys attends every key there is.
+/// lengths[b]`, causal from there.
 ///
 /// A decode step is either kind with one query a sequence.
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ mod tests {
     use cubecl::zspace::Shape;
     use cubek_matmul::kernels::tensor::PlainTensor;
     use cubek_std::Hardware;
-    use cubek_test_utils::{HostData, HostDataType, TestInput, ValidationResult};
+    use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
     const HEADS: usize = 4;
     const KV_HEADS: usize = 2;
@@ -420,46 +420,189 @@ mod tests {
         }
     }
 
-    /// A length past the keys attends the keys there are, at the lead of every kernel: the key
-    /// head after another's keys in the buffer is what a read past them would reach.
+    /// A length past the keys attends as a length of the keys there are, on every kernel at its
+    /// lead and on the hypercube stream routine: one query seeing every key, and several queries
+    /// under a causal visibility, which the length places. The key head after another's keys in the
+    /// buffer is what a read past them would reach.
     #[test]
     fn a_length_past_the_keys_attends_the_keys() {
         const LENGTH_PAST_THE_KEYS: u32 = 3 * KEYS as u32;
         let client: Client = cubecl::test_device().client();
-        let hw = Hardware::from_client(&client);
-        let random = |shape: [usize; 4], seed| {
-            PlainTensor::of_handle(
-                TestInput::builder(client.clone(), Shape::from(shape))
-                    .dtype(f32::elem_type_native())
-                    .uniform(seed, -1.0, 1.0)
-                    .generate_without_host_data(),
-            )
-        };
         let cache_shape = [1, KV_HEADS, KEYS, HEAD_DIM];
-        let attend = |kernel: AttentionKernel, length: u32| {
-            AttentionTensors::new(
-                &client,
-                random([1, HEADS, 1, HEAD_DIM], 1),
-                random(cache_shape, 2),
-                random(cache_shape, 3),
-                PlainTensor::of_u32s(&client, &[1], &[length]),
-                AttentionScoring::standard(AttentionVisibility::Attended, HEAD_DIM),
-            )
-            .and_then(|tensors| kernel.launch_lead_on(&hw, tensors))
-            .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
-        };
+        let cases = [
+            (1, AttentionVisibility::Attended),
+            (
+                5,
+                AttentionVisibility::new(true, None, QueryPlacement::Last),
+            ),
+        ];
+        assert_past_reads_as_within(
+            &every_launch(),
+            &cases,
+            |launch, (queries, visibility), past| {
+                let length = match past {
+                    true => LENGTH_PAST_THE_KEYS,
+                    false => KEYS as u32,
+                };
+                let tensors = AttentionTensors::new(
+                    &client,
+                    random(&client, &[1, HEADS, queries, HEAD_DIM], 1),
+                    random(&client, &cache_shape, 2),
+                    random(&client, &cache_shape, 3),
+                    PlainTensor::of_u32s(&client, &[1], &[length]),
+                    AttentionScoring::standard(visibility, HEAD_DIM),
+                )
+                .expect("the case's tensors are verified");
+                launch(&Hardware::from_client(&client), tensors)
+                    .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+            },
+        );
+    }
 
-        let wrong: Vec<String> = AttentionKernel::all()
+    /// An entry of a page table past the pool reads the pool's last page, on every kernel that
+    /// reads pages: the same as an entry naming that page.
+    #[test]
+    fn a_page_past_the_pool_reads_its_last_page() {
+        const POOL: usize = KEYS / PAGE_SIZE;
+        const PAGE_PAST_THE_POOL: u32 = 100 * POOL as u32;
+        let client: Client = cubecl::test_device().client();
+        let pool_shape = [POOL, KV_HEADS, PAGE_SIZE, HEAD_DIM];
+        let cases = [AttentionVisibility::Attended];
+        assert_past_reads_as_within(&every_launch(), &cases, |launch, visibility, past| {
+            let mut table: Vec<u32> = (0..POOL as u32).collect();
+            if past {
+                table[POOL - 1] = PAGE_PAST_THE_POOL;
+            }
+            let tensors = AttentionTensors::paged(
+                &client,
+                random(&client, &[1, HEADS, 1, HEAD_DIM], 1),
+                random(&client, &pool_shape, 2),
+                random(&client, &pool_shape, 3),
+                PlainTensor::of_u32s(&client, &[1, POOL], &table),
+                PlainTensor::of_u32s(&client, &[1], &[KEYS as u32]),
+                AttentionScoring::standard(visibility, HEAD_DIM),
+            )
+            .expect("the case's tensors are verified");
+            launch(&Hardware::from_client(&client), tensors)
+                .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+        });
+    }
+
+    /// Queries lying end to end whose last end is past their count read and write no query past
+    /// them: every query there is is written as under ends that stop at the count, by the cube
+    /// routines, the only ones that read queries end to end.
+    #[test]
+    fn query_ends_past_the_queries_read_the_queries_there_are() {
+        const RUNS: [u32; 2] = [3, 2];
+        const END_PAST_THE_QUERIES: u32 = 1000;
+        let client: Client = cubecl::test_device().client();
+        let count = RUNS.iter().sum::<u32>() as usize;
+        let cache_shape = [RUNS.len(), KV_HEADS, KEYS, HEAD_DIM];
+        let launches: Vec<(String, LeadLaunch)> = vec![
+            (
+                "cube staged".to_string(),
+                Box::new(|hw, tensors| {
+                    DirectAttention(CubeStagedAttentionRoutine).launch_lead_on(hw, tensors)
+                }),
+            ),
+            (
+                "cube shuffle".to_string(),
+                Box::new(|hw, tensors| {
+                    DirectAttention(CubeShuffleAttentionRoutine).launch_lead_on(hw, tensors)
+                }),
+            ),
+        ];
+        let cases = [AttentionVisibility::Attended];
+        assert_past_reads_as_within(&launches, &cases, |launch, visibility, past| {
+            let last = match past {
+                true => END_PAST_THE_QUERIES,
+                false => count as u32,
+            };
+            let queries = AttentionQueries::Packed {
+                query: random(&client, &[count, HEADS, HEAD_DIM], 1),
+                ends: PlainTensor::of_u32s(&client, &[RUNS.len()], &[RUNS[0], last]),
+                longest: RUNS[0] as usize,
+                lengths: PlainTensor::of_u32s(&client, &[1], &[KEYS as u32]),
+            };
+            let kv = KvSource::new(AttentionCache::Float {
+                key: random(&client, &cache_shape, 2),
+                value: random(&client, &cache_shape, 3),
+            });
+            let tensors = AttentionTensors::attention(
+                &client,
+                queries,
+                kv,
+                AttentionScoring::standard(visibility, HEAD_DIM),
+            )
+            .expect("the case's tensors are verified");
+            launch(&Hardware::from_client(&client), tensors)
+                .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+        });
+    }
+
+    /// A launch of the tensors at its lead on a device.
+    type LeadLaunch = Box<dyn Fn(&Hardware, AttentionTensors) -> Result<TensorHandle, Decline>>;
+
+    /// Every kernel at its lead, and the hypercube stream routine, which no kernel names.
+    fn every_launch() -> Vec<(String, LeadLaunch)> {
+        let mut launches: Vec<(String, LeadLaunch)> = AttentionKernel::all()
             .into_iter()
-            .filter_map(|kernel| {
-                let expected = attend(kernel, KEYS as u32).ok()?;
-                let actual = attend(kernel, LENGTH_PAST_THE_KEYS).expect("the length is a value");
-                let compared = cubek_test_utils::assert_equals_approx(&actual, &expected, 1e-4);
-                (!matches!(compared, ValidationResult::Pass))
-                    .then(|| format!("{kernel:?}: {compared:?}"))
+            .map(|kernel| {
+                let launch: LeadLaunch =
+                    Box::new(move |hw, tensors| kernel.launch_lead_on(hw, tensors));
+                (format!("{kernel:?}"), launch)
             })
             .collect();
+        launches.push((
+            "hypercube stream".to_string(),
+            Box::new(|hw, tensors| {
+                DirectAttention(HypercubeStreamFragmentAttentionRoutine).launch_lead_on(hw, tensors)
+            }),
+        ));
+        launches
+    }
 
+    /// `f32` values of `shape` drawn uniformly from `[-1, 1)` under `seed`, on `client`.
+    fn random(client: &Client, shape: &[usize], seed: u64) -> PlainTensor {
+        PlainTensor::of_handle(
+            TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
+                .dtype(f32::elem_type_native())
+                .uniform(seed, -1.0, 1.0)
+                .generate_without_host_data(),
+        )
+    }
+
+    /// Each of `launches` on each of `cases`, `attend` writing the attention of its operands with a
+    /// value past its range where told so, against the same within range. A launch that declines
+    /// on this device is a skip and a broken one fails, as does a device on which none ran.
+    fn assert_past_reads_as_within<C: core::fmt::Debug + Copy>(
+        launches: &[(String, LeadLaunch)],
+        cases: &[C],
+        attend: impl Fn(&LeadLaunch, C, bool) -> Result<HostData, Decline>,
+    ) {
+        let (mut compared, mut wrong, mut declined) = (0, Vec::new(), Vec::new());
+        for (name, launch) in launches {
+            for &case in cases {
+                let case_name = format!("{name}, {case:?}");
+                match (attend(launch, case, false), attend(launch, case, true)) {
+                    (Ok(expected), Ok(actual)) => {
+                        compared += 1;
+                        let checked =
+                            cubek_test_utils::assert_equals_approx(&actual, &expected, 1e-4);
+                        if !matches!(checked, ValidationResult::Pass) {
+                            wrong.push(format!("{case_name}: {checked:?}"));
+                        }
+                    }
+                    (Err(decline), _) | (_, Err(decline)) => declined.push((case_name, decline)),
+                }
+            }
+        }
+        let broken: Vec<_> = declined.iter().filter(|(_, why)| why.is_broken()).collect();
+        assert!(broken.is_empty(), "{broken:#?}");
         assert!(wrong.is_empty(), "{wrong:#?}");
+        assert!(compared > 0, "no launch ran on this device: {declined:#?}");
+        for (case, why) in declined {
+            TestOutcome::Validated(ValidationResult::Skipped(format!("{case}: {why}"))).enforce();
+        }
     }
 }

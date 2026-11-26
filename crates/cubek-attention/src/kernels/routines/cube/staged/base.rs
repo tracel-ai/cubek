@@ -1,8 +1,7 @@
 use super::kernel::cube_staged_attention_kernel;
 use crate::kernels::{
-    AttentionBinding, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
-    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, KeyFixup, PackedLayout,
-    QueryOrder,
+    AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning, AttentionRoutine,
+    AttentionRoutineProblem, AttentionTensors, KeyFixup, PackedLayout, QueryOrder,
 };
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::{Decline, Vectorization};
@@ -176,10 +175,10 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAtte
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: CubeStagedAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
         // Its planes keep their sums in the first, read the query and the keys' stage in the
@@ -191,8 +190,9 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeStagedAtte
             .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, the keys and values are read no further than
-        // the attended length, and the kernel indexes no buffer but through its tiles and the
-        // length's first element; each plane's windows are its own.
+        // the attended length, capped at the keys there are, and the kernel indexes no buffer but
+        // through its tiles and each sequence's entry of the lengths and of the query ends; each
+        // plane's windows are its own.
         unsafe {
             cube_staged_attention_kernel::launch_unchecked(
                 tensors.client(),

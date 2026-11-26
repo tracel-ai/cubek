@@ -2,13 +2,12 @@ use super::kernel::{
     hypercube_attention_partial_kernel, hypercube_attention_partial_packed_kernel,
 };
 use crate::kernels::{
-    AttentionBinding, AttentionCacheBinding, AttentionRoutineProblem, AttentionSplitSlots,
-    AttentionTensors, HypercubeMerge, HypercubeShuffleAttentionRoutine,
-    HypercubeShuffleAttentionRoutineBlueprint, HypercubeShuffleMerge, PartialAttentionRoutine,
+    AttentionCacheBinding, AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors,
+    HypercubeMerge, HypercubeShuffleAttentionRoutine, HypercubeShuffleAttentionRoutineBlueprint,
+    HypercubeShuffleMerge, HypercubeShuffleOperands, PackedCacheBinding, PartialAttentionRoutine,
 };
-use cubecl::prelude::ComptimeOptionArgs;
-use cubecl::tile::StageStorage;
 use cubecl::tile::launch::Decline;
+use cubecl::tile::{StageStorage, TileTensorLaunch};
 use cubek_microkernel::attention::hypercube::HypercubeAttentionMicrokernel;
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::routine::Grid;
@@ -50,89 +49,116 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: HypercubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
         slots: &AttentionSplitSlots,
     ) -> Result<(), Decline> {
-        let problem = tensors.problem();
-        let shape = self.merge_shape(&problem, &blueprint);
-        let microkernel = blueprint.microkernel;
-        let width = blueprint.widths.query;
-        let (client, count, dim) = (
-            tensors.client(),
-            grid.launch.cube_count,
-            grid.launch.cube_dim,
-        );
-        let partitioning = binding.launcher.partitioning_arg();
-        let (queries, keys) = (problem.seq_q as u32, problem.seq_kv as u32);
-        let scale = tensors.scale();
-        let work_item = problem.work_item();
-        match binding.cache {
+        let binding = tensors.bind(&blueprint, &grid)?;
+        let (operands, cache) = HypercubeShuffleOperands::of(binding, grid);
+        match cache {
             AttentionCacheBinding::Tiles { key, value } => {
-                // SAFETY: the query, keys and values are bound through the launcher, which masks
-                // the reads of a tile the problem's edge cuts short, and the keys and values are
-                // read no further than the attended length. A cube writes no slot but its own, for
-                // the queries of its box the problem holds.
-                unsafe {
-                    hypercube_attention_partial_kernel::launch_unchecked(
-                        client,
-                        count,
-                        dim,
-                        width,
-                        binding.query,
-                        key,
-                        value,
-                        slots.out.clone().binding().into_tensor_arg(),
-                        slots.max.clone().binding().into_tensor_arg(),
-                        slots.sum.clone().binding().into_tensor_arg(),
-                        binding.mask.map(|mask| mask.arg()).into(),
-                        binding.lengths,
-                        queries,
-                        keys,
-                        scale,
-                        partitioning,
-                        microkernel,
-                        shape,
-                        problem.visibility,
-                        work_item.operand_elements(),
-                    );
-                }
+                self.leave_over_tiles(tensors, operands, key, value, &blueprint, slots)
             }
             AttentionCacheBinding::Packed(cache) => {
-                let fixup = match cache.fixup {
-                    Some(fixup) => ComptimeOptionArgs::Some(fixup),
-                    None => ComptimeOptionArgs::None,
-                };
-                // SAFETY: as the tiles'; a field indexes its codebook, which holds an entry for
-                // every index (`PackedAttentionCache::admit`).
-                unsafe {
-                    hypercube_attention_partial_packed_kernel::launch_unchecked(
-                        client,
-                        count,
-                        dim,
-                        width,
-                        binding.query,
-                        cache.key,
-                        cache.value,
-                        fixup,
-                        slots.out.clone().binding().into_tensor_arg(),
-                        slots.max.clone().binding().into_tensor_arg(),
-                        slots.sum.clone().binding().into_tensor_arg(),
-                        binding.mask.map(|mask| mask.arg()).into(),
-                        binding.lengths,
-                        queries,
-                        keys,
-                        scale,
-                        partitioning,
-                        microkernel,
-                        shape,
-                        problem.visibility,
-                        work_item.kernel_elements(),
-                    );
-                }
+                self.leave_over_packed(tensors, operands, cache, &blueprint, slots)
             }
         }
         Ok(())
+    }
+}
+
+impl HypercubeShufflePartialAttentionRoutine {
+    /// The launch over keys and values bound as tiles.
+    fn leave_over_tiles(
+        &self,
+        tensors: &AttentionTensors,
+        operands: HypercubeShuffleOperands,
+        key: TileTensorLaunch,
+        value: TileTensorLaunch,
+        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
+        slots: &AttentionSplitSlots,
+    ) {
+        let problem = tensors.problem();
+        let HypercubeShuffleOperands {
+            launcher,
+            query,
+            mask,
+            lengths,
+            grid,
+        } = operands;
+        // SAFETY: the query, keys and values are bound through the launcher, which masks the
+        // reads of a tile the problem's edge cuts short, and the keys and values are read no
+        // further than the attended length, which is capped at the keys there are. A cube writes
+        // no slot but its own, for the queries of its box the problem holds.
+        unsafe {
+            hypercube_attention_partial_kernel::launch_unchecked(
+                tensors.client(),
+                grid.launch.cube_count,
+                grid.launch.cube_dim,
+                blueprint.widths.query,
+                query,
+                key,
+                value,
+                slots.out.clone().binding().into_tensor_arg(),
+                slots.max.clone().binding().into_tensor_arg(),
+                slots.sum.clone().binding().into_tensor_arg(),
+                mask.map(|mask| mask.arg()).into(),
+                lengths,
+                problem.seq_q as u32,
+                problem.seq_kv as u32,
+                tensors.scale(),
+                launcher.partitioning_arg(),
+                blueprint.microkernel,
+                self.merge_shape(&problem, blueprint),
+                problem.visibility,
+                problem.work_item().operand_elements(),
+            );
+        }
+    }
+
+    /// The launch over a packed cache, which the planes decode as they read it.
+    fn leave_over_packed(
+        &self,
+        tensors: &AttentionTensors,
+        operands: HypercubeShuffleOperands,
+        cache: PackedCacheBinding,
+        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
+        slots: &AttentionSplitSlots,
+    ) {
+        let problem = tensors.problem();
+        let HypercubeShuffleOperands {
+            launcher,
+            query,
+            mask,
+            lengths,
+            grid,
+        } = operands;
+        // SAFETY: as the tiles' launch; a field indexes its codebook, which holds an entry for
+        // every index (`PackedAttentionCache::admit`).
+        unsafe {
+            hypercube_attention_partial_packed_kernel::launch_unchecked(
+                tensors.client(),
+                grid.launch.cube_count,
+                grid.launch.cube_dim,
+                blueprint.widths.query,
+                query,
+                cache.key,
+                cache.value,
+                cache.fixup.into(),
+                slots.out.clone().binding().into_tensor_arg(),
+                slots.max.clone().binding().into_tensor_arg(),
+                slots.sum.clone().binding().into_tensor_arg(),
+                mask.map(|mask| mask.arg()).into(),
+                lengths,
+                problem.seq_q as u32,
+                problem.seq_kv as u32,
+                tensors.scale(),
+                launcher.partitioning_arg(),
+                blueprint.microkernel,
+                self.merge_shape(&problem, blueprint),
+                problem.visibility,
+                problem.work_item().kernel_elements(),
+            );
+        }
     }
 }

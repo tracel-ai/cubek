@@ -34,6 +34,13 @@ pub const KEY_BLOCK_SPLITS_A_PAGE: Decline = Decline::Unserved {
           buffers",
 };
 
+/// What an attention routine declines where listed blocks of keys have no place of their own: a
+/// buffer of no page or sequence, or one whose positions lie at stride zero.
+pub const KEY_BLOCKS_UNPLACED: Decline = Decline::Unserved {
+    why: "listed blocks of keys lie in a buffer of at least one page or sequence, its positions \
+          apart",
+};
+
 /// What an attention routine declines where a packed cache is stated under per-tensor scales: its
 /// keys and values are read under the norms it stores.
 pub const SCALED_PACKED_UNREAD: Decline = Decline::Unserved {
@@ -190,19 +197,37 @@ impl KvSource {
     ///
     /// [`INDEXED_KEYS_UNREAD`] over a packed cache, [`INDEXED_VISIBILITY_UNREAD`] at any visibility
     /// but [`AttentionVisibility::Attended`], [`KEY_BLOCK_SPLITS_A_PAGE`] where a block
-    /// straddles a page or the key and value buffers place their blocks apart, and
+    /// straddles a page or the key and value buffers place their blocks apart,
+    /// [`KEY_BLOCKS_UNPLACED`] where a buffer leaves a block no place of its own, and
     /// [`CACHE_SHAPES_DISAGREE`], [`PACKED_CACHE_UNREAD`], [`PACKED_WIDTH_UNREAD`],
-    /// [`PAGE_TABLE_UNREAD`] and [`CACHE_SCALE_UNREAD`] for buffers no source holds.
+    /// [`PAGE_TABLE_UNREAD`] and [`CACHE_SCALE_UNREAD`] for buffers no source holds. Each is
+    /// returned before anything is allocated or launched.
     pub fn read_as_block_pages(
         self,
         client: &Client,
         visibility: AttentionVisibility,
     ) -> Result<Self, Decline> {
+        let pools = self.block_pools(visibility)?;
+        Ok(self.into_block_pages(client, pools))
+    }
+}
+
+impl KvSource {
+    /// The pools of one block each this source's buffers are viewed as, where it lists blocks:
+    /// every check [`read_as_block_pages`](Self::read_as_block_pages) makes, nothing allocated.
+    ///
+    /// # Errors
+    ///
+    /// As [`read_as_block_pages`](Self::read_as_block_pages).
+    pub(crate) fn block_pools(
+        &self,
+        visibility: AttentionVisibility,
+    ) -> Result<Option<BlockPools>, Decline> {
         self.admit()?;
-        let Some(blocks) = self.blocks else {
-            return Ok(self);
+        let Some(blocks) = &self.blocks else {
+            return Ok(None);
         };
-        let AttentionCache::Float { key, value } = self.cache else {
+        let AttentionCache::Float { key, value } = &self.cache else {
             return Err(INDEXED_KEYS_UNREAD);
         };
         if visibility != AttentionVisibility::Attended {
@@ -213,25 +238,40 @@ impl KvSource {
             .as_ref()
             .map_or(key.shape()[0], |pages| pages.shape()[0]);
         admit_table(&blocks.table, sequences)?;
+        let key_pool = BlockPool::of(key, blocks.size)?;
+        let value_pool = BlockPool::of(value, blocks.size)?;
+        let placed = |pool: &BlockPool| (pool.page_blocks, pool.blocks_per_page);
+        if placed(&key_pool) != placed(&value_pool) {
+            return Err(KEY_BLOCK_SPLITS_A_PAGE);
+        }
+        Ok(Some(BlockPools {
+            key: key_pool,
+            value: value_pool,
+            table: blocks.table.clone(),
+            sequences: key.shape()[0],
+        }))
+    }
+
+    /// This source read through `pools`, its [`block_pools`](Self::block_pools): as it is where
+    /// there are none.
+    pub(crate) fn into_block_pages(self, client: &Client, pools: Option<BlockPools>) -> Self {
+        let Some(pools) = pools else {
+            return self;
+        };
         let pages = self.pages.unwrap_or_else(|| {
-            let sequences = key.shape()[0];
+            let sequences = pools.sequences;
             let pages: Vec<u32> = (0..sequences as u32).collect();
             PlainTensor::of_u32s(client, &[sequences, 1], &pages)
         });
-        let key = BlockPool::of(&key, blocks.size)?;
-        let value = BlockPool::of(&value, blocks.size)?;
-        if key.page_blocks != value.page_blocks || key.blocks_per_page != value.blocks_per_page {
-            return Err(KEY_BLOCK_SPLITS_A_PAGE);
-        }
-        Ok(Self {
-            pages: Some(key.table(client, &blocks.table, &pages)),
+        Self {
+            pages: Some(pools.key.table(client, &pools.table, &pages)),
             cache: AttentionCache::Float {
-                key: key.view,
-                value: value.view,
+                key: pools.key.view,
+                value: pools.value.view,
             },
             blocks: None,
             scales: self.scales,
-        })
+        }
     }
 
     /// Whether the source's buffers are as it says they lie, whatever the query.
@@ -268,8 +308,8 @@ impl KvSource {
         Ok(())
     }
 
-    /// Whether `pages` is a table over the cache's pools, of rank four: the pool, its pages and
-    /// the table's rows not empty.
+    /// Whether `pages` is a table of rank two over the cache's pools: the pool, its pages and the
+    /// table's rows not empty.
     ///
     /// # Errors
     ///
@@ -370,6 +410,17 @@ pub(crate) fn page_table(pages: &PlainTensor) -> TileTensorLaunch {
     )
 }
 
+/// A source's key and value buffers each viewed as a pool of pages of one block each
+/// ([`KvSource::block_pools`]), with the listed blocks they read.
+pub(crate) struct BlockPools {
+    key: BlockPool,
+    value: BlockPool,
+    /// The `u32` blocks `[b, n]` each sequence reads ([`KeyBlocks::table`]).
+    table: PlainTensor,
+    /// The sequences or pages the cache's buffers hold.
+    sequences: usize,
+}
+
 /// One buffer of a cache viewed as a pool of pages of one block each: `[blocks, kv, size, ·]`,
 /// its first dim stepping a block of positions of the cache's first key head, its key heads a
 /// stride on, so a block and a key head name the block's positions of that head.
@@ -387,14 +438,15 @@ impl BlockPool {
     ///
     /// # Errors
     ///
-    /// [`KEY_BLOCK_SPLITS_A_PAGE`] where there is no page, `size` does not tile one, or a page's
-    /// stride is not a whole number of blocks.
+    /// [`KEY_BLOCKS_UNPLACED`] where there is no page or the positions lie at stride zero, and
+    /// [`KEY_BLOCK_SPLITS_A_PAGE`] where `size` does not tile a page or a page's stride is not a
+    /// whole number of blocks.
     fn of(buffer: &PlainTensor, size: NonZeroUsize) -> Result<Self, Decline> {
         let (shape, strides) = (buffer.shape(), &buffer.binding.strides);
         let size = size.get();
         let block_stride = size * strides[2];
         if shape[0] == 0 || block_stride == 0 {
-            return Err(KEY_BLOCK_SPLITS_A_PAGE);
+            return Err(KEY_BLOCKS_UNPLACED);
         }
         if !shape[2].is_multiple_of(size) || !strides[0].is_multiple_of(block_stride) {
             return Err(KEY_BLOCK_SPLITS_A_PAGE);

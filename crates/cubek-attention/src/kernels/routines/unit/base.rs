@@ -1,8 +1,7 @@
 use super::kernel::unit_attention_kernel;
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    PACKED_QUERIES_UNREAD,
+    ATTENTION_PACKED_UNREAD, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, Vectorization};
@@ -168,16 +167,16 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: UnitAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, the keys and values are read no further than
-        // the attended length, and the kernel indexes no buffer but through its tiles and the
-        // length's first element.
+        // the attended length, capped at the keys there are, and the kernel indexes no buffer but
+        // through its tiles and each sequence's entry of the lengths.
         unsafe {
             unit_attention_kernel::launch_unchecked(
                 tensors.client(),

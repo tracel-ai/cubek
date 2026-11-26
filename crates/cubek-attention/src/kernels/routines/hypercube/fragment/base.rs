@@ -1,8 +1,8 @@
 use super::kernel::hypercube_fragment_attention_kernel;
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors,
-    HypercubeMerge, PACKED_QUERIES_UNREAD, PartialAttentionRoutine, QueryOrder,
+    ATTENTION_PACKED_UNREAD, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
+    AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors, HypercubeMerge,
+    PACKED_QUERIES_UNREAD, PartialAttentionRoutine, QueryOrder,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::StageStorage;
@@ -183,11 +183,11 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: HypercubeFragmentPartialAttentionRoutineBlueprint,
         grid: Grid,
         slots: &AttentionSplitSlots,
     ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let shape = self.merge_shape(&problem, &blueprint);
         let microkernel = blueprint.microkernel;
@@ -200,7 +200,7 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
             .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads of a tile the
         // problem's edge cuts short, the keys and values are read no further than the attended
-        // length, and the output is read for its shape alone. A plane writes no slot but its own,
+        // length, capped at the keys there are, and the output is read for its shape alone. A plane writes no slot but its own,
         // for the rows of its box the problem holds.
         unsafe {
             hypercube_fragment_attention_kernel::launch_unchecked(

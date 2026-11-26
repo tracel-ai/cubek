@@ -1,8 +1,8 @@
 use super::kernel::hypercube_stream_fragment_attention_kernel;
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge, PACKED_QUERIES_UNREAD,
+    ATTENTION_PACKED_UNREAD, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
+    PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
@@ -237,10 +237,10 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: HypercubeStreamFragmentAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         let microkernel = blueprint.microkernel;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
@@ -255,7 +255,7 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
             .served_kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the keys and values are read no further
-        // than the attended length. A cube writes the output of a box its run holds whole, which
+        // than the attended length, capped at the keys there are. A cube writes the output of a box its run holds whole, which
         // no other cube touches, and no slot but its own of a box it shares; the last cube of a
         // box reads the box's slots, acquired after every holder stored its own, and writes its
         // output. A box's counter, one of the line's boxes, which the arrivals outnumber, starts

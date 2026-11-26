@@ -1,7 +1,7 @@
 use super::kernel::cube_shuffle_attention_kernel;
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
+    ATTENTION_PACKED_UNREAD, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, PLANE_SHUFFLE_ONE_WIDTH,
     PLANE_SHUFFLE_WIDTHS_DIFFER, QueryOrder,
 };
 use cubecl::tile::StageStorage;
@@ -12,7 +12,7 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Breakable, CubeResources, Grid, Routine};
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
 /// nothing else: each plane of the cube owns its rows of one head and reads its keys and values
@@ -139,8 +139,7 @@ impl Routine for CubeShuffleAttentionRoutine {
         // The plane shuffle lines every operand alike, and the kernel binds them at one width.
         let widths = &blueprint.widths;
         if [widths.key, widths.value, widths.out] != [widths.query; 3] {
-            log::error!("{PLANE_SHUFFLE_WIDTHS_DIFFER}");
-            return Err(PLANE_SHUFFLE_WIDTHS_DIFFER);
+            return Err(PLANE_SHUFFLE_WIDTHS_DIFFER).or_broken(PLANE_SHUFFLE_ONE_WIDTH);
         }
         Ok((blueprint, grid))
     }
@@ -150,16 +149,17 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: CubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, the keys and values are read no further than
-        // the attended length, and the kernel indexes no buffer but through its tiles and the
-        // length's first element; the slots the planes merge in are the cube's own.
+        // the attended length, capped at the keys there are, and the kernel indexes no buffer but
+        // through its tiles and each sequence's entry of the lengths and of the query ends; the
+        // slots the planes merge in are the cube's own.
         unsafe {
             cube_shuffle_attention_kernel::launch_unchecked(
                 tensors.client(),

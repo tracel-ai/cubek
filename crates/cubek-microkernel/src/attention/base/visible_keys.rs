@@ -30,12 +30,18 @@ pub struct VisibleKeys {
 
 #[cube]
 impl VisibleKeys {
-    /// What the queries of `owner`'s sequence and key head see: its sequence's entry of `len`,
-    /// read by stride, so a single length bound at stride zero is every sequence's, and no more
-    /// than the `keys` there are, so an entry past them reads no key past its buffer; `queries` of
-    /// them, or, where every sequence's queries lie end to end, the count of its run of
-    /// `query_ends`, their cumulative counts; and the cells of `mask`, over `[B, KV, G, Q, S]`,
-    /// where there is one.
+    /// What the queries of `owner`'s sequence and key head see: its sequence's attended length
+    /// ([`attended_length`](Self::attended_length)); `queries` of them, or, where every sequence's
+    /// queries lie end to end, the count of its run of `query_ends`, their cumulative counts; and
+    /// the cells of `mask`, over `[B, KV, G, Q, S]`, where there is one.
+    ///
+    /// # Assumptions
+    ///
+    /// `keys` is at most the positions the key and value buffers hold.
+    ///
+    /// # Guarantees
+    ///
+    /// No key at or past `keys` is seen, whatever `len` holds.
     #[allow(
         clippy::clone_on_copy,
         reason = "the cube macro expands no dereference of a comptime option, only its clone"
@@ -50,7 +56,7 @@ impl VisibleKeys {
         #[comptime] visibility: AttentionVisibility,
     ) -> VisibleKeys {
         let sequence = owner.origin(B);
-        let attended = len[sequence * len.stride(0)].min(keys);
+        let attended = VisibleKeys::attended_length(len, sequence, keys);
         let queries = query_ends
             .clone()
             .map::<u32, _>(|ends| {
@@ -78,6 +84,13 @@ impl VisibleKeys {
             mask: mask.clone().map(|mask| mask.at(owner).values()),
             visibility,
         }
+    }
+
+    /// The keys sequence `sequence` attends: its entry of `len`, read by stride, so a single
+    /// length bound at stride zero is every sequence's, and no more than the `keys` there are, so
+    /// a length past them attends as a length of the keys there are.
+    pub fn attended_length(len: &Tensor<u32>, sequence: usize, keys: u32) -> u32 {
+        len[sequence * len.stride(0)].min(keys)
     }
 
     /// What `queries` see of the first `keys` keys, with no mask: a launch that states the keys

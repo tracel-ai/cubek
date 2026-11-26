@@ -2,10 +2,15 @@ use crate::kernels::PackedCacheBinding;
 use cubecl::prelude::TensorArg;
 use cubecl::tile::launch::{Bound, Decline};
 use cubecl::tile::{Launcher, TileTensorLaunch};
+use cubek_std::routine::Breakable;
+
+/// What a routine that stages its keys rests on: a packed cache whose keys carry the QJL fix-up
+/// reaches no such routine.
+const A_STAGE_IS_ONE_TILE: &str = "a stage of keys should be one tile, and a fix-up is a second";
 
 /// A QJL fix-up reaching a routine that stages its keys.
 const FIXUP_IN_A_STAGE: Decline = Decline::Broken {
-    condition: "a stage of keys should be one tile, and a fix-up is a second",
+    condition: A_STAGE_IS_ONE_TILE,
     cause: None,
 };
 
@@ -13,8 +18,11 @@ const FIXUP_IN_A_STAGE: Decline = Decline::Broken {
 /// `Launcher` is not.
 pub struct AttentionBinding {
     pub launcher: Launcher,
+    /// The query, `[b, kv, g, q, d]`.
     pub query: TileTensorLaunch,
+    /// The keys and the values.
     pub cache: AttentionCacheBinding,
+    /// The output, `[b, kv, g, q, dv]`.
     pub out: TileTensorLaunch,
     /// Each query's logsumexp, where the tensors ask for it.
     pub logsumexp: Option<Bound>,
@@ -58,10 +66,7 @@ impl AttentionCacheBinding {
                 value,
                 fixup: None,
             }) => Ok((key, value)),
-            Self::Packed(_) => {
-                log::error!("{FIXUP_IN_A_STAGE}");
-                Err(FIXUP_IN_A_STAGE)
-            }
+            Self::Packed(_) => Err(FIXUP_IN_A_STAGE).or_broken(A_STAGE_IS_ONE_TILE),
         }
     }
 }

@@ -10,6 +10,17 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 /// keys where they lie, over the keys its rows see, and writing each row's logsumexp where the
 /// launch binds one. Each operand is read in its own element and widened into the sum, `EA`:
 /// the query in `EQ`, the keys in `EK`, the values in `EV`; the output is written in `EO`.
+///
+/// - `query`: the query, `[b, kv, g, q, d]`.
+/// - `key`, `value`: the keys and the values, read no further than each sequence's attended length.
+/// - `out`: the output, `[b, kv, g, q, dv]`.
+/// - `logsumexp`: each query's logsumexp, `[b, kv, g, q]`, where the launch binds one.
+/// - `mask`: which keys each query does not see, `[b, kv, g, q, s]`, where the launch binds one.
+/// - `len`: each sequence's attended length, `[b]`, read by stride.
+/// - `query_ends`: the cumulative counts of the sequences' queries, `[b]`, where they lie end to
+///   end.
+/// - `queries`, `keys`: queries and keys a sequence; a length past `keys` attends as `keys`.
+/// - `scale`: what each dot product is scaled by before the softmax.
 #[cube(launch_unchecked)]
 pub fn cube_shuffle_attention_kernel<
     EA: Float,
