@@ -5,9 +5,16 @@ use cubek_microkernel::attention::cube::{
 };
 use cubek_microkernel::attention::{AttentionVisibility, S, VisibleKeys};
 
-/// Every cube running the cube microkernel on its box with planes that read its stage, held as
-/// `storage`, over the keys its rows see, and writing each row's logsumexp where the launch binds
+/// Every cube running the cube microkernel on its box with planes that read its stage, laid out
+/// as `storage`, over the keys its rows see, and writing each row's logsumexp where the launch binds
 /// one.
+///
+/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `len`, `keys`, `scale`: as
+///   `unit_attention_kernel`'s.
+/// - `query_ends`: the cumulative counts of the sequences' queries, `[b]`, where they lie end to
+///   end.
+/// - `queries`: the queries a sequence has, or, where they lie end to end, all of them, which caps
+///   their ends.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "the query and keys' stage element is defined from them at launch, which the kernel \

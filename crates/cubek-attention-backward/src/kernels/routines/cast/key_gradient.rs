@@ -50,10 +50,17 @@ impl CastKeyGradientRoutine {
     ) -> CastKeyGradientBlueprint {
         summed.placement()
     }
+
+    /// Every plane of `walk` casting its keys' and values' gradients out of `sums` into the
+    /// gradients of `tensors`.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`].
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

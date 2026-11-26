@@ -14,6 +14,14 @@ use cubek_microkernel::split_keys_merge::hypercube::{
 /// logsumexp where the launch binds one. Each operand is read in its own element and widened into
 /// the sum, `EA`: the query in `EQ`, the keys in `EK`, the values in `EV`; the output is written in
 /// `EO`.
+///
+/// - `query`, `key`, `value`, `logsumexp`, `mask`, `len`, `queries`, `keys`, `scale`: as
+///   `unit_attention_kernel`'s.
+/// - `out`: the output, `[b, kv, g, q, dv]`, written by each box's last arrival.
+/// - `slot_out`, `slot_max`, `slot_sum`: each cube's partial output, running max and running sum, a
+///   slot for every cube sharing its box
+///   ([`AttentionSplitSlots`](crate::kernels::AttentionSplitSlots)).
+/// - `arrivals`: a `u32` counter a box, at zero, where its cubes count themselves in.
 #[cube(launch_unchecked)]
 pub fn hypercube_attention_arrival_kernel<
     EA: Float,
@@ -98,6 +106,11 @@ pub fn hypercube_attention_arrival_kernel<
 
 /// [`hypercube_attention_arrival_kernel`] over a packed cache, its planes decoding the keys and
 /// values as they read them ([`PackedStepReads`]).
+///
+/// - `query`, `key`, `value`, `out`, `slot_out`, `slot_max`, `slot_sum`, `arrivals`, `mask`, `len`,
+///   `queries`, `keys`, `scale`: as [`hypercube_attention_arrival_kernel`]'s, the keys and values
+///   packed.
+/// - `key_fixup`: the keys' QJL fix-up, where the cache carries one.
 #[cube(launch_unchecked)]
 pub fn hypercube_attention_arrival_packed_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,

@@ -49,9 +49,14 @@ where
     /// Both launches in order over `tensors`: the partial routine's `blueprint` on `grid`, then
     /// `merge` over the slots it leaves.
     ///
+    /// # Guarantees
+    ///
+    /// Where it errs, the slots are allocated and nothing is launched but a conversion of the
+    /// query; the merge is not launched.
+    ///
     /// # Errors
     ///
-    /// As [`AttentionTensors::bind`] and [`PartialAttentionRoutine::dispatch`], neither launched.
+    /// As [`PartialAttentionRoutine::dispatch`].
     pub fn dispatch(
         &self,
         tensors: &AttentionTensors,
@@ -60,9 +65,7 @@ where
         merge: PlaneSplitKeysMergeBlueprint,
     ) -> Result<(), Decline> {
         let slots = tensors.split_slots(merge.merge.slots.splits);
-        let binding = tensors.bind(&blueprint, &grid)?;
-        self.partial
-            .dispatch(tensors, binding, blueprint, grid, &slots)?;
+        self.partial.dispatch(tensors, blueprint, grid, &slots)?;
         PlaneSplitKeysMergeRoutine.dispatch(tensors, merge, slots);
         Ok(())
     }

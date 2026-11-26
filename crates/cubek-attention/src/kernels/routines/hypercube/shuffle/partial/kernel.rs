@@ -10,6 +10,10 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 /// keys and values from tiles, leaving its partial in its slot for the split-keys merge. Each
 /// operand is read in its own element and widened into the sum, `EA`: the query in `EQ`, the keys
 /// in `EK`, the values in `EV`. The output, which the merge writes, is not read here.
+///
+/// - `query`, `key`, `value`, `mask`, `len`, `queries`, `keys`, `scale`: as
+///   `unit_attention_kernel`'s.
+/// - `slot_out`, `slot_max`, `slot_sum`: as `hypercube_attention_arrival_kernel`'s.
 #[cube(launch_unchecked)]
 #[allow(
     clippy::extra_unused_type_parameters,
@@ -91,6 +95,10 @@ pub fn hypercube_attention_partial_kernel<
 
 /// [`hypercube_attention_partial_kernel`] over a packed cache, its planes decoding the keys and
 /// values as they read them ([`PackedStepReads`]).
+///
+/// - `query`, `key`, `value`, `slot_out`, `slot_max`, `slot_sum`, `mask`, `len`, `queries`, `keys`,
+///   `scale`: as [`hypercube_attention_partial_kernel`]'s, the keys and values packed.
+/// - `key_fixup`: the keys' QJL fix-up, where the cache carries one.
 #[cube(launch_unchecked)]
 pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     query: &TileTensor<'_>,

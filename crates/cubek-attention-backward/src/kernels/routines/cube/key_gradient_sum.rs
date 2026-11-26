@@ -33,10 +33,16 @@ impl CubeStagedKeyGradientSumRoutine {
             cubes_with_heads_apart(tiling, problem.group)
         })
     }
+
+    /// The cubes of `walk` adding their parts of the keys' and values' gradients into `sums`.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`].
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

@@ -30,7 +30,6 @@ cubecl-common = { workspace = true }
 
 bytemuck = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
-log = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

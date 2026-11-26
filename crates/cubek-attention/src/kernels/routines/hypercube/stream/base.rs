@@ -1,8 +1,8 @@
 use super::kernel::hypercube_stream_fragment_attention_kernel;
 use crate::kernels::{
-    ATTENTION_PACKED_UNREAD, AttentionBinding, AttentionBlueprint, AttentionCacheLayout,
-    AttentionPartitioning, AttentionRoutine, AttentionRoutineProblem, AttentionTensors,
-    HypercubeMerge, PACKED_QUERIES_UNREAD,
+    ATTENTION_PACKED_UNREAD, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
+    AttentionRoutine, AttentionRoutineProblem, AttentionTensors, HypercubeMerge,
+    PACKED_QUERIES_UNREAD,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, VectorRequirement, Vectorization};
@@ -176,7 +176,7 @@ impl Routine for HypercubeStreamFragmentAttentionRoutine {
     /// The best hypercube of plane fragments at the settings, its grid the device's workers times
     /// the setting's count, sharing the line of every box's steps
     /// ([`AttentionPartitioning::shared`]), each cube holding the shared memory its microkernel
-    /// asks for, its stages held as its planes read them, and the word it learns it came last in.
+    /// asks for, its stages laid out as its planes read them, and the word it learns it came last in.
     /// Declines a cache of pages, which a run would walk across, and a packed one.
     fn prepare(
         hw: &Hardware,
@@ -237,15 +237,15 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
     fn dispatch(
         &self,
         tensors: &AttentionTensors,
-        binding: AttentionBinding,
         blueprint: HypercubeStreamFragmentAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
+        let binding = tensors.bind(&blueprint, &grid)?;
         let microkernel = blueprint.microkernel;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
         let splits = Self::splits(&problem, &blueprint.partitioning);
-        let slots = tensors.split_slots(splits);
+        let [slot_out, slot_max, slot_sum] = tensors.split_slots(splits).to_args();
         let arrivals = tensors.box_arrivals(microkernel.cube.seq_q());
         // Its planes keep their sums in the first, write the output in the second, read the
         // query and the keys' stage in the third and cast their probabilities to the values'
@@ -253,14 +253,15 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         let [sum, out, staged, probabilities] = microkernel
             .served(&problem.work_item())
             .served_kernel_elements();
-        // SAFETY: every operand is bound through the launcher, which masks the reads and writes
-        // of a tile the problem's edge cuts short, and the keys and values are read no further
-        // than the attended length. A cube writes the output of a box its run holds whole, which
-        // no other cube touches, and no slot but its own of a box it shares; the last cube of a
-        // box reads the box's slots, acquired after every holder stored its own, and writes its
-        // output. A box's counter, one of the line's boxes, which the arrivals outnumber, starts
-        // at zero, as every launch leaves it; a box whose counter does not is merged early or
-        // never, which costs its answer: no access leaves its buffer.
+        // SAFETY: every operand is bound through the launcher, which masks the reads and writes of
+        // a tile the problem's edge cuts short, and the keys and values are read no further than
+        // the attended length, capped at the keys the launch is given, the problem's positions the
+        // buffers or their table reach. A cube writes the output of a box its run holds whole,
+        // which no other cube touches, and no slot but its own of a box it shares; the last cube of
+        // a box reads the box's slots, acquired after every holder stored its own, and writes its
+        // output. A box's counter, one of the line's boxes, which the arrivals outnumber, starts at
+        // zero, as every launch leaves it; a box whose counter does not is merged early or never,
+        // which costs its answer: no access leaves its buffer.
         unsafe {
             hypercube_stream_fragment_attention_kernel::launch_unchecked(
                 tensors.client(),
@@ -270,12 +271,12 @@ impl AttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
                 key,
                 value,
                 binding.out,
-                binding.logsumexp.map(|logsumexp| logsumexp.arg()).into(),
-                slots.out.binding().into_tensor_arg(),
-                slots.max.binding().into_tensor_arg(),
-                slots.sum.binding().into_tensor_arg(),
+                binding.logsumexp.into(),
+                slot_out,
+                slot_max,
+                slot_sum,
                 arrivals.binding.into_tensor_arg().into_buffer_arg(),
-                binding.mask.map(|mask| mask.arg()).into(),
+                binding.mask.into(),
                 binding.lengths,
                 problem.seq_q as u32,
                 problem.seq_kv as u32,

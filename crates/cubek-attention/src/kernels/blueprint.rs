@@ -8,9 +8,13 @@ use cubek_microkernel::attention::AttentionMicrokernel;
 use cubek_microkernel::attention::{AttentionOperand, AttentionOperands, CacheLines, S};
 use cubek_std::Hardware;
 
-/// A plane shuffle whose operands bind at other widths than the query's: it lines every one alike.
+/// What a plane shuffle rests on: it lines every operand alike, at the query's width.
+pub(crate) const PLANE_SHUFFLE_ONE_WIDTH: &str =
+    "the plane shuffle's operands should share one width";
+
+/// A plane shuffle whose operands bind at other widths than the query's.
 pub(crate) const PLANE_SHUFFLE_WIDTHS_DIFFER: Decline = Decline::Broken {
-    condition: "the plane shuffle's operands should share one width",
+    condition: PLANE_SHUFFLE_ONE_WIDTH,
     cause: None,
 };
 

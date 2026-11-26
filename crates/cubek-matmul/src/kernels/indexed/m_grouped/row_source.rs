@@ -3,7 +3,6 @@ use crate::kernels::indexed::m_grouped::{
     GATED_ROWS_UNREAD, GROUPED_ROWS_UNREAD, ROUTE_SORT_UNREAD,
 };
 use crate::kernels::indexed::m_grouped::{GroupedRows, PaddedRows, RouteSort};
-use crate::kernels::indexed::stack::admit_ends;
 use crate::kernels::tensor::PlainTensor;
 use cubecl::client::Client;
 use cubecl::tile::launch::Decline;
@@ -67,21 +66,6 @@ impl MGroupedRowSource {
         }
     }
 
-    /// Whether the rows are as a product grouping them into `groups` pads them.
-    ///
-    /// # Errors
-    ///
-    /// [`GROUPED_ROWS_UNREAD`], [`ROUTE_SORT_UNREAD`], or [`GATED_ROWS_UNREAD`].
-    pub(crate) fn admit(&self, groups: usize) -> Result<(), Decline> {
-        match self {
-            Self::Sorted(rows) => GroupedRows::admit_rows(rows),
-            Self::Routed { tokens, sort } => {
-                GroupedRows::admit_rows(tokens).and_then(|()| sort.admit())
-            }
-            Self::Gated(both) => both.admit_gated(groups),
-        }
-    }
-
     /// Which source this is, as the autotune key tells them apart.
     pub fn kind(&self) -> MGroupedRowSourceKind {
         match self {
@@ -105,27 +89,47 @@ impl MGroupedRowSource {
     ///
     /// # Assumptions
     ///
-    /// The ends never decrease, and the last is the rows' count. The places of a routed source
-    /// name each route once.
+    /// The places of a routed source name each of its routes once.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`GroupedRows::new`].
     ///
     /// # Errors
     ///
     /// As [`GroupedRows::new`], and [`GROUPED_ROWS_UNREAD`], [`ROUTE_SORT_UNREAD`] or
-    /// [`GATED_ROWS_UNREAD`] for rows no layout of these groups pads.
+    /// [`GATED_ROWS_UNREAD`] for rows no layout of these groups pads, before anything is launched.
     pub fn pad(
         self,
         client: &Client,
         ends: PlainTensor,
         align: usize,
     ) -> Result<PaddedRows, Decline> {
-        admit_ends(&ends)?;
+        GroupedRows::admit_layout(&ends, align)?;
         self.admit(ends.shape().num_elements())?;
-        let layout = GroupedRows::new(client, ends, self.rows(), align)?;
+        let layout = GroupedRows::laid_out(client, ends, self.rows(), align);
         let rows = match self {
             Self::Sorted(rows) => layout.pad(rows),
             Self::Routed { tokens, sort } => layout.pad_routes(tokens, sort),
             Self::Gated(both) => layout.gate(&both),
         };
-        PaddedRows::new(rows, layout)
+        Ok(PaddedRows::laid_out(rows, layout))
+    }
+}
+
+impl MGroupedRowSource {
+    /// Whether the rows are as a product grouping them into `groups` pads them.
+    ///
+    /// # Errors
+    ///
+    /// [`GROUPED_ROWS_UNREAD`], [`ROUTE_SORT_UNREAD`], or [`GATED_ROWS_UNREAD`].
+    pub(crate) fn admit(&self, groups: usize) -> Result<(), Decline> {
+        match self {
+            Self::Sorted(rows) => GroupedRows::admit_rows(rows),
+            Self::Routed { tokens, sort } => {
+                GroupedRows::admit_rows(tokens).and_then(|()| sort.admit(tokens.shape()[0]))
+            }
+            Self::Gated(both) => both.admit_gated(groups),
+        }
     }
 }

@@ -120,6 +120,24 @@ impl PackedAttentionCache {
         }
     }
 
+    /// Coordinates a vector holds: the head dim of the codes.
+    pub fn coords(&self) -> usize {
+        self.key.words.shape()[3] * 32 / self.bits.key as usize
+    }
+
+    /// What a launch over this cache compiles about it.
+    pub fn layout(&self) -> PackedLayout {
+        PackedLayout {
+            bits: self.bits,
+            fixup: match self.fixup {
+                Some(_) => KeyFixup::Qjl,
+                None => KeyFixup::RoundOnly,
+            },
+        }
+    }
+}
+
+impl PackedAttentionCache {
     /// Whether the attention reads the cache's buffers as they are: widths it decodes, each
     /// buffer of rank four and of the same rows as the keys' words, `u32` words whose fields of a
     /// row are adjacent, `f32` norms, codebooks and fix-up, and a codebook entry for every index.
@@ -176,22 +194,6 @@ impl PackedAttentionCache {
             return Err(PACKED_CACHE_UNREAD);
         }
         Ok(())
-    }
-
-    /// Coordinates a vector holds: the head dim of the codes.
-    pub fn coords(&self) -> usize {
-        self.key.words.shape()[3] * 32 / self.bits.key as usize
-    }
-
-    /// What a launch over this cache compiles about it.
-    pub fn layout(&self) -> PackedLayout {
-        PackedLayout {
-            bits: self.bits,
-            fixup: match self.fixup {
-                Some(_) => KeyFixup::Qjl,
-                None => KeyFixup::RoundOnly,
-            },
-        }
     }
 }
 
@@ -320,6 +322,7 @@ const CHECKED_BY_ATTENTION: &str =
 
 #[cfg(test)]
 mod tests {
+    use crate::kernels::queries::tests::{LeadLaunch, assert_past_reads_as_within};
     use crate::kernels::*;
     use cubecl::client::Client;
     use cubecl::prelude::*;
@@ -433,10 +436,11 @@ mod tests {
                 .collect()
         }
 
-        /// The queries on `client`: dense `[b, h, 1, d]` at a decode step, end to end otherwise.
-        fn queries(self, client: &Client) -> AttentionQueries {
+        /// The queries on `client`, each sequence attending its entry of `lengths`: dense
+        /// `[b, h, 1, d]` at a decode step, end to end otherwise.
+        fn queries(self, client: &Client, lengths: &[u32; SEQUENCES_COUNT]) -> AttentionQueries {
             let heads = KV_HEADS_COUNT * GROUP_HEADS_COUNT;
-            let lengths = PlainTensor::of_u32s(client, &[SEQUENCES_COUNT], &LENGTHS);
+            let lengths = PlainTensor::of_u32s(client, &[SEQUENCES_COUNT], lengths);
             let query = |shape: &[usize]| {
                 PlainTensor::of_handle(
                     TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
@@ -650,9 +654,19 @@ mod tests {
 
     /// The attention `kind` states over a paged pool, on `client`.
     fn paged_attention(client: &Client, pool: &PagedPool, kind: PagedCaseKind) -> AttentionTensors {
+        attention_attending(client, pool, kind, &LENGTHS)
+    }
+
+    /// [`paged_attention`], each sequence attending its entry of `lengths`.
+    fn attention_attending(
+        client: &Client,
+        pool: &PagedPool,
+        kind: PagedCaseKind,
+        lengths: &[u32; SEQUENCES_COUNT],
+    ) -> AttentionTensors {
         AttentionTensors::attention(
             client,
-            kind.queries(client),
+            kind.queries(client, lengths),
             pool.source(client, kind.fixup()),
             kind.scoring(),
         )
@@ -713,6 +727,63 @@ mod tests {
     #[test]
     fn the_staged_cube_reads_round_only_pages_under_query_runs() {
         check_paged_read(PagedCaseKind::RoundOnlyRuns, STAGED_CUBE);
+    }
+
+    /// A length past the keys a sequence's row of the table reaches attends as a length of those
+    /// keys, for every reader of every case: the staged cube, and both hypercube shuffles decoding
+    /// their keys at a decode step, round-only and under the QJL fix-up, and causal runs of
+    /// queries end to end.
+    #[test]
+    fn a_length_past_the_pages_attends_the_pages() {
+        let keys = (ROW_PAGES_COUNT * PAGE_POSITIONS_COUNT) as u32;
+        check_past_reads(|client, kind, past| {
+            let length = match past {
+                true => 3 * keys,
+                false => keys,
+            };
+            attention_attending(client, &PagedPool::new(), kind, &[length; SEQUENCES_COUNT])
+        });
+    }
+
+    /// A page of a sequence's row of the table past the pool reads the pool's last page, for every
+    /// reader of every case: the same as an entry naming that page.
+    #[test]
+    fn a_page_past_the_pool_reads_its_last_page() {
+        check_past_reads(|client, kind, past| {
+            let mut pool = PagedPool::new();
+            pool.table[0] = match past {
+                true => 100 * POOL_PAGES_COUNT as u32,
+                false => POOL_PAGES_COUNT as u32 - 1,
+            };
+            paged_attention(client, &pool, kind)
+        });
+    }
+
+    /// Every reader of every case on the tensors `attend` states with a value past its range where
+    /// told so, against the same within range
+    /// ([`assert_past_reads_as_within`](crate::kernels::queries::tests::assert_past_reads_as_within)).
+    /// A device without the committed plane width every packed reader runs on reports a skip.
+    fn check_past_reads(attend: impl Fn(&Client, PagedCaseKind, bool) -> AttentionTensors) {
+        let client: Client = cubecl::test_device().client();
+        if let Err(decline) = Hardware::from_client(&client).plane_dim() {
+            let why = format!("no packed reader runs on this device: {decline:?}");
+            return TestOutcome::Validated(ValidationResult::Skipped(why)).enforce();
+        }
+        for kind in PagedCaseKind::ALL {
+            let readers: Vec<(String, LeadLaunch)> = kind
+                .readers()
+                .iter()
+                .map(|&kernel| {
+                    let launch: LeadLaunch =
+                        Box::new(move |hw, tensors| kernel.launch_lead_on(hw, tensors));
+                    (format!("{kernel:?}"), launch)
+                })
+                .collect();
+            assert_past_reads_as_within(&readers, &[kind], |launch, kind, past| {
+                launch(&Hardware::from_client(&client), attend(&client, kind, past))
+                    .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+            });
+        }
     }
 
     /// No kernel but a case's readers reads its paged pool: each other one declines it.

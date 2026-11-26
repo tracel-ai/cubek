@@ -339,6 +339,21 @@ fn a_sort_of_no_slot_declines() {
     assert_eq!(declined, Some(ROUTE_SORT_UNREAD));
 }
 
+/// Places past a route of its tokens: two tokens of two slots hold four routes, which five places
+/// outnumber, the fifth reading a third token.
+#[test]
+fn a_sort_of_more_places_than_routes_declines() {
+    let sort = RouteSort {
+        route_at_place: u32s(&client(), &[0, 1, 2, 3, 4]),
+        slots: 2,
+    };
+    let tokens = two_rows(4);
+
+    let declined = declined(MGroupedRowSource::Routed { tokens, sort });
+
+    assert_eq!(declined, Some(ROUTE_SORT_UNREAD));
+}
+
 /// Two rows of `width` padded a row a tile, grouped by `ends`.
 fn padded(width: usize, ends: &[u32]) -> PaddedRows {
     let client = client();

@@ -65,9 +65,6 @@ impl core::fmt::Debug for RoutedMatmulTensors {
 }
 
 impl RoutedMatmulTensors {
-    /// The most rows a key tells apart: past it a grid is full whatever the count.
-    const ROWS_KEYED: usize = 65536;
-
     /// `lhs[rows, k]` against the stack `rhs` of `experts` slabs laid `along`, float or packed,
     /// each row routed to the slabs its row of `routes[rows, slots]` names, on `client`'s device.
     /// The rows and the routes are made dense, and a float stack is copied only where it is
@@ -174,6 +171,10 @@ impl RoutedMatmulTensors {
     /// The product on `routine` at `settings`, prepared for `hw`: `[rows, slots, n]` at the
     /// lhs's element. No row is an empty answer, with no launch.
     ///
+    /// # Guarantees
+    ///
+    /// A decline of the stack as it is stored comes before the output is allocated.
+    ///
     /// # Errors
     ///
     /// Why `hw` cannot run the product at these settings, or why the routine declines a table or
@@ -188,8 +189,12 @@ impl RoutedMatmulTensors {
         Mk: MatmulMicrokernel,
         R: MatmulRoutine<Mk, SM>,
     {
+        if self.rows() == 0 {
+            return Ok(self.output());
+        }
+        let operands = self.operands()?;
         let out = self.output();
-        self.launch_into(hw, routine, settings, &out)?;
+        self.launch_operands_into(hw, routine, settings, operands, &out)?;
         Ok(out)
     }
 
@@ -213,9 +218,8 @@ impl RoutedMatmulTensors {
         if self.rows() == 0 {
             return Ok(());
         }
-        let (lhs, stack, table) = self.operands()?;
-        let bound = self.batched(out);
-        routine.launch_indexed_into(hw, &self.client, lhs, stack, table, bound, settings)
+        let operands = self.operands()?;
+        self.launch_operands_into(hw, routine, settings, operands, out)
     }
 
     /// Whether `R` at `settings` prepares the product on `hw`, of a row at least.
@@ -293,6 +297,11 @@ impl RoutedMatmulTensors {
 }
 
 impl RoutedMatmulTensors {
+    /// The most rows a key tells apart: past it a grid is full whatever the count.
+    const ROWS_KEYED: usize = 65536;
+}
+
+impl RoutedMatmulTensors {
     /// Each row's routes, `u32`.
     #[cfg(test)]
     pub(crate) fn routes(&self) -> &PlainTensor {
@@ -321,6 +330,28 @@ impl RoutedMatmulTensors {
             entries: self.routes.as_rows(rows, slots),
         };
         Ok((lhs, self.along.read_slabs(&self.rhs, self.experts)?, table))
+    }
+
+    /// The product of `operands`, this product's ([`operands`](Self::operands)), on `routine`
+    /// at `settings`, prepared for `hw`, into `out`.
+    ///
+    /// # Errors
+    ///
+    /// As [`launch`](Self::launch).
+    fn launch_operands_into<Mk, SM, R>(
+        &self,
+        hw: &Hardware,
+        routine: &R,
+        settings: &R::Settings,
+        (lhs, stack, table): (PlainTensor, StoredTensor, MatmulIndexTable),
+        out: &TensorHandle,
+    ) -> Result<(), Decline>
+    where
+        Mk: MatmulMicrokernel,
+        R: MatmulRoutine<Mk, SM>,
+    {
+        let bound = self.batched(out);
+        routine.launch_indexed_into(hw, &self.client, lhs, stack, table, bound, settings)
     }
 
     /// `out`, the product's `[rows, slots, n]`, as the dense routines write it: each row's slot a

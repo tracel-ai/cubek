@@ -43,10 +43,18 @@ pub trait AttentionBackwardLaunch {
 
     /// Launch every routine `blueprint` holds, in order, over `tensors`.
     ///
+    /// # Assumptions
+    ///
+    /// `blueprint` is what [`prepare`](Self::prepare) gave for `tensors`' problem on their device.
+    ///
+    /// # Guarantees
+    ///
+    /// Where it errs, the routine that erred launched nothing, and the gradients hold what the
+    /// routines before it wrote, which no caller reads until another dispatch writes them whole.
+    ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`]: the routines before the one that errs have launched,
-    /// and the gradients hold nothing a caller may read until another strategy writes them.
+    /// [`Decline::Broken`] where the tile engine refuses what a routine prepared.
     fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

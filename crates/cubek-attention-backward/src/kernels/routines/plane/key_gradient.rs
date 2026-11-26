@@ -81,10 +81,16 @@ impl PlaneFragmentKeyGradientRoutine {
             PlaneFragmentAttentionBackwardSharedMemory { ring, planes },
         ))
     }
+
+    /// The planes of `walk` writing `tensors`' keys' and values' gradients.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`].
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

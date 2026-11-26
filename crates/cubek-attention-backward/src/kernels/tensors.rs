@@ -52,13 +52,6 @@ impl core::fmt::Debug for AttentionBackwardTensors {
 }
 
 impl AttentionBackwardTensors {
-    /// The elements the routines are verified at.
-    pub(crate) const VERIFIED: [ElemType; 3] = [
-        ElemType::Float(FloatKind::F32),
-        ElemType::Float(FloatKind::F16),
-        ElemType::Float(FloatKind::BF16),
-    ];
-
     /// The backward pass of the attention of `query` (`[b, h, q, d]`) over `key` (`[b, kv, s, d]`)
     /// and `value` (`[b, kv, s, dv]`), the queries the last `q` positions of the keys, each seeing
     /// them as `visibility` says, each score taking `scale`: `out` (`[b, h, q, dv]`) and
@@ -190,6 +183,15 @@ impl AttentionBackwardTensors {
     pub fn into_gradients(self) -> AttentionBackwardGradients {
         self.gradients
     }
+}
+
+impl AttentionBackwardTensors {
+    /// The elements the routines are verified at.
+    pub(crate) const VERIFIED: [ElemType; 3] = [
+        ElemType::Float(FloatKind::F32),
+        ElemType::Float(FloatKind::F16),
+        ElemType::Float(FloatKind::BF16),
+    ];
 }
 
 impl AttentionBackwardTensors {
