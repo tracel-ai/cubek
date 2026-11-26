@@ -3,8 +3,8 @@ use super::kernel::{
 };
 use crate::kernels::{
     PARTIALS, REDUCED, ReduceBinding, ReduceBlueprint, ReducePartials, ReduceRoutine,
-    ReduceRoutineProblem, WORKSPACE_LOST, bound_at, each_microkernel_with, estimated_work,
-    split_launch,
+    ReduceRoutineProblem, WORKSPACE_CHECKED_BY_PREPARE, bound_at, each_microkernel_with,
+    estimated_work, split_launch,
 };
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
@@ -19,7 +19,7 @@ use cubek_microkernel::reduce::hypercube::HypercubeLastArrivalReduceMicrokernel;
 use cubek_microkernel::reduce::{ReduceCarrierFamily, ReduceOperand};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Breakable, CubeResources, Grid, Routine};
 
 /// Every row split into parts along the reduced dim, a cube a part, which reduces it as the cube
 /// routine reduces a row; the last of a row's cubes to finish merges the parts: few rows, too long
@@ -237,7 +237,9 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
         // every part's carrier, each stored by its part's cube before any is read, so they start
         // unset; the counters, one a box of rows, hold zero, as the caller gave them and as every
         // launch leaves them. All of it is the caller's workspace, which prepare checked.
-        let workspace = binding.workspace.clone().ok_or(WORKSPACE_LOST)?;
+        let Some(workspace) = binding.workspace.clone() else {
+            return Breakable::broken(WORKSPACE_CHECKED_BY_PREPARE);
+        };
         let partial_count = blueprint.partitioning.space().extent(PARTIALS);
         let partial_shape = problem.shape_with_reduced_count(partial_count);
         let counter = ElemType::UInt(UIntKind::U32);
