@@ -245,7 +245,7 @@ impl KvSource {
         admit_table(&blocks.table, sequences)?;
         let key_pool = BlockPool::of(key, blocks.size)?;
         let value_pool = BlockPool::of(value, blocks.size)?;
-        let placed = |pool: &BlockPool| (pool.page_blocks, pool.blocks_per_page);
+        let placed = |pool: &BlockPool| (pool.page_step_block_count, pool.page_block_count);
         if placed(&key_pool) != placed(&value_pool) {
             return Err(KEY_BLOCK_SPLITS_A_PAGE);
         }
@@ -263,7 +263,7 @@ impl KvSource {
             return self;
         };
         let pages = self.pages.unwrap_or_else(|| {
-            let sequences = pools.key.pages;
+            let sequences = pools.key.page_count;
             let pages: Vec<u32> = (0..sequences as u32).collect();
             PlainTensor::of_u32s(client, &[sequences, 1], &pages)
         });
@@ -429,11 +429,11 @@ pub(crate) struct BlockPools {
 pub(crate) struct BlockPool {
     pub view: PlainTensor,
     /// Blocks a page of the cache holds.
-    pub blocks_per_page: usize,
+    pub page_block_count: usize,
     /// Blocks the view steps from the start of one page of the cache to the next.
-    pub page_blocks: usize,
+    pub page_step_block_count: usize,
     /// Pages, or sequences, the buffer holds.
-    pub pages: usize,
+    pub page_count: usize,
 }
 
 impl BlockPool {
@@ -455,18 +455,18 @@ impl BlockPool {
         if !shape[2].is_multiple_of(size) || !strides[0].is_multiple_of(block_stride) {
             return Err(KEY_BLOCK_SPLITS_A_PAGE);
         }
-        let blocks_per_page = shape[2] / size;
-        let page_blocks = strides[0] / block_stride;
-        let blocks = (shape[0] - 1) * page_blocks + blocks_per_page;
+        let page_block_count = shape[2] / size;
+        let page_step_block_count = strides[0] / block_stride;
+        let blocks = (shape[0] - 1) * page_step_block_count + page_block_count;
         let view = buffer.viewed(Metadata::new(
             Shape::from(vec![blocks, shape[1], size, shape[3]]),
             vec![block_stride, strides[1], strides[2], strides[3]],
         ));
         Ok(Self {
             view,
-            blocks_per_page,
-            page_blocks,
-            pages: shape[0],
+            page_block_count,
+            page_step_block_count,
+            page_count: shape[0],
         })
     }
 
@@ -487,9 +487,9 @@ impl BlockPool {
             pages.binding.clone().into_tensor_arg(),
             table.binding.clone().into_tensor_arg(),
             shape[1] as u32,
-            self.blocks_per_page as u32,
-            self.page_blocks as u32,
-            self.pages as u32 - 1,
+            self.page_block_count as u32,
+            self.page_step_block_count as u32,
+            self.page_count as u32 - 1,
         );
         table
     }

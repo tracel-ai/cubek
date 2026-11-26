@@ -84,6 +84,10 @@ impl PlaneFragmentKeyGradientRoutine {
 
     /// The planes of `walk` writing `tensors`' keys' and values' gradients.
     ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
     /// # Errors
     ///
     /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).

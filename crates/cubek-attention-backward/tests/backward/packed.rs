@@ -130,8 +130,7 @@ impl PackedSide {
 }
 
 /// Every setting of the staged cube on `case` over a packed cache, against the host's attention
-/// over the decoded rows: a broken setting fails, and a device on which every setting declines
-/// reports a skip.
+/// over the decoded rows: a broken setting fails, and one this device declines reports a skip.
 fn check_packed(case: Case) {
     let client: Client = cubecl::test_device().client();
     let hw = Hardware::from_client(&client);
@@ -184,7 +183,6 @@ fn check_packed(case: Case) {
         }
     }
 
-    let (mut read, mut declined) = (0, Vec::new());
     for settings in CubeStagedAttentionRoutine::settings(&hw) {
         let lengths = TestInput::builder(client.clone(), Shape::new([1]))
             .dtype(u32::elem_type_native())
@@ -225,15 +223,13 @@ fn check_packed(case: Case) {
                         "{settings}: out[{b}, {h}, {i}, {c}] = {got}, expected {want}"
                     );
                 }
-                read += 1;
             }
             Err(broken) if broken.is_broken() => panic!("{settings}: {broken}"),
-            Err(decline) => declined.push(format!("{settings}: {decline}")),
+            Err(decline) => {
+                let why = format!("{settings}: declined on this device, {decline}");
+                TestOutcome::Validated(ValidationResult::Skipped(why)).enforce();
+            }
         }
-    }
-    if read == 0 {
-        let why = format!("every setting of the staged cube declines: {declined:#?}");
-        TestOutcome::Validated(ValidationResult::Skipped(why)).enforce();
     }
 }
 

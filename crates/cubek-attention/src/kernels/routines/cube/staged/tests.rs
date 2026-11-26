@@ -45,7 +45,7 @@ mod fragment {
     }
 
     /// A decode step, a prompt whose queries divide nothing, a wide group over a long cache, and
-    /// a head dim of 128 in `f32`, the widest the leads are held to.
+    /// a head dim of 128 in `f32`, the widest the leads are checked at.
     fn problems() -> [AttentionRoutineProblem; 4] {
         [
             AttentionRoutineProblem::dense((1, 32, 8), (1, 2048), (128, 128), F16),
@@ -266,7 +266,7 @@ mod fragment {
     /// memory, so every head of a group of six shares each stage with four planes a head at a head
     /// dim of 256, where staging those planes' query does not fit.
     #[test]
-    fn a_held_query_leaves_the_shared_memory_to_the_keys() {
+    fn a_query_in_registers_leaves_the_shared_memory_to_the_keys() {
         let hw = offering_square_mma();
         let problem = AttentionRoutineProblem::dense((1, 24, 4), (2048, 4096), (256, 256), F16);
         let item = problem.work_item();
@@ -293,7 +293,7 @@ mod fragment {
         let query = 16 * 256 * F16.size();
         assert_eq!(
             shared(QueryHolder::Stage, 1, 1).expect("one plane's query fits")
-                - shared(QueryHolder::Registers, 1, 1).expect("a held query fits"),
+                - shared(QueryHolder::Registers, 1, 1).expect("a query in registers fits"),
             query
         );
         assert!(shared(QueryHolder::Registers, 6, 4).is_ok());
@@ -303,10 +303,10 @@ mod fragment {
         ));
     }
 
-    /// An `e4m3` cache beside an `f16` query held in registers is multiplied on the FP8 instruction
+    /// An `e4m3` cache beside an `f16` query kept in registers is multiplied on the FP8 instruction
     /// on both sides: the query is cast as it loads, the keys and values are staged as stored.
     #[test]
-    fn a_held_query_reads_an_fp8_cache_as_it_is_stored() {
+    fn a_query_in_registers_reads_an_fp8_cache_as_it_is_stored() {
         let hw = offering_square_mma();
         let mut problem = AttentionRoutineProblem::dense((1, 24, 4), (2048, 4096), (256, 256), F16);
         problem.elements.key = E4M3;
@@ -325,19 +325,19 @@ mod fragment {
             ..lead
         };
         let (blueprint, _) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)
-            .expect("the held query reads the cache");
+            .expect("the query in registers reads the cache");
         let served = blueprint.microkernel.served(&problem.work_item()).elements;
         assert_eq!([served.query, served.key, served.value], [F16, E4M3, E4M3]);
     }
 
-    /// A query held in registers is the `A` of a score in fragments: where the device gives no such
+    /// A query kept in registers is the `A` of a score in fragments: where the device gives no such
     /// score, as RDNA3's transposed accumulator, the setting is declined, not read some other way.
     #[test]
-    fn a_held_query_asks_for_a_score_in_fragments() {
+    fn a_query_in_registers_asks_for_a_score_in_fragments() {
         let hw = offering(devices::m2_pro(), 8);
         let [_, _, problem, _] = problems();
         let lead = Settings::DEFAULT;
-        let held = Settings {
+        let in_registers = Settings {
             microkernel: CubeAttentionMicrokernelSettings {
                 plane: CubeAttentionPlaneSettings::Fragment(
                     PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
@@ -347,7 +347,7 @@ mod fragment {
             },
             ..lead
         };
-        assert!(CubeStagedAttentionRoutine::prepare(&hw, &problem, &held).is_err());
+        assert!(CubeStagedAttentionRoutine::prepare(&hw, &problem, &in_registers).is_err());
     }
 
     /// A swizzled stage is one a cmma fragment cannot read, which takes its tiles off a pointer
@@ -401,17 +401,17 @@ mod fragment {
         )));
     }
 
-    /// A query held in registers is listed only where the device offers the manual `mma` it is the
+    /// A query kept in registers is listed only where the device offers the manual `mma` it is the
     /// `A` of.
     #[test]
-    fn a_held_query_is_listed_only_beside_the_manual_mma() {
-        let held = |hw: &Hardware| {
+    fn a_query_in_registers_is_listed_only_beside_the_manual_mma() {
+        let in_registers = |hw: &Hardware| {
             CubeStagedAttentionRoutine::settings(hw)
                 .iter()
                 .any(|settings| settings.microkernel.plane.holds_query())
         };
-        assert!(!held(&offering(devices::m2_pro(), 8)));
-        assert!(held(&offering_square_mma()));
+        assert!(!in_registers(&offering(devices::m2_pro(), 8)));
+        assert!(in_registers(&offering_square_mma()));
     }
 
     /// A packed cache is bound as it is stored, so values staged along the keys decline it.
@@ -559,7 +559,7 @@ mod fragment {
     }
 
     /// Over a packed cache the kernel opens the output's sum on values its stages decode, which
-    /// fragments held as the value's `A` name no element to contract against: where the lead
+    /// fragments kept as the value's `A` name no element to contract against: where the lead
     /// keeps its score in fragments over a float cache, it reads it through its windows over a
     /// packed one, as the kernel can expand.
     #[test]

@@ -4,10 +4,9 @@
 use crate::kernels::CACHE_SEQUENCES_DISAGREE;
 use crate::kernels::conversion::{converted, distinct_elements};
 use crate::kernels::{
-    A_STAGE_IS_ONE_TILE, AttentionBinding, AttentionBlueprint, AttentionCache,
-    AttentionCacheBinding, AttentionQueries, AttentionRoutineProblem, AttentionScoring,
-    FIXUP_IN_A_STAGE, KvSource, PackedAttentionCache, QueryDimension, SCALED_PACKED_UNREAD,
-    page_table,
+    AttentionBinding, AttentionBlueprint, AttentionCache, AttentionCacheBinding, AttentionQueries,
+    AttentionRoutineProblem, AttentionScoring, KvSource, PackedAttentionCache, QueryDimension,
+    SCALED_PACKED_UNREAD, page_table,
 };
 use cubecl::client::Client;
 use cubecl::features::TypeUsage;
@@ -659,7 +658,7 @@ impl AttentionTensors {
                 .query_runs
                 .as_ref()
                 .map(|(ends, _)| ends.binding.clone().into_tensor_arg()),
-            queries: self.query_count() as u32,
+            query_count: self.query_count() as u32,
         })
     }
 
@@ -853,21 +852,6 @@ impl AttentionTensors {
         }
     }
 
-    /// Whether the keys are read as one tile a stage, as a routine that stages them reads them:
-    /// a packed cache's keys under the QJL fix-up are two.
-    ///
-    /// # Errors
-    ///
-    /// [`Decline::Broken`]: a routine that stages its keys declines the fix-up in its `prepare`.
-    pub(crate) fn admit_one_tile_of_keys(&self) -> Result<(), Decline> {
-        match &self.kv.cache {
-            AttentionCache::Packed(cache) if cache.fixup.is_some() => {
-                Err(FIXUP_IN_A_STAGE).or_broken(A_STAGE_IS_ONE_TILE)
-            }
-            _ => Ok(()),
-        }
-    }
-
     /// The queries a sequence has, or, where they lie end to end, all of them.
     fn query_count(&self) -> usize {
         match &self.query_runs {
@@ -1031,7 +1015,7 @@ pub struct AttentionSplitSlots {
 
 impl AttentionSplitSlots {
     /// The outputs, the maxes and the sums, as a kernel's launch arguments.
-    pub fn args(&self) -> [TensorArg; 3] {
+    pub fn to_args(&self) -> [TensorArg; 3] {
         [&self.out, &self.max, &self.sum].map(|slot| slot.clone().binding().into_tensor_arg())
     }
 }

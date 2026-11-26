@@ -35,6 +35,10 @@ impl HypercubeKeyGradientQuerySumRoutine {
     /// The cubes of `walk` writing `tensors`' keys' and values' gradients, and adding their shares
     /// of the queries' into `query_sum`.
     ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
     /// # Errors
     ///
     /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).

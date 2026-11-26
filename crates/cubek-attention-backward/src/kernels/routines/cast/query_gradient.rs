@@ -58,6 +58,10 @@ impl CastQueryGradientRoutine {
     /// Every plane of `walk` casting its queries' gradient out of `sum` into the gradient of
     /// `tensors`.
     ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
     /// # Errors
     ///
     /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).

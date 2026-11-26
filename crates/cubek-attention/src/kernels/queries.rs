@@ -494,44 +494,68 @@ pub(crate) mod tests {
         });
     }
 
-    /// A listed block past its sequence's pages lies in their last page, and a page of the table
-    /// past the pool is its last page, on every kernel that reads listed blocks: the same as the
-    /// block or the page in range there.
+    /// A listed block past its sequence's pages lies in its last page, on every kernel that reads
+    /// listed blocks: the same as the block of that page in range. The sequence's pages are two,
+    /// so its first would be read were the block not capped.
     #[test]
     fn a_listed_block_past_the_pages_reads_the_last_page() {
-        const BLOCK: usize = 16;
-        const BLOCKS: u32 = (KEYS / BLOCK) as u32;
-        let client: Client = cubecl::test_device().client();
-        let cache_shape = [1, KV_HEADS, KEYS, HEAD_DIM];
-        let cases = ["a block past the pages", "a page past the pool"];
-        assert_past_reads_as_within(&every_launch(), &cases, |launch, case, past| {
+        const BLOCKS: u32 = (KEYS / LISTED_BLOCK) as u32;
+        assert_past_reads_as_within(&every_launch(), &[()], |launch, (), past| {
             let mut blocks: Vec<u32> = (0..BLOCKS).collect();
-            let mut page = 0;
-            match (case, past) {
-                ("a block past the pages", true) => blocks[0] = 1000 * BLOCKS + BLOCKS - 1,
-                ("a block past the pages", false) => blocks[0] = BLOCKS - 1,
-                (_, true) => page = 100,
-                (_, false) => {}
-            }
-            let kv = KvSource::new(AttentionCache::Float {
-                key: random(&client, &cache_shape, 2),
-                value: random(&client, &cache_shape, 3),
-            })
-            .paged(PlainTensor::of_u32s(&client, &[1, 1], &[page]))
-            .indexed(
-                PlainTensor::of_u32s(&client, &[1, BLOCKS as usize], &blocks),
-                NonZeroUsize::new(BLOCK).expect("a block holds keys"),
-            );
-            let queries = AttentionQueries::Dense {
-                query: random(&client, &[1, HEADS, 1, HEAD_DIM], 1),
-                lengths: PlainTensor::of_u32s(&client, &[1], &[KEYS as u32]),
+            blocks[0] = match past {
+                true => 1000 * BLOCKS + BLOCKS - 1,
+                false => 2 * BLOCKS - 1,
             };
-            let scoring = AttentionScoring::standard(AttentionVisibility::Attended, HEAD_DIM);
-            let tensors = AttentionTensors::attention(&client, queries, kv, scoring)
-                .expect("the case's tensors are verified");
-            launch(&Hardware::from_client(&client), tensors)
-                .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
+            launch_listed(launch, &[0, 1], &blocks)
         });
+    }
+
+    /// A page of the table past the pool is its last page, for listed blocks, on every kernel that
+    /// reads them: the same as a table naming that page.
+    #[test]
+    fn a_listed_page_past_the_pool_reads_its_last_page() {
+        const BLOCKS: u32 = (KEYS / LISTED_BLOCK) as u32;
+        // The second page's blocks, read through the entry past the pool.
+        let blocks: Vec<u32> = (BLOCKS..2 * BLOCKS).collect();
+        assert_past_reads_as_within(&every_launch(), &[()], |launch, (), past| {
+            let page = match past {
+                true => 100,
+                false => 1,
+            };
+            launch_listed(launch, &[0, page], &blocks)
+        });
+    }
+
+    /// Positions a listed block holds.
+    const LISTED_BLOCK: usize = 16;
+
+    /// `launch` on one query attending the keys `blocks` lists, of a pool of two pages of
+    /// [`KEYS`] positions each, through the table `pages`.
+    fn launch_listed(
+        launch: &LeadLaunch,
+        pages: &[u32],
+        blocks: &[u32],
+    ) -> Result<HostData, Decline> {
+        let client: Client = cubecl::test_device().client();
+        let pool_shape = [2, KV_HEADS, KEYS, HEAD_DIM];
+        let kv = KvSource::new(AttentionCache::Float {
+            key: random(&client, &pool_shape, 2),
+            value: random(&client, &pool_shape, 3),
+        })
+        .paged(PlainTensor::of_u32s(&client, &[1, pages.len()], pages))
+        .indexed(
+            PlainTensor::of_u32s(&client, &[1, blocks.len()], blocks),
+            NonZeroUsize::new(LISTED_BLOCK).expect("a block holds keys"),
+        );
+        let queries = AttentionQueries::Dense {
+            query: random(&client, &[1, HEADS, 1, HEAD_DIM], 1),
+            lengths: PlainTensor::of_u32s(&client, &[1], &[KEYS as u32]),
+        };
+        let scoring = AttentionScoring::standard(AttentionVisibility::Attended, HEAD_DIM);
+        let tensors = AttentionTensors::attention(&client, queries, kv, scoring)
+            .expect("the case's tensors are verified");
+        launch(&Hardware::from_client(&client), tensors)
+            .map(|out| HostData::from_tensor_handle(&client, out, HostDataType::F32))
     }
 
     /// Queries lying end to end whose last end is past their count read and write no query past

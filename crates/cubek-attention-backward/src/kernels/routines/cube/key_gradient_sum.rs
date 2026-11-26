@@ -36,6 +36,10 @@ impl CubeStagedKeyGradientSumRoutine {
 
     /// The cubes of `walk` adding their parts of the keys' and values' gradients into `sums`.
     ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
     /// # Errors
     ///
     /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).

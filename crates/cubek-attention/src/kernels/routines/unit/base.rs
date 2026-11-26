@@ -170,14 +170,14 @@ impl AttentionRoutine<UnitAttentionMicrokernel> for UnitAttentionRoutine {
         blueprint: UnitAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
-        tensors.admit_one_tile_of_keys()?;
         let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
-        // SAFETY: every operand is bound through the launcher, which masks the reads and writes
-        // of a tile the problem's edge cuts short, the keys and values are read no further than
-        // the attended length, capped at the keys there are, and the kernel indexes no buffer but
-        // through its tiles and each sequence's entry of the lengths.
+        // SAFETY: every operand is bound through the launcher, which masks the reads and writes of
+        // a tile the problem's edge cuts short, the keys and values are read no further than the
+        // attended length, capped at the keys the launch is given, the problem's positions the
+        // buffers or their table reach, and the kernel indexes no buffer but through its tiles and
+        // each sequence's entry of the lengths.
         unsafe {
             unit_attention_kernel::launch_unchecked(
                 tensors.client(),

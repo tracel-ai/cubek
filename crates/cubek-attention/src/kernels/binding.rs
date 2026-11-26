@@ -6,11 +6,10 @@ use cubek_std::routine::Breakable;
 
 /// What a routine that stages its keys rests on: a packed cache whose keys carry the QJL fix-up
 /// reaches no such routine.
-pub(crate) const A_STAGE_IS_ONE_TILE: &str =
-    "a stage of keys should be one tile, and a fix-up is a second";
+const A_STAGE_IS_ONE_TILE: &str = "a stage of keys should be one tile, and a fix-up is a second";
 
 /// A QJL fix-up reaching a routine that stages its keys.
-pub(crate) const FIXUP_IN_A_STAGE: Decline = Decline::Broken {
+const FIXUP_IN_A_STAGE: Decline = Decline::Broken {
     condition: A_STAGE_IS_ONE_TILE,
     cause: None,
 };
@@ -36,7 +35,7 @@ pub struct AttentionBinding {
     pub query_ends: Option<TensorArg>,
     /// The queries a sequence has, or, where they lie end to end, all of them: what caps their
     /// ends.
-    pub queries: u32,
+    pub query_count: u32,
 }
 
 /// How a launch's keys and values are bound.

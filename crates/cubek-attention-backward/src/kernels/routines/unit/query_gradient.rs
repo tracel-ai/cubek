@@ -64,6 +64,10 @@ impl UnitQueryGradientRoutine {
 
     /// The units of `walk` writing `tensors`' queries' gradient and their dot products.
     ///
+    /// # Guarantees
+    ///
+    /// Nothing is launched where it errs: binding the tensors is its only fallible step.
+    ///
     /// # Errors
     ///
     /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).

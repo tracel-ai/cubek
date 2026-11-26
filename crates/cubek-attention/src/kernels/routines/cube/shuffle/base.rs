@@ -152,15 +152,15 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
         blueprint: CubeShuffleAttentionRoutineBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
-        tensors.admit_one_tile_of_keys()?;
         let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let (key, value) = binding.cache.into_tiles()?;
-        // SAFETY: every operand is bound through the launcher, which masks the reads and writes
-        // of a tile the problem's edge cuts short, the keys and values are read no further than
-        // the attended length, capped at the keys there are, and the kernel indexes no buffer but
-        // through its tiles and each sequence's entry of the lengths and of the query ends; the
-        // slots the planes merge in are the cube's own.
+        // SAFETY: every operand is bound through the launcher, which masks the reads and writes of
+        // a tile the problem's edge cuts short, the keys and values are read no further than the
+        // attended length, capped at the keys the launch is given, the problem's positions the
+        // buffers or their table reach, and the kernel indexes no buffer but through its tiles and
+        // each sequence's entry of the lengths and of the query ends; the slots the planes merge in
+        // are the cube's own.
         unsafe {
             cube_shuffle_attention_kernel::launch_unchecked(
                 tensors.client(),
@@ -175,7 +175,7 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
                 binding.mask.into(),
                 binding.lengths,
                 binding.query_ends.into(),
-                binding.queries,
+                binding.query_count,
                 problem.seq_kv as u32,
                 tensors.scale(),
                 binding.launcher.partitioning_arg(),

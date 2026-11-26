@@ -85,6 +85,10 @@ impl PlaneFragmentQueryGradientRoutine {
 
     /// The planes of `walk` writing `tensors`' queries' gradient and their dot products.
     ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
     /// # Errors
     ///
     /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).

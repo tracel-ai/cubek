@@ -66,20 +66,20 @@ fn arrive_over_tiles(
     arrivals: PlainTensor,
 ) {
     let [slot_out, slot_max, slot_sum] = launch.slots;
-    // SAFETY: the query, keys and values are bound through the launcher, which masks the reads of
-    // a tile the problem's edge cuts short, and the keys and values are read no further than the
-    // attended length, which is capped at the keys there are. A cube writes no slot but its own,
-    // for the queries of its box the problem holds; the last cube of a box writes the box's
-    // queries of the output, at its own strides, and reads no slot but its box's, acquired after
-    // every cube of the box stored its own where the counters start at zero, as every launch
-    // leaves them. A box whose counter does not is merged early or never, which costs its answer:
-    // no access leaves its buffer.
+    // SAFETY: the query, keys and values are bound through the launcher, which masks the reads of a
+    // tile the problem's edge cuts short, and the keys and values are read no further than the
+    // attended length, which is capped at the keys the launch is given, the problem's positions the
+    // buffers or their table reach. A cube writes no slot but its own, for the queries of its box
+    // the problem holds; the last cube of a box writes the box's queries of the output, at its own
+    // strides, and reads no slot but its box's, acquired after every cube of the box stored its own
+    // where the counters start at zero, as every launch leaves them. A box whose counter does not
+    // is merged early or never, which costs its answer: no access leaves its buffer.
     unsafe {
         hypercube_attention_arrival_kernel::launch_unchecked(
             launch.client,
             launch.cube_count,
             launch.cube_dim,
-            launch.width,
+            launch.width_scalars,
             launch.query,
             key,
             value,
@@ -91,14 +91,14 @@ fn arrive_over_tiles(
             arrivals.binding.into_tensor_arg().into_buffer_arg(),
             launch.mask.into(),
             launch.lengths,
-            launch.queries,
-            launch.keys,
+            launch.query_count,
+            launch.key_count,
             launch.scale,
             launch.launcher.partitioning_arg(),
             launch.microkernel,
             launch.shape,
             launch.visibility,
-            tensors.problem().work_item().operand_elements(),
+            launch.operand_elements,
         );
     }
 }
@@ -119,7 +119,7 @@ fn arrive_over_packed(
             launch.client,
             launch.cube_count,
             launch.cube_dim,
-            launch.width,
+            launch.width_scalars,
             launch.query,
             cache.key,
             cache.value,
@@ -131,14 +131,14 @@ fn arrive_over_packed(
             arrivals.binding.into_tensor_arg().into_buffer_arg(),
             launch.mask.into(),
             launch.lengths,
-            launch.queries,
-            launch.keys,
+            launch.query_count,
+            launch.key_count,
             launch.scale,
             launch.launcher.partitioning_arg(),
             launch.microkernel,
             launch.shape,
             launch.visibility,
-            tensors.problem().work_item().kernel_elements(),
+            launch.kernel_elements,
         );
     }
 }

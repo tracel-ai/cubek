@@ -7,6 +7,7 @@ use crate::kernels::{
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use cubecl::client::Client;
+use cubecl::ir::ElemType;
 use cubecl::prelude::{CubeCount, CubeDim, TensorArg};
 use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::tile::{Launcher, StageStorage, TileTensorLaunch};
@@ -53,18 +54,23 @@ pub(crate) struct HypercubeShuffleLaunch<'a> {
     pub client: &'a Client,
     pub cube_count: CubeCount,
     pub cube_dim: CubeDim,
-    pub width: usize,
+    /// Scalars a vector of every operand holds: the plane shuffle lines every one alike.
+    pub width_scalars: usize,
     pub launcher: Launcher,
     pub query: TileTensorLaunch,
     pub mask: Option<TileTensorLaunch>,
     pub lengths: TensorArg,
     pub slots: [TensorArg; 3],
-    pub queries: u32,
-    pub keys: u32,
+    pub query_count: u32,
+    pub key_count: u32,
     pub scale: f32,
     pub microkernel: HypercubeAttentionMicrokernel,
     pub shape: HypercubeMergeShape,
     pub visibility: AttentionVisibility,
+    /// The elements a kernel over tiles reads each operand in.
+    pub operand_elements: [ElemType; 5],
+    /// The elements a kernel over a packed cache computes in.
+    pub kernel_elements: [ElemType; 2],
 }
 
 impl<'a> HypercubeShuffleLaunch<'a> {
@@ -84,18 +90,20 @@ impl<'a> HypercubeShuffleLaunch<'a> {
             client: tensors.client(),
             cube_count: grid.launch.cube_count,
             cube_dim: grid.launch.cube_dim,
-            width: blueprint.widths.query,
+            width_scalars: blueprint.widths.query,
             launcher: binding.launcher,
             query: binding.query,
             mask: binding.mask,
             lengths: binding.lengths,
-            slots: slots.args(),
-            queries: problem.seq_q as u32,
-            keys: problem.seq_kv as u32,
+            slots: slots.to_args(),
+            query_count: problem.seq_q as u32,
+            key_count: problem.seq_kv as u32,
             scale: tensors.scale(),
             microkernel: blueprint.microkernel,
             shape,
             visibility: problem.visibility,
+            operand_elements: problem.work_item().operand_elements(),
+            kernel_elements: problem.work_item().kernel_elements(),
         };
         (launch, binding.cache)
     }

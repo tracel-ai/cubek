@@ -171,6 +171,10 @@ impl RoutedMatmulTensors {
     /// The product on `routine` at `settings`, prepared for `hw`: `[rows, slots, n]` at the
     /// lhs's element. No row is an empty answer, with no launch.
     ///
+    /// # Guarantees
+    ///
+    /// A decline of the stack as it is stored comes before the output is allocated.
+    ///
     /// # Errors
     ///
     /// Why `hw` cannot run the product at these settings, or why the routine declines a table or

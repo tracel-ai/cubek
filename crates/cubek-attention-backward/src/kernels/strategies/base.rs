@@ -15,17 +15,6 @@ use cubek_std::routine::Grid;
 /// What autotune races is a strategy at one of its settings. A setting holds each routine's, and
 /// which routines run can depend on it: the strategy's blueprint holds one routine blueprint per
 /// kernel it launches.
-///
-/// # Assumptions
-///
-/// A blueprint [`dispatch`](Self::dispatch) launches is the one [`prepare`](Self::prepare) gave
-/// for its tensors' problem on their device.
-///
-/// # Guarantees
-///
-/// A dispatch that errs has launched the routines before the one that erred, and allocated the
-/// sums they add into; the gradients hold nothing a caller may read until another strategy
-/// writes them.
 pub trait AttentionBackwardLaunch {
     /// The knobs a measurement settles: each routine's, and which routines run.
     type Settings: core::fmt::Debug + Clone + core::fmt::Display + PartialEq;
@@ -53,6 +42,16 @@ pub trait AttentionBackwardLaunch {
     ) -> Result<Self::Blueprint, Decline>;
 
     /// Launch every routine `blueprint` holds, in order, over `tensors`.
+    ///
+    /// # Assumptions
+    ///
+    /// `blueprint` is what [`prepare`](Self::prepare) gave for `tensors`' problem on their device.
+    ///
+    /// # Guarantees
+    ///
+    /// Where it errs, the routines before the one that erred have launched, and the sums they add
+    /// into have been allocated and filled with zeros by a launch of their own; the routine that
+    /// erred launched nothing.
     ///
     /// # Errors
     ///

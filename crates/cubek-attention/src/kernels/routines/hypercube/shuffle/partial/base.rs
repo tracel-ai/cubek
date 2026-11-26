@@ -59,10 +59,8 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         let (launch, cache) =
             HypercubeShuffleLaunch::new(tensors, binding, &blueprint, grid, shape, slots);
         match cache {
-            AttentionCacheBinding::Tiles { key, value } => {
-                leave_over_tiles(tensors, launch, key, value)
-            }
-            AttentionCacheBinding::Packed(cache) => leave_over_packed(tensors, launch, cache),
+            AttentionCacheBinding::Tiles { key, value } => leave_over_tiles(launch, key, value),
+            AttentionCacheBinding::Packed(cache) => leave_over_packed(launch, cache),
         }
         Ok(())
     }
@@ -70,22 +68,22 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
 
 /// `launch` over keys and values bound as tiles.
 fn leave_over_tiles(
-    tensors: &AttentionTensors,
     launch: HypercubeShuffleLaunch,
     key: TileTensorLaunch,
     value: TileTensorLaunch,
 ) {
     let [slot_out, slot_max, slot_sum] = launch.slots;
-    // SAFETY: the query, keys and values are bound through the launcher, which masks the reads of
-    // a tile the problem's edge cuts short, and the keys and values are read no further than the
-    // attended length, which is capped at the keys there are. A cube writes no slot but its own,
-    // for the queries of its box the problem holds.
+    // SAFETY: the query, keys and values are bound through the launcher, which masks the reads of a
+    // tile the problem's edge cuts short, and the keys and values are read no further than the
+    // attended length, which is capped at the keys the launch is given, the problem's positions the
+    // buffers or their table reach. A cube writes no slot but its own, for the queries of its box
+    // the problem holds.
     unsafe {
         hypercube_attention_partial_kernel::launch_unchecked(
             launch.client,
             launch.cube_count,
             launch.cube_dim,
-            launch.width,
+            launch.width_scalars,
             launch.query,
             key,
             value,
@@ -94,24 +92,20 @@ fn leave_over_tiles(
             slot_sum,
             launch.mask.into(),
             launch.lengths,
-            launch.queries,
-            launch.keys,
+            launch.query_count,
+            launch.key_count,
             launch.scale,
             launch.launcher.partitioning_arg(),
             launch.microkernel,
             launch.shape,
             launch.visibility,
-            tensors.problem().work_item().operand_elements(),
+            launch.operand_elements,
         );
     }
 }
 
 /// `launch` over a packed cache, which the planes decode as they read it.
-fn leave_over_packed(
-    tensors: &AttentionTensors,
-    launch: HypercubeShuffleLaunch,
-    cache: PackedCacheBinding,
-) {
+fn leave_over_packed(launch: HypercubeShuffleLaunch, cache: PackedCacheBinding) {
     let [slot_out, slot_max, slot_sum] = launch.slots;
     // SAFETY: as the tiles' launch; a field indexes its codebook, which holds an entry for every
     // index (`PackedAttentionCache::admit`).
@@ -120,7 +114,7 @@ fn leave_over_packed(
             launch.client,
             launch.cube_count,
             launch.cube_dim,
-            launch.width,
+            launch.width_scalars,
             launch.query,
             cache.key,
             cache.value,
@@ -130,14 +124,14 @@ fn leave_over_packed(
             slot_sum,
             launch.mask.into(),
             launch.lengths,
-            launch.queries,
-            launch.keys,
+            launch.query_count,
+            launch.key_count,
             launch.scale,
             launch.launcher.partitioning_arg(),
             launch.microkernel,
             launch.shape,
             launch.visibility,
-            tensors.problem().work_item().kernel_elements(),
+            launch.kernel_elements,
         );
     }
 }

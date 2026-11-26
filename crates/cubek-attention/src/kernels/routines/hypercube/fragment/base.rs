@@ -187,7 +187,6 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         grid: Grid,
         slots: &AttentionSplitSlots,
     ) -> Result<(), Decline> {
-        tensors.admit_one_tile_of_keys()?;
         let binding = tensors.bind(&blueprint, &grid)?;
         let problem = tensors.problem();
         let shape = self.merge_shape(&problem, &blueprint);
@@ -199,11 +198,12 @@ impl PartialAttentionRoutine<HypercubeAttentionMicrokernel, StageStorage>
         let [sum, _, staged, probabilities] = microkernel
             .served(&problem.work_item())
             .served_kernel_elements();
-        let [slot_out, slot_max, slot_sum] = slots.args();
+        let [slot_out, slot_max, slot_sum] = slots.to_args();
         // SAFETY: every operand is bound through the launcher, which masks the reads of a tile the
         // problem's edge cuts short, the keys and values are read no further than the attended
-        // length, capped at the keys there are, and the output is read for its shape alone. A plane writes no slot but its own,
-        // for the rows of its box the problem holds.
+        // length, capped at the keys the launch is given, the problem's positions the buffers or
+        // their table reach, and the output is read for its shape alone. A plane writes no slot but
+        // its own, for the rows of its box the problem holds.
         unsafe {
             hypercube_fragment_attention_kernel::launch_unchecked(
                 tensors.client(),

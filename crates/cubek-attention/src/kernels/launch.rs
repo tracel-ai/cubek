@@ -120,15 +120,6 @@ where
 /// It writes no output. The split-keys merge
 /// ([`PlaneSplitKeysMergeRoutine`](crate::kernels::PlaneSplitKeysMergeRoutine)) merges the slots
 /// into it, and a strategy launches the two ([`SplitKeysAttention`](crate::kernels::SplitKeysAttention)).
-///
-/// # Assumptions
-///
-/// As [`AttentionRoutine`]'s, and the slots a dispatch leaves its partials in are the tensors'
-/// [`split_slots`](AttentionTensors::split_slots) for the merge of its blueprint.
-///
-/// # Guarantees
-///
-/// As [`AttentionRoutine`]'s.
 pub trait PartialAttentionRoutine<M: AttentionMicrokernel, SM = ()>:
     Routine<Problem = AttentionRoutineProblem, Microkernel = M, Blueprint = AttentionBlueprint<M, SM>>
 {
@@ -144,6 +135,15 @@ pub trait PartialAttentionRoutine<M: AttentionMicrokernel, SM = ()>:
 
     /// Launch the kernel `blueprint` compiles, on `grid`, over `tensors` bound as `blueprint`
     /// states them, its partials left in `slots`.
+    ///
+    /// # Assumptions
+    ///
+    /// As [`AttentionRoutine`]'s, and `slots` are the tensors'
+    /// [`split_slots`](AttentionTensors::split_slots) for the merge of `blueprint`.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`AttentionRoutine`]'s.
     ///
     /// # Errors
     ///
