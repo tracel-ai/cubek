@@ -80,23 +80,18 @@ impl<'a> CubeStagedPlacement<'a> {
         if microkernel.walk().decoded().is_some() {
             view.check_reads(hw)?;
         }
-        if problem.cuts_rows_to_runs() && !matches!(cube_order.canonicalize(), CubeOrder::RowMajor)
-        {
+        if problem.rows_in_runs() && !matches!(cube_order.canonicalize(), CubeOrder::RowMajor) {
             return Err(MATMUL_ROW_RUNS_SWIZZLED);
         }
-        view.check_rows_held(
+        let contracted = microkernel.contracted(&item);
+        let partitioning = view.partitioning(
             microkernel.tiling(),
             &[item.dimensions.m, item.dimensions.n],
-        )?;
-        let contracted = microkernel.contracted(&item);
-        let cube_space = view
-            .partitioning(
-                microkernel.tiling(),
-                &[item.dimensions.m, item.dimensions.n],
-                cube_order,
-                MatmulView::ONE_CUBE_A_BOX,
-            )
-            .cube_space();
+            cube_order,
+            MatmulView::ONE_CUBE_A_BOX,
+        );
+        partitioning.check_box_spans_run()?;
+        let cube_space = partitioning.cube_space();
         if store == CubeStagedStore::Tma {
             check_tma_store(hw, problem, &contracted, &cube_space, &microkernel)?;
         }

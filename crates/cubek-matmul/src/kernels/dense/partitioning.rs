@@ -1,3 +1,4 @@
+use crate::kernels::MATMUL_ROW_RUNS_CUT;
 use cubecl::tile::launch::Decline;
 use cubecl::tile::{
     Dimension, Partitioning, Space, TileSpec,
@@ -34,8 +35,16 @@ pub struct MatmulPartitioning {
     batch_dimensions: Vec<Dimension>,
     rows_kind: MatmulRowsKind,
     dimensions_kind: MatmulDimensionsKind,
-    /// The dimension a table cuts the output's tile to a run along, whose end masks a write.
-    output_run: Option<Dimension>,
+    /// Where a table ends runs of the rows, whose end masks a write.
+    rows_in_runs: Option<RowsInRuns>,
+}
+
+/// The rows of a table's runs: the dimension they lie along, and the rows the levels inside the
+/// cubes hold along it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RowsInRuns {
+    dimension: Dimension,
+    held: usize,
 }
 
 impl MatmulPartitioning {
@@ -54,13 +63,17 @@ impl MatmulPartitioning {
             batch_dimensions,
             rows_kind,
             dimensions_kind,
-            output_run: None,
+            rows_in_runs: None,
         }
     }
 
-    /// This placement with the output's tile cut to a run along `output_run`, where a table does.
-    pub fn with_output_run(self, output_run: Option<Dimension>) -> Self {
-        Self { output_run, ..self }
+    /// This placement of rows a table ends runs of along `dimension`, the levels inside the cubes
+    /// holding `held` of them.
+    pub fn with_rows_in_runs(self, dimension: Dimension, held: usize) -> Self {
+        Self {
+            rows_in_runs: Some(RowsInRuns { dimension, held }),
+            ..self
+        }
     }
 
     /// `partitioning`, its cubes each handed the box its cube level cuts.
@@ -118,7 +131,7 @@ impl MatmulPartitioning {
             MatmulDimensionsKind::Plain => self.dynamic_plain(compiled),
             MatmulDimensionsKind::BlockSplit => {
                 let rows_free = self.rows_kind.dynamic_dimensions().contains(&M)
-                    && self.output_run.is_none()
+                    && self.rows_in_runs.is_none()
                     && self.partitioning.space().extent(MB) == 1
                     && !compiled.contains(&MI);
                 rows_free.then_some(MI).into_iter().collect()
@@ -253,12 +266,28 @@ impl MatmulPartitioning {
     /// Whether the tiles overhang the output: a tile the output's edge cuts short, or a run a
     /// table ends inside it, which a write that cannot be masked would reach past.
     pub fn overhangs_output(&self) -> bool {
-        self.output_run.is_some()
+        self.rows_in_runs.is_some()
             || self
                 .dimensions_kind
                 .output_dimensions()
                 .into_iter()
                 .any(|dimension| self.overhangs(dimension))
+    }
+
+    /// Checks that where a table ends runs of the rows, the levels inside the cubes hold exactly
+    /// the rows of the cube's box, which no level cuts: the stage is sized from the box while the
+    /// planes walk what those levels hold.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_ROW_RUNS_CUT`], for levels holding other rows than the box.
+    pub fn check_box_spans_run(&self) -> Result<(), Decline> {
+        match self.rows_in_runs {
+            Some(rows) if rows.held != self.space().extent(rows.dimension) => {
+                Err(MATMUL_ROW_RUNS_CUT)
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Checks that the engine masks `out`'s writes exactly where the tiles overhang it, which is
@@ -300,15 +329,16 @@ impl MatmulPartitioning {
 }
 
 impl MatmulPartitioning {
-    /// The dimensions a plain space frees, but those `compiled` compiles in and the rows a table
-    /// cuts to runs, which stay compiled in.
+    /// The dimensions a plain space frees, but those `compiled` compiles in and the rows in runs,
+    /// which stay compiled in.
     fn dynamic_plain(&self, compiled: &[Dimension]) -> Vec<Dimension> {
         self.batch_dimensions
             .iter()
             .chain(self.rows_kind.dynamic_dimensions())
             .copied()
             .filter(|dimension| {
-                !compiled.contains(dimension) && Some(*dimension) != self.output_run
+                !compiled.contains(dimension)
+                    && Some(*dimension) != self.rows_in_runs.map(|rows| rows.dimension)
             })
             .collect()
     }

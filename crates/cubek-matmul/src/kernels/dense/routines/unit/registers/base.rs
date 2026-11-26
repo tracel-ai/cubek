@@ -1,7 +1,8 @@
 use super::kernel::unit_registers_matmul_kernel;
 use crate::kernels::{
-    CUBE_STRIPS, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine,
-    MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
+    CUBE_STRIPS, MATMUL_ROW_RUNS_UNREAD, MatmulBinding, MatmulBlueprint, MatmulOutput,
+    MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
+    cube_order_name,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, DestinationLaunch, VectorRequirement, Vectorization};
@@ -273,7 +274,9 @@ impl Routine for UnitRegistersMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_plain()?;
-        problem.check_rows_uncut_by_runs()?;
+        if problem.rows_in_runs() {
+            return Err(MATMUL_ROW_RUNS_UNREAD);
+        }
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();
         let microkernel = UnitRegistersMicrokernel::best(hw, &item, &settings.microkernel)?;

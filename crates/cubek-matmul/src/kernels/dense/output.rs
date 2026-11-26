@@ -66,12 +66,13 @@ impl MatmulOutput for Geometry {
     }
 }
 
-/// A buffer a table places the tile of, so the writes of a tile whose rows are cut to a run stop at
-/// the run's end ([`MatmulIndex::RowRunsOnSlab`](crate::kernels::MatmulIndex::RowRunsOnSlab)).
-pub struct RunStored;
+/// An output buffer served where its table places it, so rows in runs stop at each run's end
+/// ([`MatmulIndex::RunOfMOnSlab`](crate::kernels::MatmulIndex::RunOfMOnSlab)); an output no table
+/// places is the buffer as it lies.
+pub struct TableStored;
 
 #[cube]
-impl Destination for RunStored {
+impl Destination for TableStored {
     type Arg<E: Numeric> = Output<'static, E>;
     type Served<E: Numeric> = Tile;
 
@@ -80,7 +81,7 @@ impl Destination for RunStored {
     }
 }
 
-impl DestinationLaunch for RunStored {
+impl DestinationLaunch for TableStored {
     type Operand = TileTensorLaunch;
 
     fn arg<E: Numeric>(operand: TileTensorLaunch) -> OutputArgs<'static, E> {

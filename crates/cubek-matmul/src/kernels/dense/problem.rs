@@ -75,31 +75,11 @@ pub enum MatmulIndex {
     /// before it along the batches is where it starts. A run that ends before it starts sums
     /// nothing.
     RunOfK,
-    /// A tile of a flat, unpadded lhs `[rows, k]` against the slab of a stack of `slabs` its entry
-    /// names, written to the same rows of a flat output `[rows, n]`. A second table holds where
-    /// each tile's rows end, the one before it along the tiles being where they start; rows past
-    /// the run read zero and are never written, and no run is longer than the tile's
-    /// [`TileRows`], whose later rows are not computed.
-    RowRunsOnSlab { slabs: usize },
-}
-
-/// The most rows a tile of a product cut to runs holds: the problem's `M`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TileRows(pub NonZeroUsize);
-
-impl TileRows {
-    pub fn get(self) -> usize {
-        self.0.get()
-    }
-}
-
-/// Which of a table's device buffers an operand reads ([`MatmulIndexTable`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MatmulTableBuffer {
-    /// The entries, one per batch.
-    Entries,
-    /// The ends of each batch's run of rows.
-    Runs,
+    /// A run of rows of a flat, unpadded lhs `[rows, k]` against the slab of a stack of `slabs` its
+    /// entry names, written to the same rows of a flat output `[rows, n]`. A second table holds
+    /// where each run ends, the one before it along the batches being where it starts; rows past a
+    /// run read zero and are never written, and no run is longer than the table's `rows_per_run`.
+    RunOfMOnSlab { slabs: usize },
 }
 
 impl MatmulIndex {
@@ -107,36 +87,29 @@ impl MatmulIndex {
     /// which an entry picks one of.
     pub fn dimension(self) -> Option<(Dimension, usize)> {
         match self {
-            Self::Slab { slabs } | Self::RowRunsOnSlab { slabs } => Some((EXPERT, slabs)),
+            Self::Slab { slabs } | Self::RunOfMOnSlab { slabs } => Some((EXPERT, slabs)),
             Self::RunOfK => None,
         }
     }
 
-    /// Whether the rows are cut to runs, so no level may cut them.
-    pub fn runs_along_rows(self) -> bool {
-        matches!(self, Self::RowRunsOnSlab { .. })
-    }
-}
-
-impl MatmulIndex {
-    /// The buffer each operand reads and how an entry of it places the operand, none for an
-    /// operand that reads no table. `rows` is the dimension the product's rows lie along.
-    fn tables(self, rows: Dimension) -> MatmulOperands<Option<(MatmulTableBuffer, Indexing)>> {
+    /// How an entry places each operand that reads the table, none for one that does not. `rows`
+    /// is the dimension the product's rows lie along.
+    pub fn placements(self, rows: Dimension) -> MatmulOperands<Option<Indexing>> {
         match self {
             Self::Slab { .. } => MatmulOperands {
                 lhs: None,
-                rhs: Some((MatmulTableBuffer::Entries, Indexing::Coordinate(EXPERT))),
+                rhs: Some(Indexing::Coordinate(EXPERT)),
                 out: None,
             },
             Self::RunOfK => MatmulOperands {
-                lhs: Some((MatmulTableBuffer::Entries, Indexing::Run(K))),
-                rhs: Some((MatmulTableBuffer::Entries, Indexing::Run(K))),
+                lhs: Some(Indexing::Run(K)),
+                rhs: Some(Indexing::Run(K)),
                 out: None,
             },
-            Self::RowRunsOnSlab { .. } => MatmulOperands {
-                lhs: Some((MatmulTableBuffer::Runs, Indexing::Run(rows))),
-                rhs: Some((MatmulTableBuffer::Entries, Indexing::Coordinate(EXPERT))),
-                out: Some((MatmulTableBuffer::Runs, Indexing::Run(rows))),
+            Self::RunOfMOnSlab { .. } => MatmulOperands {
+                lhs: Some(Indexing::Run(rows)),
+                rhs: Some(Indexing::Coordinate(EXPERT)),
+                out: Some(Indexing::Run(rows)),
             },
         }
     }
@@ -496,13 +469,11 @@ impl MatmulRoutineProblem {
                 ),
             });
             let innermost = self.dimensions().of(orders.innermost(operand));
-            let indexed_along_a_line = self.index.is_some_and(|index| {
-                index
-                    .tables(self.rows_dimension())
-                    .get_ref(operand)
-                    .as_ref()
-                    .is_some_and(|(_, indexing)| indexing.dimension() == innermost)
-            });
+            let indexed_along_a_line = self
+                .placements()
+                .get_ref(operand)
+                .as_ref()
+                .is_some_and(|indexing| indexing.dimension() == innermost);
             if indexed_along_a_line {
                 vectorization.require(VectorRequirement::Elementwise { operand });
             }
@@ -552,13 +523,13 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// This problem of flat rows restated as `tiles` batches of `tile_rows` rows, each a run of
-    /// the lhs and of the output ([`MatmulIndex::RowRunsOnSlab`]).
-    pub fn tiled_into_runs(self, tile_rows: TileRows, tiles: Vec<usize>) -> Self {
-        let held = tiles.iter().product();
+    /// This problem of flat rows restated as `runs` batches of `rows_per_run` rows, each a run of
+    /// the lhs and of the output ([`MatmulIndex::RunOfMOnSlab`]).
+    pub fn batched_by_runs(self, rows_per_run: NonZeroUsize, runs: Vec<usize>) -> Self {
+        let held = runs.iter().product();
         Self {
-            batches: tiles,
-            stated_rows: tile_rows.get(),
+            batches: runs,
+            stated_rows: rows_per_run.get(),
             batches_held: MatmulOperands {
                 lhs: held,
                 rhs: 1,
@@ -577,34 +548,15 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// Whether a table cuts the rows to runs ([`MatmulIndex::RowRunsOnSlab`]).
-    pub fn cuts_rows_to_runs(&self) -> bool {
-        self.index.is_some_and(MatmulIndex::runs_along_rows)
+    /// Whether a table ends runs of the rows ([`MatmulIndex::RunOfMOnSlab`]), which no level cuts.
+    pub fn rows_in_runs(&self) -> bool {
+        matches!(self.index, Some(MatmulIndex::RunOfMOnSlab { .. }))
     }
 
-    /// Checks no table cuts the rows to runs: what a routine whose planes cut the rows declines
-    /// first.
-    ///
-    /// # Errors
-    ///
-    /// [`MATMUL_ROW_RUNS_UNREAD`], for rows cut to runs.
-    pub fn check_rows_uncut_by_runs(&self) -> Result<(), Decline> {
-        match self.cuts_rows_to_runs() {
-            true => Err(MATMUL_ROW_RUNS_UNREAD),
-            false => Ok(()),
-        }
-    }
-
-    /// The dimension the product's rows lie along ([`dimensions`](Self::dimensions)).
-    pub fn rows_dimension(&self) -> Dimension {
-        self.dimensions().m
-    }
-
-    /// The buffer each operand reads and how an entry places it, none for an operand reading no
-    /// table.
-    pub fn tables(&self) -> MatmulOperands<Option<(MatmulTableBuffer, Indexing)>> {
+    /// How the table places each operand, none for one that reads no table.
+    pub fn placements(&self) -> MatmulOperands<Option<Indexing>> {
         match self.index {
-            Some(index) => index.tables(self.rows_dimension()),
+            Some(index) => index.placements(self.dimensions().m),
             None => MatmulOperands {
                 lhs: None,
                 rhs: None,
@@ -661,32 +613,32 @@ pub const MATMUL_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "this routine reads float operands; a packed one runs on the packed routines",
 };
 
-/// What a routine whose planes cut the rows declines: rows cut to runs, which no level cuts.
+/// What a routine whose planes cut the rows declines: rows in runs, which no level cuts.
 pub const MATMUL_ROW_RUNS_UNREAD: Decline = Decline::Unserved {
-    why: "this routine's planes cut the rows, which a table cutting them to runs places whole",
+    why: "this routine's planes cut the rows, which a table ending runs of them places whole",
 };
 
-/// What a launch declines whatever the device: a box that cuts the rows a table cuts to runs, or
-/// is not as tall as they are.
+/// What a launch declines whatever the device: a cube box that is not as tall as the runs, which
+/// no level cuts.
 pub const MATMUL_ROW_RUNS_CUT: Decline = Decline::Unserved {
-    why: "rows cut to runs are held whole by a box as tall as the tile's rows, which no level cuts",
+    why: "rows in runs are held whole by a box as tall as `rows_per_run`, which no level cuts",
 };
 
-/// What a launch declines whatever the device: rows cut to runs under a swizzled cube order, which
+/// What a launch declines whatever the device: rows in runs under a swizzled cube order, which
 /// has no cut rows to put back.
 pub const MATMUL_ROW_RUNS_SWIZZLED: Decline = Decline::Unserved {
-    why: "rows cut to runs are not cut among the cubes, so a swizzled cube order has nothing to permute",
+    why: "rows in runs are not cut among the cubes, so a swizzled cube order has nothing to permute",
 };
 
-/// What a launch declines whatever the device: rows cut to runs over an lhs stored in tiles, which
-/// a run is not placed over.
-pub const MATMUL_ROW_RUNS_UNTILED: Decline = Decline::Unserved {
-    why: "rows cut to runs are read in rows, which an lhs stored in tiles is not",
+/// What a launch declines whatever the device: rows in runs over an lhs stored in tiles, which a
+/// run is not placed over.
+pub const MATMUL_ROW_RUNS_OVER_TILED_LHS: Decline = Decline::Unserved {
+    why: "rows in runs are read in rows, which an lhs stored in tiles is not",
 };
 
-/// What a launch declines whatever the device: rows cut to runs written anywhere but a buffer.
+/// What a launch declines whatever the device: rows in runs written anywhere but a buffer.
 pub const MATMUL_ROW_RUNS_BUFFER_ONLY: Decline = Decline::Unserved {
-    why: "rows cut to runs are written into a buffer, which masks their end; a sink or an accumulating destination cannot",
+    why: "rows in runs are written into a buffer, which masks their end; a sink or an accumulating destination cannot",
 };
 
 /// What a routine whose kernel walks no indexed input declines: a product whose inputs read a
@@ -738,7 +690,7 @@ mod tests {
     use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
     use cubecl::ir::FloatKind;
     use cubecl::zspace::metadata::Metadata;
-    use cubek_std::matmul_dimensions::{K, M, N};
+    use cubek_std::matmul_dimensions::{K, N};
 
     /// The problem a key describes states the layout and alignments of the tensors that key was
     /// made from.
@@ -846,31 +798,5 @@ mod tests {
             MatmulLayout::lines([K, N], [4096, 4096], [4096, 1]),
             Some((N, 4096))
         );
-    }
-
-    const ROWS: usize = 32;
-    const COLUMNS: usize = 48;
-    const DEPTH: usize = 64;
-
-    fn indexed(index: MatmulIndex) -> MatmulRoutineProblem {
-        MatmulRoutineProblem {
-            index: Some(index),
-            ..MatmulRoutineProblem::dense(ROWS, COLUMNS, DEPTH, ElemType::Float(FloatKind::F32))
-        }
-    }
-
-    /// Each index reads the buffers and places the operands its variant states.
-    #[test]
-    fn each_index_places_the_operands_it_reads() {
-        use MatmulTableBuffer::{Entries, Runs};
-        let slab = indexed(MatmulIndex::Slab { slabs: 3 }).tables();
-        assert_eq!(slab.rhs, Some((Entries, Indexing::Coordinate(EXPERT))));
-        assert_eq!((slab.lhs, slab.out), (None, None));
-        let of_k = indexed(MatmulIndex::RunOfK).tables();
-        assert_eq!(of_k.lhs, Some((Entries, Indexing::Run(K))));
-        assert_eq!(of_k.out, None);
-        let rows = indexed(MatmulIndex::RowRunsOnSlab { slabs: 3 }).tables();
-        assert_eq!(rows.lhs, Some((Runs, Indexing::Run(M))));
-        assert_eq!(rows.out, Some((Runs, Indexing::Run(M))));
     }
 }

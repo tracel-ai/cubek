@@ -10,12 +10,11 @@ use cubek_std::Hardware;
 
 use crate::kernels::{
     MATMUL_TENSORS_READ_FOR_OTHER_ROWS, MatmulBlueprint, MatmulIndexTable, MatmulOutput,
-    MatmulRoutineProblem, MatmulTensors, RunStored,
+    MatmulRoutineProblem, MatmulTensors, TableStored,
 };
 use cubecl::tile::{
     Geometry, Launcher, TileTensorLaunch,
-    kind::Write,
-    launch::{Bound, Buffered, DestinationLaunch, SinkLaunch, Unbound},
+    launch::{DestinationLaunch, SinkLaunch, Unbound},
 };
 use cubek_std::routine::{Grid, Routine};
 
@@ -98,53 +97,11 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         if !tensors.is_read_for(Self::ROWS_KIND) {
             return Err(MATMUL_TENSORS_READ_FOR_OTHER_ROWS);
         }
-        let binding = tensors.bind(&blueprint, &grid)?;
+        let binding = tensors
+            .bind(&blueprint, &grid)?
+            .try_map_out(|out| tensors.output_through_table(out))?;
         let extras = self.bind_extras(tensors, &binding.launcher, &blueprint)?;
-        match tensors.indexes_output() {
-            false => self.dispatch_replacing(tensors, binding, extras, blueprint, grid),
-            true => self.dispatch_placed(tensors, binding, extras, blueprint, grid),
-        }
-    }
-
-    /// [`dispatch`](Self::dispatch) through [`Buffered`], replacing `tensors`' output buffer.
-    ///
-    /// # Errors
-    ///
-    /// Never; it shares the signature of [`dispatch_placed`](Self::dispatch_placed).
-    fn dispatch_replacing(
-        &self,
-        tensors: &MatmulTensors,
-        binding: MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>,
-        extras: Self::Extras,
-        blueprint: MatmulBlueprint<M, SM>,
-        grid: Grid,
-    ) -> Result<(), Decline> {
-        let binding = binding.map_out(|out| (out, Write::Replace));
-        self.dispatch::<Buffered, _>(tensors, binding, extras, blueprint, grid);
-        Ok(())
-    }
-
-    /// [`dispatch`](Self::dispatch) through [`RunStored`], the output placed by its table.
-    ///
-    /// # Errors
-    ///
-    /// Why the tile engine refuses to place the output by its table.
-    fn dispatch_placed(
-        &self,
-        tensors: &MatmulTensors,
-        binding: MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>,
-        extras: Self::Extras,
-        blueprint: MatmulBlueprint<M, SM>,
-        grid: Grid,
-    ) -> Result<(), Decline> {
-        let out = tensors.output_through_table(binding.out)?;
-        let binding = MatmulBinding {
-            launcher: binding.launcher,
-            lhs: binding.lhs,
-            rhs: binding.rhs,
-            out,
-        };
-        self.dispatch::<RunStored, _>(tensors, binding, extras, blueprint, grid);
+        self.dispatch::<TableStored, _>(tensors, binding, extras, blueprint, grid);
         Ok(())
     }
 
@@ -216,7 +173,10 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
 
     /// `lhs · rhs` on `client`'s device, every batch reading its entry of `table`, written into
     /// `out`, `[batches.., rows, n]`, which the caller allocated as its product lies, prepared for
-    /// `hw` at `settings` ([`MatmulTensors::indexed`]).
+    /// `hw` at `settings` ([`MatmulTensors::indexed`]). Under
+    /// [`MatmulIndex::RunOfMOnSlab`](crate::kernels::MatmulIndex::RunOfMOnSlab) the lhs and `out`
+    /// are the flat `[rows, k]` and `[rows, n]`, and every run must be at most the table's
+    /// `rows_per_run` rows, or its later output rows are left unwritten.
     ///
     /// # Errors
     ///

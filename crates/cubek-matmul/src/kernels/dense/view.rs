@@ -1,7 +1,6 @@
 use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MATMUL_ROW_RUNS_BUFFER_ONLY, MATMUL_ROW_RUNS_CUT, MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED,
-    MatmulRoutineProblem,
+    MATMUL_ROW_RUNS_BUFFER_ONLY, MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Decline;
@@ -10,8 +9,8 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDestination, MatmulDimensions, MatmulLayout, MatmulOperands, MatmulReading,
-    MatmulRows, MatmulRowsKind, MatmulWorkItem,
+    MatmulBlocks, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulRowsKind, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;
@@ -74,7 +73,7 @@ impl<'a> MatmulView<'a> {
     /// rhs lined along neither dimension; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
     /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNMERGED`], for an lhs or an output that does not
     /// hold every batch, unless a table is read per batch, which keeps the batches apart.
-    /// [`MATMUL_ROW_RUNS_BUFFER_ONLY`], for rows cut to runs written anywhere but a buffer.
+    /// [`MATMUL_ROW_RUNS_BUFFER_ONLY`], for rows in runs written anywhere but a buffer.
     pub fn new(
         problem: &'a MatmulRoutineProblem,
         rows_kind: MatmulRowsKind,
@@ -92,7 +91,7 @@ impl<'a> MatmulView<'a> {
         {
             return Err(MATMUL_PACKED_BLOCKS_DISAGREE);
         }
-        if problem.cuts_rows_to_runs() && problem.destination != MatmulDestination::Buffer {
+        if problem.rows_in_runs() && problem.destination != MatmulDestination::Buffer {
             return Err(MATMUL_ROW_RUNS_BUFFER_ONLY);
         }
         if rows_kind == MatmulRowsKind::Whole {
@@ -136,8 +135,9 @@ impl<'a> MatmulView<'a> {
         order: CubeOrder,
         cubes_along_k: NonZeroUsize,
     ) -> MatmulPartitioning {
-        let cut = self.cut_dimensions(dimensions);
-        let dimensions = &cut[..];
+        let held = self.rows_held(&inside);
+        let uncut = self.uncut(dimensions);
+        let dimensions = &uncut[..];
         let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let walked = self.walked();
         let cubes = match cubes_along_k.get() {
@@ -176,13 +176,15 @@ impl<'a> MatmulView<'a> {
                 )
             }
         };
-        MatmulPartitioning::new(
-            partitioning,
-            cube,
-            distributed_batch_dimensions,
-            self.rows_kind,
+        self.finished(
+            MatmulPartitioning::new(
+                partitioning,
+                cube,
+                distributed_batch_dimensions,
+                self.rows_kind,
+            ),
+            held,
         )
-        .with_output_run(self.output_run())
     }
 
     /// The problem partitioned with `inside` a cube's box, `cubes` cubes cutting `dimensions` and
@@ -205,14 +207,21 @@ impl<'a> MatmulView<'a> {
             distributed_batch_dimensions.is_empty(),
             "persistent_partitioning: a run of boxes walks one dimension, not batches beside it"
         );
-        let levels = inside.cubes(dimensions).shared_by(cubes.get()).build();
+        let held = self.rows_held(&inside);
+        let levels = inside
+            .cubes(&self.uncut(dimensions))
+            .shared_by(cubes.get())
+            .build();
         let partitioning = Partitioning::new(self.space(), levels);
         let cube = self.one_slab(partitioning.box_of(ComputeScope::Cube));
-        MatmulPartitioning::new(
-            partitioning,
-            cube,
-            distributed_batch_dimensions,
-            self.rows_kind,
+        self.finished(
+            MatmulPartitioning::new(
+                partitioning,
+                cube,
+                distributed_batch_dimensions,
+                self.rows_kind,
+            ),
+            held,
         )
     }
 
@@ -235,8 +244,9 @@ impl<'a> MatmulView<'a> {
         dimensions: &[Dimension],
         order: PlaneOrder,
     ) -> MatmulPartitioning {
-        let cut = self.cut_dimensions(dimensions);
-        let dimensions = &cut[..];
+        let held = self.rows_held(&inside);
+        let uncut = self.uncut(dimensions);
+        let dimensions = &uncut[..];
         let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let levels = inside
             .launch_planes(
@@ -244,13 +254,15 @@ impl<'a> MatmulView<'a> {
                 order.clone(),
             )
             .build();
-        MatmulPartitioning::of_launch_planes(
-            Partitioning::new(self.space(), levels),
-            &order,
-            distributed_batch_dimensions,
-            self.rows_kind,
+        self.finished(
+            MatmulPartitioning::of_launch_planes(
+                Partitioning::new(self.space(), levels),
+                &order,
+                distributed_batch_dimensions,
+                self.rows_kind,
+            ),
+            held,
         )
-        .with_output_run(self.output_run())
     }
 
     /// The problem partitioned with `inside` a cube's box, the cubes cutting `dimensions`, every
@@ -264,16 +276,20 @@ impl<'a> MatmulView<'a> {
         dimensions: &[Dimension],
         cubes: NonZeroUsize,
     ) -> MatmulPartitioning {
+        let held = self.rows_held(&inside);
         let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let levels = inside
-            .cubes(dimensions)
+            .cubes(&self.uncut(dimensions))
             .shared_by(cubes.get())
             .batches(&distributed_batch_dimensions)
             .build();
-        MatmulPartitioning::of_cubes(
-            Partitioning::new(self.space(), levels),
-            distributed_batch_dimensions,
-            self.rows_kind,
+        self.finished(
+            MatmulPartitioning::of_cubes(
+                Partitioning::new(self.space(), levels),
+                distributed_batch_dimensions,
+                self.rows_kind,
+            ),
+            held,
         )
     }
 
@@ -319,59 +335,35 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// `dimensions` without the rows where a table cuts them to runs: a run is placed over rows
-    /// no level at or above its key cuts.
-    fn cut_dimensions(&self, dimensions: &[Dimension]) -> Vec<Dimension> {
-        let rows = self.problem.rows_dimension();
-        match self.problem.cuts_rows_to_runs() {
+    /// `dimensions` without the rows where a table ends runs of them: a run is placed over rows no
+    /// level at or above its key cuts.
+    fn uncut(&self, dimensions: &[Dimension]) -> Vec<Dimension> {
+        let rows = self.problem.dimensions().m;
+        match self.problem.rows_in_runs() {
             true => dimensions.iter().copied().filter(|&d| d != rows).collect(),
             false => dimensions.to_vec(),
         }
     }
 
-    /// The dimension a table cuts the output's rows to runs along, where it does.
-    fn output_run(&self) -> Option<Dimension> {
-        self.problem
-            .tables()
-            .out
-            .map(|(_, indexing)| indexing.dimension())
+    /// The rows the levels `inside` the cubes hold, where a table ends runs of the rows.
+    fn rows_held(&self, inside: &Levels) -> Option<usize> {
+        let rows = self.problem.dimensions().m;
+        self.problem.rows_in_runs().then(|| {
+            inside.clone().cubes(&[rows]).build()[0]
+                .tile(rows)
+                .expect("a level naming the rows tiles them")
+        })
     }
 
-    /// Checks that where a table cuts the rows to runs, the tile of rows `inside` fits in a cube
-    /// holds the problem's rows: the stage is sized from the box, which the runs leave uncut, while
-    /// the planes walk the rows of `inside`, so a box of another height reads past its stage.
-    ///
-    /// # Errors
-    ///
-    /// [`MATMUL_ROW_RUNS_CUT`], for a cube tile of another height than the problem's rows.
-    pub fn check_rows_held(&self, inside: Levels, dimensions: &[Dimension]) -> Result<(), Decline> {
-        match self.problem.cuts_rows_to_runs() {
-            true => self.check_natural_box_holds_rows(inside, dimensions),
-            false => Ok(()),
-        }
-    }
-
-    /// Checks the box `inside` cuts the cubes `dimensions` as holds the problem's rows.
-    ///
-    /// # Errors
-    ///
-    /// [`MATMUL_ROW_RUNS_CUT`].
-    fn check_natural_box_holds_rows(
+    /// `partitioning` marked as rows in runs where `held` says the rows its levels hold.
+    fn finished(
         &self,
-        inside: Levels,
-        dimensions: &[Dimension],
-    ) -> Result<(), Decline> {
-        let rows = self.problem.rows_dimension();
-        let natural = Partitioning::new(
-            self.space(),
-            inside
-                .cubes(dimensions)
-                .batches(&self.distributed_batch_dimensions())
-                .build(),
-        );
-        match natural.box_of(ComputeScope::Cube).extent(rows) == self.space().extent(rows) {
-            true => Ok(()),
-            false => Err(MATMUL_ROW_RUNS_CUT),
+        partitioning: MatmulPartitioning,
+        held: Option<usize>,
+    ) -> MatmulPartitioning {
+        match held {
+            Some(held) => partitioning.with_rows_in_runs(self.problem.dimensions().m, held),
+            None => partitioning,
         }
     }
 
@@ -408,10 +400,7 @@ impl<'a> MatmulView<'a> {
             elements: self.problem.elements,
             sum: self.problem.sum(),
             layouts: self.problem.layouts,
-            dimensions: match blocks {
-                None => MatmulDimensions::MNK,
-                Some(_) => MatmulDimensions::INSIDE_BLOCKS,
-            },
+            dimensions: self.problem.dimensions(),
             blocks,
             rows: self.read().work_item_rows,
             destination: self.problem.destination,
