@@ -4,7 +4,6 @@
 use crate::kernels::MATMUL_SCALED_BESIDE_FLOAT;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::client::Client;
-use cubecl::ir::{ElemType, UIntKind};
 use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::metadata::Metadata;
@@ -16,24 +15,6 @@ use serde::{Deserialize, Serialize};
 pub const MATMUL_STACK_NOT_WHOLE_SLABS: Decline = Decline::Unserved {
     why: "a stack is a rank-two view of whole slabs, at least one of them",
 };
-
-/// Ends of a grouped product that are no one `u32` per group, at least one.
-pub const GROUP_ENDS_UNREAD: Decline = Decline::Unserved {
-    why: "the groups' ends are one u32 row per group, at least one group",
-};
-
-/// Whether `ends` are one `u32` per group, at least one.
-///
-/// # Errors
-///
-/// [`GROUP_ENDS_UNREAD`].
-pub(crate) fn admit_ends(ends: &PlainTensor) -> Result<(), Decline> {
-    let shape = ends.shape();
-    if ends.elem != ElemType::UInt(UIntKind::U32) || shape.rank() != 1 || shape[0] == 0 {
-        return Err(GROUP_ENDS_UNREAD);
-    }
-    Ok(())
-}
 
 /// The dimension of a product along which the slabs of its stacked rhs lie end
 /// to end.
@@ -137,7 +118,7 @@ impl SlabDimension {
     /// # Errors
     ///
     /// [`MATMUL_STACK_NOT_WHOLE_SLABS`].
-    pub(crate) fn admit(self, stack: &StoredTensor, slabs: usize) -> Result<(), Decline> {
+    pub fn admit(self, stack: &StoredTensor, slabs: usize) -> Result<(), Decline> {
         if stack.values().shape().rank() != 2 || slabs == 0 {
             return Err(MATMUL_STACK_NOT_WHOLE_SLABS);
         }
