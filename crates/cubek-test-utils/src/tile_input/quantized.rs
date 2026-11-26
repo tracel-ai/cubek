@@ -5,21 +5,14 @@ use cubecl::{prelude::TensorBinding, quant::scheme::QuantScheme};
 use crate::TileInput;
 
 /// A packed-quantized input born whole: a quantized tensor is one thing (data, scales,
-/// scheme), so the [`quantized builder`](crate::QuantizedTileInputBuilder) mints the pair together,
-/// plus the exact numbers behind both for host references.
+/// scheme), so the [`quantized builder`](crate::QuantizedTileInputBuilder) mints the pair together.
 pub struct QuantizedTileInput {
-    pub tile: TileInput,
+    tile: TileInput,
     scales: TensorHandle,
     scheme: QuantScheme,
     /// A lookup scheme's table, present exactly under `QuantMode::Lookup`
     /// ([`lookup_arange`](QuantizedTileInputBuilder::lookup_arange) mints it).
     table: Option<TensorHandle>,
-    /// The quant values, row-major in the logical shape. Table indices under a lookup scheme.
-    pub q: Vec<i32>,
-    /// One scale per block, row-major over the scheme's block grid.
-    pub scale_values: Vec<f32>,
-    /// The lookup table's entries, empty for a non-lookup scheme.
-    pub table_values: Vec<f32>,
 }
 
 impl QuantizedTileInput {
@@ -87,28 +80,18 @@ impl QuantizedTileInput {
 
 impl QuantizedTileInput {
     /// The input whose packed values `tile` holds, scaled by `scales` and decoded under `scheme`
-    /// through `table` where it is a lookup one, with the exact numbers behind them.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the stored tensors and the host numbers behind them, as the builder mints them"
-    )]
+    /// through `table` where it is a lookup one.
     pub(super) fn new(
         tile: TileInput,
         scales: TensorHandle,
         scheme: QuantScheme,
         table: Option<TensorHandle>,
-        q: Vec<i32>,
-        scale_values: Vec<f32>,
-        table_values: Vec<f32>,
     ) -> Self {
         Self {
             tile,
             scales,
             scheme,
             table,
-            q,
-            scale_values,
-            table_values,
         }
     }
 }

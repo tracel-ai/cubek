@@ -164,8 +164,8 @@ pub(crate) fn launch_kernel(
 }
 
 /// `tensors` summed by the atomic hypercube, at the launch `prepared` holds, into their output,
-/// zeroed first. Both prepare and bind before either launches, so a decline leaves the output as
-/// the caller gave it.
+/// zeroed first. Both prepare and bind before either launches, so a decline before the zeroing
+/// leaves the output as the caller gave it.
 ///
 /// # Errors
 ///

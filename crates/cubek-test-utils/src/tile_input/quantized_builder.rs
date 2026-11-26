@@ -25,11 +25,18 @@ impl QuantizedTileInputBuilder {
     /// appears. Scales are a distinct-per-block ramp (`0.05 · (block + 1)`) on the scheme's
     /// block grid.
     ///
-    /// Integer value types only. The walk is over whole numbers packed as two's complement, and
-    /// [`q`](QuantizedTileInput::q) is handed to tests as the magnitude each field stands for —
-    /// both of which hold only where a format's codes are its magnitudes. Under a minifloat the
-    /// fields would be codes, so a test folding `q · scale` would compare the kernel against the
-    /// integer grid the format exists to avoid.
+    /// The walk is over whole numbers packed as two's complement, which a test reads as the
+    /// magnitude each field stands for: under a minifloat the fields would be codes, so a test
+    /// folding them with the scales would compare the kernel against the integer grid the format
+    /// exists to avoid.
+    ///
+    /// # Assumptions
+    ///
+    /// - The scheme's value is an integer type, whose codes are its magnitudes.
+    ///
+    /// # Panics
+    ///
+    /// Where its Assumption is broken.
     pub fn arange(self) -> QuantizedTileInput {
         assert!(
             integer_valued(self.scheme.value),
@@ -59,7 +66,7 @@ impl QuantizedTileInputBuilder {
             .map(|g| 0.05 * (g + 1) as f32)
             .collect();
         let scales = TestInput::builder(self.client, Shape::from(grid))
-            .custom(scale_values.clone())
+            .custom(scale_values)
             .generate_without_host_data();
 
         QuantizedTileInput::new(
@@ -71,9 +78,6 @@ impl QuantizedTileInputBuilder {
             scales,
             self.scheme,
             None,
-            q,
-            scale_values,
-            Vec::new(),
         )
     }
 
@@ -81,8 +85,15 @@ impl QuantizedTileInputBuilder {
     /// **descending** (`2^bits - 1, …, 1, 0, 2^bits - 1, …`), so every entry is read *and* the
     /// field is never the identity of its position: a decode that indexed the table by position
     /// instead of by the unpacked field would pass an ascending walk. The scales are the same
-    /// distinct-per-block ramp, and `table` uploads beside them. Panics unless the scheme's mode
-    /// is lookup and the table holds exactly `2^bits` entries.
+    /// distinct-per-block ramp, and `table` uploads beside them.
+    ///
+    /// # Assumptions
+    ///
+    /// - The scheme's mode is lookup, and `table` holds exactly `2^bits` entries.
+    ///
+    /// # Panics
+    ///
+    /// Where its Assumption is broken.
     pub fn lookup_arange(self, table: &[f32]) -> QuantizedTileInput {
         assert!(
             matches!(self.scheme.mode, cubecl::quant::scheme::QuantMode::Lookup),
@@ -113,7 +124,7 @@ impl QuantizedTileInputBuilder {
             .map(|g| 0.05 * (g + 1) as f32)
             .collect();
         let scales = TestInput::builder(self.client.clone(), Shape::from(grid))
-            .custom(scale_values.clone())
+            .custom(scale_values)
             .generate_without_host_data();
         let table_handle = TestInput::builder(self.client, Shape::from(vec![span]))
             .custom(table.to_vec())
@@ -128,9 +139,6 @@ impl QuantizedTileInputBuilder {
             scales,
             self.scheme,
             Some(table_handle),
-            q,
-            scale_values,
-            table.to_vec(),
         )
     }
 }

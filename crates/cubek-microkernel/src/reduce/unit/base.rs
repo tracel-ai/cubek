@@ -48,8 +48,9 @@ impl UnitDirectReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s
-    /// Assumptions is broken.
+    /// When the kernel compiles, where it is handed a tile of `indices` or `partial_indices` its
+    /// item writes nothing to, or none where it writes one, or its item writes indices its carrier
+    /// does not keep.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,

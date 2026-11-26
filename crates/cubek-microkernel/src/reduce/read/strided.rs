@@ -29,6 +29,7 @@ impl UnitStridedReduceMicrokernel {
     ///
     /// # Assumptions
     ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     /// - `first` is below the stride, the units that read the row together: one step past the full
     ///   ones then covers the rest.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(

@@ -35,8 +35,9 @@ pub struct Written {
 ///
 /// # Guarantees
 ///
-/// - A case the scope refuses as a [`Decline::Broken`] fails, and so does a case it launches whose
-///   output differs from its reference or that the device then fails to run.
+/// - A case the scope refuses as a [`Decline::Broken`] is reported to the active policy as a
+///   failure, and so is a case it launches whose output differs from its reference or that the
+///   device then fails to run.
 pub trait ScopeChecker {
     /// One problem the scope runs on, named in every failure.
     type Case: Debug;

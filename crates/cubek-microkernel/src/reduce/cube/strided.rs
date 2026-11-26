@@ -36,6 +36,10 @@ impl CubeStridedReduceMicrokernel {
 impl CubeStridedReduceMicrokernel {
     /// The lines of `input` accumulated by the cube into `C`, the line at `l` read as line
     /// `first_line + l` of its row (`cube_strided_reduce_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         input: &Tile,

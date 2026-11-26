@@ -86,6 +86,10 @@ impl<In> ReduceTensors<In> {
 impl<In: Clone> ReduceTensors<In> {
     /// These tensors with `workspace`, the last-arrival hypercube's scratch, which declines
     /// them without one.
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkspace`].
     pub fn with_workspace(&self, workspace: ReduceWorkspace) -> Self {
         Self {
             problem: ReduceRoutineProblem {
@@ -105,10 +109,13 @@ impl ReduceTensors<TensorBinding> {
     ///
     /// - `axis` is an axis of `input`, which has one at least.
     /// - `out` has `input`'s shape, `axis` one wide, or `k` wide for a top-k.
+    /// - The element indices are written in, `elements.out` for an `ArgMax`, `ArgMin` or
+    ///   `ArgTopK` and the index element of [`with_indices`](Self::with_indices), counts every
+    ///   position of the reduced axis.
     ///
     /// # Panics
     ///
-    /// Where an Assumption is broken.
+    /// Where `axis` is not an axis of `input` or `out` has not the shape above.
     pub fn new(
         client: &Client,
         input: TensorBinding,
@@ -137,11 +144,11 @@ impl ReduceTensors<TensorBinding> {
     /// - The operation's carrier keeps indices: not a sum's, nor a max's, whose pair an argmax
     ///   writes.
     /// - `indices` has `values`' shape.
-    /// - `index_element` counts every position of the reduced axis.
     ///
     /// # Panics
     ///
-    /// Where an Assumption is broken.
+    /// Where [`new`](Self::new) does, the carrier keeps no indices, or `indices` does not have
+    /// `values`' shape.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -174,6 +181,10 @@ impl ReduceTensors<TensorBinding> {
     /// [`Reduce::execute`](crate::kernels::Reduce::execute) launches on, for a caller that picks the
     /// kernel itself.
     ///
+    /// # Assumptions
+    ///
+    /// - That of [`new`](Self::new) its checks leave: the element indices are written in.
+    ///
     /// # Errors
     ///
     /// As [`Reduce::execute`](crate::kernels::Reduce::execute), but for a kernel's decline.
@@ -194,6 +205,10 @@ impl ReduceTensors<TensorBinding> {
     /// Domain, `Max`, `Min` and `TopK` writing the same pair as `ArgMax`, `ArgMin` and `ArgTopK`:
     /// what [`Reduce::execute_with_indices`](crate::kernels::Reduce::execute_with_indices)
     /// launches on.
+    ///
+    /// # Assumptions
+    ///
+    /// - That of [`with_indices`](Self::with_indices) its checks leave: the element indices are written in.
     ///
     /// # Errors
     ///
@@ -247,7 +262,7 @@ impl ReduceTensors<Geometry> {
     ///
     /// # Panics
     ///
-    /// Where an Assumption is broken.
+    /// Where [`new`](ReduceTensors::new) does, of `input`'s geometry.
     pub fn unbound(
         client: &Client,
         input: Geometry,

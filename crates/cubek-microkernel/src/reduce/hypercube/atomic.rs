@@ -38,6 +38,9 @@ impl HypercubeAtomicReduceMicrokernel {
     ///
     /// # Assumptions
     ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its part's item.
+    /// - Its part's item is a sum that writes no indices, what
+    ///   [`admits`](Microkernel::admits) accepts.
     /// - Every cell of `out` holds zero before the launch: each cube only adds into it.
     /// - The cubes of the launch split each row into parts, each part some cube's alone.
     pub fn reduce<

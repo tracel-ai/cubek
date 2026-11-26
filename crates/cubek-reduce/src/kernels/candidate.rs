@@ -68,6 +68,10 @@ impl ReduceCandidate {
 
     /// `tensors`, whose input the caller binds, reduced at this candidate's setting.
     ///
+    /// # Guarantees
+    ///
+    /// - The output is zeroed first where the routine only adds into it, the atomic hypercube.
+    ///
     /// # Errors
     ///
     /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's

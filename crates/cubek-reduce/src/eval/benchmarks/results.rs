@@ -2,6 +2,7 @@
 //! its bits from the same values, so the two compare directly.
 
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::launch::Decline;
 use cubecl::{client::Client, prelude::*};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, TestInput, launch_and_capture_outcome,
@@ -77,8 +78,8 @@ fn ramp_of_elem_count(elem_count: usize) -> Vec<f32> {
 ///
 /// # Errors
 ///
-/// Why the launch did not run, a [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) marked
-/// by [`BROKEN_LAUNCH`] ([`launch_error`]).
+/// [`ReduceRunError::Declined`] with the kernel's decline, and
+/// [`ReduceRunError::DidNotRun`] where the call or the launch failed otherwise.
 ///
 /// # Panics
 ///
@@ -91,7 +92,7 @@ pub(crate) fn strategy_result(
     operation: ReduceOperation,
     input: ReduceInput,
     with_indices: bool,
-) -> Result<HostData, String> {
+) -> Result<HostData, ReduceRunError> {
     let index_dtype = u32::elem_type_native();
     let out_dtype = match with_indices {
         true => input.dtype,
@@ -107,6 +108,7 @@ pub(crate) fn strategy_result(
     let workspace =
         EvalWorkspace::new(&client, &shape, axis, operation, elements, with_indices).workspace;
     let reduce = reduce_given(strategy, workspace);
+    let mut failed = None;
     let outcome = launch_and_capture_outcome(&client, &[&values.handle, &indices.handle], |c| {
         let launched = match with_indices {
             true => reduce.execute_with_indices(
@@ -128,27 +130,53 @@ pub(crate) fn strategy_result(
                 elements,
             ),
         };
-        match launched {
-            Ok(()) => ExecutionOutcome::Executed,
-            Err(why) => ExecutionOutcome::CompileError(launch_error(&why)),
-        }
+        outcome_of(launched, &mut failed)
     });
+    if let Some(why) = failed {
+        return Err(ReduceRunError::from(why));
+    }
     read_back(&client, outcome, values)
 }
 
-/// What marks a launch whose routine broke what it prepared, in the error the harness reports:
-/// a bug the check fails on, not a launch the device cannot run.
-pub const BROKEN_LAUNCH: &str = "a routine broke what it prepared: ";
+/// Why a launch the harness compares wrote no output to compare.
+#[derive(Debug)]
+pub(crate) enum ReduceRunError {
+    /// The kernel declined the problem, for the device or as a bug of its own
+    /// ([`Decline::Broken`](cubecl::tile::launch::Decline::Broken)).
+    Declined(Decline),
+    /// The call lay outside the reduction's Domain, or the launch it accepted did not run.
+    DidNotRun(String),
+}
 
-/// Why a launch erred, as the harness reports it: a
-/// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) marked by [`BROKEN_LAUNCH`].
-pub(crate) fn launch_error(why: &ReduceError) -> String {
-    match why {
-        ReduceError::Declined(decline) if decline.is_broken() => {
-            format!("{BROKEN_LAUNCH}{decline}")
+impl From<ReduceError> for ReduceRunError {
+    fn from(why: ReduceError) -> Self {
+        match why {
+            ReduceError::Declined(decline) => Self::Declined(decline),
+            other => Self::DidNotRun(other.to_string()),
         }
-        other => other.to_string(),
     }
+}
+
+impl core::fmt::Display for ReduceRunError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Declined(decline) => write!(f, "declined: {decline}"),
+            Self::DidNotRun(why) => write!(f, "did not run: {why}"),
+        }
+    }
+}
+
+/// The outcome the capture reads of `launched`, its error kept in `failed` for the caller.
+fn outcome_of(
+    launched: Result<(), ReduceError>,
+    failed: &mut Option<ReduceError>,
+) -> ExecutionOutcome {
+    let Err(why) = launched else {
+        return ExecutionOutcome::Executed;
+    };
+    let outcome = ExecutionOutcome::CompileError(why.to_string());
+    *failed = Some(why);
+    outcome
 }
 
 /// What an output holds before its launch: a value no comparison's result comes near, so a kernel
@@ -164,14 +192,14 @@ fn unwritten(client: &Client, shape: Vec<usize>, dtype: ElemType) -> TensorHandl
         .generate_without_host_data()
 }
 
-/// `handle` read back as f32 where the launch ran, or why it did not compile.
+/// `handle` read back as f32 where the launch ran, or why it did not run.
 fn read_back(
     client: &Client,
     outcome: ExecutionOutcome,
     handle: TensorHandle,
-) -> Result<HostData, String> {
+) -> Result<HostData, ReduceRunError> {
     match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
+        ExecutionOutcome::CompileError(why) => Err(ReduceRunError::DidNotRun(why)),
         ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
             client,
             handle,
@@ -186,7 +214,7 @@ fn read_back(
 ///
 /// # Panics
 ///
-/// As [`strategy_result`].
+/// Where `shape` has fewer axes than `axis` counts.
 pub(crate) fn cpu_reference_result(
     client: Client,
     shape: Vec<usize>,
@@ -254,21 +282,6 @@ mod tests {
     use crate::kernels::ReduceKernel;
     use cubecl::ir::{FloatKind, UIntKind};
     use cubek_test_utils::assert_equals_approx;
-
-    #[test]
-    fn a_broken_launch_is_marked() {
-        let broken = cubecl::tile::launch::Decline::broken_by(
-            "the cube holds units",
-            cubecl::tile::launch::Decline::NoUnits,
-        );
-        assert!(launch_error(&ReduceError::Declined(broken)).starts_with(BROKEN_LAUNCH));
-    }
-
-    #[test]
-    fn a_launch_the_device_cannot_run_is_not_marked() {
-        let refused = ReduceError::Declined(cubecl::tile::launch::Decline::NoUnits);
-        assert!(!launch_error(&refused).contains(BROKEN_LAUNCH));
-    }
 
     #[test]
     fn a_ramp_lies_within_its_range() {

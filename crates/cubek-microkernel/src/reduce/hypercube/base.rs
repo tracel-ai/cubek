@@ -66,8 +66,9 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s
-    /// Assumptions is broken.
+    /// When the kernel compiles, where it is handed a tile of `indices` or `partial_indices` its
+    /// item writes nothing to, or none where it writes one, or its item writes indices its carrier
+    /// does not keep.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"
@@ -192,8 +193,7 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
 /// carrier's lines a slot apart, and the cube counts itself in at the row's `counter` of
 /// `arrivals`. The row's last cube to count merges every partial and writes the
 /// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
-/// a row, a mean dividing by `values`, the values the whole row holds. The row's last cube sets
-/// its counter back to zero once it has merged.
+/// a row, a mean dividing by `values`, the values the whole row holds.
 ///
 /// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
 /// the last cube reads the others'.

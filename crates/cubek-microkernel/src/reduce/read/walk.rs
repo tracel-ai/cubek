@@ -34,6 +34,10 @@ impl UnitWalkReduceMicrokernel {
 impl UnitWalkReduceMicrokernel {
     /// The cells of `input` `region`'s walk gives this unit, accumulated from the identity
     /// (`unit_walk_reduce_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         region: &Region,

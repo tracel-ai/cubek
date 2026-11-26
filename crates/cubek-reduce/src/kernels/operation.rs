@@ -15,8 +15,7 @@ use cubek_microkernel::reduce::ReduceOperation;
 /// # Assumptions
 ///
 /// - The outputs alias neither the input nor each other.
-/// - An output of indices, `elements.out` for an `ArgMax`, `ArgMin` or `ArgTopK` and the index
-///   element beside the values, counts every position of the reduced axis.
+/// - Those of [`ReduceTensors::new`] that its checks leave: the element indices are written in.
 ///
 /// # Guarantees
 ///
