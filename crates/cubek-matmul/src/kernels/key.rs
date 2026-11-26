@@ -15,15 +15,20 @@ use crate::kernels::select::problem::{MatmulProblem, OperandKind};
 use cubecl::ir::ElemType;
 use cubecl::tile::Dimension;
 use cubecl::{self as cubecl, AutotuneKey};
-use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand, MatmulOperands};
+use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand, MatmulOperands, MatmulStoredTile};
 use serde::{Deserialize, Serialize};
 
 use cubecl::zspace::metadata::Metadata;
 
 use cubek_std::layout::contiguous;
 
+use cubecl::ir::UIntKind;
+use cubecl::tile::layout::Stagger;
+use cubek_std::Hardware;
 use cubek_std::layout;
+use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::layout::tile_order::{TileOrder, TileWords};
+use cubek_std::matmul_dimensions::{K, M, N};
 
 /// One input as the key tells problems apart: what it is, how it lies, and whether its batches
 /// read one matrix.
@@ -95,11 +100,48 @@ pub enum OperandLayout {
     /// Contiguous along neither dimension: a strided or broadcast view, read one element at a time.
     Strided,
     /// Contiguous along this dimension inside tiles of these extents over the operand's two
-    /// dimensions, the tiles' words lying as the order says: a buffer stored a tile at a time. One
-    /// of one value a tile is [`Along`](Self::Along). A float buffer's tiles, and a packed one's
-    /// laid row by row, are a row's run a tile row; a packed one's laid block by block are not, and
-    /// a kernel may decline one where it reads the other.
-    Tiles(Dimension, (usize, usize), TileWords),
+    /// dimensions, the tiles' words lying as the order says and their strips as the strips say: a
+    /// buffer stored a tile at a time. One of one value a tile is [`Along`](Self::Along). A float
+    /// buffer's tiles, and a packed one's laid row by row, are a row's run a tile row; a packed
+    /// one's laid block by block are not, and a kernel may decline one where it reads the other.
+    Tiles(Dimension, (usize, usize), TileWords, TileStrips),
+}
+
+/// How a packed operand's strips of tiles lie in its buffer ([`TileOrder::stagger`]): what a key
+/// holds of the order beyond its tile and its words, so the problem a packed key describes is the
+/// one its tensors state ([`MatmulTuneKey::packed_problem`]).
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum TileStrips {
+    /// Each strip right after the one before it.
+    BackToBack,
+    /// Each strip an odd number of memory transactions of `transaction_bits` after the one
+    /// before it.
+    Staggered {
+        /// Bits one memory transaction moves.
+        transaction_bits: usize,
+    },
+}
+
+impl TileStrips {
+    /// How the strips of a matrix stored in `order` lie.
+    pub fn of(order: TileOrder) -> Self {
+        order
+            .stagger()
+            .map_or(Self::BackToBack, |stagger| Self::Staggered {
+                transaction_bits: stagger.transaction_bits(),
+            })
+    }
+
+    /// `order` with its strips laid as these are, or `None` where a transaction holds no whole
+    /// number of the order's values.
+    pub fn laid(self, order: TileOrder) -> Option<TileOrder> {
+        match self {
+            Self::BackToBack => Some(order),
+            Self::Staggered { transaction_bits } => {
+                Some(order.staggered(Stagger::new(transaction_bits, u8::BITS as usize)?))
+            }
+        }
+    }
 }
 
 impl OperandLayout {
@@ -125,16 +167,23 @@ impl core::fmt::Debug for OperandLayout {
                 f.write_str(cubek_std::matmul_dimensions::dimension_name(*dimension))
             }
             Self::Strided => f.write_str("strided"),
-            Self::Tiles(dimension, (first, second), words) => {
+            Self::Tiles(dimension, (first, second), words, strips) => {
                 write!(
                     f,
                     "{} in {first}x{second} tiles",
                     cubek_std::matmul_dimensions::dimension_name(*dimension)
                 )?;
-                // Row by row is the tiles every key named before the order did.
+                // Row by row and back to back are the tiles every key named before the order and
+                // the strips did.
                 match words {
                     TileWords::RowByRow => Ok(()),
                     TileWords::BlockByBlock => f.write_str(" block by block"),
+                }?;
+                match strips {
+                    TileStrips::BackToBack => Ok(()),
+                    TileStrips::Staggered { transaction_bits } => {
+                        write!(f, " staggered by {}B", transaction_bits / 8)
+                    }
                 }
             }
         }
@@ -149,6 +198,50 @@ impl MatmulTuneKey {
         [self.lhs.kind, self.rhs.kind]
             .iter()
             .any(|kind| matches!(kind, OperandKind::Quantized(_)))
+    }
+
+    /// The problem a packed key describes on `hw`: the one the tensors it was read off state
+    /// ([`MatmulTensors::problem`](crate::kernels::MatmulTensors::problem)), each packed input
+    /// read as its scheme, its layout and its strips say, a float input dense in the key's
+    /// element, the batches merged into the rows. `None` for a key with no packed input, or a
+    /// packed input no read takes as stated.
+    pub fn packed_problem(&self, hw: &Hardware) -> Option<MatmulRoutineProblem> {
+        if !self.is_packed() {
+            return None;
+        }
+        let packings = MatmulOperands {
+            lhs: self.lhs.packing([M, K], hw)?,
+            rhs: self.rhs.packing([K, N], hw)?,
+            out: None,
+        };
+        let stored_tile = |packing: Option<Packing>| {
+            let order = packing?.operand.tile_order()?;
+            let (columns, rows) = order.tile();
+            (order.words() == TileWords::RowByRow).then_some(MatmulStoredTile { rows, columns })
+        };
+        let element = |packing: Option<Packing>| match packing {
+            Some(_) => MatmulRoutineProblem::PACKED,
+            None => self.elem,
+        };
+        Some(MatmulRoutineProblem {
+            stored_tiles: MatmulOperands {
+                lhs: stored_tile(packings.lhs),
+                rhs: stored_tile(packings.rhs),
+                out: None,
+            },
+            elements: MatmulOperands {
+                lhs: element(packings.lhs),
+                rhs: element(packings.rhs),
+                out: self.elem,
+            },
+            ..MatmulRoutineProblem::packed(
+                self.m * self.batches.max(1),
+                self.n,
+                self.k,
+                self.elem,
+                packings,
+            )
+        })
     }
 
     /// The problem this key describes, as a candidate list prioritizes against it.
@@ -196,6 +289,32 @@ pub struct MatmulShape {
 }
 
 impl OperandKey {
+    /// How this input is stored, over `dimensions` as the product names them (`[M, K]` for the
+    /// lhs, `[K, N]` for the rhs), read `hw`'s loads at a time: `Some(None)` for a float input,
+    /// `None` for a packed one no read takes as the key states it.
+    pub fn packing(self, dimensions: [Dimension; 2], hw: &Hardware) -> Option<Option<Packing>> {
+        let OperandKind::Quantized(scheme) = self.kind else {
+            return Some(None);
+        };
+        let along = Operand::dimension_of(&scheme, dimensions)?;
+        let operand = Operand::of_scheme(&scheme, along, dimensions)?;
+        let operand = match self.layout {
+            OperandLayout::Tiles(_, tile, words, strips) => {
+                // Tile order states a matrix `[k, rows]`: an `[m, k]` input states its tile
+                // swapped, as it states its metadata.
+                let (tile, across) = match dimensions {
+                    [K, across] => (tile, across),
+                    [across, _] => ((tile.1, tile.0), across),
+                };
+                let order = strips.laid(TileOrder::laid(&scheme, words, tile)?)?;
+                let word = ElemType::UInt(UIntKind::U32);
+                operand.in_tile_order(order, across, hw.load_values(word))?
+            }
+            OperandLayout::Along(_) | OperandLayout::Strided => operand,
+        };
+        Some(Some(Packing { operand, scheme }))
+    }
+
     /// A float input contiguous along `dimension`, strided where it names none, batched as
     /// `batching` says.
     pub fn float(dimension: Option<Dimension>, batching: MatmulBatching) -> Self {
@@ -357,18 +476,18 @@ pub fn create_key(
     // which its kernel may decline.
     let operand = |meta: &Metadata, kind: OperandKind, operand: MatmulOperand| {
         let shape = logical(meta);
-        let words = match kind {
-            OperandKind::Quantized(scheme) => {
-                TileOrder::of_matrix(&scheme, meta).map_or(TileWords::RowByRow, TileOrder::words)
-            }
-            _ => TileWords::RowByRow,
+        let order = match kind {
+            OperandKind::Quantized(scheme) => TileOrder::of_matrix(&scheme, meta),
+            _ => None,
         };
+        let words = order.map_or(TileWords::RowByRow, TileOrder::words);
+        let strips = order.map_or(TileStrips::BackToBack, TileStrips::of);
         OperandKey {
             kind,
             layout: match (contiguous(meta, operand.dimensions()), layout::tile(meta)) {
                 (None, _) => OperandLayout::Strided,
                 (Some(dimension), (1, 1)) => OperandLayout::Along(dimension),
-                (Some(dimension), tile) => OperandLayout::Tiles(dimension, tile, words),
+                (Some(dimension), tile) => OperandLayout::Tiles(dimension, tile, words, strips),
             },
             batching: MatmulBatching::new(&shape.as_slice()[..shape.rank() - 2]),
         }
