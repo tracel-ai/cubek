@@ -11,7 +11,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::{Shape, shape};
 use cubek_matmul::{
-    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem, MatmulSetupError},
+    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     eval::cpu_reference::{matmul_cpu_reference, matmul_epsilon},
     launch::launch_ref,
     strategy::Strategy,
@@ -439,7 +439,7 @@ impl ScopeUnderTest for ByStrategy {
             (Ok(()), _) => Ok(Product::written(out)),
             // A launch that broke what its routine prepared fails the test, whatever it declines.
             #[cfg(feature = "tiled")]
-            (Err(MatmulSetupError::Broken(broken)), _) => Err(broken),
+            (Err(cubek_matmul::definition::MatmulSetupError::Broken(broken)), _) => Err(broken),
             (Err(_), Declines::AsItStates) => Err(Decline::Unserved {
                 why: "the strategy serves no such product on this device",
             }),

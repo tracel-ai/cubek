@@ -40,7 +40,7 @@ const ALLOCATED: &str = "a launch allocating its output hands it back";
 /// # Guarantees
 ///
 /// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
-/// while binding, before its kernel launches. Binding may allocate scratch and zero it.
+/// while binding, before its kernel launches.
 pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>
 {
@@ -57,7 +57,8 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     type Extras;
 
     /// What its kernel reads beside `tensors`' operands, bound under `launcher` as `blueprint`
-    /// states it: what [`dispatch`](Self::dispatch) launches beside them.
+    /// states it: what [`dispatch`](Self::dispatch) launches beside them. Binding them may
+    /// allocate scratch and zero it.
     ///
     /// # Errors
     ///
@@ -321,5 +322,43 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> SinkLaunch for MatmulSin
             self.blueprint,
             self.grid,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::UnitRegistersMatmulRoutine;
+    use cubecl::ir::FloatKind;
+    use cubek_test_utils::client;
+
+    /// Zeros of `shape` in `f32`.
+    fn zeros(shape: &[usize]) -> StoredTensor {
+        let element = ElemType::Float(FloatKind::F32);
+        StoredTensor::Plain(PlainTensor::of_handle(TensorHandle::zeros(
+            &client(),
+            shape.to_vec(),
+            element,
+        )))
+    }
+
+    #[test]
+    fn tensors_read_for_other_rows_decline() {
+        let (client, hw) = (client(), Hardware::from_client(&client()));
+        let tensors = |rows_kind| {
+            MatmulTensors::new(&client, zeros(&[4, 8]), zeros(&[8, 16]), rows_kind)
+                .expect("dense float operands")
+        };
+        let (blueprint, grid) = UnitRegistersMatmulRoutine::prepare_first_served(
+            &hw,
+            &tensors(MatmulRowsKind::Tiled).problem(),
+        )
+        .expect("the unit routine serves a small product");
+
+        let declined = UnitRegistersMatmulRoutine
+            .dispatch_into_buffer(&tensors(MatmulRowsKind::Whole), blueprint, grid)
+            .err();
+
+        assert_eq!(declined, Some(MATMUL_TENSORS_READ_FOR_OTHER_ROWS));
     }
 }

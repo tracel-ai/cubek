@@ -3,6 +3,7 @@ use cubek_std::{InvalidConfigError, MatrixLayout};
 use std::fmt::{Debug, Display};
 
 /// Errors that can occur during the setup phase of a matmul operation.
+#[non_exhaustive]
 pub enum MatmulSetupError {
     /// A required hardware or runtime feature is not available.
     Unavailable(MatmulAvailabilityError),

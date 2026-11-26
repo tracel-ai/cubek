@@ -193,6 +193,17 @@ mod tests {
         assert!(launched.is_ok());
     }
 
+    #[test]
+    fn another_error_does_not_fall_back() {
+        let error =
+            MatmulSetupError::Vectorization(cubecl::VectorizationError::NoValidVectorization);
+
+        let (launched, fell_back) = launched(error);
+
+        assert!(!fell_back);
+        assert!(matches!(launched, Err(MatmulSetupError::Vectorization(_))));
+    }
+
     #[cfg(feature = "tiled")]
     #[test]
     fn a_broken_launch_does_not_fall_back() {

@@ -9,7 +9,7 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::{Shape, Strides, shape},
 };
-use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulSetupError};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
@@ -19,7 +19,7 @@ use cubek_test_utils::{
 use crate::{
     ConvolutionArgs, ConvolutionInputs, SpatialExtent, SpatialPosition, SpatialWindow, Strategy,
     TapCount, TapIndex,
-    components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
+    components::{ConvSetupError, ConvolutionOperation, ConvolutionProblem, Dimensionality},
     launch_ref,
 };
 
@@ -27,6 +27,16 @@ const HOST_HAS_NO_TRANSPOSED: &str = "the host states no transposed forward";
 
 /// Run `strategy` against `operation` over `spec`'s geometry with seeded operands and return its
 /// output as a [`HostData`]: the forward's activation, the weight gradient or the data gradient.
+///
+/// # Errors
+///
+/// Why the strategy refused the convolution, or why its launch failed, which a test skips.
+///
+/// # Panics
+///
+/// On a launch that broke what its routine prepared
+/// ([`MatmulSetupError::Broken`](cubek_matmul::definition::MatmulSetupError::Broken)): a bug, which
+/// a test fails on rather than skips.
 pub fn strategy_result(
     client: Client,
     spec: ConvSpec,
@@ -63,6 +73,9 @@ pub fn strategy_result(
         };
         match launch_ref::<2>(&strategy, c, conv_inputs, spec.args, dtypes.clone()) {
             Ok(()) => ExecutionOutcome::Executed,
+            Err(ConvSetupError::Matmul(MatmulSetupError::Broken(broken))) => {
+                panic!("{strategy:?} broke what it prepared: {broken}")
+            }
             Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
         }
     });
