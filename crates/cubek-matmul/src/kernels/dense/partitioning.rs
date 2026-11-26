@@ -296,7 +296,7 @@ impl MatmulPartitioning {
 
 impl MatmulPartitioning {
     /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
-    /// cube's box holds where every row is held whole.
+    /// cube's box holds where it takes every row whole.
     fn compiled_space(&self) -> Space {
         let space = self.partitioning.space();
         match self.rows_kind {
