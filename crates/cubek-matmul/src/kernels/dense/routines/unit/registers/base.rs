@@ -4,14 +4,16 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView, cube_order_name,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::TileTensorLaunch;
-use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
+use cubecl::tile::launch::{Decline, DestinationLaunch, VectorRequirement, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::{BaseRegion, Space, TileTensorLaunch, VectorRegion};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulRowsKind;
 use cubek_microkernel::matmul::cube::MatmulPlaneLayout;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
-use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStagingCount};
+use cubek_microkernel::matmul::{
+    MatmulDimensions, MatmulOperand, MatmulOperands, MatmulStagingCount,
+};
 use cubek_std::Hardware;
 use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -49,6 +51,35 @@ impl UnitRegistersMatmulRoutine {
             .max(1)
     }
 
+    /// The vector region of `problem`, over `space`, on `hw` read as `microkernel` reads it: each
+    /// input a register at once, or the widest read below it that its buffer admits and that
+    /// divides the problem, along the dimension it is bound innermost along. The output is written
+    /// as its rhs is lined, or a value at a time.
+    fn vector_region(
+        hw: &Hardware,
+        problem: &MatmulRoutineProblem,
+        space: &Space,
+        microkernel: &UnitRegistersMicrokernel,
+    ) -> VectorRegion {
+        let orders = microkernel.orders();
+        let mut vectorization = Vectorization::new();
+        problem.require_reads(orders, &mut vectorization);
+        vectorization.require(microkernel.lined());
+        for operand in MatmulOperand::ALL {
+            vectorization.require(VectorRequirement::masked(
+                operand,
+                space,
+                MatmulDimensions::MNK.of(orders.innermost(operand)),
+            ));
+        }
+        VectorRegion::new(MatmulOperand::INPUTS.map(|input| {
+            let read = vectorization.width(input, |operand| {
+                hw.register_values(problem.elements.get(operand))
+            });
+            Space::new(&[(MatmulDimensions::MNK.of(orders.innermost(input)), read)])
+        }))
+    }
+
     /// `microkernel` placed by `partitioning`, its widths settled. A register block reads its
     /// operands from global memory and drains cell by cell, so the walk holds no shared memory.
     pub fn blueprint(
@@ -81,6 +112,21 @@ impl UnitRegistersMatmulRoutineSettings {
         blocks_per_plane: NonZeroUsize::new(32).unwrap(),
         cube_order: CubeOrder::RowMajor,
     };
+
+    /// These settings, each unit's block one `region`.
+    fn counting(&self, region: &BaseRegion) -> Self {
+        let along = |dimension| {
+            NonZeroUsize::new(region.along(dimension)).expect("a region should reach a value")
+        };
+        Self {
+            microkernel: UnitRegistersMicrokernelSettings {
+                rows: along(M),
+                columns: along(N),
+                depth: along(K),
+            },
+            ..*self
+        }
+    }
 
     /// Blocks along `n` per plane. A one-unit plane (CPU runtime) takes the largest divisor of
     /// `n / columns` up to the setting, so no plane's row overhangs `n` and masks its accesses.
@@ -228,8 +274,13 @@ impl Routine for UnitRegistersMatmulRoutine {
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_plain()?;
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
-        let microkernel =
-            UnitRegistersMicrokernel::best(hw, &view.work_item(), &settings.microkernel)?;
+        let item = view.work_item();
+        let microkernel = UnitRegistersMicrokernel::best(hw, &item, &settings.microkernel)?;
+        let settings = settings.counting(&BaseRegion::new(
+            &Self::vector_region(hw, problem, &view.space(), &microkernel),
+            microkernel.region(),
+        ));
+        let microkernel = UnitRegistersMicrokernel::best(hw, &item, &settings.microkernel)?;
         let planes = settings.planes;
         let plane_width = Self::plane_width(hw, planes.count());
         let blocks_per_plane = settings.fitted_blocks_per_plane(problem.n, plane_width);
@@ -292,7 +343,7 @@ mod tests {
     /// the output is written a value at a time.
     #[test]
     fn a_col_rhs_contracts_with_the_lhs_into_one_value_cells() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let col_weight = MatmulRoutineProblem::from(&MatmulShape {
             m: 256,
             n: 512,
@@ -347,7 +398,7 @@ mod tests {
     /// described, those whose plane width no memory-bound routine can merge across included.
     #[test]
     fn the_default_prepares_every_decode_projection_on_every_device() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let f16 = ElemType::Float(FloatKind::F16);
         let settings = UnitRegistersMatmulRoutineSettings::DEFAULT;
         for hw in fixtures() {
@@ -385,15 +436,19 @@ mod tests {
             UnitRegistersMatmulRoutine::prepare(&hw, &problem, &settings)
                 .expect("the floor prepares everywhere")
         };
-        let (wave32, wave32_grid) = prepare(devices::strix_halo());
-        let (wave64, wave64_grid) = prepare(devices::cdna_wave64());
+        let narrow = devices::strix_halo();
+        let mut wide = devices::cdna_wave64();
+        // A block is as wide as a register, which the two fixtures state differently.
+        devices::topology(&mut wide).max_vector_size = narrow.properties.hardware.max_vector_size;
+        let (wave32, wave32_grid) = prepare(narrow);
+        let (wave64, wave64_grid) = prepare(wide);
         assert_eq!(wave32, wave64);
         assert_eq!(wave32_grid.planes().width, 32);
         assert_eq!(wave64_grid.planes().width, 64);
     }
 
-    /// A unit reads its block's `depth` of the lhs and its `columns` of the rhs and the output, so
-    /// the default's four narrows every width, until the extent a mask cuts narrows it further.
+    /// A unit reads as widely as the device does where that divides the problem, its block a whole
+    /// number of those reads; an extent the device's read does not divide narrows it.
     #[test]
     fn the_widths_are_what_the_accesses_and_the_binding_admit() {
         let hw = devices::strix_halo();
@@ -406,20 +461,19 @@ mod tests {
             let widths = blueprint.widths;
             (widths.lhs, widths.rhs, widths.out)
         };
-        assert_eq!(widths(256, 512, 64), (4, 4, 4));
-        // A `k` the steps overhang masks the lhs, whose contiguous dimension it is, at a width that
-        // divides it.
-        assert_eq!(widths(256, 512, 22), (2, 4, 4));
-        // An `n` the planes overhang masks the rhs and the output, likewise.
-        assert_eq!(widths(256, 516, 64), (4, 4, 4));
-        assert_eq!(widths(256, 514, 64), (4, 2, 2));
+        assert_eq!(widths(256, 512, 64), (8, 8, 8));
+        // The lhs is read along `k`, at a width that divides it.
+        assert_eq!(widths(256, 512, 22), (2, 8, 8));
+        // The rhs and the output along `n`, likewise.
+        assert_eq!(widths(256, 516, 64), (8, 4, 4));
+        assert_eq!(widths(256, 514, 64), (8, 2, 2));
     }
 
     /// `cpu_col_rhs` settings with `n = 1632`: 32 blocks of width 2 per plane would overhang `n`,
     /// so `prepare` fits them to 24, and the col rhs stays vectorized along `K`.
     #[test]
     fn the_cpu_settings_fit_their_planes_to_an_n_their_count_overhangs() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let hw = devices::cpu_12();
         let col_weight = MatmulRoutineProblem::from(&MatmulShape {
             m: 2304,

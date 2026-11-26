@@ -261,7 +261,7 @@ fn quant_mask(size_quant: usize) -> u32 {
 /// the test would pass with both of them wrong.
 pub(crate) fn assert_supported(scheme: &QuantScheme) {
     assert!(
-        scheme.num_levels() <= 1,
+        scheme.levels().count() <= 1,
         "two-level quantization is not supported by the reference quantizer, got {scheme:?}"
     );
 }

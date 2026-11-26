@@ -8,7 +8,7 @@ use cubecl::tile::{
 };
 use cubek_microkernel::matmul::{
     MatmulBlocks, MatmulDimensions, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
-    MatmulRowsKind, MatmulStep, MatmulWorkItem,
+    MatmulRowsKind, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;
@@ -306,25 +306,21 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// Whether the product is a whole number of its [step](MatmulStep) on `hw`, each read of a
-    /// packed input inside one scale tile, and two packed inputs whole words of each other in
-    /// each read along `K`, the runs the two are contracted in. Float inputs have no step to
-    /// close.
+    /// Whether the [vector region](cubecl::tile::VectorRegion) of the product on `hw` divides it,
+    /// each read of a packed input inside one scale tile, and two packed inputs whole words of
+    /// each other in each read along `K`, the runs the two are contracted in. Float inputs have no
+    /// packed read to close.
     ///
     /// # Errors
     ///
-    /// [`MATMUL_STEPS_UNCLOSED`](cubek_microkernel::matmul::MATMUL_STEPS_UNCLOSED), and
+    /// [`MATMUL_READS_UNCLOSED`](cubek_microkernel::matmul::MATMUL_READS_UNCLOSED), and
     /// [`MATMUL_PACKED_READS_SPLIT`](cubek_microkernel::matmul::MATMUL_PACKED_READS_SPLIT).
-    pub fn check_steps(&self, hw: &Hardware) -> Result<(), Decline> {
+    pub fn check_reads(&self, hw: &Hardware) -> Result<(), Decline> {
         let operands = self.problem.inputs.map(|_, input| input.operand);
         if operands == MatmulOperands::all(Operand::plain()) {
             return Ok(());
         }
-        MatmulStep::new(hw, operands, self.problem.elements).check(
-            operands,
-            self.problem.n,
-            self.problem.k,
-        )
+        operands.check_reads(hw, &self.problem.elements, self.problem.n, self.problem.k)
     }
 
     /// What every microkernel is handed, summing in the problem's
@@ -450,7 +446,7 @@ impl RowsReading {
 mod tests {
     use super::*;
     use crate::kernels::MatmulIndex;
-    use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+    use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::matmul::{MatmulOperands, MatmulRows};
     use cubek_std::matmul_dimensions::{EXPERT, batch_dimension};

@@ -5,13 +5,12 @@ use crate::ReduceError;
 use crate::kernels::{
     ReduceElements, ReduceOpStrategy, ReduceTensors, ReduceWorkspace, launch_by_strategy,
 };
-use cubecl::Device;
 use cubecl::ir::ElemType;
 use cubecl::prelude::*;
 use cubek_microkernel::reduce::ReduceOperation;
 
 /// A reduction of one tensor along one axis, run by the kernel its strategy picks, with the
-/// scratch its caller gives the kernels that split a row across cubes.
+/// scratch its caller gives the kernel whose last cube merges a row split across cubes.
 #[derive(Debug, Clone)]
 pub struct Reduce {
     strategy: ReduceOpStrategy,
@@ -19,8 +18,8 @@ pub struct Reduce {
 }
 
 impl Reduce {
-    /// The reduction whose kernel `strategy` picks, given no scratch: the kernels that split a
-    /// row across cubes decline it.
+    /// The reduction whose kernel `strategy` picks, given no scratch: the last-arrival hypercube
+    /// declines it.
     pub fn new(strategy: ReduceOpStrategy) -> Self {
         Self {
             strategy,
@@ -28,7 +27,7 @@ impl Reduce {
         }
     }
 
-    /// This reduction given `workspace`, the scratch of the kernels that split a row across cubes
+    /// This reduction given `workspace`, the last-arrival hypercube's scratch
     /// ([`ReduceWorkspace::bytes_for`]), which cubek never allocates.
     pub fn with_workspace(self, workspace: ReduceWorkspace) -> Self {
         Self {
@@ -37,18 +36,18 @@ impl Reduce {
         }
     }
 
-    /// Reduce dim `axis` of `input` into `output` by `operation`, in `elements`, on `device`.
+    /// Reduce dim `axis` of `input` into `output` by `operation`, in `elements`.
     /// `output` has `input`'s shape with `axis` one wide, `k` wide for a top-k.
     ///
     /// # Errors
     ///
     /// [`ReduceError::InvalidAxis`] where `axis` is not a dim of `input`,
     /// [`ReduceError::EmptyTopK`] where a top-k keeps `k = 0` values,
-    /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is shorter than the `k` a top-k
-    /// keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one above,
-    /// and [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy picks
-    /// cannot run the problem on this device: a [`Specific`](ReduceOpStrategy::Specific) one, or
-    /// the unit kernel the rule falls back to.
+    /// [`ReduceError::ReduceAxisTooSmall`] where the reduced dim is empty, or shorter than the `k` a
+    /// top-k keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one
+    /// above, and [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy
+    /// picks cannot run the problem on the client's device: a
+    /// [`Specific`](ReduceOpStrategy::Specific) one, or the unit kernel the rule falls back to.
     ///
     /// # Panics
     ///
@@ -61,22 +60,15 @@ impl Reduce {
     pub fn execute(
         &self,
         client: &Client,
-        device: &Device,
         input: TensorBinding,
         output: TensorBinding,
         axis: usize,
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Result<(), ReduceError> {
-        validate_axis(input.shape.len(), axis)?;
-        validate_shape(
-            &input.shape,
-            &output.shape,
-            axis,
-            operation.written_per_row(),
-        )?;
-        let tensors = ReduceTensors::new(client, input, output, axis, operation, elements);
-        launch_by_strategy(self.strategy, device, self.given(tensors))
+        self.launch(ReduceTensors::checked(
+            client, input, output, axis, operation, elements,
+        )?)
     }
 
     /// [`execute`](Self::execute), the values written to `values` in `elements.out` and their
@@ -86,9 +78,7 @@ impl Reduce {
     ///
     /// # Errors
     ///
-    /// As [`execute`](Self::execute); [`ReduceError::IndicesUnsupported`] for an operation whose
-    /// values carry no index; and [`ReduceError::MismatchIndicesShape`] where `indices` differs
-    /// from `values` in shape.
+    /// Every [`ReduceError`].
     ///
     /// # Panics
     ///
@@ -100,7 +90,6 @@ impl Reduce {
     pub fn execute_with_indices(
         &self,
         client: &Client,
-        device: &Device,
         input: TensorBinding,
         values: TensorBinding,
         indices: TensorBinding,
@@ -109,16 +98,7 @@ impl Reduce {
         elements: ReduceElements,
         index_element: ElemType,
     ) -> Result<(), ReduceError> {
-        let operation = indexed(operation)?;
-        validate_axis(input.shape.len(), axis)?;
-        validate_shape(
-            &input.shape,
-            &values.shape,
-            axis,
-            operation.written_per_row(),
-        )?;
-        validate_indices(&values.shape, &indices.shape)?;
-        let tensors = ReduceTensors::with_indices(
+        let tensors = ReduceTensors::checked_with_indices(
             client,
             input,
             values,
@@ -127,8 +107,24 @@ impl Reduce {
             operation,
             elements,
             index_element,
-        );
-        launch_by_strategy(self.strategy, device, self.given(tensors))
+        )?;
+        self.launch(tensors)
+    }
+
+    /// `tensors`, checked to lie in the reduction's Domain
+    /// ([`ReduceTensors::checked`]), reduced by the kernel the strategy picks, given this
+    /// reduction's workspace where it has one.
+    ///
+    /// # Errors
+    ///
+    /// [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy picks
+    /// cannot run the problem on the client's device.
+    ///
+    /// # Panics
+    ///
+    /// As [`execute`](Self::execute).
+    pub fn launch(&self, tensors: ReduceTensors) -> Result<(), ReduceError> {
+        launch_by_strategy(self.strategy, self.given(tensors))
     }
 }
 
@@ -172,7 +168,7 @@ fn unindexed_operation_named(operation_name: &'static str) -> ReduceError {
 }
 
 /// Whether `axis` is a dim of a tensor of rank `rank`.
-fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
+pub(crate) fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
     if axis >= rank {
         return Err(ReduceError::InvalidAxis { axis, rank });
     }
@@ -181,7 +177,7 @@ fn validate_axis(rank: usize, axis: usize) -> Result<(), ReduceError> {
 
 /// Whether `output_shape` is `input_shape` with `axis` `written_per_row` wide, and the reduced dim
 /// at least that long.
-fn validate_shape(
+pub(crate) fn validate_shape(
     input_shape: &[usize],
     output_shape: &[usize],
     axis: usize,
@@ -208,7 +204,10 @@ fn validate_shape(
 }
 
 /// Whether the indices' shape is the values': an index for every value.
-fn validate_indices(values_shape: &[usize], indices_shape: &[usize]) -> Result<(), ReduceError> {
+pub(crate) fn validate_indices(
+    values_shape: &[usize],
+    indices_shape: &[usize],
+) -> Result<(), ReduceError> {
     if indices_shape != values_shape {
         return Err(ReduceError::MismatchIndicesShape {
             values_shape: values_shape.to_vec(),
@@ -270,13 +269,43 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_sum_has_no_index_to_write() {
-        let result = indexed(ReduceOperation::Sum);
+    /// Checks that `operation` is refused under its own `name`.
+    fn has_no_index_to_write(operation: ReduceOperation, name: &str) {
+        let result = indexed(operation);
         assert!(
-            matches!(result, Err(ReduceError::IndicesUnsupported { .. })),
+            matches!(result, Err(ReduceError::IndicesUnsupported { operation }) if operation == name),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_sum_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Sum, "Sum");
+    }
+
+    #[test]
+    fn a_prod_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Prod, "Prod");
+    }
+
+    #[test]
+    fn a_mean_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Mean, "Mean");
+    }
+
+    #[test]
+    fn a_max_abs_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::MaxAbs, "MaxAbs");
+    }
+
+    #[test]
+    fn an_any_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::Any, "Any");
+    }
+
+    #[test]
+    fn an_all_has_no_index_to_write() {
+        has_no_index_to_write(ReduceOperation::All, "All");
     }
 
     #[test]
@@ -284,6 +313,22 @@ mod tests {
         assert!(matches!(
             indexed(ReduceOperation::Max),
             Ok(ReduceOperation::ArgMax)
+        ));
+    }
+
+    #[test]
+    fn a_min_with_indices_writes_an_argmin() {
+        assert!(matches!(
+            indexed(ReduceOperation::Min),
+            Ok(ReduceOperation::ArgMin)
+        ));
+    }
+
+    #[test]
+    fn a_top_k_with_indices_writes_an_arg_top_k() {
+        assert!(matches!(
+            indexed(ReduceOperation::TopK { k: 3 }),
+            Ok(ReduceOperation::ArgTopK { k: 3 })
         ));
     }
 

@@ -1,3 +1,3 @@
-//! SwiGLU: its routines and their autotune ([`kernels`]).
+//! SwiGLU: its routines and the candidates a caller races ([`kernels`]).
 
 pub mod kernels;

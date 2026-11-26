@@ -247,7 +247,7 @@ impl CubeShuffleMatmulRoutine {
         let problem: &MatmulRoutineProblem = &read;
         let packing = &problem.inputs.rhs.packing().unwrap_or(*packing);
         let view = MatmulView::new(problem, CubeShuffleMatmulRoutine::ROWS_KIND)?;
-        view.check_steps(hw)?;
+        view.check_reads(hw)?;
         let item = view.work_item();
         let mut microkernel = match read {
             Cow::Borrowed(_) => planning,

@@ -1,13 +1,18 @@
 //! The cube staged routine: a cube's planes of fragments contracting the stages it fills.
 
+use core::num::NonZeroUsize;
 use cubek_attention::kernels::{CubeStagedAttentionRoutine, CubeStagedAttentionRoutineSettings};
-use cubek_microkernel::attention::cube::CubeAttentionMicrokernelSettings;
-use cubek_std::microkernel::StageLayout;
+use cubek_microkernel::attention::CacheLines;
+use cubek_microkernel::attention::cube::{
+    CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
+};
+use cubek_microkernel::attention::plane::{PlaneFragmentAttentionMicrokernelSettings, QueryHolder};
+use cubek_std::microkernel::{StageLayout, StageRing};
 use cubek_test_utils::ScopeUnderTest;
 
 use crate::attention::{
-    Forward, PROMPT, PROMPT_HEAD_DIM_256, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8,
-    PROMPTS_WIDE_PER_TENSOR,
+    Forward, PROMPT, PROMPT_HEAD_DIM_256, PROMPT_WIDE, PROMPTS, PROMPTS_HEAD_DIM_256_PAGED,
+    PROMPTS_WIDE_FP8, PROMPTS_WIDE_PAGED, PROMPTS_WIDE_PER_TENSOR,
 };
 
 /// The cube staged routine's lead on every prompt case.
@@ -48,6 +53,84 @@ fn a_swizzled_stage_matches_the_host() {
                 ..lead
             });
     forward.check(forward.at(swizzled, &[PROMPT_WIDE]));
+}
+
+/// Planes holding their query in registers: one plane along the queries and several, over one and
+/// several key fragments a step, with the next stage in a second slot and waiting in registers, the
+/// values staged as they are stored and along the keys. A device that keeps no score in fragments,
+/// or whose shared memory does not hold the stages, declines.
+fn held_queries() -> [CubeStagedAttentionRoutineSettings; 5] {
+    let through_registers = StageRing::SINGLE_THROUGH_REGISTERS;
+    [
+        (1, 1, 1, StageRing::SINGLE, CacheLines::AsStored),
+        (2, 2, 1, StageRing::DOUBLE, CacheLines::AsStored),
+        (6, 4, 1, through_registers, CacheLines::AlongKeys),
+        (6, 4, 1, StageRing::DOUBLE, CacheLines::AlongKeys),
+        (2, 4, 2, StageRing::SINGLE, CacheLines::AlongKeys),
+    ]
+    .map(|(heads, planes, keys, ring, values)| {
+        let lead = CubeStagedAttentionRoutineSettings::DEFAULT;
+        CubeStagedAttentionRoutineSettings {
+            microkernel: CubeAttentionMicrokernelSettings {
+                plane: CubeAttentionPlaneSettings::Fragment(
+                    PlaneFragmentAttentionMicrokernelSettings::fragments(1, keys)
+                        .querying(QueryHolder::Registers)
+                        .along(values),
+                ),
+                heads: NonZeroUsize::new(heads).unwrap(),
+                planes_along_queries: NonZeroUsize::new(planes).unwrap(),
+                ring,
+                layout: StageLayout::PaddedRows,
+                ..lead.microkernel
+            },
+            ..lead
+        }
+    })
+}
+
+/// A held query reads its values from global memory once, past the last query a box cuts, and
+/// casts them as they load beside `e4m3` keys, the probabilities cast to `e4m3` values' own.
+#[test]
+fn a_query_held_in_registers_matches_the_host() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    forward.check(forward.at(held_queries(), &[PROMPT_WIDE, PROMPT_HEAD_DIM_256]));
+    forward.check(forward.at(held_queries(), &PROMPTS_WIDE_FP8));
+}
+
+/// Values staged along the keys beside a query staged with them.
+#[test]
+fn values_along_the_keys_beside_a_staged_query_match_the_host() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    let lead = CubeStagedAttentionRoutineSettings::DEFAULT;
+    let along_keys = CubeStagedAttentionRoutineSettings {
+        microkernel: CubeAttentionMicrokernelSettings {
+            plane: CubeAttentionPlaneSettings::Fragment(
+                PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1)
+                    .along(CacheLines::AlongKeys),
+            ),
+            layout: StageLayout::PaddedRows,
+            ..lead.microkernel
+        },
+        ..lead
+    };
+    forward.check(forward.at([along_keys], &[PROMPT_WIDE]));
+    forward.check(forward.at([along_keys], &PROMPTS_WIDE_FP8));
+}
+
+/// A held query over a cache in pages, `f16` and `e4m3`: a stage fills from the page its table
+/// names, each side in the lines it is staged along.
+#[test]
+fn a_query_held_in_registers_reads_a_paged_cache() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    forward.check(forward.at(held_queries(), &PROMPTS_WIDE_PAGED));
+    forward.check(forward.at(held_queries(), &PROMPTS_HEAD_DIM_256_PAGED));
+}
+
+/// The cube staged routine's lead over a cache in pages.
+#[test]
+fn the_cube_staged_routine_reads_a_paged_cache() {
+    let forward = Forward::new(CubeStagedAttentionRoutine);
+    forward.check(forward.at_its_lead(&PROMPTS_WIDE_PAGED));
 }
 
 /// Every setting the routine lists at a head dim of 256, where the output's rows a correction

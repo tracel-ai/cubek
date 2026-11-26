@@ -8,17 +8,9 @@
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore};
 
-/// Per-axis block extents, the number of elements each scale covers along each axis. A scheme with
-/// no block level has one scale for the whole tensor, so its block spans everything.
+/// Per-axis block extents, the number of elements each scale covers along each axis.
 pub fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    match scheme.block_size() {
-        Some(block) => block
-            .to_dim_vec(shape.len())
-            .into_iter()
-            .map(usize::from)
-            .collect(),
-        None => shape.to_vec(),
-    }
+    scheme.finest().size.values(shape)
 }
 
 /// The block scale grid: each axis divided by its block extent, so one entry per block. A
@@ -77,5 +69,5 @@ pub fn values_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
 
 /// The element type the innermost level's scales are stored at.
 pub fn scales_dtype(scheme: &QuantScheme) -> ElemType {
-    ElemType::from_scale_dtype(scheme.scale_dtype())
+    ElemType::from_scale_dtype(scheme.finest().dtype)
 }

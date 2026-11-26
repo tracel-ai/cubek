@@ -1,17 +1,15 @@
 use super::{AttentionBackwardSpec, AttentionBackwardStrategy};
-use crate::kernels::{
-    AttentionBackwardLaunch, AttentionBackwardProblem, AttentionBackwardTensors, attention_backward,
-};
+use crate::kernels::{AttentionBackwardLaunch, AttentionBackwardProblem, AttentionBackwardTensors};
 use crate::kernels::{
     CubeStagedAttentionBackward, HypercubeAttentionBackward, PlaneFragmentAttentionBackward,
     UnitAttentionBackward,
 };
 use cubecl::benchmark::{Benchmark, ProfileDuration, TimingMethod};
 use cubecl::client::Client;
+use cubecl::future;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
-use cubecl::{Device, future};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_std::Hardware;
 use cubek_test_utils::{RunSamples, TestInput};
@@ -22,12 +20,10 @@ pub fn bench(
     spec: &AttentionBackwardSpec,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = cubecl::test_device();
     let bench = AttentionBackwardBench {
         spec: *spec,
         strategy: *strategy,
-        client: device.client(),
-        device,
+        client: cubecl::test_device().client(),
         samples: num_samples,
     };
     let durations = bench
@@ -40,7 +36,6 @@ pub fn bench(
 struct AttentionBackwardBench {
     spec: AttentionBackwardSpec,
     strategy: AttentionBackwardStrategy,
-    device: Device,
     client: Client,
     samples: usize,
 }
@@ -127,10 +122,6 @@ impl Benchmark for AttentionBackwardBench {
             AttentionBackwardStrategy::CubeLead => self.lead(CubeStagedAttentionBackward, tensors),
             AttentionBackwardStrategy::HypercubeLead => {
                 self.lead(HypercubeAttentionBackward, tensors)
-            }
-            AttentionBackwardStrategy::Tuned => {
-                attention_backward(&self.device, tensors);
-                Ok(())
             }
         }
     }

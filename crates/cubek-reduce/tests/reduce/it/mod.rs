@@ -4,11 +4,13 @@ mod test_case;
 
 mod argtopk_shared_memory;
 mod empty_output;
+mod int_mean;
 mod logical;
 mod matrix;
 mod nan_extrema;
 mod plane_reduction;
 mod rows_one_value_long;
+mod strided_output;
 mod topk_negative_infinity;
 mod topk_unroll_limit;
 mod topk_vectorized_output;

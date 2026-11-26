@@ -1,13 +1,13 @@
 use crate::attention::plane::{
     PlaneFragmentAttentionMicrokernel, PlaneFragmentAttentionMicrokernelSettings,
-    PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings,
+    PlaneShuffleAttentionMicrokernel, PlaneShuffleAttentionMicrokernelSettings, QueryHolder,
 };
-use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem};
+use crate::attention::{AttentionMicrokernel, AttentionOperand, AttentionWorkItem, CacheOrder};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Decline, Delivery, Vectorization};
 use cubecl::tile::{Levels, Space, StageStorage};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayout};
 
 /// The plane microkernel a cube runs on each of its planes.
@@ -64,6 +64,14 @@ impl CubePlaneLayout {
 }
 
 impl CubeAttentionPlaneSettings {
+    /// Whether each plane holds its query in registers ([`QueryHolder::Registers`]).
+    pub fn holds_query(&self) -> bool {
+        match self {
+            Self::Fragment(plane) => plane.query == QueryHolder::Registers,
+            Self::Shuffle(_) => false,
+        }
+    }
+
     /// What the routines whose cubes run planes of this kind are named after, as a cube of
     /// fragments is `cube-fragment-attention`.
     pub fn name(&self) -> &'static str {
@@ -119,6 +127,15 @@ impl CubeAttentionPlane {
         match self {
             Self::Fragment(_) => CubePlaneReads::Stage,
             Self::Shuffle(_) => CubePlaneReads::Global,
+        }
+    }
+
+    /// Whether the cube stages its query for its planes: they read it from a stage, none where they
+    /// hold it in registers ([`QueryHolder`]) or read it where it lies.
+    pub fn stages_query(&self) -> bool {
+        match self {
+            Self::Fragment(plane) => plane.query_holder() == QueryHolder::Stage,
+            Self::Shuffle(_) => false,
         }
     }
 
@@ -239,18 +256,9 @@ impl CubeAttentionPlane {
         }
     }
 
-    /// The element a stage of its query holds where the stage's fill decodes it, as it does an
-    /// operand bound as its words: `f32` where `None`, the element the tile DSL decodes a packed
-    /// operand at unless the kernel names another.
-    pub fn decoded_query(&self) -> Option<ElemType> {
-        match self {
-            Self::Fragment(plane) => plane.decoded_query(),
-            Self::Shuffle(_) => None,
-        }
-    }
-
-    /// The element a stage of its keys and values holds where the stage's fill decodes them, as
-    /// [`decoded_query`](Self::decoded_query) the query's.
+    /// The element a stage of its keys and values holds where the stage's fill decodes them, as it
+    /// does an operand bound as its words: `f32` where `None`, the element the tile DSL decodes a
+    /// packed operand at unless the kernel names another.
     pub fn decoded_stage(&self) -> Option<ElemType> {
         match self {
             Self::Fragment(plane) => plane.decoded_stage(),
@@ -284,11 +292,20 @@ impl CubeAttentionPlane {
         }
     }
 
-    /// The order its score reads the keys in ([`AttentionMicrokernel::key_order`]).
-    pub fn key_order(&self) -> BindingOrder {
+    /// The lines its planes read the cache in ([`AttentionMicrokernel::cache_order`]).
+    pub fn cache_order(&self) -> CacheOrder {
         match self {
-            Self::Fragment(plane) => plane.key_order(),
-            Self::Shuffle(plane) => plane.key_order(),
+            Self::Fragment(plane) => plane.cache_order(),
+            Self::Shuffle(plane) => plane.cache_order(),
+        }
+    }
+
+    /// Where the scale its values share whole is multiplied in
+    /// ([`AttentionMicrokernel::values_outer_scale`]).
+    pub fn values_outer_scale(&self) -> OuterScale {
+        match self {
+            Self::Fragment(plane) => plane.values_outer_scale(),
+            Self::Shuffle(plane) => plane.values_outer_scale(),
         }
     }
 

@@ -5,5 +5,4 @@ mod packed;
 mod plane;
 mod reference;
 mod tensors;
-mod tuned;
 mod unit;

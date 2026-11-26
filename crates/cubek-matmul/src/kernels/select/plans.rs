@@ -7,7 +7,8 @@
 //! A line reads:
 //! - `name`: a routine at the first of its settings that serves; `name@default` at its default.
 //! - `name(packed as stored)`: the routine reading the packed inputs as they are stored.
-//! - `fastest(autotune)`: the fastest candidate of an autotune.
+//! - `fastest(race)`: the caller's measured choice, as the selector's tests stub it: the fastest
+//!   candidate of the race the product goes to.
 //! - `decoded(..)`: every packed input decoded into floats first, by this crate's decode, or by the
 //!   framework's dequantize where the decode declines.
 //! - `framework-dequantized(..)`: every packed input dequantized by the framework first.
@@ -19,7 +20,7 @@ use super::MatmulOpStrategy;
 use super::packed::nvfp4_scheme;
 use super::problem::{MatmulProblem, OperandKind};
 use super::selector::select;
-use crate::kernels::tune::{FLOAT_FEW_ROWS, MatmulAutotuneGroups, QUANTIZED_FEW_ROWS};
+use super::{FLOAT_FEW_ROWS, QUANTIZED_FEW_ROWS, stub_measured};
 use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_std::plan::Plan;
@@ -50,8 +51,7 @@ fn render_all() -> String {
     for product in Product::all() {
         out.push_str(&format!("# {}\n", product.name));
         for strategy in MatmulOpStrategy::all() {
-            let groups = MatmulAutotuneGroups::default();
-            let plan = select(strategy, &product.problem, &product.hw, groups)
+            let plan = select(strategy, &product.problem, &product.hw, &stub_measured)
                 .map(|plan| plan.tree().to_string())
                 .unwrap_or_else(|decline| format!("refused: {decline}"));
             out.push_str(&format!("{strategy:?}: {plan}\n"));

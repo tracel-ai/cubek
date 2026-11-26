@@ -3,6 +3,8 @@ use cubecl::ir::ElemType;
 use cubecl::tile::Dimension;
 use cubecl::tile::launch::VectorRequirement;
 use cubek_std::microkernel::{ArithmeticInstruction, UnitWork};
+#[cfg(test)]
+use cubek_std::microkernel::{CubeFootprint, KernelEstimate};
 
 /// A reduced row as its microkernels see it: what it reduces with, what it reads and accumulates,
 /// and which dimension its lines run along. Not how long it is: a microkernel reads its row's length off its tile, so
@@ -24,13 +26,12 @@ pub struct ReduceWorkItem {
 }
 
 impl ReduceWorkItem {
-    /// What one unit of any reduce microkernel works with: vector arithmetic, and registers for a
-    /// value and an index a slot of the row it writes, beside two of its own.
+    /// What one unit works with: vector arithmetic, and registers for its carrier's lines beside
+    /// two of its own.
     pub fn unit_work(&self) -> UnitWork {
-        let slots = self.operation.written_per_row() as u32;
         UnitWork {
             instruction: ArithmeticInstruction::Vector,
-            registers: 2 * slots + 2,
+            registers: self.operation.carrier().lines() as u32 + 2,
         }
     }
 
@@ -60,6 +61,19 @@ impl ReduceWorkItem {
     }
 }
 
+impl ReduceWorkItem {
+    /// Whether its carrier keeps the indices it writes, or it writes none.
+    pub(crate) fn has_indices_to_write(&self) -> bool {
+        self.writes() == ReduceWrites::Values || self.operation.carrier().carries_indices()
+    }
+
+    /// Whether it is rightly handed an output of indices (`handed`): exactly where it writes them
+    /// beside the values.
+    pub(crate) fn takes_indices(&self, handed: bool) -> bool {
+        handed == (self.writes() == ReduceWrites::Both)
+    }
+}
+
 #[cfg(test)]
 impl ReduceWorkItem {
     /// `operation` on f32 values, its lines along the row and no indices beside them: what a
@@ -73,6 +87,21 @@ impl ReduceWorkItem {
             lines_along: REDUCED,
             with_indices: false,
         }
+    }
+}
+
+/// An estimate nothing has been added to.
+#[cfg(test)]
+pub(crate) fn empty_estimate() -> KernelEstimate {
+    KernelEstimate {
+        cubes: None,
+        cube: CubeFootprint {
+            units: 1,
+            shared_memory: 0,
+        },
+        demand: None,
+        staging: None,
+        work: None,
     }
 }
 
@@ -108,7 +137,6 @@ mod tests {
         );
     }
 
-    /// Across the reduced dim an input line is an output line.
     #[test]
     fn across_the_axis_an_input_line_is_an_output_line() {
         assert_eq!(
@@ -120,22 +148,40 @@ mod tests {
         );
     }
 
-    /// A unit holds a value and an index a slot, beside two registers of its own.
+    /// A unit holds its carrier's lines, beside two registers of its own.
     #[test]
-    fn a_unit_holds_two_registers_a_slot_and_two() {
+    fn a_unit_holds_its_carriers_lines_and_two() {
         const K: u32 = 3;
-        let work = item(ReduceOperation::TopK { k: K as usize }, REDUCED, false).unit_work();
+        let work = item(ReduceOperation::ArgTopK { k: K as usize }, REDUCED, false).unit_work();
         assert_eq!(work.registers, 2 * K + 2);
     }
 
-    /// A unit computes on vectors.
     #[test]
     fn a_unit_computes_on_vectors() {
         let work = item(ReduceOperation::Sum, REDUCED, false).unit_work();
         assert_eq!(work.instruction, ArithmeticInstruction::Vector);
     }
 
-    /// With indices beside them, both halves are written.
+    #[test]
+    fn a_sum_has_no_indices_to_write_beside_its_values() {
+        assert!(!item(ReduceOperation::Sum, REDUCED, true).has_indices_to_write());
+    }
+
+    #[test]
+    fn an_arg_max_has_the_indices_it_writes() {
+        assert!(item(ReduceOperation::ArgMax, REDUCED, false).has_indices_to_write());
+    }
+
+    #[test]
+    fn an_item_that_writes_both_takes_indices() {
+        assert!(item(ReduceOperation::ArgMax, REDUCED, true).takes_indices(true));
+    }
+
+    #[test]
+    fn an_item_that_writes_one_half_refuses_indices() {
+        assert!(!item(ReduceOperation::ArgMax, REDUCED, false).takes_indices(true));
+    }
+
     #[test]
     fn indices_beside_the_values_write_both() {
         assert_eq!(
@@ -144,7 +190,6 @@ mod tests {
         );
     }
 
-    /// Without indices beside them, what the operation writes.
     #[test]
     fn without_indices_beside_them_the_operation_writes_its_own() {
         assert_eq!(

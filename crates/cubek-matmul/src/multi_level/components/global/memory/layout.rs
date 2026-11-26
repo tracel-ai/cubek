@@ -6,7 +6,7 @@ use cubecl::std::{
     },
 };
 use cubecl::zspace::Shape;
-use cubecl_common::quant::scheme::QuantScheme;
+use cubecl_common::quant::scheme::{BlockExtent, BlockSize, QuantScheme};
 use cubek_std::MatrixLayout;
 
 use crate::{
@@ -267,23 +267,22 @@ impl GlobalLayoutLaunch {
         let scales_layout = {
             let shape = (rows as u32, cols as u32);
 
-            if scheme.num_levels() > 1 {
+            if scheme.levels().count() > 1 {
                 unimplemented!(
                     "two-level quantization is not supported by the quantized matmul, got {scheme:?}"
                 );
             }
 
-            match scheme.block_size() {
-                None => GlobalScaleLayoutArgs::PerTensor { shape },
-                Some(block_size) => {
-                    let [block_row, block_col] = block_size.as_dim();
+            match scheme.finest().size {
+                BlockSize::TENSOR => GlobalScaleLayoutArgs::PerTensor { shape },
+                block_size => {
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
                     let scales_layout =
                         GlobalLayoutLaunch::from_handle_batched(scales, problem, 1, config);
                     GlobalScaleLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
                         shape,
                         scales_layout,
-                        (block_row as u32, block_col as u32),
+                        block_size.extents_in(),
                     ))
                 }
             }
@@ -409,7 +408,7 @@ pub struct BlockScaledLayout {
     shape: Coords2d,
     scales_layout: GlobalLayout,
     #[cube(comptime)]
-    block_size: Coords2d,
+    block_size: [BlockExtent; 2],
 }
 
 #[cube]
@@ -417,13 +416,22 @@ impl BlockScaledLayout {
     pub fn new(
         shape: Coords2d,
         scales_layout: GlobalLayout,
-        #[comptime] block_size: Coords2d,
+        #[comptime] block_size: [BlockExtent; 2],
     ) -> Self {
         BlockScaledLayout {
             shape,
             scales_layout,
             block_size,
         }
+    }
+}
+
+/// The block `position` is in along an axis its blocks reach `extent` of.
+#[cube]
+fn block_along(position: u32, #[comptime] extent: BlockExtent) -> u32 {
+    match extent {
+        BlockExtent::Values(values) => position / comptime!(values.get() as u32),
+        BlockExtent::WholeAxis => 0u32.runtime(),
     }
 }
 
@@ -443,8 +451,8 @@ impl Layout for GlobalScaleLayout {
                 } = layout.clone();
 
                 let (batch, row, col) = coords;
-                let (block_row, block_col) = block_size;
-                let (row, col) = (row / block_row, col / block_col);
+                let row = block_along(row, comptime!(block_size[0]));
+                let col = block_along(col, comptime!(block_size[1]));
                 scales_layout.to_source_pos((batch, row, col))
             }
         }

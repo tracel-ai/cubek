@@ -55,7 +55,7 @@ impl PlaneFragmentAttentionLaunch {
             hw,
             &microkernel
                 .served(&item)
-                .stage(microkernel.seq_kv(), microkernel.key_order()),
+                .stage(microkernel.seq_kv(), microkernel.cache_order()),
             plane_width as usize,
         );
         Ok(Self {

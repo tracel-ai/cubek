@@ -4,10 +4,11 @@
 use core::cmp::Reverse;
 use std::sync::Arc;
 
+use crate::routine::LaunchSettings;
 use cubecl::tile::launch::{Decline, Delivery};
 use cubecl::tile::layout::Stagger;
 use cubecl::{
-    CubeDim,
+    CubeCount, CubeDim,
     client::Client,
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig},
     ir::{DeviceProperties, ElemType, FloatKind, TargetProperties, Type, VectorRegisters},
@@ -212,6 +213,21 @@ impl Hardware {
         Some((self.units_to_fill()? / units_per_cube.max(1)).max(1))
     }
 
+    /// How far short of filling this device a launch's grid falls, in halvings: zero where the
+    /// grid reaches [`cubes_to_fill`](Self::cubes_to_fill), and zero where the device does not say
+    /// how wide it is or the grid is not static. A grid smaller than the device leaves workers
+    /// idle whatever the cube does inside.
+    pub fn halvings_short_of_filling(&self, settings: &LaunchSettings) -> u32 {
+        let CubeCount::Static(x, y, z) = settings.cube_count else {
+            return 0;
+        };
+        let cubes = x.saturating_mul(y).saturating_mul(z).max(1);
+        let Some(wanted) = self.cubes_to_fill(settings.units_per_cube()) else {
+            return 0;
+        };
+        (wanted / cubes).max(1).ilog2()
+    }
+
     /// How many values of `elem` one load instruction holds: what a step counts its loads in.
     pub fn load_values(&self, elem: ElemType) -> usize {
         (self.properties.hardware.load_width as usize / elem.size_bits().max(1)).max(1)
@@ -319,6 +335,21 @@ impl Hardware {
     /// copies land on, as the tile DSL asks ([`Delivery::runs_on`]).
     pub fn bulk_tensor_copy(&self) -> bool {
         Delivery::Tma.runs_on(&self.properties).is_ok()
+    }
+
+    /// Whether the device contracts 8-bit floats through its manual matrix instruction, whose units
+    /// load the values they hold.
+    pub fn contracts_fp8_in_registers(&self) -> bool {
+        let fp8 = |element| {
+            matches!(
+                element,
+                ElemType::Float(FloatKind::E4M3) | ElemType::Float(FloatKind::E5M2)
+            )
+        };
+        let calls = &self.properties.features.matmul.mma;
+        calls
+            .iter()
+            .any(|call| fp8(call.a_type) && fp8(call.b_type))
     }
 
     /// Whether a stage may be filled by the units' async copies: the copy engine, and the
@@ -490,13 +521,11 @@ impl BlockScaledMma {
             false => self.form.rhs,
         };
         let register_codes = Self::REGISTER_BYTES * BlockScaledOperands::values_per_element(kind);
-        let scales = scheme
-            .block_scale()
-            .map(|scale| ElemType::from_scale_dtype(scale.dtype));
+        let scales = ElemType::from_scale_dtype(scheme.finest().dtype);
         value_element(scheme.value).is_some_and(|values| self.holds(lhs, values, block))
             && scheme.mode == QuantMode::Symmetric
             && scheme.num_quants() == register_codes
-            && scales == Some(ElemType::Float(self.form.scales))
+            && scales == ElemType::Float(self.form.scales)
     }
 }
 
@@ -577,7 +606,7 @@ pub const TMA_ALIGNMENT_BYTES: usize = 16;
 /// device's: on the RTX PRO 6000 a stage landed in 32-byte rows copies about 40% slower than the
 /// same stage in 64-byte rows (the NVFP4 product with no contraction, Qwen3-4B's down projection
 /// at 2048 rows, 126 against 89 µs). The step rule cuts a stage the engine fills to it
-/// (`MatmulStep::filled_by_tma` in cubek-matmul).
+/// ([`Operand::tma_row`](crate::layout::stored::Operand::tma_row)).
 pub const TMA_ROW_BYTES: usize = 64;
 
 /// Vector registers assumed of a device that states no count: the sixteen every x86 CPU names,
@@ -912,5 +941,30 @@ mod tests {
             None,
             "an e2m1 operand of the 8-bit instruction is one code a byte, not eight a word"
         );
+    }
+
+    /// A device whose manual matrix instruction takes 8-bit floats on both sides contracts them in
+    /// registers; one that takes `f16` alone does not.
+    #[test]
+    fn eight_bit_floats_are_contracted_in_registers_where_an_instruction_takes_them() {
+        let e4m3 = ElemType::Float(FloatKind::E4M3);
+        let mut hw = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
+        let config = MmaConfig {
+            a_type: e4m3,
+            b_type: e4m3,
+            ..shape(16, 16, 16)
+        };
+        devices::features(&mut hw).matmul.mma.insert(config);
+        assert!(hw.contracts_fp8_in_registers());
+    }
+
+    #[test]
+    fn half_floats_alone_are_no_8_bit_contraction() {
+        let mut hw = device(PLANE_32, PLANE_32, WITH_PLANE_OPS, NO_CPU_CORES);
+        devices::features(&mut hw)
+            .matmul
+            .mma
+            .insert(shape(16, 16, 16));
+        assert!(!hw.contracts_fp8_in_registers());
     }
 }

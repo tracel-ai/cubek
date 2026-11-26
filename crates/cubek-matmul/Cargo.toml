@@ -21,9 +21,6 @@ std = ["cubecl/std", "cubek-std/std"]
 tiled = ["cubecl/tile", "dep:cubek-quant", "dep:cubek-microkernel"]
 multi-level = []
 
-# Autotune compares every candidate's output against the first's: a debugging instrument.
-autotune-checks = ["cubecl/autotune-checks"]
-
 heavy = []
 extended = ["heavy"]
 full = ["extended", "benchmarks"]
@@ -44,11 +41,11 @@ cubek-test-utils = { workspace = true, optional = true }
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
 
-bytemuck = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
+bytemuck = { workspace = true }
 # Enable reference helpers for tests without publishing a versioned self-dependency.
 cubek-matmul = { path = ".", default-features = false, features = ["cpu-reference"] }
 cubek-test-utils = { workspace = true }

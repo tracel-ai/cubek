@@ -10,10 +10,11 @@ use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Decline};
 use cubecl::tile::layout::ElemAlignment;
+use cubecl::tune::Work;
 use cubek_matmul::definition::MatmulElems;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::InputBinding;
-use cubek_std::routine::Grid;
+use cubek_std::routine::{EstimatedProblem, Grid};
 
 /// The tensors of one convolution on one client, held by the role they play in the contraction:
 /// the gathered input, the rhs (the weight, or the output gradient) and the output (the
@@ -111,6 +112,11 @@ impl ConvTensors {
     /// The client these tensors live on.
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// What the convolution these tensors state asks for, whichever routine runs it.
+    pub fn demand(&self) -> Work {
+        self.problem().demand()
     }
 
     /// The problem these tensors state. Their shapes are already the roles' views, as the checks

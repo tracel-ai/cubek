@@ -13,6 +13,7 @@ mod base {
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::space::{ComputeScope, CubeOrder};
     use cubecl::tile::stage::RowChunks;
+    use cubecl::tile::stage::StagedOperands;
     use cubecl::tile::{Scratch, StageStorage};
     use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
@@ -222,7 +223,7 @@ mod base {
     /// tile cut short is where its fragments bounce through a window.
     #[test]
     fn a_setting_settles_alike_at_the_rows_a_key_anchors() {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         let hw = offering(devices::strix_halo());
         let shape = |m, n, k, rhs| MatmulShape {
             m,
@@ -454,7 +455,7 @@ mod base {
     /// An `f16` product of `m × n × k` whose rhs lies col-major, `K` its rows: what one TMA box
     /// lands whole under a matrix instruction.
     fn col_rhs_of(m: usize, n: usize, k: usize) -> MatmulRoutineProblem {
-        use crate::kernels::tune::key::{MatmulBatching, MatmulShape, OperandKey};
+        use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
         MatmulRoutineProblem::from(&MatmulShape {
             m,
             n,
@@ -551,6 +552,7 @@ mod base {
         let (double, double_grid) = prepared(StageRing::DOUBLE);
         let stage = single.partitioning.stage().bytes(
             &hw,
+            StagedOperands::Both,
             problem.elements,
             &single.shared_memory,
             single.microkernel.plane.orders,
@@ -582,6 +584,7 @@ mod base {
             .expect(MatmulView::PREPARED)
             .work_item();
         let operands = partitioning.stage().operands(
+            StagedOperands::Both,
             item.elements,
             blueprint.microkernel.plane.orders,
             MatmulOperands::all(MatmulRead::AsBound),
@@ -1300,6 +1303,7 @@ mod base {
             let bytes = |storage: &StageStorage| {
                 blueprint.partitioning.stage().bytes(
                     &hw,
+                    StagedOperands::Both,
                     problem.elements,
                     storage,
                     blueprint.microkernel.plane.orders,
@@ -1342,6 +1346,7 @@ mod base {
         ));
         let bytes = blueprint.partitioning.stage().bytes(
             &hw,
+            StagedOperands::Both,
             problem().elements,
             &blueprint.shared_memory,
             blueprint.microkernel.plane.orders,

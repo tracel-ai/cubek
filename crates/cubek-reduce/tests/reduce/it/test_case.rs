@@ -30,15 +30,6 @@ pub const HYPERCUBE: ReduceOpStrategy =
 /// The rule, which picks among the kernels by the problem and the device.
 pub const RULE: ReduceOpStrategy = ReduceOpStrategy::Heuristic(ReduceKernelHeuristic::Tile);
 
-/// What a reduction of `input` accumulates in: `f32` for a narrower float, the input's own element
-/// otherwise.
-pub fn accumulation_of(input: ElemType) -> ElemType {
-    match input {
-        ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
-        other => other,
-    }
-}
-
 #[derive(Clone)]
 pub struct TestCase {
     pub shape: Shape,
@@ -46,7 +37,6 @@ pub struct TestCase {
     pub axis: Option<usize>,
     pub strategy: ReduceOpStrategy,
     pub input_dtype: ElemType,
-    pub accumulation_dtype: ElemType,
     custom_input: Option<Vec<f32>>,
 }
 
@@ -58,7 +48,6 @@ impl core::fmt::Debug for TestCase {
             .field("axis", &self.axis)
             .field("strategy", &self.strategy)
             .field("input_dtype", &self.input_dtype)
-            .field("accumulation_dtype", &self.accumulation_dtype)
             .finish()
     }
 }
@@ -77,13 +66,12 @@ impl TestCase {
             axis,
             strategy,
             input_dtype,
-            accumulation_dtype: accumulation_of(input_dtype),
             custom_input: None,
         }
     }
 
-    /// Use explicit regression data. Custom cases must execute even when the default matrix-test
-    /// policy permits unsupported generated configurations to fail compilation.
+    /// Use explicit regression data. A custom case a kernel accepts must compile, even where the
+    /// default matrix-test policy permits generated configurations to fail compilation.
     pub fn with_data(mut self, data: Vec<f32>) -> Self {
         self.custom_input = Some(data);
         self
@@ -300,19 +288,12 @@ impl Op {
     }
 
     /// The tolerance of the values: nothing for what a reduction selects or counts, and for a
-    /// sum, a mean or a product, the rounding of the element it is written in, or of a 16-bit
-    /// accumulator, whose error grows with the row.
-    fn tolerance(self, output: ElemType, accumulation: ElemType) -> f32 {
-        let rounding = |element: ElemType| match element {
-            ElemType::Float(FloatKind::F64) => 1e-6,
-            ElemType::Float(FloatKind::F16) => 2e-3,
-            ElemType::Float(FloatKind::BF16) => 1.6e-2,
-            _ => 1e-4,
-        };
+    /// sum, a mean or a product, the rounding of the element it is written in.
+    fn tolerance(self, output: ElemType) -> f32 {
         match self {
-            Op::Sum | Op::Mean | Op::Prod => match accumulation {
-                ElemType::Float(FloatKind::F16 | FloatKind::BF16) => 0.0625,
-                _ => rounding(output),
+            Op::Sum | Op::Mean | Op::Prod => match output {
+                ElemType::Float(FloatKind::F16) => 2e-3,
+                _ => 1e-4,
             },
             Op::Min
             | Op::Max
@@ -344,7 +325,7 @@ impl Reduction {
     }
 }
 
-/// The reduce entry the environment names, against the host.
+/// [`Reduce`] at its case's strategy, against the host.
 pub struct ReduceScopeUnderTest;
 
 impl ScopeUnderTest for ReduceScopeUnderTest {
@@ -352,7 +333,7 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
 
     /// # Panics
     ///
-    /// Where a case of explicit regression data is refused: it must execute.
+    /// Where a case of explicit regression data does not compile.
     fn launch(&self, client: &Client, reduction: &Reduction) -> Result<Vec<Written>, Decline> {
         let case = &reduction.case;
         let (op, axis, operation) = (reduction.op, case.axis.unwrap(), reduction.op.operation());
@@ -366,12 +347,8 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
                 (dtype, output)
             })
             .collect();
-        let device = cubecl::test_device();
-        let elements = ReduceElements {
-            input: case.input_dtype,
-            accumulator: case.accumulation_dtype,
-            out: outputs[0].0,
-        };
+        let elements =
+            ReduceElements::for_operation(operation, case.input_dtype, Some(outputs[0].0));
         let workspace = workspace_for(
             client,
             &case.shape,
@@ -384,7 +361,6 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
         let launched = match op.with_indices() {
             true => reduce.execute_with_indices(
                 client,
-                &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 outputs[1].1.clone().binding(),
@@ -395,7 +371,6 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
             ),
             false => reduce.execute(
                 client,
-                &device,
                 input.binding(),
                 outputs[0].1.clone().binding(),
                 axis,
@@ -415,7 +390,7 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
             if let ExecutionOutcome::CompileError(why) =
                 ExecutionOutcome::of_outputs(client, &handles)
             {
-                panic!("{reduction:?}: a case of explicit data must execute: {why}");
+                panic!("{reduction:?}: a case of explicit data must compile: {why}");
             }
         }
         let names = match op.with_indices() {
@@ -449,7 +424,7 @@ impl ScopeUnderTest for ReduceScopeUnderTest {
     fn tolerance(&self, reduction: &Reduction) -> f32 {
         let case = &reduction.case;
         let output = reduction.op.output_dtypes(case.input_dtype)[0];
-        reduction.op.tolerance(output, case.accumulation_dtype)
+        reduction.op.tolerance(output)
     }
 
     /// The indices a fused reduction writes are exact.
@@ -498,10 +473,6 @@ fn cast_host_through_dtype(mut host: HostData, dtype: ElemType) -> HostData {
             ElemType::Float(FloatKind::F16) => values
                 .iter()
                 .map(|&x| half::f16::from_f32(x).to_f32())
-                .collect(),
-            ElemType::Float(FloatKind::BF16) => values
-                .iter()
-                .map(|&x| half::bf16::from_f32(x).to_f32())
                 .collect(),
             _ => return host,
         };

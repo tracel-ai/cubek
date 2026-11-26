@@ -6,7 +6,6 @@ use cubek_std::Hardware;
 
 use crate::kernels::MatmulRoutineProblem;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
-use cubecl::tile::layout::ElemAlignment;
 use cubek_std::layout::stored::Packing;
 use cubek_std::matmul_dimensions::{K, N};
 
@@ -45,29 +44,9 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
         shared_memory: SM,
     ) -> Self {
         let orders = microkernel.orders();
-        let alignments = orders.map(|operand, order| problem.alignment(operand, order));
+        problem.require_reads(orders, &mut vectorization);
         for operand in MatmulOperand::ALL {
-            vectorization.require(VectorRequirement::Aligned {
-                operand,
-                alignment: alignments.get(operand),
-            });
-            // A view starting partway into its buffer lines up only where its start does.
-            vectorization.require(VectorRequirement::Aligned {
-                operand,
-                alignment: ElemAlignment::at_start(
-                    problem.start_bytes.get(operand),
-                    problem.elements.get(operand).size(),
-                ),
-            });
             let innermost = MatmulDimensions::MNK.of(orders.innermost(operand));
-            // A table entry placing the innermost dimension — a run of `K` read along a row —
-            // places an element, which a line would straddle: the input reads it one value a line.
-            let indexed_along_a_line = problem.index.is_some_and(|index| {
-                index.readers().get(operand) && index.indexing().dimension() == innermost
-            });
-            if indexed_along_a_line {
-                vectorization.require(VectorRequirement::Elementwise { operand });
-            }
             if partitioning.overhangs(innermost) {
                 vectorization.require(VectorRequirement::masked(
                     operand,
@@ -76,7 +55,7 @@ impl<M: MatmulMicrokernel, SM> MatmulBlueprint<M, SM> {
                 ));
             }
         }
-        let widths = alignments.map(|operand, _| {
+        let widths = orders.map(|operand, _| {
             vectorization.width(operand, |operand| {
                 hw.vector_ceiling(problem.elements.get(operand))
             })
@@ -96,7 +75,7 @@ impl<M> MatmulBlueprint<M> {
     /// means nothing for words. In values: the rhs's a whole read, every dimension it spans, the
     /// lhs and the output that read's run along the dimension they share with it, one value across
     /// it. A packed lhs is contracted in those runs too, whole words of it
-    /// ([`MatmulView::check_steps`](crate::kernels::MatmulView::check_steps)).
+    /// ([`MatmulView::check_reads`](crate::kernels::MatmulView::check_reads)).
     pub fn packed(rhs: &Packing, microkernel: M, partitioning: MatmulPartitioning) -> Self {
         let operand = &rhs.operand;
         let lined = operand.lined();

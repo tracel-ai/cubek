@@ -8,10 +8,12 @@ use crate::{
 
 const PLANE_WINDOW_LABEL: &str = "Plane window, at the device's settings";
 const UNIT_BALANCED_LABEL: &str = "Unit / balanced tiling";
+const FIRST_SERVED_LABEL: &str = "Cube staged / first listed setting that serves";
 
-/// The settings pinned, beside the tuned row: the base setting at both widths, two tiles of rows
-/// over two planes, one tile of rows, the narrow instruction, and a grid held whole over a map of
-/// its width. The `T8` rows refuse where the tile picks no instruction of eight rows.
+/// The settings pinned, beside the row at the first setting that serves: the base setting at both
+/// widths, two tiles of rows over two planes, one tile of rows, the narrow instruction, and a grid
+/// held whole over a map of its width. The `T8` rows refuse where the tile picks no instruction of
+/// eight rows.
 const PINNED: [CubeStagedConvSettings; 8] = [
     settings::F2X2_P2X2_T16,
     settings::F2X2_P2X2_T16.width_one(),
@@ -24,20 +26,13 @@ const PINNED: [CubeStagedConvSettings; 8] = [
 ];
 
 /// A row of the cube staged routine, named by its strategy: the routine and, where pinned, its
-/// settings. Without settings it is the tuned launch, which floors on the plane window routine.
+/// settings. Without settings it runs the first setting the device lists that serves.
 fn cube_staged(settings: Option<CubeStagedConvSettings>) -> CatalogEntry<Strategy> {
-    let (routine, label) = match settings {
-        Some(settings) => (
-            ConvRoutineKind::CubeStaged(Some(settings)),
-            format!("Cube staged / {settings}"),
-        ),
-        None => (
-            ConvRoutineKind::Tuned,
-            "Tuned: cube staged settings the device offers, the plane window routine where none serves"
-                .to_string(),
-        ),
+    let label = match settings {
+        Some(settings) => format!("Cube staged / {settings}"),
+        None => FIRST_SERVED_LABEL.to_string(),
     };
-    let strategy = Strategy::Tile(routine);
+    let strategy = Strategy::Tile(ConvRoutineKind::CubeStaged(settings));
     CatalogEntry::new(strategy.to_string(), label, strategy)
 }
 

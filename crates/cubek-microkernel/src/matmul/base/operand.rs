@@ -1,7 +1,15 @@
-use crate::matmul::{MatmulDim, MatmulDimensions};
-use cubecl::tile::{Dimension, Tile};
+use crate::matmul::{
+    MATMUL_PACKED_READS_SPLIT, MATMUL_READS_UNCLOSED, MatmulDim, MatmulDimensions,
+};
+use cubecl::ir::FloatKind;
+use cubecl::tile::launch::Decline;
+use cubecl::tile::stage::StagedOperands;
+use cubecl::tile::{BaseRegion, Dimension, Space, Tile, VectorRegion};
 use cubecl::{self as cubecl, cube, ir::ElemType, prelude::*};
 use cubek_std::layout::BindingOrder;
+use cubek_std::layout::stored::Operand;
+use cubek_std::matmul_dimensions::{K, M, N};
+use cubek_std::{Hardware, Instructions, block_scaled_mma};
 
 /// One of the three operands of `out = lhs · rhs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,6 +37,22 @@ impl MatmulOperand {
         }
     }
 
+    /// The inputs `staged` names.
+    pub fn staged(staged: StagedOperands) -> impl Iterator<Item = Self> {
+        Self::INPUTS
+            .into_iter()
+            .filter(move |operand| operand.staged_by(staged))
+    }
+
+    /// Whether a walk staging the inputs `staged` names stages it.
+    pub fn staged_by(self, staged: StagedOperands) -> bool {
+        match self {
+            Self::Lhs => staged.lhs(),
+            Self::Rhs => staged.rhs(),
+            Self::Out => false,
+        }
+    }
+
     /// The dimension it is bound innermost along in `order`: the one its lines run along, the
     /// last the product names it by, or the first where it is bound as its buffer steps.
     pub fn innermost(self, order: BindingOrder) -> MatmulDim {
@@ -42,6 +66,62 @@ impl MatmulOperand {
     /// The dimensions the product names it by, in that order.
     pub fn dimensions(self) -> [Dimension; 2] {
         self.dims().map(|dim| MatmulDimensions::MNK.of(dim))
+    }
+
+    /// The region a load stores this input in on `hw`: the input read as `operand`, its values
+    /// `values`, against the other input at `contracted`, the element the product is contracted
+    /// at, under the largest instruction `hw` offers to contract it, its stages filled by the TMA
+    /// engine where `hw` has one. The decode routines take no instruction, and their vector region
+    /// divides this one, so one stored tile serves both.
+    ///
+    /// Packed codes on a device that contracts them as stored, under a block-scaled instruction
+    /// that reads them for this input at their block along `k`, take the largest such instruction:
+    /// NVFP4's `128 × 8`. Under an `8 × 8 × 8` instruction NVFP4 against an `f16` input takes
+    /// `64 × 8`, and a float input `8 × 8`. `None` on a device that offers no instruction to
+    /// contract it: there a tile would feed no fragment, and the input stays as it was laid down.
+    pub fn stored_region(
+        self,
+        hw: &Hardware,
+        operand: Operand,
+        values: ElemType,
+        contracted: ElemType,
+    ) -> Option<BaseRegion> {
+        let f32 = ElemType::Float(FloatKind::F32);
+        let block_scaled = operand.scale(K).and_then(|block| {
+            block_scaled_mma(hw)
+                .filter(|instruction| {
+                    instruction.shape.cd_type == f32
+                        && instruction.holds(self == Self::Lhs, values, block)
+                })
+                .map(|instruction| instruction.shape)
+                .largest()
+        });
+        let shape = match block_scaled {
+            Some(shape) => Some(shape),
+            None => hw
+                .properties
+                .features
+                .matmul
+                .cmma
+                .iter()
+                .copied()
+                .for_triple(contracted, contracted, f32)
+                .largest(),
+        }?;
+        let operands = MatmulOperands::all(Operand::plain()).with(self, operand);
+        let elements = MatmulOperands::all(contracted).with(self, values);
+        let region = BaseRegion::new(
+            &operands.vector_region(hw, &elements),
+            Space::new(&[
+                (M, shape.m as usize),
+                (N, shape.n as usize),
+                (K, shape.k as usize),
+            ]),
+        );
+        Some(match hw.bulk_tensor_copy() {
+            true => region.divided_by(operand.tma_row(values)),
+            false => region,
+        })
     }
 }
 
@@ -89,6 +169,80 @@ impl<T: Copy> MatmulOperands<T> {
             lhs: f(MatmulOperand::Lhs, self.lhs),
             rhs: f(MatmulOperand::Rhs, self.rhs),
             out: f(MatmulOperand::Out, self.out),
+        }
+    }
+}
+
+impl MatmulOperands<Operand> {
+    /// The vector region of a product of inputs read so and loaded at `elements` on `hw`: each
+    /// packed input's read and its scales' as its operand states them, and each float input one
+    /// of the device's loads along the dimension the other input's reads run along where it has
+    /// that dimension, one value where it does not and each of its values meets a whole line of
+    /// the other.
+    ///
+    /// NVFP4 in tile order against an `f16` input on a device of 128-bit loads: the `f16` input
+    /// loaded eight of `k` at a time, a word of four scales covering sixty-four of `k`, and the
+    /// values two words, one block, down `k` a read: one column by sixty-four of `k`.
+    pub fn vector_region(
+        &self,
+        hw: &Hardware,
+        elements: &MatmulOperands<ElemType>,
+    ) -> VectorRegion {
+        let [first, second] = MatmulOperand::INPUTS;
+        let mut vector_tiles = Vec::new();
+        for (input, other) in [(first, second), (second, first)] {
+            let operand = self.get(input);
+            let lined = self.get(other).lined();
+            match operand.scaled_along() {
+                Some(_) => vector_tiles.extend(
+                    [operand.read_space()]
+                        .into_iter()
+                        .chain(operand.scale_read_space()),
+                ),
+                None if input.dimensions().contains(&lined) => {
+                    vector_tiles.push(Space::new(&[(lined, hw.load_values(elements.get(input)))]))
+                }
+                None => {}
+            }
+        }
+        VectorRegion::new(vector_tiles)
+    }
+
+    /// Whether a product of `n` columns and `k` deep, its inputs read so and loaded at `elements`,
+    /// is whole reads along both, each read of a packed input inside one scale tile, and two
+    /// packed inputs' reads along `K` whole words of each other.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_READS_UNCLOSED`], and [`MATMUL_PACKED_READS_SPLIT`].
+    pub fn check_reads(
+        &self,
+        hw: &Hardware,
+        elements: &MatmulOperands<ElemType>,
+        n: usize,
+        k: usize,
+    ) -> Result<(), Decline> {
+        let straddles = MatmulOperand::INPUTS.into_iter().any(|input| {
+            let operand = self.get(input);
+            let lined = operand.lined();
+            operand
+                .scale(lined)
+                .is_some_and(|tile| !tile.is_multiple_of(operand.read(lined)))
+        });
+        let vectors = self.vector_region(hw, elements);
+        let closes = n.is_multiple_of(vectors.along(N)) && k.is_multiple_of(vectors.along(K));
+        if !closes || straddles {
+            return Err(MATMUL_READS_UNCLOSED);
+        }
+        let [first, second] = MatmulOperand::INPUTS.map(|input| self.get(input));
+        let both_packed = first.scaled_along().is_some() && second.scaled_along().is_some();
+        let [short, long] = [
+            first.read(K).min(second.read(K)),
+            first.read(K).max(second.read(K)),
+        ];
+        match both_packed && !long.is_multiple_of(short) {
+            true => Err(MATMUL_PACKED_READS_SPLIT),
+            false => Ok(()),
         }
     }
 }
@@ -141,5 +295,21 @@ impl MatmulRead {
             MatmulRead::AsBound => operand.clone(),
             MatmulRead::Dequantized(element) => sum.dequantized(operand, element),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MatmulOperand;
+    use cubecl::tile::stage::StagedOperands;
+
+    #[test]
+    fn staging_the_rhs_leaves_the_lhs_where_it_lies() {
+        assert!(!MatmulOperand::Lhs.staged_by(StagedOperands::Rhs));
+    }
+
+    #[test]
+    fn the_output_is_never_staged_as_an_input() {
+        assert!(!MatmulOperand::Out.staged_by(StagedOperands::Both));
     }
 }

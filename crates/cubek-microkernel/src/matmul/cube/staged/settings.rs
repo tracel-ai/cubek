@@ -3,6 +3,7 @@ use crate::matmul::plane::{PlaneFragmentMicrokernelSettings, PlaneFragmentRowsAl
 use core::num::NonZeroUsize;
 use cubecl::tile::Scratch;
 use cubecl::tile::space::ComputeScope;
+use cubecl::tile::stage::StagedOperands;
 use cubek_std::microkernel::{StageLayout, StageRing};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -16,6 +17,9 @@ pub struct CubeStagedMicrokernelSettings {
     /// they bounce: one fragment, three cube barriers each, or all of them, two barriers for the
     /// whole drain at as many times the bytes.
     pub scratch: Scratch,
+    /// Which inputs it stages. Its planes read the other where it lies, each the fragments it
+    /// contracts: once for each plane that reads them, through no shared memory.
+    pub staged: StagedOperands,
     /// How it holds the stages its planes contract.
     pub ring: StageRing,
     /// How a stage its units copy lays out the rows its fragments load, the tile arranging its
@@ -40,6 +44,7 @@ impl CubeStagedMicrokernelSettings {
         planes: MatmulPlaneLayout::new(2, 4),
         planes_along_k: NonZeroUsize::MIN,
         scratch: Scratch::OneTile,
+        staged: StagedOperands::Both,
         ring: StageRing::SINGLE,
         stage_layout: Self::SWIZZLED,
         stage_steps: NonZeroUsize::MIN,
@@ -70,7 +75,7 @@ impl CubeStagedMicrokernelSettings {
     };
 
     /// A box against a packed input, counted in steps of the packed product
-    /// ([`MatmulStep`](crate::matmul::MatmulStep)): `steps` of `M` and `N` on each
+    /// ([`BaseRegion`](cubecl::tile::BaseRegion)): `steps` of `M` and `N` on each
     /// plane, on `planes` (along `m` by along `n`), holding its stages in `ring`. A step's box is
     /// whole loads of the packed input's words and scales, so every load filling a stage is
     /// whole; the stage holds the step's scale blocks, decoded by the units that fill it, and each
@@ -89,6 +94,7 @@ impl CubeStagedMicrokernelSettings {
             planes: MatmulPlaneLayout::new(planes.0, planes.1),
             planes_along_k: NonZeroUsize::MIN,
             scratch: Scratch::None,
+            staged: StagedOperands::Both,
             ring,
             stage_layout: Self::SWIZZLED,
             stage_steps: NonZeroUsize::MIN,
@@ -118,6 +124,7 @@ impl CubeStagedMicrokernelSettings {
             planes: MatmulPlaneLayout::new(planes.0, planes.1),
             planes_along_k: NonZeroUsize::MIN,
             scratch: Scratch::OneTile,
+            staged: StagedOperands::Both,
             ring,
             stage_layout: Self::SWIZZLED,
             stage_steps: NonZeroUsize::MIN,
@@ -170,6 +177,11 @@ impl CubeStagedMicrokernelSettings {
         }
     }
 
+    /// These settings staging the inputs `staged` names.
+    pub const fn staging(self, staged: StagedOperands) -> Self {
+        Self { staged, ..self }
+    }
+
     /// These settings holding their stages in `ring`.
     pub const fn ringed(self, ring: StageRing) -> Self {
         Self { ring, ..self }
@@ -190,24 +202,37 @@ impl CubeStagedMicrokernelSettings {
     }
 }
 
-/// Nothing for one plane along `K`, a one-fragment scratch, the swizzled stage layout or a stage
-/// of one step, so the settings that hold them keep their
-/// names.
+/// Nothing for one plane along `K`, a one-fragment scratch, both inputs staged, the swizzled stage
+/// layout or a stage of one step, so the settings that hold them keep their names.
 impl core::fmt::Display for CubeStagedMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let named = |kept: bool, part: String| (!kept).then_some(part);
+        let parts = [
+            named(
+                self.planes_along_k.get() == 1,
+                format!(" planes_along_k={}", self.planes_along_k),
+            ),
+            named(
+                self.scratch == Scratch::OneTile,
+                format!(" scratch={}", self.scratch),
+            ),
+            named(
+                self.staged == StagedOperands::Both,
+                format!(" staged={:?}", self.staged),
+            ),
+            Some(format!("{}", self.ring)),
+            named(
+                self.stage_layout == Self::SWIZZLED,
+                format!("{}", self.stage_layout),
+            ),
+            named(
+                self.stage_steps.get() == 1,
+                format!(" stage_steps={}", self.stage_steps),
+            ),
+        ];
         write!(f, "{} {}", self.plane, self.planes)?;
-        if self.planes_along_k.get() > 1 {
-            write!(f, " planes_along_k={}", self.planes_along_k)?;
-        }
-        if self.scratch != Scratch::OneTile {
-            write!(f, " scratch={}", self.scratch)?;
-        }
-        write!(f, "{}", self.ring)?;
-        if self.stage_layout != Self::SWIZZLED {
-            write!(f, "{}", self.stage_layout)?;
-        }
-        if self.stage_steps.get() > 1 {
-            write!(f, " stage_steps={}", self.stage_steps)?;
+        for part in parts.into_iter().flatten() {
+            write!(f, "{part}")?;
         }
         Ok(())
     }

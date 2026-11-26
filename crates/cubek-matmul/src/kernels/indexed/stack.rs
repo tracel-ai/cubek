@@ -1,6 +1,7 @@
 //! A stacked rhs: slabs laid end to end along one dimension of a product, as the routed and grouped
 //! products read it.
 
+use crate::kernels::MATMUL_SCALED_BESIDE_FLOAT;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::client::Client;
 use cubecl::tile::Dimension;
@@ -70,7 +71,7 @@ impl SlabDimension {
     /// # Panics
     ///
     /// As [`slab_of`](Self::slab_of).
-    pub(crate) fn slab_shape(self, stack: &StoredTensor, slabs: usize) -> [usize; 2] {
+    pub fn slab_shape(self, stack: &StoredTensor, slabs: usize) -> [usize; 2] {
         self.slab_of(
             [K, N].map(|dimension| stack.extent([K, N], dimension)),
             slabs,
@@ -84,15 +85,12 @@ impl SlabDimension {
     /// # Errors
     ///
     /// What reading a packed stack slab by slab declines.
-    pub(crate) fn read_slabs(
-        self,
-        stack: &StoredTensor,
-        slabs: usize,
-    ) -> Result<StoredTensor, Decline> {
+    pub fn read_slabs(self, stack: &StoredTensor, slabs: usize) -> Result<StoredTensor, Decline> {
         match stack {
             StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
                 packed.clone().stacked(slabs, self.dimension())?,
             )),
+            StoredTensor::Scaled(_) => Err(MATMUL_SCALED_BESIDE_FLOAT),
             StoredTensor::Plain(stack) => {
                 let view = SlabView::new(stack, slabs, self);
                 Ok(StoredTensor::Plain(view.slabs_of(stack)))

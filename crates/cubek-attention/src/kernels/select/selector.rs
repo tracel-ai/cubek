@@ -2,13 +2,13 @@
 //! its rules are unit-tested with no GPU.
 //!
 //! The selector runs first. What it answers is how the call reads its cache, and then how the
-//! kernel is chosen: by measurement on one of two autotunes, by rule, or by the caller's pin.
-//! Each routine then chooses its own setting, the autotune's candidates being its settings.
+//! kernel is chosen: by the caller's measurement of the call's query positions, by rule, or by the
+//! caller's pin. Each routine then chooses its own setting, a measurement's candidates being its
+//! settings.
 
 use super::problem::{KvKind, QueryPositions};
 use super::{AttentionKernel, AttentionOpStrategy};
 use crate::kernels::plan::{AttentionPlan, CacheRead, KernelLead, Rebuilt};
-use crate::kernels::tune::{AttentionAutotuneGroups, fastest};
 use crate::kernels::{CubeAttentionKernel, HypercubeAttentionKernel};
 use cubecl::tile::launch::Decline;
 use cubek_std::plan::{InOrder, Then};
@@ -27,10 +27,11 @@ const PACKED_PIN_UNREAD: Decline = Decline::Unserved {
 };
 
 /// How a call of `queries` positions over a `cache` runs under `strategy`: the plan its launch
-/// tries, the autotunes it names shipping their routines' group at `groups`.
+/// tries, a measured choice of a call of some query positions being the plan `measured` builds
+/// for them.
 ///
-/// A measuring strategy measures: a call of one query position on the one-position autotune, any
-/// other on the many-positions autotune. A rule runs the hypercube shuffle merged on the last
+/// A measuring strategy measures: a call of one query position on the caller's measurement of one
+/// position, any other on its measurement of many, over a float cache. A rule runs the hypercube shuffle merged on the last
 /// arrival at one position, and the cube fragment routine elsewhere, then what each kernel's scope
 /// names where it declines, down to the unit routine. A pin runs its kernel alone.
 ///
@@ -47,10 +48,10 @@ pub fn select(
     strategy: AttentionOpStrategy,
     queries: QueryPositions,
     cache: KvKind,
-    groups: AttentionAutotuneGroups,
+    measured: &dyn Fn(QueryPositions) -> AttentionPlan,
 ) -> Result<AttentionPlan, Decline> {
     let choice = Choice::of(strategy, queries);
-    let float = || choice.plan(queries, CacheRead::Float, groups);
+    let float = || choice.plan(queries, CacheRead::Float, measured);
     match (cache, choice) {
         (KvKind::Float, _) => Ok(float()),
         (KvKind::Packed, Choice::Pin(kernel)) if kernel.reads_packed() => {
@@ -58,8 +59,8 @@ pub fn select(
         }
         (KvKind::Packed, Choice::Pin(_)) => Err(PACKED_PIN_UNREAD),
         (KvKind::Packed, _) if queries == QueryPositions::One => Ok(Box::new(InOrder::new(vec![
-            Choice::Rule(ONE_POSITION_RULE).plan(queries, CacheRead::Packed, groups),
-            rebuilt(Choice::Rule(AttentionKernel::Unit).plan(queries, CacheRead::Float, groups)),
+            Choice::Rule(ONE_POSITION_RULE).plan(queries, CacheRead::Packed, measured),
+            rebuilt(Choice::Rule(AttentionKernel::Unit).plan(queries, CacheRead::Float, measured)),
         ]))),
         (KvKind::Packed, _) => Ok(Box::new(InOrder::new(vec![
             Box::new(KernelLead::new(MANY_POSITIONS_PACKED, CacheRead::Packed)),
@@ -71,7 +72,7 @@ pub fn select(
 /// How a kernel is chosen for a call: measured, by rule, or as the caller pinned it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Choice {
-    /// The fastest candidate of the autotune of the call's query positions.
+    /// The caller's measured choice for the call's query positions.
     Measured,
     /// The kernel's lead by rule, then what its scope names where it declines.
     Rule(AttentionKernel),
@@ -92,16 +93,17 @@ impl Choice {
         }
     }
 
-    /// The plan this choice runs over the cache `cache` says.
+    /// The plan this choice runs over the cache `cache` says, a measured choice the plan `measured`
+    /// builds for the call's query positions.
     fn plan(
         self,
         queries: QueryPositions,
         cache: CacheRead,
-        groups: AttentionAutotuneGroups,
+        measured: &dyn Fn(QueryPositions) -> AttentionPlan,
     ) -> AttentionPlan {
         let lead = |kernel| -> AttentionPlan { Box::new(KernelLead::new(kernel, cache)) };
         match self {
-            Self::Measured => fastest(queries, groups.of(queries)),
+            Self::Measured => measured(queries),
             Self::Pin(kernel) => lead(kernel),
             Self::Rule(kernel) => Box::new(InOrder::new(
                 core::iter::successors(Some(kernel), AttentionKernel::instead_by_rule)
@@ -120,7 +122,7 @@ fn rebuilt(plan: AttentionPlan) -> AttentionPlan {
 #[cfg(test)]
 mod tests {
     use crate::kernels::select::selector::*;
-    use crate::kernels::tune::AttentionAutotuneGroups;
+    use crate::kernels::select::stub_measured;
     use crate::kernels::*;
     use AttentionKernelHeuristic as H;
     use AttentionOpStrategy::{Autotune, Heuristic, Specific};
@@ -178,9 +180,9 @@ mod tests {
         assert_eq!(AttentionKernel::Unit.instead_by_rule(), None);
     }
 
-    /// `Autotune` measures every float call, on the autotune of its query positions; a packed call
-    /// of one position has one kernel and nothing to race, and a packed call of many is read by
-    /// the staged cube, or rebuilt and measured as a float one where it declines.
+    /// `Autotune` measures every float call, on the caller's measurement of its query positions; a
+    /// packed call of one position has one kernel and nothing to race, and a packed call of many
+    /// is read by the staged cube, or rebuilt and measured as a float one where it declines.
     #[test]
     fn autotune_measures_every_float_call() {
         assert_eq!(
@@ -245,8 +247,7 @@ mod tests {
         queries: QueryPositions,
         cache: KvKind,
     ) -> Result<String, cubecl::tile::launch::Decline> {
-        select(strategy, queries, cache, AttentionAutotuneGroups::default())
-            .map(|plan| plan.tree().to_string())
+        select(strategy, queries, cache, &stub_measured).map(|plan| plan.tree().to_string())
     }
 
     /// `kernel` at its lead, reading the cache as `cache` says.

@@ -9,14 +9,14 @@ use cubecl::tile::launch::Decline;
 use cubek_microkernel::reduce::ReduceOperation;
 use cubek_std::Hardware;
 
-/// Why a routine that splits a row across cubes declines a call whose caller gave it less scratch
-/// than it needs ([`ReduceWorkspace::bytes_for`]).
+/// Why the last-arrival hypercube declines a call whose caller gave it less scratch than it needs
+/// ([`ReduceWorkspace::bytes_for`]).
 pub const WORKSPACE_TOO_SMALL: Decline = Decline::Unserved {
     why: "the routine needs more scratch than the workspace its caller gave",
 };
 
-/// The scratch of a reduction that splits its rows across cubes, which its caller allocates and
-/// owns: each cube's partial, its indices where the carrier keeps any, and one arrival counter a
+/// The scratch of a reduction whose last cube merges a row split across cubes, which its caller
+/// allocates and owns: each cube's partial, its indices where the carrier keeps any, and one arrival counter a
 /// box of rows. The counters hold zero when the caller first gives them, and every launch leaves
 /// them at zero, so one workspace serves every launch that runs after the one before it ends.
 #[derive(Debug, Clone)]
@@ -40,8 +40,8 @@ pub struct ReduceWorkspaceBytes {
 impl ReduceWorkspace {
     /// The bytes a workspace takes for reducing an input of `shape` along `axis` by `operation`
     /// in `elements` on `client`'s device, with the indices written beside the values where
-    /// `with_indices`: enough for every setting of every routine that splits a row across cubes,
-    /// at every width, so it serves whichever the strategy picks.
+    /// `with_indices`: enough for every setting of the last-arrival hypercube, at every width, so it
+    /// serves whichever the strategy picks.
     ///
     /// # Panics
     ///
@@ -96,5 +96,133 @@ impl ReduceWorkspaceBytes {
             partial_indices: self.partial_indices.max(other.partial_indices),
             arrivals: self.arrivals.max(other.arrivals),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::{ElemType, FloatKind};
+
+    const SHAPE: [usize; 2] = [3, 70001];
+    const AXIS: usize = 1;
+
+    const BYTES: ReduceWorkspaceBytes = ReduceWorkspaceBytes {
+        partials: 64,
+        partial_indices: 32,
+        arrivals: 8,
+    };
+
+    fn max_elements() -> ReduceElements {
+        let f32 = ElemType::Float(FloatKind::F32);
+        ReduceElements::for_operation(ReduceOperation::Max, f32, None)
+    }
+
+    /// What the last-arrival hypercube takes on the test device to reduce a [`SHAPE`] along
+    /// [`AXIS`] by `operation`.
+    fn bound(operation: ReduceOperation, with_indices: bool) -> ReduceWorkspaceBytes {
+        let hw = Hardware::from_client(&cubecl::test_device().client());
+        let problem =
+            ReduceRoutineProblem::of_shape(&SHAPE, AXIS, operation, max_elements(), with_indices);
+        HypercubeLastArrivalReduceRoutine::workspace_bound(&hw, &problem)
+    }
+
+    #[test]
+    fn a_workspace_takes_what_the_last_arrival_hypercube_takes() {
+        let bytes = ReduceWorkspace::bytes_for(
+            &cubecl::test_device().client(),
+            &SHAPE,
+            AXIS,
+            ReduceOperation::Max,
+            max_elements(),
+            false,
+        );
+        assert_eq!(bytes, bound(ReduceOperation::Max, false));
+    }
+
+    #[test]
+    fn a_max_with_its_indices_takes_an_argmaxs_workspace() {
+        let bytes = ReduceWorkspace::bytes_for(
+            &cubecl::test_device().client(),
+            &SHAPE,
+            AXIS,
+            ReduceOperation::Max,
+            max_elements(),
+            true,
+        );
+        assert_eq!(bytes, bound(ReduceOperation::ArgMax, true));
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn a_workspace_along_an_axis_past_the_rank_panics() {
+        ReduceWorkspace::bytes_for(
+            &cubecl::test_device().client(),
+            &SHAPE,
+            SHAPE.len(),
+            ReduceOperation::Max,
+            max_elements(),
+            false,
+        );
+    }
+
+    #[test]
+    fn a_workspace_is_as_large_as_its_buffers() {
+        let client = cubecl::test_device().client();
+        let workspace = ReduceWorkspace {
+            partials: client.empty(BYTES.partials as usize),
+            partial_indices: client.empty(BYTES.partial_indices as usize),
+            arrivals: client.empty(BYTES.arrivals as usize),
+        };
+        assert_eq!(workspace.bytes(), BYTES);
+    }
+
+    #[test]
+    fn bytes_hold_as_many() {
+        assert!(BYTES.holds(&BYTES));
+    }
+
+    #[test]
+    fn fewer_partials_than_needed_hold_nothing() {
+        let given = ReduceWorkspaceBytes {
+            partials: BYTES.partials - 1,
+            ..ReduceWorkspaceBytes::UNBOUNDED
+        };
+        assert!(!given.holds(&BYTES));
+    }
+
+    #[test]
+    fn fewer_partial_indices_than_needed_hold_nothing() {
+        let given = ReduceWorkspaceBytes {
+            partial_indices: BYTES.partial_indices - 1,
+            ..ReduceWorkspaceBytes::UNBOUNDED
+        };
+        assert!(!given.holds(&BYTES));
+    }
+
+    #[test]
+    fn fewer_arrivals_than_needed_hold_nothing() {
+        let given = ReduceWorkspaceBytes {
+            arrivals: BYTES.arrivals - 1,
+            ..ReduceWorkspaceBytes::UNBOUNDED
+        };
+        assert!(!given.holds(&BYTES));
+    }
+
+    #[test]
+    fn the_max_takes_the_larger_of_each_buffer() {
+        let other = ReduceWorkspaceBytes {
+            partials: BYTES.partials * 2,
+            partial_indices: BYTES.partial_indices / 2,
+            arrivals: BYTES.arrivals * 2,
+        };
+        assert_eq!(
+            BYTES.max(other),
+            ReduceWorkspaceBytes {
+                partials: other.partials,
+                partial_indices: BYTES.partial_indices,
+                arrivals: other.arrivals,
+            }
+        );
     }
 }

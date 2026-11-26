@@ -1,14 +1,15 @@
 use crate::kernels::indexed::m_grouped::{
-    MGroupedChunk, MGroupedMatmulKey, MGroupedRowSource, MGroupedSettings, PaddedRows,
+    GroupedRows, MGroupedChunk, MGroupedFloors, MGroupedMatmulKey, MGroupedRowSource,
+    MGroupedSettings, PaddedRows, RouteSort, upload,
 };
 use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
-use crate::kernels::tune::key::{MatmulTuneKey, OperandLayout};
 use crate::kernels::{
-    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
-    MatmulRoutineProblem,
+    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable,
+    MatmulInputs, MatmulRoutine, MatmulRoutineProblem,
 };
+use crate::kernels::{MatmulTuneKey, OperandLayout};
 use cubecl::client::Client;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
@@ -73,6 +74,7 @@ impl MGroupedMatmulTensors {
         }
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),
+            StoredTensor::Scaled(_) => return Err(MATMUL_SCALED_BESIDE_FLOAT),
             // The rows are padded into a buffer of the launch's own, so only the stack is read
             // where it lies. The slabs are strided views of the stack's buffer, which an
             // overlapping view has no single place for.
@@ -109,11 +111,43 @@ impl MGroupedMatmulTensors {
         &self.source
     }
 
-    /// The same product over the rows `source` holds, grouped by `ends`: what a candidate is
-    /// measured on when the call's own layout cannot be trusted.
-    pub(crate) fn with_rows(&self, source: MGroupedRowSource, ends: PlainTensor) -> Self {
+    /// The same product and stack, the call's rows spread evenly over its groups: operands whose
+    /// layout is the one they state whatever the call's buffers hold, for a caller that measures
+    /// the product on operands of its own. A routed source's places name its own routes, and a
+    /// gated source's layout is built on the spread ends.
+    ///
+    /// The sort that makes the call's `ends` and route places can be discarded, as a process mode
+    /// that discards launches does, leaving whatever the buffers held, which a kernel reading
+    /// them as a layout runs on as garbage. These are uploaded rather than launched, so such a
+    /// mode keeps them.
+    pub fn with_spread_rows(&self) -> Self {
+        let client = &self.client;
+        let rows = self.source.rows();
+        let groups = self.groups();
+        let spread: Vec<u32> = (1..=groups)
+            .map(|group| (group * rows / groups) as u32)
+            .collect();
+        let ends = PlainTensor::of_handle(upload(client, &spread));
+        let source = match &self.source {
+            MGroupedRowSource::Sorted(rows) => MGroupedRowSource::Sorted(rows.clone()),
+            MGroupedRowSource::Routed { tokens, sort } => {
+                let places: Vec<u32> = (0..rows as u32).collect();
+                MGroupedRowSource::Routed {
+                    tokens: tokens.clone(),
+                    sort: RouteSort {
+                        route_at_place: PlainTensor::of_handle(upload(client, &places)),
+                        slots: sort.slots,
+                    },
+                }
+            }
+            MGroupedRowSource::Gated(both) => {
+                let align = both.layout().align();
+                let layout = GroupedRows::uploaded(client, &spread, rows, align);
+                MGroupedRowSource::Gated(PaddedRows::new(both.rows().clone(), layout))
+            }
+        };
         Self {
-            client: self.client.clone(),
+            client: client.clone(),
             source,
             rhs: self.rhs.clone(),
             ends,
@@ -121,10 +155,15 @@ impl MGroupedMatmulTensors {
         }
     }
 
-    /// Each group's cumulative end row, `u32`.
-    #[cfg(test)]
-    pub(crate) fn ends(&self) -> &PlainTensor {
-        &self.ends
+    /// Whether some floor listed for the stack's kind prepares the product on `hw`
+    /// ([`MGroupedMatmulCandidates::floors`](super::MGroupedMatmulCandidates::floors)): where
+    /// none does, no candidate is known to, and a caller names what runs instead.
+    ///
+    /// # Errors
+    ///
+    /// The last floor's decline, where none serves.
+    pub fn served_on_floor(&self, hw: &Hardware) -> Result<(), Decline> {
+        MGroupedFloors::LISTED.served(hw, self)
     }
 
     /// The client the operands live on.
@@ -247,6 +286,14 @@ impl MGroupedMatmulTensors {
         )?;
         Ok(PaddedRows::new(out, layout))
     }
+}
+
+impl MGroupedMatmulTensors {
+    /// Each group's cumulative end row, `u32`.
+    #[cfg(test)]
+    pub(crate) fn ends(&self) -> &PlainTensor {
+        &self.ends
+    }
 
     /// The rows each group is padded to a whole number of, as `settings` name them, on `hw`.
     ///
@@ -309,6 +356,7 @@ impl MGroupedMatmulTensors {
                 };
                 Ok(MatmulRoutineProblem::packed(rows, n, k, elem, packings))
             }
+            StoredTensor::Scaled(_) => Err(MATMUL_SCALED_BESIDE_FLOAT),
             StoredTensor::Plain(rhs) => {
                 let slabs = SlabView::new(rhs, self.groups(), self.along);
                 let rhs_layout = MatmulLayout::new(

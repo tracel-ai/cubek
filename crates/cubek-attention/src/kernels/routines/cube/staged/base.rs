@@ -9,9 +9,8 @@ use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernel, CubeAttentionMicrokernelSettings,
 };
-use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand};
+use cubek_microkernel::attention::{AttentionMicrokernel, AttentionOperand, CacheOrder};
 use cubek_std::Hardware;
-use cubek_std::layout::BindingOrder;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
@@ -24,7 +23,7 @@ pub const STAGED_FIXUP_UNREAD: Decline = Decline::Unserved {
 /// What the staged cube declines on a packed cache when its planes read the keys transposed: a
 /// packed cache is bound as its words lie, a key a row.
 pub const STAGED_PACKED_TRANSPOSED: Decline = Decline::Unserved {
-    why: "a packed cache is bound a key a row, and these planes read the keys transposed",
+    why: "a packed cache is bound as it is stored, and these planes read a side along its keys",
 };
 
 /// Attention with every cube owning a box of queries of some heads of the group, and walking
@@ -138,7 +137,7 @@ impl Routine for CubeStagedAttentionRoutine {
         };
         let item = problem.work_item();
         let microkernel = CubeAttentionMicrokernel::best(hw, &item, &settings.microkernel)?;
-        if packed && microkernel.key_order() != BindingOrder::InBufferOrder {
+        if packed && microkernel.cache_order() != CacheOrder::AS_STORED {
             return Err(STAGED_PACKED_TRANSPOSED);
         }
         let partitioning = AttentionPartitioning::new(

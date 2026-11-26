@@ -9,22 +9,28 @@
 mod bias;
 mod binding;
 mod blueprint;
+mod candidate;
 mod decline;
+mod key;
 mod launch;
 mod partitioning;
+mod prepared;
 mod problem;
 mod roles;
 mod routines;
 mod spatial;
 mod staging;
 mod tensors;
-mod tune;
 
+pub use candidate::CubeStagedConvCandidate;
 pub use decline::ConvDecline;
+pub use key::CubeStagedConvTuneKey;
+pub use partitioning::ConvCoverage;
+pub use prepared::CubeStagedConvPrepared;
 pub use problem::ConvBias;
 pub use routines::{ConvRoutineKind, CubeStagedConvSettings};
+pub use spatial::SpatialDim;
 pub use tensors::ConvTensors;
-pub use tune::CubeStagedConvCandidate;
 
 pub(crate) use bias::BiasTile;
 pub(crate) use binding::ConvBinding;
@@ -35,7 +41,5 @@ pub(crate) use problem::{B, CI, CO, ConvDimension, ConvProblem, G, SpatialDimCou
 pub(crate) use roles::{
     ChannelAxis, ConvChannelOperands, ConvGather, ConvGrouping, ConvPhasing, ConvRoles,
 };
-pub(crate) use routines::{CubeStagedConvRoutine, PlaneWindowConvRoutine};
-pub(crate) use spatial::SpatialDim;
+pub(crate) use routines::CubeStagedConvRoutine;
 pub(crate) use staging::ConvStaging;
-pub(crate) use tune::launch_tuned;

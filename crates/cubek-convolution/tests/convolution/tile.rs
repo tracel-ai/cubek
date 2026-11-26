@@ -13,6 +13,7 @@ use cubek_convolution::kernels::tiled::{
     ConvDecline, ConvRoutineKind, CubeStagedConvCandidate, CubeStagedConvSettings,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
+use cubek_std::routine::ROUTINE_LISTS_NO_SETTING;
 use cubek_std::{Hardware, InputBinding};
 use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest};
 
@@ -105,9 +106,9 @@ fn plane_window() -> Strategy {
     Strategy::Tile(ConvRoutineKind::PlaneWindow)
 }
 
-/// The setting the autotune finds fastest.
-fn tuned() -> Strategy {
-    Strategy::Tile(ConvRoutineKind::Tuned)
+/// The first setting the device lists that serves.
+fn first_served() -> Strategy {
+    Strategy::Tile(ConvRoutineKind::CubeStaged(None))
 }
 
 /// The refusals a tile routine may answer a case with, by the reason it states.
@@ -117,6 +118,8 @@ enum Accepts {
     Instruction,
     /// Every refusal the routine states for a setting its device lists.
     Listed,
+    /// A device that lists the routine no setting, or offers the setting no instruction.
+    Unlisted,
 }
 
 impl Accepts {
@@ -127,6 +130,9 @@ impl Accepts {
                 states(ConvDecline::InstructionUnoffered) || states(ConvDecline::RowsNotPicked)
             }
             Self::Listed => Self::Instruction.covers(message) || Self::listed_alone(message),
+            Self::Unlisted => {
+                Self::Instruction.covers(message) || message.contains(why(ROUTINE_LISTS_NO_SETTING))
+            }
         }
     }
 
@@ -376,8 +382,8 @@ mod cube {
     }
 
     cases! {
-        tuned_forward, Forward;
-        narrow_map: tuned(), Instruction, conv(2, (64, 64), [7, 7], [3, 3], SAME);
+        first_served_forward, Forward;
+        narrow_map: first_served(), Unlisted, conv(2, (64, 64), [7, 7], [3, 3], SAME);
     }
 
     /// Every setting the device lists, pinned, on one small problem of `pass`: it matches the
@@ -601,7 +607,7 @@ fn an_empty_output_launches_nothing() {
         dense([32, 3, 3, 64]),
         empty.binding(),
     );
-    assert_eq!(launch(&tuned(), &client, operands, VALID), Ok(()));
+    assert_eq!(launch(&first_served(), &client, operands, VALID), Ok(()));
     let after = HostData::from_tensor_handle(&client, sentinel, HostDataType::F32);
     assert_eq!(after.get_f32(&[0, 0, 0, 0]), UNTOUCHED);
 }
