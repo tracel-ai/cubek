@@ -5,7 +5,7 @@ use super::ConvTensors;
 use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{ChannelAxis, ConvDecline, ConvGrouping, SpatialDim};
 use crate::launch::SpatialWindow;
-use cubecl::ir::{ElemType, FloatKind};
+use cubecl::ir::{ElemType, FloatKind, IntKind};
 use cubecl::prelude::TensorBinding;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
@@ -203,6 +203,32 @@ fn tensors_of_another_rank_than_the_window_are_refused() {
     assert_eq!(declined, ConvDecline::RankMismatch.into());
 }
 
+/// An output of integers is refused, since the bias and the sum are added in a float.
+#[test]
+fn an_output_of_integers_is_refused() {
+    let client = cubecl::test_device().client();
+    let i32 = ElemType::Int(IntKind::I32);
+    let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
+        lhs: i32,
+        rhs: i32,
+        out: i32,
+    });
+    let dense = |shape: [usize; 4]| -> TensorBinding {
+        TensorHandle::empty(&client, shape.to_vec(), i32).binding()
+    };
+    let declined = ConvTensors::forward(
+        &client,
+        InputBinding::new(dense([1, 6, 6, 64]), i32),
+        InputBinding::new(dense([32, 3, 3, 64]), i32),
+        None,
+        dense([1, 6, 6, 32]),
+        &SAME,
+        dtypes,
+    )
+    .expect_err("the tensors were accepted");
+    assert_eq!(declined, ConvDecline::OutputElement.into());
+}
+
 /// A tiled tensor cannot have its channels split by group, which the tiling labels the dims of.
 #[test]
 fn a_tiled_tensor_of_a_grouped_convolution_is_refused() {
@@ -231,7 +257,7 @@ fn a_tiled_tensor_of_a_grouped_convolution_is_refused() {
     assert_eq!(declined, ConvDecline::PermutedTiled.into());
 }
 
-/// A forward of 32 filters whose bias has `shape` and `element`, the sum's by default.
+/// A forward of 32 filters whose bias has `shape` and `element`, the output's by default.
 fn forward_with_bias(shape: [usize; 1], element: Option<ElemType>) -> Decline {
     let client = cubecl::test_device().client();
     let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
@@ -261,9 +287,9 @@ fn a_bias_of_fewer_values_than_the_output_channels_is_refused() {
     assert_eq!(forward_with_bias([31], None), ConvDecline::BiasShape.into());
 }
 
-/// A bias is of the element the output channels are summed in.
+/// A bias is of the output's element.
 #[test]
-fn a_bias_of_another_element_than_the_sum_is_refused() {
+fn a_bias_of_another_element_than_the_output_is_refused() {
     let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
         lhs: F16,
         rhs: F16,

@@ -20,11 +20,9 @@ impl ConvFreeDimensions {
     pub fn in_order(&self) -> Vec<Dimension> {
         [&self.outer[..], &[self.across, self.m, self.n]].concat()
     }
-}
 
-impl ConvFreeDimensions {
     /// The last three of `dimensions` as the one across, the rows and the columns, the rest outer.
-    pub(super) fn split(dimensions: &[Dimension]) -> Self {
+    pub fn split(dimensions: &[Dimension]) -> Self {
         let [outer @ .., across, m, n] = dimensions else {
             panic!("a convolution's output has an across, a rows and a columns dimension");
         };
@@ -51,11 +49,9 @@ impl ConvContractedDimensions {
     pub fn in_order(&self) -> Vec<Dimension> {
         [&self.outer[..], &[self.beside, self.k]].concat()
     }
-}
 
-impl ConvContractedDimensions {
     /// The last two of `dimensions` as the one beside `k` and `k`, the rest outer.
-    pub(super) fn split(dimensions: &[Dimension]) -> Self {
+    pub fn split(dimensions: &[Dimension]) -> Self {
         let [outer @ .., beside, k] = dimensions else {
             panic!("a convolution contracts a beside and a k dimension");
         };
@@ -70,18 +66,16 @@ impl ConvContractedDimensions {
 /// The out and tap dimensions of a convolution over `spatial_dims` spatial dims, and where their
 /// extents sit in the operands' views.
 #[derive(Debug)]
-pub(super) struct SpatialDimensions {
-    pub(super) spatial_dims: SpatialDimCount,
-    pub(super) grouping: ConvGrouping,
-    pub(super) phasing: ConvPhasing,
-    pub(super) outs: Vec<Dimension>,
-    pub(super) taps: Vec<Dimension>,
-    /// The phase dimensions of the strided dims, which no operand's buffer has an axis for.
-    pub(super) phases: Vec<Dimension>,
+pub struct SpatialDimensions {
+    pub spatial_dims: SpatialDimCount,
+    pub grouping: ConvGrouping,
+    pub phasing: ConvPhasing,
+    pub outs: Vec<Dimension>,
+    pub taps: Vec<Dimension>,
 }
 
 impl SpatialDimensions {
-    pub(super) fn new(
+    pub fn new(
         spatial_dims: SpatialDimCount,
         grouping: ConvGrouping,
         phasing: ConvPhasing,
@@ -92,7 +86,6 @@ impl SpatialDimensions {
         Self {
             spatial_dims,
             grouping,
-            phases: phasing.dimensions(),
             phasing,
             outs,
             taps,
@@ -101,7 +94,7 @@ impl SpatialDimensions {
 
     /// The channels dim of `operand`'s view, after the batch or filters, the groups and the
     /// spatial dims.
-    pub(super) fn channels(&self, operand: MatmulOperand) -> ViewDim {
+    pub fn channels(&self, operand: MatmulOperand) -> ViewDim {
         ViewDim::at(
             operand,
             self.spatial_dims.0 + 1 + self.grouping.dimension_count(),
@@ -109,13 +102,13 @@ impl SpatialDimensions {
     }
 
     /// The group dim of the gathered input, the lhs, which is split but never reordered.
-    pub(super) fn groups(&self) -> Option<ViewDim> {
+    pub fn groups(&self) -> Option<ViewDim> {
         (self.grouping.dimension_count() > 0)
             .then(|| ViewDim::at(MatmulOperand::Lhs, self.spatial_dims.0 + 1))
     }
 
     /// The spatial dims of `operand`'s view, from `first`.
-    pub(super) fn run(&self, operand: MatmulOperand, first: usize) -> ViewRun {
+    pub fn run(&self, operand: MatmulOperand, first: usize) -> ViewRun {
         ViewRun {
             operand,
             first,

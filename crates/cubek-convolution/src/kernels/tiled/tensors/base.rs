@@ -6,6 +6,7 @@ use crate::kernels::tiled::{
 };
 use crate::launch::{SpatialExtent, SpatialWindow, TapCount};
 use cubecl::client::Client;
+use cubecl::ir::ElemType;
 use cubecl::prelude::TensorBinding;
 use cubecl::tile::kind::Boundary;
 use cubecl::tile::launch::{BoundaryPolicy, Decline};
@@ -247,6 +248,9 @@ impl ConvTensors {
         let (InputBinding::Normal(input, _), InputBinding::Normal(rhs, _)) = (input, rhs) else {
             return Err(ConvDecline::Quantized.into());
         };
+        if !matches!(dtypes.acc_global, ElemType::Float(_)) {
+            return Err(ConvDecline::OutputElement.into());
+        }
         let rank = window.len() + 2;
         if [&input, &rhs, &out]
             .iter()

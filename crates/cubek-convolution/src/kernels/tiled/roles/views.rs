@@ -41,7 +41,7 @@ impl ViewOrder {
 
 impl ViewOrder {
     /// `values`, one per dim of a buffer, in the order of its view.
-    pub(in crate::kernels::tiled) fn view(
+    pub fn view(
         self,
         spatial_dims: SpatialDimCount,
         grouping: ConvGrouping,

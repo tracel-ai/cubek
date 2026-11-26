@@ -270,7 +270,8 @@ impl ConvRoles {
         use MatmulOperand::{Lhs, Out, Rhs};
         let groups = spatial.grouping.dimensions();
         let split = spatial.grouping.dimension_count();
-        let free = [groups, &spatial.phases, &[B], &spatial.outs, &[CI]].concat();
+        let phases = spatial.phasing.dimensions();
+        let free = [groups, &phases, &[B], &spatial.outs, &[CI]].concat();
         let contracted = [&spatial.taps[..], &[CO]].concat();
         Self {
             operation: ConvolutionOperation::BackwardData,
@@ -282,7 +283,7 @@ impl ConvRoles {
             free: ConvFreeDimensions::split(&free),
             contracted: ConvContractedDimensions::split(&contracted),
             lhs: [groups, &[B], &spatial.outs, &spatial.taps, &[CO]].concat(),
-            rhs: [groups, &spatial.phases, &spatial.taps, &[CO, CI]].concat(),
+            rhs: [groups, &phases, &spatial.taps, &[CO, CI]].concat(),
             rhs_order: ViewOrder::ChannelsOutAfterTaps,
             out_order: ViewOrder::GroupsFirst,
             inner: MatmulOperands {

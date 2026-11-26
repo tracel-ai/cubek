@@ -8,6 +8,8 @@ pub enum ConvDecline {
     BiasShape,
     /// A bias of another element than the output's.
     BiasElement,
+    /// An output of an element that is not a float, which the bias and the sum are added in.
+    OutputElement,
     /// Input channels that are not a whole number of groups of the weight's input channels, or
     /// filters that the same number of groups does not divide.
     Groups,
@@ -67,6 +69,7 @@ impl ConvDecline {
                 "the tiled forward convolution's bias is a vector of its output channels"
             }
             Self::BiasElement => "the tiled forward convolution's bias is of the output's element",
+            Self::OutputElement => "the tiled convolution's output is a float",
             Self::Groups => {
                 "the tiled convolution's input channels are a whole number of groups of the weight's input channels, and its filters split into that same number of groups"
             }

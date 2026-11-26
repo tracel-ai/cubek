@@ -190,6 +190,24 @@ mod tests {
         }
     }
 
+    /// A grouped convolution keys apart from the dense one of its channels, and its key describes
+    /// a problem keyed as the key is.
+    #[test]
+    fn a_grouped_key_describes_a_problem_keyed_as_itself() {
+        let hw = nvidia();
+        let dense = ConvProblem::from(&dense());
+        let grouped = ConvProblem {
+            groups: 2,
+            ..dense.clone()
+        };
+        let key = CubeStagedConvTuneKey::of_problem(&grouped, &hw);
+        assert_ne!(key, CubeStagedConvTuneKey::of_problem(&dense, &hw));
+        assert_eq!(
+            CubeStagedConvTuneKey::of_problem(&ConvProblem::from(&key), &hw),
+            key
+        );
+    }
+
     /// Batches that fill the grid's third dimension with the positions across are keyed exactly,
     /// since settings may disagree within a bucket there; below that they share their power of
     /// two.

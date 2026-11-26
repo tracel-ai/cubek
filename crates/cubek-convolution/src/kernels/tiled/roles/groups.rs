@@ -60,10 +60,10 @@ pub struct ConvChannelOperands {
 
 /// The channel counts a group count is read from.
 struct GroupChannels {
-    input: usize,
-    output: usize,
-    filters: usize,
-    per_group: usize,
+    pub input: usize,
+    pub output: usize,
+    pub filters: usize,
+    pub per_group: usize,
 }
 
 /// What the channel counts of a convolution state about its groups, the cases in the order they

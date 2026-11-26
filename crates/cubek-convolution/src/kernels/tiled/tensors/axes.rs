@@ -21,7 +21,7 @@ fn refuse_tiled(tensor: &TensorBinding) -> Result<(), Decline> {
 /// # Errors
 ///
 /// [`ConvDecline::PermutedTiled`], where `grouping` is grouped and `tensor` is tiled.
-pub(in crate::kernels::tiled) fn split_channels(
+pub fn split_channels(
     axis: ChannelAxis,
     mut tensor: TensorBinding,
     grouping: ConvGrouping,
@@ -71,7 +71,7 @@ fn permute(
 /// # Errors
 ///
 /// [`ConvDecline::PermutedTiled`], where the channels split and `tensor` is tiled.
-pub(super) fn split(
+pub fn split(
     roles: &ConvRoles,
     operand: MatmulOperand,
     tensor: TensorBinding,
@@ -84,7 +84,7 @@ pub(super) fn split(
 /// # Errors
 ///
 /// [`ConvDecline::PermutedTiled`], where the dims move and `rhs` is tiled.
-pub(super) fn rhs_view(roles: &ConvRoles, rhs: TensorBinding) -> Result<TensorBinding, Decline> {
+pub fn rhs_view(roles: &ConvRoles, rhs: TensorBinding) -> Result<TensorBinding, Decline> {
     permute(roles.rhs_order, rhs, roles.spatial_dims, roles.grouping)
 }
 
@@ -94,13 +94,13 @@ pub(super) fn rhs_view(roles: &ConvRoles, rhs: TensorBinding) -> Result<TensorBi
 /// # Errors
 ///
 /// [`ConvDecline::PermutedTiled`], where the dims move and `out` is tiled.
-pub(super) fn out_view(roles: &ConvRoles, out: TensorBinding) -> Result<TensorBinding, Decline> {
+pub fn out_view(roles: &ConvRoles, out: TensorBinding) -> Result<TensorBinding, Decline> {
     permute(roles.out_order, out, roles.spatial_dims, roles.grouping)
 }
 
 /// Whether `rhs` and `out`, viewed through `roles`, and the input's `extent` of `dimension`
 /// (`None` where the input does not carry it) all give `dimension` the same extent.
-pub(super) fn agree_on(
+pub fn agree_on(
     roles: &ConvRoles,
     dimension: Dimension,
     extent: Option<usize>,

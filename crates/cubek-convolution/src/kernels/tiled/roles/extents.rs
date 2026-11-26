@@ -5,11 +5,16 @@ use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 /// One dim of one operand's view, where a problem reads an extent from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewDim {
-    pub(super) operand: MatmulOperand,
-    pub(super) dim: usize,
+    pub operand: MatmulOperand,
+    pub dim: usize,
 }
 
 impl ViewDim {
+    /// The dim `dim` of `operand`'s view.
+    pub const fn at(operand: MatmulOperand, dim: usize) -> Self {
+        Self { operand, dim }
+    }
+
     /// The extent of this dim in `views`.
     pub fn read(self, views: &MatmulOperands<Vec<usize>>) -> usize {
         self.read_shape(views.get_ref(self.operand))
@@ -21,18 +26,12 @@ impl ViewDim {
     }
 }
 
-impl ViewDim {
-    pub(super) const fn at(operand: MatmulOperand, dim: usize) -> Self {
-        Self { operand, dim }
-    }
-}
-
 /// The run of dims of one operand's view that hold the spatial extents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewRun {
-    pub(super) operand: MatmulOperand,
-    pub(super) first: usize,
-    pub(super) len: usize,
+    pub operand: MatmulOperand,
+    pub first: usize,
+    pub len: usize,
 }
 
 impl ViewRun {
