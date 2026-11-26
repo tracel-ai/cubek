@@ -95,13 +95,14 @@ pub const RMS_NORM_INPUT_OF_NO_DIM: Decline = Decline::Unserved {
 };
 
 /// What a launch into a buffer its caller allocated declines: an output of another shape or
-/// element than the input's.
+/// element than the input's, or not dense.
 pub const RMS_NORM_OUTPUT_UNREAD: Decline = Decline::Unserved {
-    why: "the output takes the input's shape and element",
+    why: "the output takes the input's shape and element, laid densely",
 };
 
-/// What a packed or tiled launch declines before preparing anything: rows in batch entries,
-/// which a matrix of rows does not lie in.
+/// What a packed or tiled launch declines before preparing anything: a weight a row whose rows
+/// are not the input's, which puts the rows in several batch entries, where a matrix of rows lies
+/// in one.
 pub const RMS_NORM_ROWS_IN_ENTRIES: Decline = Decline::Unserved {
     why: "a packed or tiled RMS norm writes dense rows, one batch entry of them",
 };
@@ -118,18 +119,29 @@ struct RmsNormInputs {
     dim: usize,
 }
 
+/// The rows an input holds and its normalized dim, checked against its weight from their shapes
+/// and elements alone ([`RmsNormInputs::admit`]), and whether its rows are read as one batch entry.
+#[derive(Debug, Clone, Copy)]
+struct RmsNormAdmitted {
+    rows: usize,
+    dim: usize,
+    one_entry: bool,
+}
+
 impl RmsNormInputs {
-    /// The rows `input` holds and its normalized dim, `[rows, dim]`, checked against `weight`
-    /// from their shapes and elements alone, before any copy.
+    /// `input` against `weight`, checked from their shapes and elements alone, before any copy,
+    /// for a launch that reads the rows as one batch entry where `one_entry`.
     ///
     /// # Errors
     ///
-    /// As [`RmsNormTensors::new`].
+    /// As [`RmsNormTensors::new`], and where `one_entry`, [`RMS_NORM_ROWS_IN_ENTRIES`] for a
+    /// weight a row whose rows are not the input's.
     fn admit(
         client: &Client,
         input: &PlainTensor,
         weight: &PlainTensor,
-    ) -> Result<[usize; 2], Decline> {
+        one_entry: bool,
+    ) -> Result<RmsNormAdmitted, Decline> {
         if input.elem != weight.elem {
             return Err(RMS_NORM_WEIGHT_ELEMENT_DIFFERS);
         }
@@ -140,13 +152,23 @@ impl RmsNormInputs {
             return Err(ELEMENT_NOT_ON_DEVICE);
         }
         let shape = &input.binding.shape;
-        let dim = *shape.last().ok_or(RMS_NORM_INPUT_OF_NO_DIM)?;
-        let rows = shape.iter().product::<usize>() / dim.max(1);
+        let dim = match shape.last() {
+            Some(&dim) if dim > 0 => dim,
+            _ => return Err(RMS_NORM_INPUT_OF_NO_DIM),
+        };
+        let rows = shape.iter().product::<usize>() / dim;
         let weight_rows = RmsNormWeight::rows_of(weight, dim)?;
         if !rows.is_multiple_of(weight_rows) {
             return Err(RMS_NORM_WEIGHT_ROWS_UNDIVIDED);
         }
-        Ok([rows, dim])
+        if one_entry && weight_rows != 1 && weight_rows != rows {
+            return Err(RMS_NORM_ROWS_IN_ENTRIES);
+        }
+        Ok(RmsNormAdmitted {
+            rows,
+            dim,
+            one_entry,
+        })
     }
 
     /// The rows of `input`, in batch entries where they lie, and `weight`, read as dense rows
@@ -154,16 +176,28 @@ impl RmsNormInputs {
     /// entry holds the weight's rows: rows that lie in other entries are made dense and taken as
     /// many at a time.
     ///
-    /// # Errors
+    /// Where `admitted` reads the rows as one batch entry, rows that lie in several are made
+    /// dense.
     ///
-    /// As [`RmsNormTensors::new`].
-    fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
-        let [_, dim] = Self::admit(client, &input, &weight)?;
+    /// # Assumptions
+    ///
+    /// `admitted` is what [`admit`](Self::admit) returned for `input` and `weight`.
+    fn new(
+        client: &Client,
+        input: PlainTensor,
+        weight: PlainTensor,
+        admitted: RmsNormAdmitted,
+    ) -> Self {
+        let dim = admitted.dim;
         let read_bytes = Hardware::from_client(client).properties.io_width() as u64 / 8;
         let shape = input.binding.shape.to_vec();
         let starts_on_a_read = input.start_bytes().is_multiple_of(read_bytes.max(1));
         let input = match input.as_batched_rows(dim) {
-            Some(rows) if starts_on_a_read => rows,
+            Some(rows)
+                if starts_on_a_read && !(admitted.one_entry && rows.binding.shape[0] > 1) =>
+            {
+                rows
+            }
             _ => input
                 .into_dense_at(client, read_bytes)
                 .as_batched_rows(dim)
@@ -184,7 +218,7 @@ impl RmsNormInputs {
         let [batch, rows, _] = input.binding.shape[..] else {
             unreachable!("batched rows have three dims")
         };
-        Ok(Self {
+        Self {
             client: client.clone(),
             input,
             weight,
@@ -192,18 +226,6 @@ impl RmsNormInputs {
             batch,
             rows,
             dim,
-        })
-    }
-
-    /// These operands, the rows in one batch entry, as a matrix of rows lies.
-    ///
-    /// # Errors
-    ///
-    /// [`RMS_NORM_ROWS_IN_ENTRIES`].
-    fn one_entry(self) -> Result<Self, Decline> {
-        match self.batch {
-            1 => Ok(self),
-            _ => Err(RMS_NORM_ROWS_IN_ENTRIES),
         }
     }
 
@@ -273,7 +295,8 @@ impl RmsNormTensors {
     /// [`RMS_NORM_WEIGHT_ELEMENT_DIFFERS`], [`RMS_NORM_WEIGHT_NOT_ROWS`] and
     /// [`RMS_NORM_WEIGHT_ROWS_UNDIVIDED`].
     pub fn new(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
-        let operands = RmsNormInputs::new(client, input, weight)?;
+        let admitted = RmsNormInputs::admit(client, &input, &weight, false)?;
+        let operands = RmsNormInputs::new(client, input, weight, admitted);
         let (out, _) = PlainTensor::empty_contiguous(
             client,
             operands.shape.clone().into(),
@@ -327,10 +350,12 @@ impl RmsNormTensors {
         weight: PlainTensor,
         out: TensorHandle,
     ) -> Result<Self, Decline> {
-        if !out.shape().iter().eq(input.binding.shape.iter()) || out.dtype != input.elem {
+        let admitted = RmsNormInputs::admit(client, &input, &weight, false)?;
+        let dense = PlainTensor::of_handle(out.clone()).is_contiguous();
+        if !out.shape().iter().eq(input.binding.shape.iter()) || out.dtype != input.elem || !dense {
             return Err(RMS_NORM_OUTPUT_UNREAD);
         }
-        Ok(RmsNormInputs::new(client, input, weight)?.into_contiguous(out))
+        Ok(RmsNormInputs::new(client, input, weight, admitted).into_contiguous(out))
     }
 }
 
@@ -343,7 +368,8 @@ impl RmsNormTensors<Geometry> {
     ///
     /// As [`RmsNormTensors::new`].
     pub fn sink(client: &Client, input: PlainTensor, weight: PlainTensor) -> Result<Self, Decline> {
-        let operands = RmsNormInputs::new(client, input, weight)?;
+        let admitted = RmsNormInputs::admit(client, &input, &weight, false)?;
+        let operands = RmsNormInputs::new(client, input, weight, admitted);
         let out = Geometry::row_major(&[operands.batch, operands.rows, operands.dim]);
         let placement = Placement::dense_rows(operands.dim);
         Ok(operands.with_out(out, placement, RowStore::Plain))
@@ -398,9 +424,9 @@ impl RmsNormTensors<PackedRows> {
         weight: PlainTensor,
         out: PackedTensor,
     ) -> Result<Self, Decline> {
-        let [rows, dim] = RmsNormInputs::admit(client, &input, &weight)?;
-        let out = PackedRows::new(out, rows, dim)?;
-        let operands = RmsNormInputs::new(client, input, weight)?.one_entry()?;
+        let admitted = RmsNormInputs::admit(client, &input, &weight, true)?;
+        let out = PackedRows::new(out, admitted.rows, admitted.dim)?;
+        let operands = RmsNormInputs::new(client, input, weight, admitted);
         let (placement, store) = (Placement::dense_rows(operands.dim), out.store());
         Ok(operands.with_out(out, placement, store))
     }
@@ -442,9 +468,9 @@ impl RmsNormTensors<TiledRows> {
         weight: PlainTensor,
         out: PlainTensor,
     ) -> Result<Self, Decline> {
-        let [rows, dim] = RmsNormInputs::admit(client, &input, &weight)?;
-        let out = TiledRows::new(out, rows, dim, input.elem)?;
-        let operands = RmsNormInputs::new(client, input, weight)?.one_entry()?;
+        let admitted = RmsNormInputs::admit(client, &input, &weight, true)?;
+        let out = TiledRows::new(out, admitted.rows, admitted.dim, input.elem)?;
+        let operands = RmsNormInputs::new(client, input, weight, admitted);
         let placement = Placement::from(&out);
         Ok(operands.with_out(out, placement, RowStore::Plain))
     }
@@ -637,6 +663,30 @@ mod tests {
             declined(&[5, 8], &[2, 8], F32),
             Some(RMS_NORM_WEIGHT_ROWS_UNDIVIDED)
         );
+    }
+
+    #[test]
+    fn an_input_whose_last_dim_is_empty_declines() {
+        assert_eq!(declined(&[4, 0], &[1], F32), Some(RMS_NORM_INPUT_OF_NO_DIM));
+    }
+
+    #[test]
+    fn a_weight_a_row_of_other_rows_than_the_input_declines_one_entry() {
+        let admitted =
+            RmsNormInputs::admit(&client(), &zeros(&[4, 8], F32), &zeros(&[2, 8], F32), true);
+
+        assert_eq!(admitted.err(), Some(RMS_NORM_ROWS_IN_ENTRIES));
+    }
+
+    #[test]
+    fn a_strided_output_declines() {
+        let mut out = TensorHandle::zeros(&client(), vec![8, 4], F32);
+        out.metadata = Box::new(Metadata::new(vec![4, 8], vec![1, 4]));
+
+        let declined =
+            RmsNormTensors::contiguous(&client(), zeros(&[4, 8], F32), zeros(&[8], F32), out).err();
+
+        assert_eq!(declined, Some(RMS_NORM_OUTPUT_UNREAD));
     }
 
     #[test]

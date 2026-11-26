@@ -97,11 +97,11 @@ impl InterpolateTensors {
     ///
     /// # Assumptions
     ///
-    /// `input` and `output` are of rank four, as [`interpolate`](crate::interpolate) checks.
+    /// `input` and `output` are both of rank four, as [`interpolate`](crate::interpolate) checks.
     ///
     /// # Panics
     ///
-    /// On an `input` or an `output` of a lower rank, against its Assumption.
+    /// On an `input` or an `output` of another rank, against its Assumption.
     pub fn new(
         client: &Client,
         input: TensorBinding,
@@ -109,6 +109,10 @@ impl InterpolateTensors {
         options: InterpolateOptions,
         element: ElemType,
     ) -> Self {
+        assert!(
+            input.shape.len() == 4 && output.shape.len() == 4,
+            "the input and the output are NHWC, of rank four"
+        );
         let problem = InterpolateRoutineProblem {
             forward: InterpolateForwardProblem::from_input_output_shapes(
                 &input.shape,

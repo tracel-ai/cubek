@@ -28,9 +28,9 @@ pub const SWIGLU_ROW_NOT_TWO_HALVES: Decline = Decline::Unserved {
 };
 
 /// What a launch into a buffer its caller allocated declines: an output of another shape or
-/// element than the gate's.
+/// element than the gate's, or not dense.
 pub const SWIGLU_OUTPUT_UNREAD: Decline = Decline::Unserved {
-    why: "the output takes the input's element and shape at half its width",
+    why: "the output takes the input's element and shape at half its width, laid densely",
 };
 
 /// The tensors of one gate, its output among them, and the problem they state.
@@ -91,7 +91,8 @@ impl SwigluTensors {
     /// whatever the device, and [`ELEMENT_NOT_ON_DEVICE`]: an element this device's runtime does
     /// not run.
     pub fn new(client: &Client, both: PlainTensor) -> Result<Self, Decline> {
-        let input = SwigluInput::new(client, both)?;
+        let shape = SwigluInput::admit(client, &both)?;
+        let input = SwigluInput::new(client, both, shape);
         let (out, _) =
             PlainTensor::empty_contiguous(client, input.shape.clone().into(), input.fused.elem);
         Ok(input.into_contiguous(out))
@@ -152,10 +153,11 @@ impl SwigluTensors {
         out: TensorHandle,
     ) -> Result<Self, Decline> {
         let shape = SwigluInput::admit(client, &both)?;
-        if !out.shape().iter().eq(shape.iter()) || out.dtype != both.elem {
+        let dense = PlainTensor::of_handle(out.clone()).is_contiguous();
+        if !out.shape().iter().eq(shape.iter()) || out.dtype != both.elem || !dense {
             return Err(SWIGLU_OUTPUT_UNREAD);
         }
-        Ok(SwigluInput::new(client, both)?.into_contiguous(out))
+        Ok(SwigluInput::new(client, both, shape).into_contiguous(out))
     }
 }
 
@@ -168,9 +170,10 @@ impl SwigluTensors<PackedRows> {
     ///
     /// As [`SwigluTensors::new`], and what [`PackedRows::new`] declines of `out`.
     pub fn packed(client: &Client, both: PlainTensor, out: PackedTensor) -> Result<Self, Decline> {
-        let [rows, dim] = rows_and_dim(&SwigluInput::admit(client, &both)?);
+        let shape = SwigluInput::admit(client, &both)?;
+        let [rows, dim] = rows_and_dim(&shape);
         let out = PackedRows::new(out, rows, dim)?;
-        let input = SwigluInput::new(client, both)?;
+        let input = SwigluInput::new(client, both, shape);
         let (placement, store) = (Placement::dense_rows(input.dim), out.store());
         Ok(input.with_out(out, placement, store))
     }
@@ -205,9 +208,10 @@ impl SwigluTensors<TiledRows> {
     ///
     /// As [`SwigluTensors::new`], and what [`TiledRows::new`] declines of `out`.
     pub fn tiled(client: &Client, both: PlainTensor, out: PlainTensor) -> Result<Self, Decline> {
-        let [rows, dim] = rows_and_dim(&SwigluInput::admit(client, &both)?);
+        let shape = SwigluInput::admit(client, &both)?;
+        let [rows, dim] = rows_and_dim(&shape);
         let out = TiledRows::new(out, rows, dim, both.elem)?;
-        let input = SwigluInput::new(client, both)?;
+        let input = SwigluInput::new(client, both, shape);
         let placement = Placement::from(&out);
         Ok(input.with_out(out, placement, RowStore::Plain))
     }
@@ -320,22 +324,21 @@ impl SwigluInput {
     /// The fused rows of `both`, `(..., 2 · d)` laid out `[gate | up]`, as dense rows starting on
     /// a whole read, bound as `[r, h, d]`.
     ///
-    /// # Errors
+    /// # Assumptions
     ///
-    /// As [`SwigluTensors::new`].
-    fn new(client: &Client, both: PlainTensor) -> Result<Self, Decline> {
-        let shape = Self::admit(client, &both)?;
+    /// `shape` is what [`admit`](Self::admit) returned for `both`.
+    fn new(client: &Client, both: PlainTensor, shape: Vec<usize>) -> Self {
         let [rows, dim] = rows_and_dim(&shape);
         let read_bytes = Hardware::from_client(client).properties.io_width() as u64 / 8;
         let both = both.into_dense_at(client, read_bytes);
         let fused = both.viewed(Metadata::new([rows, 2, dim], [2 * dim, dim, 1]));
-        Ok(Self {
+        Self {
             client: client.clone(),
             fused,
             shape,
             rows,
             dim,
-        })
+        }
     }
 
     /// The gate's shape of `both`, checked from its shape and element alone, before any copy.
@@ -421,6 +424,16 @@ mod tests {
         let declined = SwigluTensors::new(&client(), zeros(&[4, 7])).err();
 
         assert_eq!(declined, Some(SWIGLU_ROW_NOT_TWO_HALVES));
+    }
+
+    #[test]
+    fn a_strided_output_declines() {
+        let mut out = TensorHandle::zeros(&client(), vec![4, 4], F32);
+        out.metadata = Box::new(Metadata::new(vec![4, 4], vec![1, 4]));
+
+        let declined = SwigluTensors::contiguous(&client(), zeros(&[4, 8]), out).err();
+
+        assert_eq!(declined, Some(SWIGLU_OUTPUT_UNREAD));
     }
 
     #[test]
