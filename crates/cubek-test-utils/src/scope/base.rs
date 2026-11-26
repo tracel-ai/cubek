@@ -27,6 +27,16 @@ pub struct Written {
 }
 
 /// A kernel or a microkernel under test, against its own reference.
+///
+/// # Assumptions
+///
+/// - [`reference`](Self::reference) returns one value per output [`launch`](Self::launch) returns
+///   for the same case, in its order.
+///
+/// # Guarantees
+///
+/// - A case the scope refuses is a skip, unless the refusal is a [`Decline::Broken`], which fails;
+///   a case it launches is checked against its reference.
 pub trait ScopeChecker {
     /// One problem the scope runs on, named in every failure.
     type Case: Debug;
@@ -56,6 +66,11 @@ pub trait ScopeChecker {
 
     /// Launch the scope on every case and fail the test, through the active policy, at the first
     /// case whose output differs from the reference.
+    ///
+    /// # Panics
+    ///
+    /// Where the active policy rejects a case's outcome, which is how the test fails, or an
+    /// Assumption of [`ScopeChecker`] is broken.
     #[track_caller]
     fn check(&self, cases: impl IntoIterator<Item = Self::Case>) {
         let client = cubecl::test_device().client();
@@ -66,6 +81,10 @@ pub trait ScopeChecker {
 
     /// [`check`](Self::check), reporting one skip where no case launches rather than one a case:
     /// for cases most of which the device refuses, as every setting a routine lists.
+    ///
+    /// # Panics
+    ///
+    /// As [`check`](Self::check).
     #[track_caller]
     fn check_some(&self, cases: impl IntoIterator<Item = Self::Case>) {
         let client = cubecl::test_device().client();
@@ -99,6 +118,10 @@ pub trait ScopeChecker {
     /// is a skip: a launch the scope accepted and the device then failed, compiling it, short of
     /// a resource or running it, fails, since the scope promised what it could not keep. One it
     /// refuses as [`Decline::Broken`] fails as well: it is a bug in the scope.
+    ///
+    /// # Panics
+    ///
+    /// Where an Assumption of [`ScopeChecker`] is broken.
     #[track_caller]
     fn attempt(&self, client: &Client, case: &Self::Case) -> Result<TestOutcome, Decline> {
         let written = match self.launch(client, case) {

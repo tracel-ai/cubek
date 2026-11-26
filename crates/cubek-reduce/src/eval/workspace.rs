@@ -13,9 +13,13 @@ pub struct EvalWorkspace {
 impl EvalWorkspace {
     /// A workspace on `client` as large as [`ReduceWorkspace::bytes_for`] asks, its counters zero.
     ///
+    /// # Assumptions
+    ///
+    /// - That of [`ReduceWorkspace::bytes_for`]: `axis` is an axis of `shape`.
+    ///
     /// # Panics
     ///
-    /// As [`ReduceWorkspace::bytes_for`].
+    /// Where its Assumption is broken.
     pub fn new(
         client: &Client,
         shape: &[usize],

@@ -20,8 +20,13 @@ use cubek_std::routine::{CubeResources, Grid, Routine};
 /// routine reduces a row and adds its total into the output: a sum of few rows, too long for one
 /// cube each to keep the device busy, as a whole tensor summed into one value.
 ///
-/// The output must hold zero before it runs ([`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
-/// zeroes it), since it only ever adds.
+/// # Assumptions
+///
+/// - The output holds zero before [`launch`](ReduceRoutine::launch) or
+///   [`dispatch`](ReduceRoutine::dispatch) runs, since it only ever adds: only
+///   [`launch_zeroed_atomic`](crate::kernels::launch_zeroed_atomic) and its unbound twin, which
+///   zero it with [`UnitDirectZeroReduceRoutine`](crate::kernels::UnitDirectZeroReduceRoutine)
+///   first, ensure it.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HypercubeAtomicReduceRoutine;
 

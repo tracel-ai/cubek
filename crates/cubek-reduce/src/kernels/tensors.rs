@@ -99,13 +99,16 @@ impl<In: Clone> ReduceTensors<In> {
 }
 
 impl ReduceTensors<TensorBinding> {
-    /// `out = operation(input)` along axis `axis`: `out` has `input`'s shape, `axis` one wide, or
-    /// `k` wide for a top-k.
+    /// `out = operation(input)` along axis `axis`.
+    ///
+    /// # Assumptions
+    ///
+    /// - `axis` is an axis of `input`, which has one at least.
+    /// - `out` has `input`'s shape, `axis` one wide, or `k` wide for a top-k.
     ///
     /// # Panics
     ///
-    /// Where `axis` is not an axis of `input`, as of one that has none, or `out`'s shape is not the
-    /// one above.
+    /// Where an Assumption is broken.
     pub fn new(
         client: &Client,
         input: TensorBinding,
@@ -126,13 +129,18 @@ impl ReduceTensors<TensorBinding> {
     }
 
     /// `values = operation(input)` along axis `axis`, and the indices of those values to
-    /// `indices`, in `index_element`, from one launch: `indices` has `values`' shape, each written
-    /// at its own strides.
+    /// `indices`, in `index_element`, from one launch, each written at its own strides.
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`new`](Self::new), `values` its `out`.
+    /// - The operation's carrier keeps indices: not a sum's, nor a max's, whose pair an argmax
+    ///   writes.
+    /// - `indices` has `values`' shape.
     ///
     /// # Panics
     ///
-    /// As [`new`](Self::new), and where the operation's carrier keeps no index (a sum's, or a
-    /// max's, whose pair an argmax writes), or `indices` does not have `values`' shape.
+    /// Where an Assumption is broken.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -231,9 +239,13 @@ impl ReduceTensors<Geometry> {
     /// caller once the launch is prepared and read at exactly `lane_count`: what a fused read stands
     /// for, whose lines the caller's code computes whole.
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`new`](ReduceTensors::new), of `input`'s geometry.
+    ///
     /// # Panics
     ///
-    /// As [`new`](ReduceTensors::new).
+    /// Where an Assumption is broken.
     pub fn unbound(
         client: &Client,
         input: Geometry,

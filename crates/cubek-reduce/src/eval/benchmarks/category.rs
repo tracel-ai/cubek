@@ -35,9 +35,7 @@ impl cubek_test_utils::Category for ReduceCategory {
 
     /// # Panics
     ///
-    /// Where `problem`'s axis is not one of its shape's, or it compares a values launch with an
-    /// indices launch for an operation that has no such pair (a sum, a mean, a product, a max of
-    /// absolute values, any or all).
+    /// Where an Assumption of [`ReduceProblem`] is broken.
     fn bench(
         &self,
         strategy: &ReduceOpStrategy,
@@ -61,7 +59,7 @@ impl cubek_test_utils::Category for ReduceCategory {
 
     /// # Panics
     ///
-    /// Where `problem`'s axis is not one of its shape's, or holds no value.
+    /// Where an Assumption of [`ReduceProblem`] is broken.
     fn work(&self, problem: &ReduceProblem) -> Option<CategoryWork> {
         Some(work_of(problem))
     }

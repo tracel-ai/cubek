@@ -25,10 +25,14 @@ impl UnitLinesWriteMicrokernel {
     /// `acc` written to `out` and `indices` in lines `W` wide, `values` the values each of its rows
     /// holds (`unit_lines_write_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - `indices` holds a tile exactly where the item writes the indices beside the values
+    ///   ([`ReduceWrites::Both`](crate::reduce::ReduceWrites::Both)).
+    ///
     /// # Panics
     ///
-    /// Where the lines' item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     pub fn write<
         Out: Numeric,
         Idx: Numeric,

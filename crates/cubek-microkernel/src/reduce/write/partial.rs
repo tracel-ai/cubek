@@ -24,9 +24,14 @@ impl UnitPartialStoreMicrokernel {
     /// `acc` stored as partial `part` of `partials` and `partial_indices`
     /// (`unit_partial_store_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - `partial_indices` holds a tile exactly where the carrier keeps indices
+    ///   ([`ReduceCarrier::carries_indices`](crate::reduce::ReduceCarrier::carries_indices)).
+    ///
     /// # Panics
     ///
-    /// Where the stored partial's carrier and `partial_indices` disagree on whether it keeps indices.
+    /// When the kernel compiles, where its Assumption is broken.
     pub fn store<Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         acc: C,

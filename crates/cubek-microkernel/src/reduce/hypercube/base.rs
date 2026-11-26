@@ -36,7 +36,8 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its part's top-k keeps no value.
+    /// Where its item breaks an Assumption of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem): a
+    /// top-k that keeps no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.part.widest_line()
     }
@@ -50,11 +51,25 @@ impl HypercubeLastArrivalReduceMicrokernel {
 impl HypercubeLastArrivalReduceMicrokernel {
     /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` (`hypercube_last_arrival_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - `indices` holds a tile exactly where the item writes the indices beside the values
+    ///   ([`ReduceWrites::Both`](crate::reduce::ReduceWrites::Both)).
+    /// - `partial_indices` holds a tile exactly where the carrier keeps indices
+    ///   ([`ReduceCarrier::carries_indices`](crate::reduce::ReduceCarrier::carries_indices)).
+    /// - `arrivals[counter]` holds zero when the launch starts, and exactly `parts` cubes of the
+    ///   launch count themselves in at it, each once, each with its own `part` below `parts`.
+    /// - No other row's cubes write the slots of `partials` and `partial_indices` this row's
+    ///   cubes store their partials in.
+    ///
+    /// # Guarantees
+    ///
+    /// - The launch leaves `arrivals[counter]` at zero, so its caller's counters serve the next
+    ///   launch.
+    ///
     /// # Panics
     ///
-    /// Where the hypercube's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
-    /// Where its part's carrier and `partial_indices` disagree on whether it keeps indices.
+    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"

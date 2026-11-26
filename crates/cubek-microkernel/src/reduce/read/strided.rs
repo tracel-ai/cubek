@@ -26,6 +26,11 @@ impl UnitStridedReduceMicrokernel {
 impl UnitStridedReduceMicrokernel {
     /// The lines of `input` from `first` on, a turn apart, accumulated from the identity, line `l` as
     /// line `offset + l` of its row (`unit_strided_reduce_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - `first` is below the stride, the units that read the row together: one step past the full
+    ///   ones then covers the rest.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         input: &Tile,

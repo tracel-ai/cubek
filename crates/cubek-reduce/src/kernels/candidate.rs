@@ -13,6 +13,10 @@ use cubek_std::Hardware;
 /// A routine at one of its settings, whichever routine it is: what a caller that measures the
 /// routines identifies a candidate by, and runs again once it is found fastest, so a launch
 /// outside a round, a fused one, runs the winner.
+///
+/// # Assumptions
+///
+/// - Those of [`Reduce`](crate::kernels::Reduce), of the tensors it launches on.
 #[derive(Debug, Clone)]
 pub struct ReduceCandidate {
     launcher: ReduceCandidateLauncher,
@@ -47,11 +51,12 @@ impl ReduceCandidate {
     ///
     /// # Errors
     ///
-    /// Why the routine, or the zeroing before it, cannot run the problem at its setting.
+    /// Why the routine, or the zeroing before it, cannot run the problem at its setting, or a
+    /// [`Decline::Broken`] where it breaks what it prepared.
     ///
     /// # Panics
     ///
-    /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
+    /// Where an Assumption of [`ReduceCandidate`] is broken.
     pub fn launch(&self, tensors: &ReduceTensors) -> Result<(), Decline> {
         self.launcher.launch(tensors)
     }
@@ -67,11 +72,11 @@ impl ReduceCandidate {
     /// # Errors
     ///
     /// Why the routine cannot run the problem at its setting, or why it cannot read the caller's
-    /// input.
+    /// input, or a [`Decline::Broken`] where it breaks what it prepared.
     ///
     /// # Panics
     ///
-    /// As [`Reduce::execute`](crate::kernels::Reduce::execute).
+    /// Where an Assumption of [`ReduceCandidate`] is broken.
     pub fn launch_unbound<I: TileOperand>(
         &self,
         tensors: &ReduceTensors<Geometry>,

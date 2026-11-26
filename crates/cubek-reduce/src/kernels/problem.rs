@@ -27,10 +27,14 @@ impl ReduceElements {
     /// for a narrower float or integer), every other operation in the input's own: an extremum
     /// gains nothing from a wider carrier, and an index or a flag is carried apart from the values.
     ///
+    /// # Assumptions
+    ///
+    /// - `out` names an element where `operation` writes an index or a flag.
+    /// - A sum, a product or a mean reduces neither booleans nor complex numbers.
+    ///
     /// # Panics
     ///
-    /// Where `operation` writes an index or a flag and `out` is `None`, or sums, multiplies or
-    /// averages a boolean or a complex number.
+    /// Where an Assumption is broken.
     pub fn for_operation(
         operation: ReduceOperation,
         input: ElemType,
@@ -83,6 +87,10 @@ fn widened(input: ElemType) -> ElemType {
 /// Its space has the same dimensions whatever the rank: `BATCH`, every axis but `axis` as one,
 /// `REDUCED`, `axis` itself, and `SLOTS`, the cells a row writes, which the output holds in place
 /// of `axis`. Each operand's layout maps its axes onto them.
+///
+/// # Assumptions
+///
+/// - `axis` is an axis of `shape`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReduceRoutineProblem {
     /// The input's extent along each axis, read by axis (Position Usage) and walked in their order
@@ -111,8 +119,9 @@ pub struct ReduceIndices {
     pub elem_alignment: ElemAlignment,
 }
 
-/// The operands a row reduced in parts is written to before its parts merge: what each holds, one
-/// cell after another ([`ReduceWorkspace`](crate::kernels::ReduceWorkspace)).
+/// The operands a row reduced in parts is written to before its parts merge: the cells each
+/// holds, one after another ([`ReduceWorkspace`](crate::kernels::ReduceWorkspace)), which a
+/// routine that splits rows checks are enough before it launches.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReducePartials {
     /// The parts' values, in the accumulator's element.
@@ -152,9 +161,14 @@ impl ReduceRoutineProblem {
     /// The problem `out = operation(input)` along axis `axis` states, `out` having `input`'s shape
     /// with `axis` as wide as the operation writes per row.
     ///
+    /// # Assumptions
+    ///
+    /// - `axis` is an axis of `input`, which has one at least.
+    /// - `out` has `input`'s shape, `axis` as wide as the operation writes per row.
+    ///
     /// # Panics
     ///
-    /// Where `input` has no axis, `axis` is not one of its axes, or `out`'s shape is not that.
+    /// Where an Assumption is broken.
     pub fn stated(
         input: &Geometry,
         out: &Geometry,

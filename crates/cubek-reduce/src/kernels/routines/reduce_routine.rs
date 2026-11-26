@@ -23,6 +23,12 @@ use cubek_std::routine::{Grid, Routine};
 ///
 /// A reduce routine's own code reads nothing: every access is its microkernel's, so its
 /// `vectorize` hands the whole pass to the microkernel, whatever its placement.
+///
+/// # Assumptions
+///
+/// - The blueprint and grid a launch takes are what the routine's `prepare` returned for the
+///   tensors' problem; a launch that finds otherwise returns a
+///   [`Decline::Broken`](cubecl::tile::launch::Decline::Broken).
 pub(crate) trait ReduceRoutine<M>:
     Routine<Problem = ReduceRoutineProblem, Partitioning = (), Blueprint = ReduceBlueprint<M>>
 {

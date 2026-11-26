@@ -28,11 +28,16 @@ impl UnitPartialsReduceMicrokernel {
     /// The first `parts` partials of `partials` and `partial_indices` reduced into `out` and
     /// `indices`, `values` the values each of the rows holds (`unit_partials_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - `indices` holds a tile exactly where the item writes the indices beside the values
+    ///   ([`ReduceWrites::Both`](crate::reduce::ReduceWrites::Both)).
+    /// - `partial_indices` holds a tile exactly where the carrier keeps indices
+    ///   ([`ReduceCarrier::carries_indices`](crate::reduce::ReduceCarrier::carries_indices)).
+    ///
     /// # Panics
     ///
-    /// Where the merged row's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
-    /// Where a partial's carrier and `partial_indices` disagree on whether it keeps indices.
+    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     pub fn reduce<Out: Numeric, Idx: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         partials: &Tile,

@@ -35,6 +35,11 @@ impl HypercubeAtomicReduceMicrokernel {
 impl HypercubeAtomicReduceMicrokernel {
     /// `cube`'s part of the rows of `input` added into their cells of `out`
     /// (`hypercube_atomic_reduce_microkernel`).
+    ///
+    /// # Assumptions
+    ///
+    /// - Every cell of `out` holds zero before the launch: each cube only adds into it.
+    /// - The cubes of the launch split each row into parts, each part some cube's alone.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,

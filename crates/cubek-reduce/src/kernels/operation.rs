@@ -11,6 +11,15 @@ use cubek_microkernel::reduce::ReduceOperation;
 
 /// A reduction of one tensor along one axis, run by the kernel its strategy picks, with the
 /// scratch its caller gives the kernel whose last cube merges a row split across cubes.
+///
+/// # Assumptions
+///
+/// - The input has fewer than 256 axes.
+/// - The outputs alias neither the input nor each other.
+///
+/// # Guarantees
+///
+/// - Each output is written in the layout of the buffer its caller gives.
 #[derive(Debug, Clone)]
 pub struct Reduce {
     strategy: ReduceOpStrategy,
@@ -30,6 +39,11 @@ impl Reduce {
     /// This reduction given `workspace`, the last-arrival hypercube's scratch, which cubek never
     /// allocates. The hypercube declines a reduction given fewer bytes than
     /// [`ReduceWorkspace::bytes_for`] states where its launch needs them.
+    ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkspace`]: its counters at zero when first given, its launches one
+    ///   after another, its buffers aliasing no operand nor each other.
     pub fn with_workspace(&self, workspace: ReduceWorkspace) -> Self {
         Self {
             workspace: Some(workspace),
@@ -48,11 +62,13 @@ impl Reduce {
     /// top-k keeps, [`ReduceError::MismatchOutputShape`] where `output`'s shape is not the one
     /// above, and [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy
     /// picks cannot run the problem on the client's device: a
-    /// [`Specific`](ReduceOpStrategy::Specific) one, or the unit kernel the rule falls back to.
+    /// [`Specific`](ReduceOpStrategy::Specific) one, or the unit kernel the rule falls back to. A
+    /// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) in it is a bug of the routine
+    /// that ran, not a problem it cannot run.
     ///
     /// # Panics
     ///
-    /// Where `input` has 256 axes or more.
+    /// Where an Assumption of [`Reduce`] is broken: an input of 256 axes or more.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and what the reduction computes, as a caller states them"
@@ -118,7 +134,9 @@ impl Reduce {
     /// # Errors
     ///
     /// [`ReduceError::Declined`] with the kernel's decline where the kernel the strategy picks
-    /// cannot run the problem on the client's device.
+    /// cannot run the problem on the client's device, or a
+    /// [`Decline::Broken`](cubecl::tile::launch::Decline::Broken) where it breaks what it
+    /// prepared.
     ///
     /// # Panics
     ///

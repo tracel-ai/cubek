@@ -25,9 +25,13 @@ pub struct CubeColumnsReduceMicrokernel {
 }
 
 impl CubeColumnsReduceMicrokernel {
+    /// # Assumptions
+    ///
+    /// - `columns` is a power of two, at most `lanes`.
+    ///
     /// # Panics
     ///
-    /// Where `columns` is not a power of two at most one plane's `lanes`.
+    /// Where its Assumption is broken.
     pub fn new(item: ReduceWorkItem, lanes: usize, planes: usize, columns: usize) -> Self {
         assert!(
             spreads_across(lanes, columns),
@@ -54,10 +58,14 @@ impl CubeColumnsReduceMicrokernel {
     /// As [`CubeStagedReduceMicrokernel::reduce`](crate::reduce::cube::CubeStagedReduceMicrokernel::reduce),
     /// several lines of rows wide (`cube_columns_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - `indices` holds a tile exactly where the item writes the indices beside the values
+    ///   ([`ReduceWrites::Both`](crate::reduce::ReduceWrites::Both)).
+    ///
     /// # Panics
     ///
-    /// Where the cube's columns' item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,

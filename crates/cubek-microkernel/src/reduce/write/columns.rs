@@ -26,10 +26,14 @@ impl UnitGroupColumnWriteMicrokernel {
     /// `region`'s walk its column's first unit holds, `values` the values each row holds
     /// (`unit_group_column_write_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - `indices` holds a tile exactly where the item writes the indices beside the values
+    ///   ([`ReduceWrites::Both`](crate::reduce::ReduceWrites::Both)).
+    ///
     /// # Panics
     ///
-    /// Where the column's item and `indices` disagree on whether the indices are written beside the values, or
-    /// its carrier keeps none of the indices it writes.
+    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     pub fn write<
         Out: Numeric,
         Idx: Numeric,

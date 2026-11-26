@@ -27,9 +27,14 @@ impl CubePartialReduceMicrokernel {
     /// The lines of `input`, the line at `l` read as line `first_line + l` of its row, reduced into
     /// partial `part` of `partials` and `partial_indices` (`cube_partial_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - `partial_indices` holds a tile exactly where the carrier keeps indices
+    ///   ([`ReduceCarrier::carries_indices`](crate::reduce::ReduceCarrier::carries_indices)).
+    ///
     /// # Panics
     ///
-    /// Where the cube's carrier and `partial_indices` disagree on whether it keeps indices.
+    /// When the kernel compiles, where its Assumption is broken.
     pub fn reduce<In: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         input: &Tile,
