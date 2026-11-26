@@ -8,12 +8,6 @@ use cubek_std::routine::Breakable;
 /// reaches no such routine.
 const A_STAGE_IS_ONE_TILE: &str = "a stage of keys should be one tile, and a fix-up is a second";
 
-/// A QJL fix-up reaching a routine that stages its keys.
-const FIXUP_IN_A_STAGE: Decline = Decline::Broken {
-    condition: A_STAGE_IS_ONE_TILE,
-    cause: None,
-};
-
 /// The arguments of one launch, its operands bound under its launcher. Not `Debug`: the tile DSL's
 /// `Launcher` is not.
 pub struct AttentionBinding {
@@ -69,7 +63,7 @@ impl AttentionCacheBinding {
                 value,
                 fixup: None,
             }) => Ok((key, value)),
-            Self::Packed(_) => Err(FIXUP_IN_A_STAGE).or_broken(A_STAGE_IS_ONE_TILE),
+            Self::Packed(_) => Result::broken(A_STAGE_IS_ONE_TILE),
         }
     }
 }

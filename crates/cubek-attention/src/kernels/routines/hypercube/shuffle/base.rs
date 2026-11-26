@@ -1,8 +1,7 @@
 use crate::kernels::{
     AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionCacheLayout,
     AttentionPartitioning, AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors,
-    HypercubeMerge, PACKED_QUERIES_UNREAD, PLANE_SHUFFLE_ONE_WIDTH, PLANE_SHUFFLE_WIDTHS_DIFFER,
-    QueryOrder,
+    HypercubeMerge, PACKED_QUERIES_UNREAD, PLANE_SHUFFLE_ONE_WIDTH, QueryOrder,
 };
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
@@ -301,7 +300,7 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
         let widths = &blueprint.widths;
         let packed = matches!(problem.cache, AttentionCacheLayout::Packed(_));
         if !packed && [widths.key, widths.value] != [widths.query; 2] {
-            return Err(PLANE_SHUFFLE_WIDTHS_DIFFER).or_broken(PLANE_SHUFFLE_ONE_WIDTH);
+            return Result::broken(PLANE_SHUFFLE_ONE_WIDTH);
         }
         Ok((blueprint, grid))
     }

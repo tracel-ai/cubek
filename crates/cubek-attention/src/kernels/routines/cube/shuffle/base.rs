@@ -2,7 +2,7 @@ use super::kernel::cube_shuffle_attention_kernel;
 use crate::kernels::{
     ATTENTION_PACKED_UNREAD, AttentionBlueprint, AttentionCacheLayout, AttentionPartitioning,
     AttentionRoutine, AttentionRoutineProblem, AttentionTensors, PLANE_SHUFFLE_ONE_WIDTH,
-    PLANE_SHUFFLE_WIDTHS_DIFFER, QueryOrder,
+    QueryOrder,
 };
 use cubecl::tile::StageStorage;
 use cubecl::tile::launch::{Decline, Vectorization};
@@ -139,7 +139,7 @@ impl Routine for CubeShuffleAttentionRoutine {
         // The plane shuffle lines every operand alike, and the kernel binds them at one width.
         let widths = &blueprint.widths;
         if [widths.key, widths.value, widths.out] != [widths.query; 3] {
-            return Err(PLANE_SHUFFLE_WIDTHS_DIFFER).or_broken(PLANE_SHUFFLE_ONE_WIDTH);
+            return Result::broken(PLANE_SHUFFLE_ONE_WIDTH);
         }
         Ok((blueprint, grid))
     }
