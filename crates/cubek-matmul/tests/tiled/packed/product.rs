@@ -18,6 +18,7 @@ use cubek_std::matmul_dimensions::{K, N};
 use cubek_test_utils::{HostData, HostDataVec};
 use half::bf16;
 
+use crate::tiled::packed::fp8::{Fp8Layout, Fp8Rows};
 use crate::tiled::packed::{HostSlabs, PackedFormat, PackedSlabs, PackedSlabsSpec};
 use crate::tiled::{RoutineProduct, upload};
 
@@ -35,6 +36,8 @@ pub(crate) enum Stored {
     /// framework hands a tied embedding to the vocabulary head: its words run along the view's
     /// first dimension.
     PackedViewedTransposed { format: PackedFormat, seed: usize },
+    /// An lhs of `e4m3` values under one scale a row ([`Fp8Rows`]), laid as `layout` says.
+    Fp8Rows { layout: Fp8Layout },
 }
 
 /// `m × n`, `k` deep, of two operands stored as stated, written in `bf16`.
@@ -163,6 +166,9 @@ impl PackedProduct {
                 let matrix = PackedSlabs::new(client, self.spec(operand, format, seed)).matrix();
                 StoredTensor::Packed(Self::viewed_transposed(client, matrix, self.k))
             }
+            Stored::Fp8Rows { layout } => {
+                StoredTensor::Scaled(Fp8Rows::of(dims).stored(client, layout))
+            }
         }
     }
 
@@ -185,6 +191,11 @@ impl PackedProduct {
         match (stored, operand) {
             (Stored::Bf16, MatmulOperand::Lhs) => HostOperand::Dense {
                 values: Self::floats(self.m * self.k),
+                row_stride: self.k,
+                k_stride: 1,
+            },
+            (Stored::Fp8Rows { .. }, _) => HostOperand::Dense {
+                values: Fp8Rows::of([self.m, self.k]).dequantized(),
                 row_stride: self.k,
                 k_stride: 1,
             },

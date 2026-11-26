@@ -1,7 +1,11 @@
-use super::{PackedTensor, PlainTensor};
+use super::{PackedTensor, PlainTensor, ScaledTensor};
 use crate::kernels::select::problem::OperandKind;
+use cubecl::client::Client;
+use cubecl::prelude::TensorBinding;
+use cubecl::quant::scheme::QuantScheme;
 use cubecl::server::BufferBinding;
 use cubecl::tile::Dimension;
+use cubecl::tile::launch::Decline;
 use cubecl::zspace::SmallVec;
 use cubecl::zspace::metadata::Metadata;
 
@@ -15,15 +19,45 @@ use cubecl::zspace::metadata::Metadata;
 pub enum StoredTensor {
     /// Its values as they are.
     Plain(PlainTensor),
+    /// 8-bit floats under scales constant along the contraction.
+    Scaled(ScaledTensor),
     /// Packed words under their scales.
     Packed(PackedTensor),
 }
 
 impl StoredTensor {
+    /// A quantized matrix over `dimensions`, in the order its shape states them, as a framework
+    /// stores one: `values`, its buffer bound under its logical shape and strides, stored as
+    /// `scheme` says, under its `scales` and, where `scheme` has a second level, its
+    /// `outer_scales`. 8-bit floats under scales constant along the contraction
+    /// ([`ScaledTensor::reads`]), or packed ([`PackedTensor::of_quantized`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`ScaledTensor::of_quantized`] and [`PackedTensor::of_quantized`].
+    pub fn of_quantized(
+        client: &Client,
+        values: TensorBinding,
+        scheme: QuantScheme,
+        scales: PlainTensor,
+        outer_scales: Option<PlainTensor>,
+        dimensions: [Dimension; 2],
+    ) -> Result<Self, Decline> {
+        match ScaledTensor::reads(&scheme, dimensions) {
+            true => ScaledTensor::of_quantized(client, values, scheme, scales, dimensions)
+                .map(Self::Scaled),
+            false => {
+                PackedTensor::of_quantized(client, values, scheme, scales, outer_scales, dimensions)
+                    .map(Self::Packed)
+            }
+        }
+    }
+
     /// The tensor holding its values: itself, or a packed one's words.
     pub fn values(&self) -> &PlainTensor {
         match self {
             Self::Plain(tensor) => tensor,
+            Self::Scaled(tensor) => &tensor.values,
             Self::Packed(tensor) => tensor.words(),
         }
     }
@@ -32,6 +66,7 @@ impl StoredTensor {
     pub fn kind(&self) -> OperandKind {
         match self {
             Self::Plain(_) => OperandKind::Float,
+            Self::Scaled(tensor) => OperandKind::Quantized(tensor.scheme),
             Self::Packed(tensor) => OperandKind::Quantized(tensor.scheme()),
         }
     }
@@ -43,20 +78,20 @@ impl StoredTensor {
     /// On a dimension not among them.
     pub fn extent(&self, dimensions: [Dimension; 2], dimension: Dimension) -> usize {
         match self {
-            Self::Plain(tensor) => {
-                let shape = tensor.shape();
+            Self::Plain(_) | Self::Scaled(_) => {
+                let shape = self.values().logical_shape();
                 let position = dimensions
                     .iter()
                     .position(|&own| own == dimension)
                     .unwrap_or_else(|| panic!("{dimension:?} is not one of {dimensions:?}"));
-                shape[shape.rank() - 2 + position]
+                shape[shape.len() - 2 + position]
             }
             Self::Packed(tensor) => tensor.extent(dimension),
         }
     }
 
-    /// Every buffer it binds, in the order its binding holds them: its values, then a packed one's
-    /// block scales and its per-tensor scale. What a kept binding is rebound to, in place of the
+    /// Every buffer it binds, in the order its binding holds them: its values, then its scales, the
+    /// finest level first. What a kept binding is rebound to, in place of the
     /// buffers it was made over.
     pub fn buffers(&self) -> Vec<BufferBinding> {
         self.tensors()
@@ -86,11 +121,12 @@ impl StoredTensor {
 
     /// The tensors behind [`buffers`](Self::buffers), in its order.
     fn tensors(&self) -> impl Iterator<Item = &PlainTensor> {
-        let (values, scales) = match self {
-            Self::Plain(tensor) => (tensor, None),
-            Self::Packed(tensor) => (tensor.words(), Some(tensor.scales())),
+        let scales: SmallVec<[&PlainTensor; 2]> = match self {
+            Self::Plain(_) => SmallVec::new(),
+            Self::Scaled(tensor) => core::iter::once(&tensor.scales).collect(),
+            Self::Packed(tensor) => tensor.scales().collect(),
         };
-        core::iter::once(values).chain(scales.into_iter().flatten())
+        core::iter::once(self.values()).chain(scales)
     }
 }
 

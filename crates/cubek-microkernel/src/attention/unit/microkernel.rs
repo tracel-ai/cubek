@@ -14,9 +14,8 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// then the rows are normalized and drained into `out`, and each row's logsumexp written where the
 /// caller asks for it.
 ///
-/// The per-tensor scale each side is stored under is taken out of it and applied once: the keys'
-/// to every score the softmax reads ([`Tile::factor_whole`]), the values' to the output as it
-/// drains ([`Tile::factor`]). The probabilities are contracted with the values from the score's
+/// The scale each side shares whole is factored out of it ([`Tile::factor`]) and applied once: the
+/// keys' to every score the softmax reads, the values' to the output as it drains. The probabilities are contracted with the values from the score's
 /// registers, which read the values as they lie.
 #[cube]
 pub fn unit_attention_microkernel<EA: Float>(
@@ -32,9 +31,9 @@ pub fn unit_attention_microkernel<EA: Float>(
     #[comptime] microkernel: UnitAttentionMicrokernel,
 ) {
     let value_matmul = microkernel.value.software_matmul();
-    let mut sum = out.register_accumulator::<EA>(bias, value, value_matmul, Semiring::SumProd);
+    let (value, value_scale) = value.factor();
+    let mut sum = out.register_accumulator::<EA>(bias, &value, value_matmul, Semiring::SumProd);
     sum.zero();
-    let (value, value_factor) = value.factor(&sum);
 
     let mut softmax = OnlineSoftmax::<EA>::along(bias, S);
 
@@ -53,7 +52,7 @@ pub fn unit_attention_microkernel<EA: Float>(
     }
 
     sum.along(DV).mul(&softmax.recip_l());
-    sum.scaled(&value_factor).drained_into(out);
+    sum.mul(&value_scale).drained_into(out);
 
     #[comptime]
     match logsumexp {
@@ -85,13 +84,13 @@ pub(crate) fn unit_attention_step<EA: Float>(
     let score_matmul = microkernel.score.software_matmul();
     let mut score = bias.register_accumulator::<EA>(query, key, score_matmul, Semiring::SumProd);
     score.zero();
-    let (key, key_factor) = key.factor_whole();
+    let (key, key_scale) = key.factor();
 
     for depth in step.walk() {
         unit_registers_microkernel(&depth, &score, query, &key);
     }
 
-    let correction = softmax.step(&score.scaled(&key_factor), bias, scale);
+    let correction = softmax.step(&score.mul(&key_scale), bias, scale);
     sum.along(DV).rescale(&correction);
 
     // A tile's clone is a handle to the same cells: the shared microkernel adds into the sum

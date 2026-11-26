@@ -150,12 +150,8 @@ impl TileQuantStageBench {
 
     /// The scale block along `N`, which the scheme states.
     fn bn(&self) -> usize {
-        // The block is `1 × bn`; the scheme keeps its trailing dims, the `N` one last.
-        let block = self
-            .scheme
-            .block_size()
-            .expect("the bench's scheme is block-scaled");
-        block[block.len() - 1] as usize
+        let [_, bn] = self.scheme.finest().size.extents_in();
+        bn.values_of_axis(self.n)
     }
 
     /// `N`'s one physical dim, in blocks and inside one.

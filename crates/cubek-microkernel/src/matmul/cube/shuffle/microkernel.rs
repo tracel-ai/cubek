@@ -27,13 +27,13 @@ pub fn cube_shuffle_microkernel<EA: Numeric, D: ServedDestination>(
     #[comptime] reads: MatmulOperands<MatmulRead>,
 ) {
     let c = dest.tile().at(cube);
+    let (a, a_scale) = a.factor();
+    let (b, b_scale) = b.factor();
 
     match meet {
         CubeMeet::Atomic => {
             let mut accumulator = c.smem_accumulation::<EA>();
-            let mut sum = open_sum::<EA>(&accumulator.sink, a, b, block);
-            let (a, a_factor) = a.factor(&sum);
-            let (b, b_factor) = b.factor(&sum);
+            let mut sum = open_sum::<EA>(&accumulator.sink, &a, &b, block);
             sum.zero();
 
             for step in cube {
@@ -42,7 +42,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric, D: ServedDestination>(
 
             accumulator
                 .sink
-                .dequantize_from(&sum.scaled(&a_factor).scaled(&b_factor));
+                .dequantize_from(&sum.mul(&a_scale).mul(&b_scale));
 
             sync_cube();
 
@@ -50,9 +50,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric, D: ServedDestination>(
         }
         CubeMeet::InSlots => {
             let accumulator = c.smem_slots_accumulation::<EA>(planes);
-            let mut sum = open_sum::<EA>(&c, a, b, block);
-            let (a, a_factor) = a.factor(&sum);
-            let (b, b_factor) = b.factor(&sum);
+            let mut sum = open_sum::<EA>(&c, &a, &b, block);
             sum.zero();
 
             let steps = cube.walk();
@@ -63,7 +61,7 @@ pub fn cube_shuffle_microkernel<EA: Numeric, D: ServedDestination>(
                 plane_shuffle_microkernel(&step, &sum, &a, &b, reads);
             }
 
-            accumulator.drain(&sum.scaled(&a_factor).scaled(&b_factor), writer);
+            accumulator.drain(&sum.mul(&a_scale).mul(&b_scale), writer);
             accumulator.source.consumed_by::<D>(dest, cube);
         }
     }

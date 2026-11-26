@@ -1,6 +1,7 @@
 use crate::attention::{AttentionOperand, AttentionOperands, AttentionWorkItem, CacheOrder};
 use cubecl::tile::Space;
 use cubecl::tile::launch::Delivery;
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::microkernel::Microkernel;
 
 /// A microkernel of this kind, as its routines and their blueprint read it beside what every
@@ -16,6 +17,13 @@ pub trait AttentionMicrokernel:
     /// in. As they are stored, unless its instruction reads them in another element.
     fn served(&self, item: &AttentionWorkItem) -> AttentionWorkItem {
         *item
+    }
+
+    /// Where the scale the values share whole is multiplied in, which the launch binds them for:
+    /// into the output's sum for one that sums in its units' own registers. The keys' is the
+    /// softmax's to apply, whatever holds the score.
+    fn values_outer_scale(&self) -> OuterScale {
+        OuterScale::Factored
     }
 
     /// How the keys and values it binds at `widths` are moved into its stages, which the launch

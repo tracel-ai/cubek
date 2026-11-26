@@ -26,10 +26,10 @@ impl<E: Float> TileStepReads<E> {
     /// ([`StepReads::per_tensor_scale`]). A scale that varies along a dimension stays on the
     /// operand, which a flat read refuses.
     pub fn new(operand: &Tile) -> TileStepReads<E> {
-        let (tile, factor) = operand.factor_whole();
+        let (tile, scale) = operand.factor();
         TileStepReads::<E> {
             tile,
-            scale: factor.whole(),
+            scale: scale.whole(),
             element: PhantomData,
         }
     }

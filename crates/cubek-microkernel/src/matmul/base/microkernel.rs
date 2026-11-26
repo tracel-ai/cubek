@@ -3,7 +3,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::Levels;
 use cubecl::tile::launch::Delivery;
 use cubek_std::layout::BindingOrder;
-use cubek_std::layout::stored::BlockScales;
+use cubek_std::layout::stored::{BlockScales, OuterScale};
 use cubek_std::microkernel::Microkernel;
 
 /// A microkernel of every matmul product: handed a [`MatmulWorkItem`], and read by a routine for
@@ -47,6 +47,12 @@ pub trait MatmulMicrokernel:
     /// [`Fields`](BlockScales::Fields) for one that decodes them.
     fn block_scales(&self) -> BlockScales {
         BlockScales::Fields
+    }
+
+    /// Where the scale a whole packed input shares is multiplied in, which the launch binds the
+    /// input for: into the sum for one that sums in its units' own registers.
+    fn outer_scale(&self) -> OuterScale {
+        OuterScale::Factored
     }
 
     /// The block-split space it planned on, every packed input at the reads it takes, where it
