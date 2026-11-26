@@ -69,7 +69,8 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
+    /// When the kernel compiles, where an Assumption, or one of
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"
@@ -137,7 +138,8 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the last-arrival hypercube needs one cube's stores reaching another within a launch (`device_memory_scope`)";
+    const DECLINE: &'static str = "the last-arrival hypercube needs one cube's stores reaching \
+        another within a launch (`device_memory_scope`)";
 
     /// The cube microkernel's.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {

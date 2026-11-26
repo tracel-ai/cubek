@@ -32,7 +32,8 @@ impl UnitRegionWriteMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
+    /// When the kernel compiles, where an Assumption, or one of
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     pub fn write<Out: Numeric, Idx: Numeric, Acc: Numeric, N: Size, C: Accumulable<Acc, N>>(
         &self,
         region: &Region,

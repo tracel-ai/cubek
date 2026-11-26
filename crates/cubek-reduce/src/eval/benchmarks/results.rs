@@ -134,7 +134,8 @@ pub(crate) fn strategy_result(
 ///
 /// # Panics
 ///
-/// Where `launched` is a [`Decline::Broken`](cubecl::tile::launch::Decline::Broken): a bug of the routine.
+/// Where `launched` is a [`Decline::Broken`](cubecl::tile::launch::Decline::Broken): a bug of the
+/// routine.
 fn unbroken(launched: Result<(), ReduceError>) -> Result<(), ReduceError> {
     if let Err(ReduceError::Declined(broken)) = &launched
         && broken.is_broken()

@@ -36,7 +36,8 @@ impl PlaneLineReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
+    /// When the kernel compiles, where an Assumption, or one of
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,

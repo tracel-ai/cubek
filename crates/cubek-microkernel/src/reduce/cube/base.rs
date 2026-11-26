@@ -109,7 +109,8 @@ impl CubeStagedReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// Where its item breaks an Assumption of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem): a top-k that keeps no value.
+    /// Where its item breaks an Assumption of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem): a
+    /// top-k that keeps no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
@@ -130,7 +131,8 @@ impl CubeStagedReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// When the kernel compiles, where an Assumption, or one of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
+    /// When the kernel compiles, where an Assumption, or one of
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s, is broken.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,

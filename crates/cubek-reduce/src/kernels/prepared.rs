@@ -7,8 +7,9 @@ use crate::kernels::{
 };
 use cubek_std::routine::{Grid, LaunchSettings, Routine};
 
-/// The launch a [`ReduceCandidate`](crate::kernels::ReduceCandidate) prepares for a key: the grid it runs on, and what it compiles,
-/// which two candidates compile alike exactly where their prepared launches are equal.
+/// The launch a [`ReduceCandidate`](crate::kernels::ReduceCandidate) prepares for a key: the grid it
+/// runs on, and what it compiles, which two candidates compile alike exactly where their prepared
+/// launches are equal.
 #[derive(Clone)]
 pub struct ReducePrepared {
     blueprint: ReduceRoutineBlueprint,
