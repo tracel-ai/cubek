@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn its_label_is_the_familys() {
+    fn its_label_is_the_family_name() {
         assert_eq!(ReduceCategory.label(), "Reduce");
     }
 

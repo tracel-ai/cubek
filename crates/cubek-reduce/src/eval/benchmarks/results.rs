@@ -326,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fused_launchs_values_are_the_references() {
+    fn a_fused_launch_gives_the_reference_values() {
         agrees_with_the_reference(
             ReduceOperation::TopK { k: 2 },
             ReduceOperation::TopK { k: 2 },
