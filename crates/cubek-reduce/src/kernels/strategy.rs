@@ -178,15 +178,13 @@ pub(crate) fn launch_zeroed_atomic(
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) = prepared;
-    let binding = bound_as(
-        tensors.bind(&blueprint, &grid)?,
-        Bound::arg,
-        HypercubeAtomicReduceRoutine::out_arg,
-    );
+    let (launcher, binding) = tensors.bind(&blueprint, &grid)?;
+    let binding = bound_as(binding, Bound::arg, HypercubeAtomicReduceRoutine::out_arg);
     UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid)?;
     HypercubeAtomicReduceRoutine::dispatch_carrier::<StoredTileOperand>(
         tensors.problem(),
         tensors.client(),
+        &launcher,
         binding,
         blueprint,
         grid,
@@ -207,15 +205,13 @@ pub(crate) fn launch_zeroed_atomic_unbound<I: TileOperand>(
     let (zero_blueprint, zero_grid) =
         UnitDirectZeroReduceRoutine::prepare_first_served(hw, tensors.problem())?;
     let (blueprint, grid) = prepared;
-    let binding = bound_as(
-        tensors.bind(&blueprint, &grid)?,
-        input,
-        HypercubeAtomicReduceRoutine::out_arg,
-    );
+    let (launcher, binding) = tensors.bind(&blueprint, &grid)?;
+    let binding = bound_as(binding, input, HypercubeAtomicReduceRoutine::out_arg);
     UnitDirectZeroReduceRoutine::launch(tensors, zero_blueprint, zero_grid)?;
     HypercubeAtomicReduceRoutine::dispatch_carrier::<I>(
         tensors.problem(),
         tensors.client(),
+        &launcher,
         binding,
         blueprint,
         grid,

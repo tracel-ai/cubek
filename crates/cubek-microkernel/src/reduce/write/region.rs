@@ -23,7 +23,7 @@ impl UnitRegionWriteMicrokernel {
 #[cube]
 impl UnitRegionWriteMicrokernel {
     /// `total` written to `region`'s cells of `out` and `indices` by the unit that `writes`, `values`
-    /// the values each row held (`unit_region_write_microkernel`).
+    /// the values each row holds (`unit_region_write_microkernel`).
     ///
     /// # Panics
     ///

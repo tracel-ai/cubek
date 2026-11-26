@@ -7,6 +7,7 @@ use cubecl::client::Client;
 use cubecl::ir::Type;
 use cubecl::ir::features::AtomicUsage;
 use cubecl::prelude::LaunchArg;
+use cubecl::tile::Launcher;
 use cubecl::tile::launch::{AccumulateArgLaunch, Bound, Decline, TileOperand, Vectorization};
 use cubek_microkernel::reduce::cube::CubeStagedReduceMicrokernelSettings;
 use cubek_microkernel::reduce::hypercube::HypercubeAtomicReduceMicrokernel;
@@ -49,6 +50,10 @@ impl core::fmt::Display for HypercubeAtomicReduceSettings {
 }
 
 pub type HypercubeAtomicReduceBlueprint = ReduceBlueprint<HypercubeAtomicReduceMicrokernel>;
+
+/// The output as its kernel takes it: an argument the cubes add into atomically, in the element the
+/// launch defines.
+type AtomicOut = AccumulateArgLaunch<'static, hypercube_atomic_reduce_kernel::Out>;
 
 impl Routine for HypercubeAtomicReduceRoutine {
     type Problem = ReduceRoutineProblem;
@@ -135,24 +140,24 @@ impl Routine for HypercubeAtomicReduceRoutine {
 impl ReduceRoutine<HypercubeAtomicReduceMicrokernel> for HypercubeAtomicReduceRoutine {
     const NAME: &'static str = "hypercube-atomic-reduce";
 
-    /// The output as the launch binds it, which its kernel takes as an atomic argument.
-    type Out = Bound;
+    /// The output as an argument several cubes add into atomically.
+    type Out = AtomicOut;
 
-    fn out_arg(out: Bound) -> Bound {
-        out
+    fn out_arg(out: Bound) -> AtomicOut {
+        let (spec, lane_count) = (out.spec.clone(), out.vector_size);
+        AccumulateArgLaunch::new(out.tensor(), lane_count, spec)
     }
 
     /// A sum accumulates into values alone, whichever carrier `F` serves.
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
-        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Bound>,
+        launcher: &Launcher,
+        binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, AtomicOut>,
         blueprint: HypercubeAtomicReduceBlueprint,
         grid: Grid,
     ) -> Result<(), Decline> {
         let elements = problem.elements;
-        let (spec, lane_count) = (binding.out.spec.clone(), binding.out.vector_size);
-        let out = AccumulateArgLaunch::new(binding.out.tensor(), lane_count, spec);
         // SAFETY: both operands are bound through the launcher, which masks the reads and writes of a
         // tile the problem's edge cuts short, and the kernel indexes no buffer but through its tiles;
         // the output only receives atomic adds. Its shared memory is the slots its microkernel
@@ -164,8 +169,8 @@ impl ReduceRoutine<HypercubeAtomicReduceMicrokernel> for HypercubeAtomicReduceRo
                 grid.launch.cube_dim,
                 blueprint.lane_count,
                 binding.input,
-                out,
-                binding.launcher.partitioning_arg(),
+                binding.out,
+                launcher.partitioning_arg(),
                 blueprint.microkernel,
                 [elements.input, elements.accumulator, elements.out],
             )

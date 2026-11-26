@@ -91,9 +91,9 @@ pub(crate) fn plane_line_reduce_microkernel<
         total,
         out,
         indices,
-        read.values,
+        read.value_count,
         UNIT_POS_PLANE == 0,
-        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lanes)),
+        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lane_count)),
     );
 }
 

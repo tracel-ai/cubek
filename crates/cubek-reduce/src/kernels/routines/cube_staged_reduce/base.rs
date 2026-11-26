@@ -5,6 +5,7 @@ use crate::kernels::{
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
+use cubecl::tile::Launcher;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{Bound, Decline, TileOperand, Vectorization};
 use cubek_microkernel::reduce::cube::{
@@ -109,6 +110,7 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
+        launcher: &Launcher,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: CubeStagedReduceBlueprint,
         grid: Grid,
@@ -127,7 +129,7 @@ impl ReduceRoutine<CubeStagedReduceMicrokernel> for CubeStagedReduceRoutine {
                 binding.input,
                 binding.out,
                 binding.indices.map(Bound::arg).into(),
-                binding.launcher.partitioning_arg(),
+                launcher.partitioning_arg(),
                 blueprint.microkernel,
                 problem.compiled_elements(),
             )

@@ -10,6 +10,7 @@ use cubecl::client::Client;
 use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::LaunchArg;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::Launcher;
 use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{Bound, Decline, TileOperand, Vectorization};
 use cubecl::tile::space::ComputeScope;
@@ -226,6 +227,7 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
+        launcher: &Launcher,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, TileTensorLaunch>,
         blueprint: HypercubeLastArrivalReduceBlueprint,
         grid: Grid,
@@ -248,7 +250,7 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
         let arrivals = TensorHandle::new_contiguous([row_boxes], workspace.arrivals, counter);
         let bind_partials = |handle: TensorHandle, element| {
             bound_at(
-                &binding.launcher,
+                launcher,
                 problem,
                 handle.binding(),
                 PARTIALS,
@@ -276,6 +278,7 @@ impl ReduceRoutine<HypercubeLastArrivalReduceMicrokernel> for HypercubeLastArriv
             hypercube_last_arrival_reduce_kernel::<F, I>,
             problem,
             client,
+            launcher,
             binding,
             blueprint,
             grid,

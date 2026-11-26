@@ -35,6 +35,6 @@ pub trait Accumulable<Acc: Numeric, N: Size>:
     fn set_line(acc: &mut Self, slot: usize, value: Vector<Acc, N>, index: Vector<u32, N>);
 
     /// `acc`, whose lanes hold one row, its lanes combined under `monoid` into the row's own
-    /// carrier, held in every lane: what a row along the reduced dimension writes.
+    /// carrier, the same in every lane: what a row along the reduced dimension writes.
     fn one_row(acc: Self, #[comptime] monoid: Monoid) -> Self;
 }

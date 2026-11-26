@@ -6,10 +6,10 @@ use crate::kernels::{
 };
 use cubecl::client::Client;
 use cubecl::prelude::LaunchArg;
-use cubecl::tile::Geometry;
 use cubecl::tile::launch::{
     Bound, Decline, StoredTileOperand, TileOperand, Unbound, Vectorization,
 };
+use cubecl::tile::{Geometry, Launcher};
 use cubek_microkernel::reduce::{
     IndexedReduceCarrierFamily, ReduceCarrier, ReduceCarrierFamily, ReduceOperand,
     TopKReduceCarrierFamily, TopValuesReduceCarrierFamily, ValuesReduceCarrierFamily,
@@ -36,7 +36,8 @@ pub(crate) trait ReduceRoutine<M>:
     fn out_arg(out: Bound) -> Self::Out;
 
     /// Launch the kernel `blueprint` compiles for `problem`, on `grid`, accumulating into `F`'s
-    /// carrier, its input served as `I` serves it, from the arguments `binding` holds.
+    /// carrier, its input served as `I` serves it, from the arguments `binding` holds, bound
+    /// through `launcher`.
     ///
     /// # Errors
     ///
@@ -44,6 +45,7 @@ pub(crate) trait ReduceRoutine<M>:
     fn dispatch<F: ReduceCarrierFamily, I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
+        launcher: &Launcher,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Self::Out>,
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
@@ -77,22 +79,23 @@ pub(crate) trait ReduceRoutine<M>:
     fn dispatch_carrier<I: TileOperand>(
         problem: &ReduceRoutineProblem,
         client: &Client,
+        launcher: &Launcher,
         binding: ReduceBinding<<I::Arg as LaunchArg>::RuntimeArg, Self::Out>,
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
     ) -> Result<(), Decline> {
         match problem.operation.carrier() {
             ReduceCarrier::Values => Self::dispatch::<ValuesReduceCarrierFamily, I>(
-                problem, client, binding, blueprint, grid,
+                problem, client, launcher, binding, blueprint, grid,
             ),
             ReduceCarrier::Indexed => Self::dispatch::<IndexedReduceCarrierFamily, I>(
-                problem, client, binding, blueprint, grid,
+                problem, client, launcher, binding, blueprint, grid,
             ),
             ReduceCarrier::TopK { .. } => Self::dispatch::<TopKReduceCarrierFamily, I>(
-                problem, client, binding, blueprint, grid,
+                problem, client, launcher, binding, blueprint, grid,
             ),
             ReduceCarrier::TopValues { .. } => Self::dispatch::<TopValuesReduceCarrierFamily, I>(
-                problem, client, binding, blueprint, grid,
+                problem, client, launcher, binding, blueprint, grid,
             ),
         }
     }
@@ -107,11 +110,12 @@ pub(crate) trait ReduceRoutine<M>:
         blueprint: ReduceBlueprint<M>,
         grid: Grid,
     ) -> Result<(), Decline> {
-        let binding = bound_as(tensors.bind(&blueprint, &grid)?, Bound::arg, Self::out_arg);
+        let (launcher, binding) = tensors.bind(&blueprint, &grid)?;
         Self::dispatch_carrier::<StoredTileOperand>(
             tensors.problem(),
             tensors.client(),
-            binding,
+            &launcher,
+            bound_as(binding, Bound::arg, Self::out_arg),
             blueprint,
             grid,
         )
@@ -130,11 +134,12 @@ pub(crate) trait ReduceRoutine<M>:
         grid: Grid,
         input: impl FnOnce(Unbound) -> <I::Arg as LaunchArg>::RuntimeArg,
     ) -> Result<(), Decline> {
-        let binding = bound_as(tensors.bind(&blueprint, &grid)?, input, Self::out_arg);
+        let (launcher, binding) = tensors.bind(&blueprint, &grid)?;
         Self::dispatch_carrier::<I>(
             tensors.problem(),
             tensors.client(),
-            binding,
+            &launcher,
+            bound_as(binding, input, Self::out_arg),
             blueprint,
             grid,
         )

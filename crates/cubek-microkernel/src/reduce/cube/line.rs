@@ -98,9 +98,9 @@ pub(crate) fn cube_line_reduce_microkernel<
         read.carrier,
         out,
         indices,
-        read.values,
+        read.value_count,
         UNIT_POS == 0,
-        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lanes)),
+        comptime!(UnitRegionWriteMicrokernel::new(item, read.row_lane_count)),
     );
 }
 

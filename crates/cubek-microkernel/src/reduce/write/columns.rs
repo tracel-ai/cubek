@@ -23,7 +23,7 @@ impl UnitGroupColumnWriteMicrokernel {
 #[cube]
 impl UnitGroupColumnWriteMicrokernel {
     /// `total`, a column of rows' carrier, written to `out` and `indices` at the cell of
-    /// `region`'s walk its column's first unit holds, `values` the values each row held
+    /// `region`'s walk its column's first unit holds, `values` the values each row holds
     /// (`unit_group_column_write_microkernel`).
     ///
     /// # Panics

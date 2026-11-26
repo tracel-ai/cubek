@@ -27,7 +27,7 @@ impl UnitCarrierWriteMicrokernel {
 
 #[cube]
 impl UnitCarrierWriteMicrokernel {
-    /// `acc` written to `out` and `indices`, `values` the values each of its rows held
+    /// `acc` written to `out` and `indices`, `values` the values each of its rows holds
     /// (`unit_carrier_write_microkernel`).
     ///
     /// # Panics
@@ -55,7 +55,7 @@ impl UnitCarrierWriteMicrokernel {
 }
 
 /// `acc` written by one unit to `out`, its window of the output, and `indices` beside it, slot by
-/// slot, `values` the values each of its rows held. Where a line's lanes hold one row
+/// slot, `values` the values each of its rows holds. Where a line's lanes hold one row
 /// (`row_lanes` above one), the lanes are combined into
 /// the row's carrier first and each slot written as one cell; the whole line, a row a lane,
 /// otherwise.

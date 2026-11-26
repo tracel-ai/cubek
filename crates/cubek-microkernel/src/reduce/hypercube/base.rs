@@ -19,7 +19,7 @@ const ARRIVAL_SLOT_BYTES: usize = size_of::<u32>();
 /// It runs where the cube's microkernel runs and where one cube's stores reach another within a
 /// launch (`device_memory_scope`), which is how the cubes meet: on WGSL, whose storage barrier
 /// orders a workgroup's own memory only, the last cube was seen reading another's partial as the
-/// zero it held before the write.
+/// zero it stored before the write.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeLastArrivalReduceMicrokernel {
     /// The cube microkernel each cube reduces its part with.

@@ -102,8 +102,8 @@ pub(crate) fn unit_walk_reduce_microkernel<
     }
     RowsRead::<C> {
         carrier: acc,
-        values,
-        row_lanes,
+        value_count: values,
+        row_lane_count: row_lanes,
     }
 }
 

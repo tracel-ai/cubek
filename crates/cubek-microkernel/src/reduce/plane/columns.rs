@@ -114,7 +114,7 @@ pub(crate) fn plane_columns_reduce_microkernel<
         total,
         out,
         indices,
-        read.values,
+        read.value_count,
         comptime!(UnitGroupColumnWriteMicrokernel::new(item)),
     );
 }

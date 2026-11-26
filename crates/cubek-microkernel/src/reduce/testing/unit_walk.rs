@@ -78,7 +78,7 @@ fn unit_walk_reduce_kernel<In: Numeric, Acc: Numeric, Out: Numeric, N: Size>(
             read.carrier,
             &o,
             &ComptimeOption::new_None(),
-            read.values,
+            read.value_count,
             comptime!(UnitGroupColumnWriteMicrokernel::new(item)),
         );
     }

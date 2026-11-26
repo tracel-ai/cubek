@@ -47,7 +47,7 @@ pub trait ScopeChecker {
     /// value, or absolute where that value is below one.
     fn tolerance(&self, case: &Self::Case) -> f32;
 
-    /// The tolerance the output `name` is held to at `case`: [`tolerance`](Self::tolerance),
+    /// The tolerance the output `name` is checked at for `case`: [`tolerance`](Self::tolerance),
     /// unless the scope holds one output to its own, as a state kept in `f32` beside an output
     /// rounded to a narrower element, or a buffer the scope must leave bit for bit.
     fn tolerance_of(&self, case: &Self::Case, _name: &'static str) -> f32 {

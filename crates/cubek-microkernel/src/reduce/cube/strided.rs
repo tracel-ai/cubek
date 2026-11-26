@@ -96,8 +96,8 @@ pub(crate) fn cube_strided_reduce_microkernel<
     );
     RowsRead::<C> {
         carrier: total,
-        values: read.values,
-        row_lanes: read.row_lanes,
+        value_count: read.value_count,
+        row_lane_count: read.row_lane_count,
     }
 }
 

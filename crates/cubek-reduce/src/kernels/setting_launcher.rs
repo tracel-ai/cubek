@@ -1,4 +1,5 @@
-//! One routine at one of its settings, on the device it was listed for ([`ReduceRoutineSetting`]).
+//! Launches one routine at one of its settings, on the device it was listed for
+//! ([`ReduceSettingLauncher`]).
 
 use crate::kernels::{
     HypercubeAtomicReduceRoutine, ReduceBlueprint, ReduceKey, ReduceRoutine, ReduceRoutineProblem,
@@ -11,10 +12,10 @@ use cubecl::tile::launch::{Decline, TileOperand, Unbound};
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, Routine};
 
-/// One routine at one of its settings, on the device it was listed for: what a
+/// Launches one routine at one of its settings, on the device it was listed for: what a
 /// [`ReduceCandidate`](crate::kernels::ReduceCandidate) holds.
 #[derive(Debug, Clone)]
-pub(crate) struct ReduceRoutineSetting<R: Routine> {
+pub(crate) struct ReduceSettingLauncher<R: Routine> {
     routine: PhantomData<R>,
     settings: R::Settings,
     /// The routine's prefix and its setting: what a tuning cache names it by.
@@ -22,7 +23,7 @@ pub(crate) struct ReduceRoutineSetting<R: Routine> {
     hw: Hardware,
 }
 
-impl<R, M> ReduceRoutineSetting<R>
+impl<R, M> ReduceSettingLauncher<R>
 where
     R: ReduceRoutine<M> + Routine<Microkernel = M>,
     R::Settings: core::fmt::Display,
@@ -41,7 +42,7 @@ where
     }
 }
 
-impl<R, M> ReduceRoutineSetting<R>
+impl<R, M> ReduceSettingLauncher<R>
 where
     R: ReduceRoutine<M> + Routine<Microkernel = M>,
 {
@@ -83,7 +84,7 @@ where
     }
 }
 
-impl ReduceRoutineSetting<HypercubeAtomicReduceRoutine> {
+impl ReduceSettingLauncher<HypercubeAtomicReduceRoutine> {
     /// `tensors` summed at this setting into their output, which the zeroing sets first. Both
     /// routines prepare before either launches.
     ///
@@ -123,19 +124,19 @@ mod tests {
     use cubek_test_utils::ScopeChecker;
 
     /// The first setting of the cube routine on a device that runs none of it.
-    fn declining() -> ReduceRoutineSetting<CubeStagedReduceRoutine> {
+    fn declining() -> ReduceSettingLauncher<CubeStagedReduceRoutine> {
         let hw = devices::lacking_every_feature(devices::m2_pro());
-        ReduceRoutineSetting::list(&hw).remove(0)
+        ReduceSettingLauncher::list(&hw).remove(0)
     }
 
     /// The unit routine's first setting on an M2 Pro.
-    fn unit() -> ReduceRoutineSetting<UnitDirectReduceRoutine> {
-        ReduceRoutineSetting::list(&devices::m2_pro()).remove(0)
+    fn unit() -> ReduceSettingLauncher<UnitDirectReduceRoutine> {
+        ReduceSettingLauncher::list(&devices::m2_pro()).remove(0)
     }
 
     /// The atomic hypercube's first setting on an M2 Pro.
-    fn atomic() -> ReduceRoutineSetting<HypercubeAtomicReduceRoutine> {
-        ReduceRoutineSetting::list(&devices::m2_pro()).remove(0)
+    fn atomic() -> ReduceSettingLauncher<HypercubeAtomicReduceRoutine> {
+        ReduceSettingLauncher::list(&devices::m2_pro()).remove(0)
     }
 
     /// The key of sums of eight rows of 16 values.
@@ -150,7 +151,7 @@ mod tests {
     #[test]
     fn every_setting_of_a_routine_is_listed() {
         let hw = devices::m2_pro();
-        let settings: Vec<_> = ReduceRoutineSetting::<UnitDirectReduceRoutine>::list(&hw)
+        let settings: Vec<_> = ReduceSettingLauncher::<UnitDirectReduceRoutine>::list(&hw)
             .into_iter()
             .map(|listed| listed.settings)
             .collect();
@@ -217,7 +218,7 @@ mod tests {
     #[test]
     fn a_setting_that_prepares_the_tensors_reduces_them() {
         BufferScopeChecker::new(|hw, tensors| {
-            ReduceRoutineSetting::<UnitDirectReduceRoutine>::list(hw)
+            ReduceSettingLauncher::<UnitDirectReduceRoutine>::list(hw)
                 .remove(0)
                 .launch(tensors)
         })
@@ -227,7 +228,7 @@ mod tests {
     #[test]
     fn an_atomic_setting_sums_into_an_output_it_zeroes() {
         BufferScopeChecker::new(|hw, tensors| {
-            ReduceRoutineSetting::<HypercubeAtomicReduceRoutine>::list(hw)
+            ReduceSettingLauncher::<HypercubeAtomicReduceRoutine>::list(hw)
                 .remove(0)
                 .launch_zeroed(tensors)
         })

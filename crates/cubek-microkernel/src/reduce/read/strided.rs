@@ -78,8 +78,8 @@ pub(crate) fn unit_strided_reduce_microkernel<
     }
     RowsRead::<C> {
         carrier: acc,
-        values: count * row_lanes,
-        row_lanes,
+        value_count: count * row_lanes,
+        row_lane_count: row_lanes,
     }
 }
 

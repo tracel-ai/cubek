@@ -23,7 +23,7 @@ impl UnitLinesWriteMicrokernel {
 #[cube]
 impl UnitLinesWriteMicrokernel {
     /// `acc` written to `out` and `indices` in lines `W` wide, `values` the values each of its rows
-    /// held (`unit_lines_write_microkernel`).
+    /// holds (`unit_lines_write_microkernel`).
     ///
     /// # Panics
     ///
