@@ -8,7 +8,7 @@ use cubecl::client::Client;
 use cubecl::ir::ElemType;
 use cubek_convolution::components::ConvSetupError;
 use cubek_convolution::{DirectTensors, launch_direct};
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::convolution::{
     Conv, ConvRoutine, ConvTensors, Convolves, Declines, F16, F32, Pass, Values,

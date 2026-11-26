@@ -3,8 +3,8 @@ use crate::kernels::filter::SeparableFilterFamily;
 use crate::kernels::geometry::TileGeometry;
 use crate::kernels::space;
 use crate::kernels::{
-    CubeInterpolateRoutineSettings, InterpolateRoutine, InterpolateRoutineProblem,
-    InterpolateTensors,
+    CubeInterpolateRoutineSettings, InterpolateBinding, InterpolateRoutine,
+    InterpolateRoutineProblem, InterpolateTensors,
 };
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{Decline, Vectorization};
@@ -136,19 +136,28 @@ impl Routine for CubeStagedInterpolateRoutine {
 }
 
 impl InterpolateRoutine for CubeStagedInterpolateRoutine {
+    fn bind(
+        &self,
+        tensors: &InterpolateTensors,
+        blueprint: &CubeStagedInterpolateRoutineBlueprint,
+        grid: &Grid,
+    ) -> Result<InterpolateBinding, Decline> {
+        tensors.bind(
+            &blueprint.partitioning,
+            blueprint.width,
+            blueprint.checked,
+            grid,
+        )
+    }
+
     fn dispatch<F: SeparableFilterFamily>(
         &self,
         tensors: &InterpolateTensors,
+        binding: InterpolateBinding,
         blueprint: CubeStagedInterpolateRoutineBlueprint,
         grid: Grid,
     ) {
         let problem = tensors.problem();
-        let binding = tensors.bind(
-            &blueprint.partitioning,
-            blueprint.width,
-            blueprint.checked,
-            &grid,
-        );
         cube_staged_interpolate_kernel::launch::<F>(
             tensors.client(),
             grid.launch.cube_count,

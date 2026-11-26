@@ -69,8 +69,21 @@ impl PlaneDeltaRoutine {
         ))
     }
 
-    pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &PlaneDeltaBlueprint) {
-        let binding = tensors.bind(walk);
+    /// The planes of `walk` writing `tensors`' dot products of the output with its gradient.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
+    pub fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        walk: &PlaneDeltaBlueprint,
+    ) -> Result<(), Decline> {
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -88,5 +101,6 @@ impl PlaneDeltaRoutine {
                 AttentionBackwardProblem::SUM,
             );
         }
+        Ok(())
     }
 }

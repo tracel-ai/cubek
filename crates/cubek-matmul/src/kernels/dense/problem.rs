@@ -103,6 +103,22 @@ pub enum MatmulTableBuffer {
 }
 
 impl MatmulIndex {
+    /// The dimension the index adds to the product's space, with its extent: the stack's slabs,
+    /// which an entry picks one of.
+    pub fn dimension(self) -> Option<(Dimension, usize)> {
+        match self {
+            Self::Slab { slabs } | Self::RowRunsOnSlab { slabs } => Some((EXPERT, slabs)),
+            Self::RunOfK => None,
+        }
+    }
+
+    /// Whether the rows are cut to runs, so no level may cut them.
+    pub fn runs_along_rows(self) -> bool {
+        matches!(self, Self::RowRunsOnSlab { .. })
+    }
+}
+
+impl MatmulIndex {
     /// The buffer each operand reads and how an entry of it places the operand, none for an
     /// operand that reads no table. `rows` is the dimension the product's rows lie along.
     fn tables(self, rows: Dimension) -> MatmulOperands<Option<(MatmulTableBuffer, Indexing)>> {
@@ -123,20 +139,6 @@ impl MatmulIndex {
                 out: Some((MatmulTableBuffer::Runs, Indexing::Run(rows))),
             },
         }
-    }
-
-    /// The dimension the index adds to the product's space, with its extent: the stack's slabs,
-    /// which an entry picks one of.
-    pub fn dimension(self) -> Option<(Dimension, usize)> {
-        match self {
-            Self::Slab { slabs } | Self::RowRunsOnSlab { slabs } => Some((EXPERT, slabs)),
-            Self::RunOfK => None,
-        }
-    }
-
-    /// Whether the rows are cut to runs, so no level may cut them.
-    pub fn runs_along_rows(self) -> bool {
-        matches!(self, Self::RowRunsOnSlab { .. })
     }
 }
 
@@ -846,10 +848,14 @@ mod tests {
         );
     }
 
+    const ROWS: usize = 32;
+    const COLUMNS: usize = 48;
+    const DEPTH: usize = 64;
+
     fn indexed(index: MatmulIndex) -> MatmulRoutineProblem {
         MatmulRoutineProblem {
             index: Some(index),
-            ..MatmulRoutineProblem::dense(32, 48, 64, ElemType::Float(FloatKind::F32))
+            ..MatmulRoutineProblem::dense(ROWS, COLUMNS, DEPTH, ElemType::Float(FloatKind::F32))
         }
     }
 

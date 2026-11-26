@@ -1,7 +1,7 @@
 use super::kernel::cube_max_pool_kernel;
 use crate::kernels::geometry::TileGeometry;
 use crate::kernels::space;
-use crate::kernels::{PoolRoutine, PoolRoutineProblem, PoolTensors};
+use crate::kernels::{PoolBinding, PoolRoutine, PoolRoutineProblem, PoolTensors};
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{Decline, Vectorization};
 use cubek_microkernel::pool::PoolOperand;
@@ -137,14 +137,22 @@ impl Routine for CubeMaxPoolRoutine {
 }
 
 impl PoolRoutine for CubeMaxPoolRoutine {
-    fn dispatch(&self, tensors: &PoolTensors, blueprint: CubeMaxPoolRoutineBlueprint, grid: Grid) {
-        let problem = tensors.problem();
-        let binding = tensors.bind(
+    fn bind(
+        &self,
+        tensors: &PoolTensors,
+        blueprint: &CubeMaxPoolRoutineBlueprint,
+        grid: &Grid,
+    ) -> Result<PoolBinding, Decline> {
+        tensors.bind(
             &blueprint.partitioning,
             blueprint.width,
             blueprint.checked,
-            &grid,
-        );
+            grid,
+        )
+    }
+
+    fn dispatch(&self, tensors: &PoolTensors, binding: PoolBinding, grid: Grid) {
+        let problem = tensors.problem();
         cube_max_pool_kernel::launch(
             tensors.client(),
             grid.launch.cube_count,

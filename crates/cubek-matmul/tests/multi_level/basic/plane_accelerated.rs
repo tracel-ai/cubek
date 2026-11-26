@@ -9,7 +9,7 @@ use cubek_matmul::{
     definition::MatmulElems,
     multi_level::{Strategy as MultiLevel, definition::adjust_dtypes},
 };
-use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
+use cubek_test_utils::{ScopeChecker, TestOutcome, ValidationResult};
 
 use crate::matmul::{ByStrategy, Declines, F16, F32, Product};
 

@@ -164,6 +164,7 @@ impl AttentionLaunch for PlaneFragmentAttentionLaunch {
                 Option::<TileTensorLaunch>::None.into(),
                 lengths,
                 queries as u32,
+                keys as u32,
                 scale,
                 launcher.partitioning_arg(),
                 self.microkernel,
@@ -188,6 +189,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: PlaneFragmentAttentionMicrokernel,
@@ -208,6 +210,7 @@ fn plane_fragment_attention_kernel<EA: Float, ES: Float>(
             &ComptimeOption::new_None(),
             &plane,
             queries,
+            keys,
             &mask,
             visibility,
         );

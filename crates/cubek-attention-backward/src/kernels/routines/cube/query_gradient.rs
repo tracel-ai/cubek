@@ -72,13 +72,22 @@ impl CubeStagedQueryGradientRoutine {
         ))
     }
 
+    /// The cubes of `walk` writing `tensors`' queries' gradient and their dot products.
+    ///
+    /// # Guarantees
+    ///
+    /// As [`UnitQueryGradientRoutine::dispatch`](crate::kernels::UnitQueryGradientRoutine::dispatch).
+    ///
+    /// # Errors
+    ///
+    /// As [`AttentionBackwardLaunch::dispatch`](crate::kernels::AttentionBackwardLaunch::dispatch).
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
         walk: &CubeStagedQueryGradientBlueprint,
-    ) {
+    ) -> Result<(), Decline> {
         let problem = tensors.problem();
-        let binding = tensors.bind(walk);
+        let binding = tensors.bind(walk)?;
         let operands = binding.operands;
 
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
@@ -108,5 +117,6 @@ impl CubeStagedQueryGradientRoutine {
                 [AttentionBackwardProblem::SUM, problem.element],
             );
         }
+        Ok(())
     }
 }

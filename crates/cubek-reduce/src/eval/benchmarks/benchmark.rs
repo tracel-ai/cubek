@@ -10,11 +10,12 @@ use cubecl::{
 use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::ReduceOperation;
-use crate::eval::benchmarks::correctness::ReduceCorrectness;
+use crate::eval::EvalWorkspace;
+use crate::eval::benchmarks::correctness::ReduceVerifier;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
-use crate::eval::cpu_reference::{accumulation_dtype, output_dtype_for};
-use crate::eval::workspace::workspace_for;
-use crate::kernels::{self, ReduceElements, ReduceOpStrategy, ReduceWorkspace};
+use crate::eval::benchmarks::results::{compared_elements, output_dtype_for, reduce_given};
+use crate::eval::cpu_reference::output_shape_for;
+use crate::kernels::{ReduceElements, ReduceOpStrategy, ReduceWorkspace};
 
 /// `problem` reduced by `strategy` `num_samples` times on the test device, once its result is
 /// checked against the reference.
@@ -22,35 +23,30 @@ use crate::kernels::{self, ReduceElements, ReduceOpStrategy, ReduceWorkspace};
 /// # Errors
 ///
 /// Where the result differs from the reference, or the strategy's kernel cannot run the problem.
-///
-/// # Panics
-///
-/// Where `problem` compares a values launch with an indices launch for an operation that has no
-/// such pair (a sum, a mean, a product, a max of absolute values, any or all).
-pub fn bench(
+pub(crate) fn bench(
     strategy: &ReduceOpStrategy,
     problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    ReduceCorrectness::verify(strategy, problem)?;
+    ReduceVerifier::verify(strategy, problem)?;
 
     let device = cubecl::test_device();
     let client = device.client();
     let value_dtype = problem.precision.to_dtype();
     // The two launches of a values and indices pair, and the fused one, keep indices beside their
     // values: a workspace for the indexed carrier serves both.
-    let workspace = workspace_for(
+    let workspace = EvalWorkspace::new(
         &client,
         &problem.shape,
         problem.axis,
         problem.operation,
-        ReduceElements {
-            input: value_dtype,
-            accumulator: accumulation_dtype(),
-            out: output_dtype_for(problem.operation, value_dtype),
-        },
+        compared_elements(
+            value_dtype,
+            output_dtype_for(problem.operation, value_dtype),
+        ),
         problem.kind != ReduceBenchKind::Single,
-    );
+    )
+    .workspace;
 
     let bench = ReduceBenchmark {
         shape: problem.shape.clone(),
@@ -62,7 +58,7 @@ pub fn bench(
         workspace,
         device,
         client,
-        samples: num_samples,
+        sample_count: num_samples,
     };
 
     // Device timing (hardware timestamps) rather than system timing: the reduce
@@ -111,10 +107,6 @@ enum InputOrder {
 }
 
 impl InputOrder {
-    fn from_env() -> Self {
-        Self::named(std::env::var("CUBEK_BENCH_INPUT").ok().as_deref())
-    }
-
     /// The order `name` names, uniform where there is none.
     ///
     /// # Panics
@@ -156,12 +148,23 @@ impl InputOrder {
     }
 }
 
+/// The order `CUBEK_BENCH_INPUT` names.
+///
+/// # Panics
+///
+/// As [`InputOrder::named`].
+fn input_order() -> InputOrder {
+    InputOrder::named(std::env::var("CUBEK_BENCH_INPUT").ok().as_deref())
+}
+
 /// The range a timed input is drawn from.
 const UNIFORM_LOW: f32 = 0.0;
 const UNIFORM_HIGH: f32 = 1.0;
 
+/// Times a reduction the catalogue names, on the test device.
 struct ReduceBenchmark {
-    /// The timed input's extent along each axis, read by axis (Position Usage).
+    /// The timed input's extent along each axis, read by axis (Position Usage) and walked in their
+    /// order (Arrival Usage).
     shape: Vec<usize>,
     axis: usize,
     operation: ReduceOperation,
@@ -172,7 +175,7 @@ struct ReduceBenchmark {
     workspace: ReduceWorkspace,
     device: cubecl::Device,
     client: Client,
-    samples: usize,
+    sample_count: usize,
 }
 
 impl ReduceBenchmark {
@@ -184,8 +187,7 @@ impl ReduceBenchmark {
         operation: ReduceOperation,
         elements: ReduceElements,
     ) -> Result<(), String> {
-        kernels::Reduce::new(self.strategy)
-            .with_workspace(self.workspace.clone())
+        reduce_given(self.strategy, self.workspace.clone())
             .execute(
                 &self.client,
                 input.binding(),
@@ -194,7 +196,7 @@ impl ReduceBenchmark {
                 operation,
                 elements,
             )
-            .map_err(|err| format!("{err}"))
+            .map_err(|err| err.to_string())
     }
 
     /// What a caller needing both halves does without the fused launch: `input` reduced twice,
@@ -229,13 +231,12 @@ impl Benchmark for ReduceBenchmark {
 
         let builder =
             TestInput::builder(client.clone(), Shape::from(self.shape.clone())).dtype(elem);
-        let input = match InputOrder::from_env() {
+        let input = match input_order() {
             InputOrder::Uniform => builder.uniform(0, UNIFORM_LOW, UNIFORM_HIGH),
             order => builder.custom(order.data(&self.shape, self.axis)),
         }
         .generate_without_host_data();
-        let mut shape_out = self.shape.clone();
-        shape_out[self.axis] = self.operation.written_per_row();
+        let shape_out = output_shape_for(&self.shape, self.axis, self.operation);
         let out = TensorHandle::empty(&client, shape_out.clone(), output_elem);
         let indices = TensorHandle::empty(&client, shape_out, u32::elem_type_native());
 
@@ -245,11 +246,7 @@ impl Benchmark for ReduceBenchmark {
     fn execute(&self, (input, out, indices): Self::Input) -> Result<(), String> {
         let value_dtype = self.value_dtype;
         let index_dtype = u32::elem_type_native();
-        let elements = |out: ElemType| ReduceElements {
-            input: value_dtype,
-            accumulator: accumulation_dtype(),
-            out,
-        };
+        let elements = |out| compared_elements(value_dtype, out);
 
         match self.kind {
             ReduceBenchKind::Single => self.reduce(
@@ -263,8 +260,7 @@ impl Benchmark for ReduceBenchmark {
                 [out, indices],
                 [elements(value_dtype), elements(index_dtype)],
             )?,
-            ReduceBenchKind::Fused => kernels::Reduce::new(self.strategy)
-                .with_workspace(self.workspace.clone())
+            ReduceBenchKind::Fused => reduce_given(self.strategy, self.workspace.clone())
                 .execute_with_indices(
                     &self.client,
                     input.binding(),
@@ -275,7 +271,7 @@ impl Benchmark for ReduceBenchmark {
                     elements(value_dtype),
                     index_dtype,
                 )
-                .map_err(|err| format!("{err}"))?,
+                .map_err(|err| err.to_string())?,
         }
 
         Ok(())
@@ -288,7 +284,7 @@ impl Benchmark for ReduceBenchmark {
     }
 
     fn num_samples(&self) -> usize {
-        self.samples
+        self.sample_count
     }
 
     fn name(&self) -> String {
@@ -311,8 +307,9 @@ impl Benchmark for ReduceBenchmark {
 
 #[cfg(test)]
 mod tests {
-    use super::{InputOrder, two_launch_operations};
-    use crate::ReduceOperation;
+    use super::*;
+    use crate::eval::benchmarks::ReduceBenchPrecision;
+    use crate::kernels::ReduceKernel;
 
     #[test]
     fn ascending_is_read_by_its_name() {
@@ -350,12 +347,12 @@ mod tests {
     /// A top-k runs as its values, then its indices.
     #[test]
     fn a_top_k_runs_as_its_values_then_its_indices() {
-        const K: usize = 3;
+        const KEPT_COUNT: usize = 3;
         assert_eq!(
-            two_launch_operations(ReduceOperation::TopK { k: K }),
+            two_launch_operations(ReduceOperation::TopK { k: KEPT_COUNT }),
             (
-                ReduceOperation::TopK { k: K },
-                ReduceOperation::ArgTopK { k: K }
+                ReduceOperation::TopK { k: KEPT_COUNT },
+                ReduceOperation::ArgTopK { k: KEPT_COUNT }
             )
         );
     }
@@ -406,5 +403,33 @@ mod tests {
         assert!(row.windows(2).all(|w| w[1] > w[0]));
         assert_eq!(row[0], 0.0);
         assert_eq!(row[shape[2] - 1], (shape[2] - 1) as f32);
+    }
+
+    /// Checks that the unit kernel is timed on a small `kind` of reduction.
+    fn times(kind: ReduceBenchKind) {
+        let problem = ReduceProblem {
+            shape: vec![4, 300],
+            axis: 1,
+            operation: ReduceOperation::Max,
+            kind,
+            precision: ReduceBenchPrecision::F32,
+        };
+        let unit = ReduceOpStrategy::Specific(ReduceKernel::Unit);
+        assert!(bench(&unit, &problem, 2).is_ok());
+    }
+
+    #[test]
+    fn one_launch_is_timed() {
+        times(ReduceBenchKind::Single);
+    }
+
+    #[test]
+    fn two_launches_are_timed() {
+        times(ReduceBenchKind::TwoLaunch);
+    }
+
+    #[test]
+    fn a_fused_launch_is_timed() {
+        times(ReduceBenchKind::Fused);
     }
 }

@@ -6,7 +6,7 @@ use crate::kernels::{
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
-use cubecl::tile::{Dimension, TileTensorLaunch};
+use cubecl::tile::{Dimension, Launcher, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -346,7 +346,7 @@ impl PlaneShuffleMatmulRoutine {
                 &[(N, Self::float_planes(problem, &microkernel, settings))],
                 CubeOrder::RowMajor,
             ),
-        )?;
+        );
         let blueprint = Self::blueprint(hw, problem, microkernel, partitioning)?;
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
@@ -387,7 +387,7 @@ impl PlaneShuffleMatmulRoutine {
             (Some(_), None) => return Err(Self::PERSISTENT_UNSIZED),
             (None, _) => order,
         };
-        let partitioning = view.plane_partitioning(microkernel.tiling(), &[columns], order)?;
+        let partitioning = view.plane_partitioning(microkernel.tiling(), &[columns], order);
         let cube = CubeResources {
             plane_width: microkernel.plane_width() as u32,
             shared_memory: 0,
@@ -559,10 +559,22 @@ impl MatmulRoutine<PlaneShuffleMicrokernel> for PlaneShuffleMatmulRoutine {
     /// It holds every row, compiled in, against each step of the rhs.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
+    type Extras = ();
+
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        _: &MatmulTensors<Out>,
+        _: &Launcher,
+        _: &PlaneShuffleMatmulRoutineBlueprint,
+    ) -> Result<(), Decline> {
+        Ok(())
+    }
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        _: (),
         blueprint: PlaneShuffleMatmulRoutineBlueprint,
         grid: Grid,
     ) {

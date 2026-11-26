@@ -81,11 +81,9 @@ where
     ///
     /// # Errors
     ///
-    /// Why this device cannot run the gate at this setting.
-    ///
-    /// # Panics
-    ///
-    /// On an `out` of another shape or element than the gate's.
+    /// Why this device cannot run the gate at this setting, and
+    /// [`SWIGLU_OUTPUT_UNREAD`](crate::kernels::SWIGLU_OUTPUT_UNREAD) for an `out` of another shape
+    /// or element than the gate's, or not dense.
     pub fn launch_contiguous(
         &self,
         call: &SwigluCall,
@@ -110,7 +108,7 @@ where
         self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
-                .map_out(|out| (out, Write::Replace))
+                .map(|binding| binding.map_out(|out| (out, Write::Replace)))
         })
     }
 
@@ -159,13 +157,13 @@ where
     fn launch_on<O: DestinationLaunch, Out>(
         &self,
         tensors: &SwigluTensors<Out>,
-        bind: impl FnOnce(&SwigluBlueprint<M>, &Grid) -> SwigluBinding<O::Operand>,
+        bind: impl FnOnce(&SwigluBlueprint<M>, &Grid) -> Result<SwigluBinding<O::Operand>, Decline>,
     ) -> Result<(), Decline> {
         if tensors.problem().is_empty() {
             return Ok(());
         }
         let (blueprint, grid) = self.prepare(tensors.problem())?;
-        let binding = bind(&blueprint, &grid);
+        let binding = bind(&blueprint, &grid)?;
         self.routine
             .dispatch::<O, _>(tensors, binding, blueprint, grid);
         Ok(())
@@ -184,7 +182,7 @@ where
         self.launch_on::<Buffered, _>(&tensors, |blueprint, grid| {
             tensors
                 .bind(blueprint, grid)
-                .map_out(|out| (out, Write::Replace))
+                .map(|binding| binding.map_out(|out| (out, Write::Replace)))
         })?;
         Ok(tensors.into_out())
     }

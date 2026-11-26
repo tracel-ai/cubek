@@ -16,6 +16,16 @@ use cubek_std::routine::{Grid, Routine};
 /// A routine states what is its own — how it places its microkernel's rows, and the kernel it
 /// dispatches through any destination — and the launches around those are written once, on its
 /// candidate ([`RmsNormRoutineCandidate`](crate::kernels::RmsNormRoutineCandidate)).
+///
+/// # Assumptions
+///
+/// [`dispatch`](Self::dispatch) is handed the binding the tensors' `bind` returned for the same
+/// blueprint and grid.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait RmsNormRoutine<M>:
     Routine<Problem = RmsNormRoutineProblem, Microkernel = M, Blueprint = RmsNormBlueprint<M>>
 {
@@ -33,13 +43,13 @@ pub trait RmsNormRoutine<M>:
 
 /// A norm prepared for a sink that does not exist yet: the routine, its operands, and the launch
 /// it settled, whose width the sink is then built to — what a fused tail stores through.
-#[derive(Debug)]
 pub struct RmsNormRoutineSinkLaunch<R, M> {
     routine: R,
     tensors: RmsNormTensors<Geometry>,
     blueprint: RmsNormBlueprint<M>,
     grid: Grid,
     epsilon: f32,
+    binding: RmsNormBinding<Unbound>,
 }
 
 /// What a sink launch declines: rows of no rows, which no grid spawns and no sink takes.
@@ -49,21 +59,40 @@ pub const RMS_NORM_SINK_TAKES_NO_ROWS: Decline = Decline::Unserved {
 
 impl<R: RmsNormRoutine<M>, M> RmsNormRoutineSinkLaunch<R, M> {
     /// The norm of `tensors` handed to a sink, by `routine` at the launch it `prepared` for them,
-    /// each row's mean square shifted by `epsilon`.
+    /// each row's mean square shifted by `epsilon`, its operands bound now.
+    ///
+    /// # Errors
+    ///
+    /// As [`RmsNormTensors::bind`].
     pub fn new(
         routine: R,
         tensors: RmsNormTensors<Geometry>,
         prepared: (RmsNormBlueprint<M>, Grid),
         epsilon: f32,
-    ) -> Self {
+    ) -> Result<Self, Decline> {
         let (blueprint, grid) = prepared;
-        Self {
+        let binding = tensors.bind(&blueprint, &grid)?;
+        Ok(Self {
             routine,
             tensors,
             blueprint,
             grid,
             epsilon,
-        }
+            binding,
+        })
+    }
+}
+
+impl<R: core::fmt::Debug, M: core::fmt::Debug> core::fmt::Debug for RmsNormRoutineSinkLaunch<R, M> {
+    // The binding is left out: the tile DSL's `Launcher` is not `Debug`.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RmsNormRoutineSinkLaunch")
+            .field("routine", &self.routine)
+            .field("tensors", &self.tensors)
+            .field("blueprint", &self.blueprint)
+            .field("grid", &self.grid)
+            .field("epsilon", &self.epsilon)
+            .finish_non_exhaustive()
     }
 }
 
@@ -77,7 +106,7 @@ impl<R: RmsNormRoutine<M>, M> SinkLaunch for RmsNormRoutineSinkLaunch<R, M> {
     }
 
     fn launch<O: DestinationLaunch>(self, sink: impl FnOnce(Unbound) -> O::Operand) {
-        let binding = self.tensors.bind(&self.blueprint, &self.grid).map_out(sink);
+        let binding = self.binding.map_out(sink);
         self.routine.dispatch::<O, _>(
             &self.tensors,
             binding,

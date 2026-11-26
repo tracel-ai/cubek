@@ -4,9 +4,9 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_microkernel::matmul::{
@@ -233,7 +233,7 @@ impl Routine for UnitWholeKMatmulRoutine {
                 .units_distributed(N, settings.blocks_per_plane.get()),
             &[M, N],
             PlaneOrder::new(&[(N, planes)], CubeOrder::RowMajor),
-        )?;
+        );
         let mut vectorization = Vectorization::new();
         Self::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
@@ -251,10 +251,22 @@ impl MatmulRoutine<UnitRegistersMicrokernel> for UnitWholeKMatmulRoutine {
     /// A unit holds every row, compiled in, against each step of the rhs.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
+    type Extras = ();
+
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        _: &MatmulTensors<Out>,
+        _: &Launcher,
+        _: &UnitWholeKMatmulRoutineBlueprint,
+    ) -> Result<(), Decline> {
+        Ok(())
+    }
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        _: (),
         blueprint: UnitWholeKMatmulRoutineBlueprint,
         grid: Grid,
     ) {

@@ -4,9 +4,9 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
+use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -219,7 +219,7 @@ impl CubeShuffleMatmulRoutine {
             &[M, N],
             CubeOrder::RowMajor,
             MatmulView::ONE_CUBE_A_BOX,
-        )?;
+        );
         let mut vectorization = Vectorization::new();
         CubeShuffleMatmulRoutine::vectorize(&microkernel, &partitioning, &mut vectorization);
         let blueprint =
@@ -268,14 +268,14 @@ impl CubeShuffleMatmulRoutine {
                     microkernel.tiling(),
                     &[columns],
                     NonZeroUsize::new(cubes).expect("at least one box"),
-                )?
+                )
             }
             _ => view.partitioning(
                 microkernel.tiling(),
                 &[columns],
                 CubeOrder::RowMajor,
                 MatmulView::ONE_CUBE_A_BOX,
-            )?,
+            ),
         };
         let cube = CubeResources {
             plane_width: microkernel.plane.plane_width() as u32,
@@ -373,10 +373,22 @@ impl MatmulRoutine<CubeShuffleMicrokernel> for CubeShuffleMatmulRoutine {
     /// Its planes each hold every row.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
+    type Extras = ();
+
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        _: &MatmulTensors<Out>,
+        _: &Launcher,
+        _: &CubeShuffleMatmulRoutineBlueprint,
+    ) -> Result<(), Decline> {
+        Ok(())
+    }
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        _: (),
         blueprint: CubeShuffleMatmulRoutineBlueprint,
         grid: Grid,
     ) {

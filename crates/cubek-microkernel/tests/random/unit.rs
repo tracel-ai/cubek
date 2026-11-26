@@ -1,7 +1,7 @@
 //! The unit random microkernel alone: one unit draws its run line after line.
 
 use cubek_std::Hardware;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::random::{Random, RandomCase, RandomScope};
 

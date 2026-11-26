@@ -5,6 +5,7 @@
 //! [`CubeStagedPlacement::prepare`].
 
 use super::kernel::cube_staged_matmul_kernel;
+use super::tma::CubeStagedTmaBinding;
 use crate::kernels::{
     CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
     MATMUL_PACKED_WALK_PAST_K, MATMUL_ROW_RUNS_SWIZZLED, MatmulBinding, MatmulBlueprint,
@@ -18,7 +19,7 @@ use cubecl::tile::launch::{
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::space::CubeOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{StageStorage, TileTensorLaunch};
+use cubecl::tile::{Launcher, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::cube::{
     CubeStagedDelivery, CubeStagedFill, CubeStagedMicrokernel, CubeStagedMicrokernelSettings,
     CubeStagedResolved, CubeStagedStore, CubeStagedTmaDecline, CubeStagedTmaStoreDecline,
@@ -79,6 +80,14 @@ impl<'a> CubeStagedPlacement<'a> {
         if microkernel.walk().decoded().is_some() {
             view.check_reads(hw)?;
         }
+        if problem.cuts_rows_to_runs() && !matches!(cube_order.canonicalize(), CubeOrder::RowMajor)
+        {
+            return Err(MATMUL_ROW_RUNS_SWIZZLED);
+        }
+        view.check_rows_held(
+            microkernel.tiling(),
+            &[item.dimensions.m, item.dimensions.n],
+        )?;
         let contracted = microkernel.contracted(&item);
         let cube_space = view
             .partitioning(
@@ -86,7 +95,7 @@ impl<'a> CubeStagedPlacement<'a> {
                 &[item.dimensions.m, item.dimensions.n],
                 cube_order,
                 MatmulView::ONE_CUBE_A_BOX,
-            )?
+            )
             .cube_space();
         if store == CubeStagedStore::Tma {
             check_tma_store(hw, problem, &contracted, &cube_space, &microkernel)?;
@@ -214,16 +223,12 @@ impl<'a> CubeStagedPlacement<'a> {
             microkernel.block_scales(),
             microkernel.fill.delivery == CubeStagedDelivery::Tma,
         )?;
-        if problem.cuts_rows_to_runs() && !matches!(cube_order.canonicalize(), CubeOrder::RowMajor)
-        {
-            return Err(MATMUL_ROW_RUNS_SWIZZLED);
-        }
         let partitioning = view.partitioning(
             microkernel.launch_tiling(),
             &[item.dimensions.m, item.dimensions.n],
             cube_order,
             MatmulView::ONE_CUBE_A_BOX,
-        )?;
+        );
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
         let past_k = || {
@@ -329,12 +334,95 @@ pub(crate) fn estimate(
     }
 }
 
-/// Every cube staged routine's launch: the operands the units fill the stages from, or the tensor
-/// maps the TMA engine fills them from; the output its fragments store, or the box the TMA engine
-/// stores.
+/// What the TMA engine moves for every cube staged routine, bound under `launcher`: the tensor
+/// maps it fills the stages from, where the fill's delivery is the engine, and the one it stores
+/// the box through, where the store is.
+///
+/// # Errors
+///
+/// [`Decline::Broken`] where a descriptor finds false what `prepare` claimed of the stage or the
+/// output.
+pub(crate) fn bind_extras<Out: MatmulOutput>(
+    tensors: &MatmulTensors<Out>,
+    launcher: &Launcher,
+    blueprint: &CubeStagedMatmulRoutineBlueprint,
+) -> Result<CubeStagedTmaBinding, Decline> {
+    let stage = blueprint.partitioning.stage();
+    let inputs = match blueprint.microkernel.fill.delivery {
+        CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => None,
+        // A packed product's inputs through descriptors over its block-split space.
+        CubeStagedDelivery::Tma if tensors.work_item().blocks.is_some() => {
+            Some(tensors.tma_packed_operands(
+                launcher,
+                &stage,
+                &blueprint.shared_memory,
+                blueprint.microkernel.plane.orders,
+                blueprint.widths,
+                blueprint.microkernel.block_scales(),
+                blueprint.microkernel.planned_space(),
+            )?)
+        }
+        CubeStagedDelivery::Tma => Some(tensors.tma_operands(
+            &stage,
+            &blueprint.shared_memory,
+            blueprint.microkernel.plane.orders,
+        )?),
+    };
+    let output = match blueprint.microkernel.store {
+        CubeStagedStore::Fragments => None,
+        CubeStagedStore::Tma => Some(tensors.tma_output(&stage)?),
+    };
+    Ok(CubeStagedTmaBinding { inputs, output })
+}
+
+/// Every cube staged routine's launch: over the operands the units fill the stages from, or the
+/// tensor maps the TMA engine fills them from; into the output its fragments store, or through the
+/// tensor map the TMA engine stores the box through ([`bind_extras`]).
 pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
     tensors: &MatmulTensors<Out>,
     binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+    tma: CubeStagedTmaBinding,
+    blueprint: CubeStagedMatmulRoutineBlueprint,
+    grid: Grid,
+) {
+    let MatmulBinding {
+        launcher,
+        lhs,
+        rhs,
+        out,
+    } = binding;
+    let (lhs, rhs) = tma.inputs.unwrap_or((lhs, rhs));
+    match tma.output {
+        None => launch_through::<O, Out>(
+            tensors,
+            MatmulBinding {
+                launcher,
+                lhs,
+                rhs,
+                out,
+            },
+            blueprint,
+            grid,
+        ),
+        Some(out) => launch_through::<TmaStored, Out>(
+            tensors,
+            MatmulBinding {
+                launcher,
+                lhs,
+                rhs,
+                out,
+            },
+            blueprint,
+            grid,
+        ),
+    }
+}
+
+/// The cube staged kernel launched over `binding`, its box reaching the output through the
+/// destination `D`.
+fn launch_through<D: DestinationLaunch, Out: MatmulOutput>(
+    tensors: &MatmulTensors<Out>,
+    binding: MatmulBinding<D::Operand, TileTensorLaunch, TileTensorLaunch>,
     blueprint: CubeStagedMatmulRoutineBlueprint,
     grid: Grid,
 ) {
@@ -344,67 +432,26 @@ pub(crate) fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         .microkernel
         .contracted(&tensors.work_item())
         .kernel_elements();
-    let client = tensors.client();
-    let stage = blueprint.partitioning.stage();
-    let out_width = blueprint.widths.out;
-    // The fill's delivery is who moves the operands into the stages: the cube's units from the
-    // bound operands, or the TMA engine from descriptors over the same tensors.
-    let (lhs, rhs) = match blueprint.microkernel.fill.delivery {
-        CubeStagedDelivery::Copy | CubeStagedDelivery::AsyncCopy => (binding.lhs, binding.rhs),
-        // A packed product's inputs through descriptors over its block-split space.
-        CubeStagedDelivery::Tma if tensors.work_item().blocks.is_some() => tensors
-            .tma_packed_operands(
-                &binding.launcher,
-                &stage,
-                &blueprint.shared_memory,
-                blueprint.microkernel.plane.orders,
-                blueprint.widths,
-                blueprint.microkernel.block_scales(),
-                blueprint.microkernel.planned_space(),
-            ),
-        CubeStagedDelivery::Tma => tensors.tma_operands(
-            &stage,
-            &blueprint.shared_memory,
-            blueprint.microkernel.plane.orders,
-        ),
-    };
     // SAFETY: every operand is bound through the launcher, which masks the reads and writes
     // of a tile the problem's edge cuts short, or by a descriptor, whose copies fill what lies
     // past the operand with zeros and whose stores leave what lies past it unwritten; the
     // kernel indexes no buffer but through its tiles. Its shared memory is sized by the planes
     // of the grid it launches on: the stage fill counts `grid.launch.cube_dim`'s units, the
     // scratch windows `grid.planes()`.
-    match blueprint.microkernel.store {
-        CubeStagedStore::Fragments => unsafe {
-            cube_staged_matmul_kernel::launch_unchecked::<O>(
-                client,
-                grid.launch.cube_count.clone(),
-                grid.launch.cube_dim,
-                out_width,
-                lhs,
-                rhs,
-                O::arg(binding.out),
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel.walk(),
-                blueprint.shared_memory,
-                elements,
-            );
-        },
-        CubeStagedStore::Tma => unsafe {
-            cube_staged_matmul_kernel::launch_unchecked::<TmaStored>(
-                client,
-                grid.launch.cube_count.clone(),
-                grid.launch.cube_dim,
-                out_width,
-                lhs,
-                rhs,
-                tensors.tma_output(&stage),
-                binding.launcher.partitioning_arg(),
-                blueprint.microkernel.walk(),
-                blueprint.shared_memory,
-                elements,
-            );
-        },
+    unsafe {
+        cube_staged_matmul_kernel::launch_unchecked::<D>(
+            tensors.client(),
+            grid.launch.cube_count.clone(),
+            grid.launch.cube_dim,
+            blueprint.widths.out,
+            binding.lhs,
+            binding.rhs,
+            D::arg(binding.out),
+            binding.launcher.partitioning_arg(),
+            blueprint.microkernel.walk(),
+            blueprint.shared_memory,
+            elements,
+        );
     }
 }
 
@@ -608,5 +655,82 @@ fn decoded_width(step: usize, storage: &StageStorage, decoded: ElemType) -> usiz
             ..
         } => step.min(RowChunks::CHUNK_BYTES / decoded.size()),
         StageStorage::Tiled { .. } | StageStorage::Strided | StageStorage::Lines { .. } => step,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::CubeStagedTmaStoredMatmulRoutine;
+    use crate::kernels::select::packed::nvfp4_scheme;
+    use cubecl::ir::{FloatKind, UIntKind};
+    use cubecl::quant::scheme::QuantScheme;
+    use cubecl::tile::Dimension;
+    use cubek_microkernel::matmul::MatmulStoredTile;
+    use cubek_std::devices;
+    use cubek_std::layout::stored::{Operand, Packing};
+    use cubek_std::layout::tile_order::{self, TileOrder, TileWords};
+    use cubek_std::matmul_dimensions::M;
+    use cubek_std::routine::Routine;
+
+    /// A packed lhs whose tiles lay its words block by block is declined by the routines the TMA
+    /// engine fills, before anything binds, beside an rhs in tiles a descriptor lands: a
+    /// descriptor lands a row's run, and a tile row laid block by block is none, though the
+    /// problem states no stored tile for it, as for rows.
+    #[test]
+    fn an_lhs_laid_block_by_block_is_declined_by_a_tma_fill() {
+        let hw = devices::offering_nvfp4(devices::rtx_pro_6000());
+        let packing = |scheme: QuantScheme, dimensions: [Dimension; 2], across, words| {
+            let order = TileOrder::laid(&tile_order::nvfp4_scheme(), words, (128, 8))
+                .expect("NVFP4 lays a 128 x 8 tile");
+            let read = hw.load_values(ElemType::UInt(UIntKind::U32));
+            Packing {
+                operand: Operand::of_scheme(&scheme, K, dimensions)
+                    .and_then(|operand| operand.in_tile_order(order, across, read))
+                    .expect("NVFP4 reads in tile order"),
+                scheme,
+            }
+        };
+        let problem = MatmulRoutineProblem {
+            stored_tiles: MatmulOperands {
+                lhs: None,
+                rhs: Some(MatmulStoredTile {
+                    rows: 8,
+                    columns: 128,
+                }),
+                out: None,
+            },
+            ..MatmulRoutineProblem::packed(
+                512,
+                5120,
+                5120,
+                ElemType::Float(FloatKind::F16),
+                MatmulOperands {
+                    lhs: Some(packing(nvfp4_scheme(), [M, K], M, TileWords::BlockByBlock)),
+                    rhs: Some(packing(
+                        tile_order::nvfp4_scheme(),
+                        [K, N],
+                        N,
+                        TileWords::RowByRow,
+                    )),
+                    out: None,
+                },
+            )
+        };
+
+        let prepared: Vec<_> = CubeStagedTmaStoredMatmulRoutine
+            .block_scaled_settings(&hw)
+            .iter()
+            .map(|settings| CubeStagedTmaStoredMatmulRoutine::prepare(&hw, &problem, settings))
+            .collect();
+
+        let in_tiles: Decline = CubeStagedTmaDecline::StoredInTiles(MatmulOperand::Lhs).into();
+        assert!(prepared.iter().all(Result::is_err));
+        assert!(
+            prepared
+                .iter()
+                .any(|prepared| prepared.as_ref().err() == Some(&in_tiles)),
+            "a TMA fill declines an lhs laid block by block as stored in tiles it cannot land"
+        );
     }
 }

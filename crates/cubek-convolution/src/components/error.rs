@@ -69,10 +69,13 @@ impl From<MatmulSetupError> for ConvSetupError {
     }
 }
 
-/// A launch the tile engine refused is a configuration this routine cannot run.
+/// A launch the tile engine refused, classified as the matmul classifies it
+/// ([`MatmulSetupError`]'s `From<Decline>`): past what the device holds, a feature it lacks; a
+/// [`Broken`](Decline::Broken) one, a bug in the routine; any other, a configuration the routine
+/// cannot run.
 impl From<Decline> for ConvSetupError {
     fn from(decline: Decline) -> Self {
-        Self::InvalidConfig(Box::new(decline))
+        Self::Matmul(MatmulSetupError::from(decline))
     }
 }
 

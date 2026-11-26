@@ -10,7 +10,7 @@ use cubecl::zspace::{Shape, shape};
 use cubek_microkernel::split_keys_merge::SlotShape;
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
 use crate::split_keys_merge::{F16, F32, HostSlots};
 
@@ -34,7 +34,7 @@ struct HypercubeMergeCase {
     cubes: usize,
 }
 
-impl ScopeUnderTest for HypercubeMerge {
+impl ScopeChecker for HypercubeMerge {
     type Case = HypercubeMergeCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

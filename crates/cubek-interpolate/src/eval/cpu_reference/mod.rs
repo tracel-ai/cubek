@@ -7,7 +7,7 @@ use crate::{
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{client::Client, prelude::*, zspace::Strides};
-use cubek_test_utils::{HostData, Progress, TestInput};
+use cubek_test_utils::{HostData, KernelResultError, Progress, TestInput};
 
 pub(crate) fn f32_elem_type() -> ElemType {
     f32::elem_type_native()
@@ -34,12 +34,18 @@ pub(crate) fn make_zero_handle(
         .generate_without_host_data()
 }
 
+/// The output of `problem`'s launch on seeded operands, by `strategy` for a forward one.
+///
+/// # Errors
+///
+/// [`KernelResultError::Refused`] with the decline the launch returns, and
+/// [`KernelResultError::NotRun`] where it returns another error or did not run.
 pub fn kernel_result(
     client: Client,
     problem: InterpolateProblem,
     strategy: InterpolateStrategy,
     seed: u64,
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     match problem {
         InterpolateProblem::Forward(prob) => forward::kernel_result(client, prob, strategy, seed),
         InterpolateProblem::Backward(prob) => backward::kernel_result(client, prob, seed),

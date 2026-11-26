@@ -10,6 +10,9 @@ use cubek_microkernel::attention::{AttentionVisibility, VisibleKeys};
 /// keys where they lie, over the keys its rows see, and writing each row's logsumexp where the
 /// launch binds one. Each operand is read in its own element and widened into the sum, `EA`:
 /// the query in `EQ`, the keys in `EK`, the values in `EV`; the output is written in `EO`.
+///
+/// - `query`, `key`, `value`, `out`, `logsumexp`, `mask`, `len`, `query_ends`, `queries`, `keys`,
+///   `scale`: as `cube_staged_attention_kernel`'s.
 #[cube(launch_unchecked)]
 pub fn cube_shuffle_attention_kernel<
     EA: Float,
@@ -28,6 +31,7 @@ pub fn cube_shuffle_attention_kernel<
     len: &Tensor<u32>,
     query_ends: ComptimeOption<&Tensor<u32>>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: CubeAttentionMicrokernel,
@@ -46,7 +50,8 @@ pub fn cube_shuffle_attention_kernel<
 
     for sequence in &partitioning {
         for cube in sequence {
-            let visible = VisibleKeys::new(len, &query_ends, &cube, queries, &mask, visibility);
+            let visible =
+                VisibleKeys::new(len, &query_ends, &cube, queries, keys, &mask, visibility);
             let steps = visible.steps(
                 &cube,
                 microkernel.seq_q(),

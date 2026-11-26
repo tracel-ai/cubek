@@ -9,7 +9,7 @@ use cubecl_common::e4m3;
 use cubek_matmul::kernels::tensor::{PlainTensor, ScaledTensor};
 use cubek_matmul::kernels::{CubeStagedMatmulRoutine, PlaneShuffleMatmulRoutine};
 use cubek_std::matmul_dimensions::{K, M};
-use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
+use cubek_test_utils::{ScopeChecker, TestOutcome, ValidationResult};
 
 use crate::matmul::Declines;
 use crate::tiled::packed::{PackedFormat, PackedProduct, Stored};

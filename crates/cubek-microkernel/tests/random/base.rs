@@ -10,7 +10,7 @@ use cubecl::zspace::shape;
 use cubek_microkernel::random::plane::PlaneRandomMicrokernelSettings;
 use cubek_microkernel::random::{Bernoulli, DistributionArgs, Normal, SeedsLaunch, Uniform};
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
 const F32: ElemType = ElemType::Float(FloatKind::F32);
 
@@ -196,7 +196,7 @@ impl Random {
     }
 }
 
-impl ScopeUnderTest for Random {
+impl ScopeChecker for Random {
     type Case = RandomCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

@@ -68,7 +68,7 @@ impl AttentionBackwardLaunch for HypercubeAttentionBackward {
     type Blueprint = HypercubeAttentionBackwardBlueprint;
 
     /// The key walk's microkernel's settings at the default ring, then each ring of stages through
-    /// registers, then each held key walk on each of them, then some of those with the key walk's
+    /// registers, then each key walk holding its score on each of them, then some of those with the key walk's
     /// heads apart.
     fn settings(&self, hw: &Hardware) -> Vec<Self::Settings> {
         let lead = HypercubeAttentionBackwardSettings::DEFAULT;
@@ -82,8 +82,8 @@ impl AttentionBackwardLaunch for HypercubeAttentionBackward {
         let rings = [StageRing::DOUBLE, StageRing::SINGLE_THROUGH_REGISTERS]
             .map(|ring| Self::Settings { ring, ..lead });
         // A key walk holding its score in fragments runs nothing but its products between two
-        // fills, so its next stage lands under them: each held setting on each ring.
-        let held = HypercubeKeyGradientMicrokernel::settings(hw)
+        // fills, so its next stage lands under them: each such setting on each ring.
+        let score_holding = HypercubeKeyGradientMicrokernel::settings(hw)
             .into_iter()
             .filter(|key_gradient| key_gradient.holds_its_score())
             .flat_map(|key_gradient| {
@@ -96,10 +96,10 @@ impl AttentionBackwardLaunch for HypercubeAttentionBackward {
                 })
             })
             .collect::<Vec<_>>();
-        // The key walk's heads apart, on the held settings prefetching through registers: a
+        // The key walk's heads apart, on the score-holding settings prefetching through registers: a
         // launch of few cubes, each holding a whole group, leaves most of the device idle while
         // the last ones run.
-        let apart = held
+        let apart = score_holding
             .iter()
             .filter(|settings| settings.ring == StageRing::SINGLE_THROUGH_REGISTERS)
             .map(|settings| Self::Settings {
@@ -110,7 +110,7 @@ impl AttentionBackwardLaunch for HypercubeAttentionBackward {
         core::iter::once(lead)
             .chain(keys)
             .chain(rings)
-            .chain(held)
+            .chain(score_holding)
             .chain(apart)
             .collect()
     }
@@ -152,20 +152,25 @@ impl AttentionBackwardLaunch for HypercubeAttentionBackward {
         })
     }
 
-    fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint) {
+    fn dispatch(
+        &self,
+        tensors: &AttentionBackwardTensors,
+        blueprint: Self::Blueprint,
+    ) -> Result<(), Decline> {
         let query_sum = QueryGradientSum::zeros(tensors);
-        PlaneDeltaRoutine.dispatch(tensors, &blueprint.delta);
+        PlaneDeltaRoutine.dispatch(tensors, &blueprint.delta)?;
         match &blueprint.keys {
             KeyHeadsBlueprint::Together(walk) => {
-                HypercubeKeyGradientQuerySumRoutine.dispatch(tensors, walk, &query_sum)
+                HypercubeKeyGradientQuerySumRoutine.dispatch(tensors, walk, &query_sum)?
             }
             KeyHeadsBlueprint::Apart { sums: walk, cast } => {
                 let sums = KeyGradientSums::zeros(tensors);
-                HypercubeGradientSumRoutine.dispatch(tensors, walk, &sums, &query_sum);
-                CastKeyGradientRoutine.dispatch(tensors, cast, &sums);
+                HypercubeGradientSumRoutine.dispatch(tensors, walk, &sums, &query_sum)?;
+                CastKeyGradientRoutine.dispatch(tensors, cast, &sums)?;
             }
         }
-        CastQueryGradientRoutine.dispatch(tensors, &blueprint.cast_queries, &query_sum);
+        CastQueryGradientRoutine.dispatch(tensors, &blueprint.cast_queries, &query_sum)?;
+        Ok(())
     }
 
     fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {

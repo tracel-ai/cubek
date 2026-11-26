@@ -1,13 +1,14 @@
-use super::microkernel::hypercube_last_arrival_reduce_microkernel;
-use crate::reduce::cube::{CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings};
-use crate::reduce::{ReduceAccumulator, ReduceOperand, ReduceWorkItem};
+use crate::reduce::cube::{
+    CubePartialReduceMicrokernel, CubeStagedReduceMicrokernel, CubeStagedReduceMicrokernelSettings,
+    cube_partial_reduce_microkernel,
+};
+use crate::reduce::read::{UnitPartialsReduceMicrokernel, unit_partials_reduce_microkernel};
+use crate::reduce::{Accumulable, REDUCED, ReduceOperand, ReduceWorkItem};
 use cubecl::tile::Tile;
-use cubecl::tile::launch::Vectorization;
+use cubecl::tile::launch::{Decline, Vectorization};
 use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
-use cubek_std::microkernel::{
-    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
-};
+use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
 /// Bytes of the slot of shared memory a cube's first unit hands it its arrival through.
 const ARRIVAL_SLOT_BYTES: usize = size_of::<u32>();
@@ -18,7 +19,7 @@ const ARRIVAL_SLOT_BYTES: usize = size_of::<u32>();
 /// It runs where the cube's microkernel runs and where one cube's stores reach another within a
 /// launch (`device_memory_scope`), which is how the cubes meet: on WGSL, whose storage barrier
 /// orders a workgroup's own memory only, the last cube was seen reading another's partial as the
-/// zero it held before the write.
+/// zero it stored before the write.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HypercubeLastArrivalReduceMicrokernel {
     /// The cube microkernel each cube reduces its part with.
@@ -27,7 +28,6 @@ pub struct HypercubeLastArrivalReduceMicrokernel {
 }
 
 impl HypercubeLastArrivalReduceMicrokernel {
-    /// A hypercube whose cubes each reduce their part with `part`.
     pub fn new(part: CubeStagedReduceMicrokernel) -> Self {
         Self { part }
     }
@@ -36,7 +36,8 @@ impl HypercubeLastArrivalReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// As the unit microkernel's [`widest_line`](crate::reduce::unit::UnitDirectReduceMicrokernel::widest_line).
+    /// Where its item breaks an Assumption of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem): a
+    /// top-k that keeps no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.part.widest_line()
     }
@@ -50,11 +51,26 @@ impl HypercubeLastArrivalReduceMicrokernel {
 impl HypercubeLastArrivalReduceMicrokernel {
     /// One cube's part of a row of `input`, the row's last cube writing it to `out` and `indices` (`hypercube_last_arrival_reduce_microkernel`).
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    /// - `arrivals[counter]` holds zero when the launch starts, and exactly `parts` cubes of the
+    ///   launch count themselves in at it, each once, each with its own `part` below `parts`.
+    /// - No other row's cubes write the slots of `partials` and `partial_indices` this row's
+    ///   cubes store their partials in.
+    ///
+    /// # Guarantees
+    ///
+    /// - The launch leaves `arrivals[counter]` at zero, so its caller's counters serve the next
+    ///   launch.
+    ///
     /// # Panics
     ///
-    /// Where `indices` is there and its item does not write them beside the values, or the other
-    /// way around; or where it writes indices its carrier does not keep; or where `partial_indices` is there and its carrier
-    /// keeps no index, or the other way around.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices` (a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep) or on `partial_indices` (a tile handed where its carrier keeps no
+    /// indices, or none where it keeps them).
     #[allow(
         clippy::too_many_arguments,
         reason = "the operands and the cube's place in its row, as the microkernel takes them"
@@ -65,7 +81,7 @@ impl HypercubeLastArrivalReduceMicrokernel {
         Out: Numeric,
         Idx: Numeric,
         N: Size,
-        C: ReduceAccumulator<Acc, N>,
+        C: Accumulable<Acc, N>,
     >(
         &self,
         input: &Tile,
@@ -100,8 +116,8 @@ impl HypercubeLastArrivalReduceMicrokernel {
 impl HypercubeLastArrivalReduceMicrokernel {
     /// Bytes of shared memory each cube allocates with its lines `width` lanes wide: its part's,
     /// and the slot its first unit hands the cube its arrival through.
-    pub fn shared_memory_bytes_at_width(&self, width: usize) -> usize {
-        self.part.shared_memory_bytes_at_width(width) + ARRIVAL_SLOT_BYTES
+    pub fn shared_memory_bytes_at_lane_count(&self, width: usize) -> usize {
+        self.part.shared_memory_bytes_at_lane_count(width) + ARRIVAL_SLOT_BYTES
     }
 }
 
@@ -111,13 +127,19 @@ impl core::fmt::Display for HypercubeLastArrivalReduceMicrokernel {
     }
 }
 
+/// Whether one cube's stores reach another within a launch on `hw`, which is how the cubes meet.
+fn meets_in_device_memory(hw: &Hardware) -> bool {
+    hw.properties.features.device_memory_scope
+}
+
 impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
     type Settings = CubeStagedReduceMicrokernelSettings;
     type Operand = ReduceOperand;
     type CubeSpace = ();
 
-    const DECLINE: &'static str = "the hypercube reduce needs the cube reduce, and one cube's stores reaching another within a launch";
+    const DECLINE: &'static str = "the last-arrival hypercube needs one cube's stores reaching \
+        another within a launch (`device_memory_scope`)";
 
     /// The cube microkernel's.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
@@ -129,11 +151,24 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        // The cubes meet through device memory, which must stay coherent across them in a launch.
-        let meets = hw.properties.features.device_memory_scope;
+        let meets = meets_in_device_memory(hw);
         CubeStagedReduceMicrokernel::candidates(hw, item, settings)
             .filter(move |_| meets)
-            .map(|part| Self { part })
+            .map(Self::new)
+    }
+
+    /// The hypercube of the cube's best where the cubes meet in device memory, the cube's own
+    /// Decline coming through where the device runs no cube.
+    fn best(
+        hw: &Hardware,
+        item: &ReduceWorkItem,
+        settings: &Self::Settings,
+    ) -> Result<Self, Decline> {
+        let part = CubeStagedReduceMicrokernel::best(hw, item, settings)?;
+        if !meets_in_device_memory(hw) {
+            return Err(Decline::Unserved { why: Self::DECLINE });
+        }
+        Ok(Self::new(part))
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
@@ -149,11 +184,103 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
         _planes: CubePlanes,
         estimate: &mut KernelEstimate,
     ) {
-        let lines = self.part.item().operation.carrier().lines() as u32;
-        estimate.work = Some(UnitWork {
-            instruction: ArithmeticInstruction::Vector,
-            registers: 2 * lines + 2,
-        });
+        estimate.work = Some(self.part.item().merge_work());
+    }
+}
+
+/// One cube's part of a row its `parts` cubes split: the cube reduces `input`, its window of the
+/// part, with the cube's microkernel, each line indexed `first_line` lines further, its place in
+/// the whole row; a part the row's end cuts short reads the edge monoid's identity past it. Its first unit
+/// stores the partial as partial `part` of the row's `partials` and `partial_indices`, its
+/// carrier's lines a slot apart, and the cube counts itself in at the row's `counter` of
+/// `arrivals`. The row's last cube to count merges every partial and writes the
+/// row to `out`, and to `indices` where both halves are written, as the cube's microkernel writes
+/// a row, a mean dividing by `values`, the values the whole row holds.
+///
+/// The cube meets on `sync_storage` before it counts, so its partial lands first, and again before
+/// the last cube reads the others'.
+#[cube]
+pub(crate) fn hypercube_last_arrival_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+    C: Accumulable<Acc, N>,
+>(
+    input: &Tile,
+    out: &mut Tile,
+    indices: &ComptimeOption<Tile>,
+    partials: &mut Tile,
+    partial_indices: &ComptimeOption<Tile>,
+    arrivals: &[Atomic<u32>],
+    counter: usize,
+    part: usize,
+    parts: usize,
+    first_line: usize,
+    values: usize,
+    #[comptime] microkernel: HypercubeLastArrivalReduceMicrokernel,
+) {
+    let cube = microkernel.part;
+    cube_partial_reduce_microkernel::<In, Acc, N, C>(
+        input,
+        partials,
+        partial_indices,
+        part,
+        first_line,
+        comptime!(CubePartialReduceMicrokernel::new(cube.strided())),
+    );
+
+    // The partial lands at device scope before the cube counts itself in.
+    sync_storage();
+    let last = counts_in_last(arrivals, counter, parts);
+    sync_storage_where_last(last);
+
+    let load = input.vector_tile();
+    let row_lanes = comptime!(load.extent_along(REDUCED));
+    let merges = last && UNIT_POS == 0;
+    if merges {
+        unit_partials_reduce_microkernel::<Out, Idx, Acc, N, C>(
+            &*partials,
+            partial_indices,
+            parts,
+            out,
+            indices,
+            values,
+            comptime!(UnitPartialsReduceMicrokernel::new(cube.item(), row_lanes)),
+        );
+    }
+    reset_count_where(arrivals, counter, merges);
+}
+
+/// Whether the cube is the last of its row's `parts` to count itself in at `counter` of `arrivals`:
+/// its first unit counts it in, and the cube meets so every unit answers the same.
+#[cube]
+fn counts_in_last(arrivals: &[Atomic<u32>], counter: usize, parts: usize) -> bool {
+    let mut arrived = Shared::<[u32]>::new_slice(1usize);
+    if UNIT_POS == 0 {
+        arrived[0] = arrivals[counter].fetch_add(1u32);
+    }
+
+    sync_cube();
+    arrived[0] as usize + 1 == parts
+}
+
+/// What every other cube of the row stored acquired before it is read, by the cube whose units all
+/// hold `last`.
+#[cube]
+fn sync_storage_where_last(last: bool) {
+    if last {
+        sync_storage();
+    }
+}
+
+/// The counter at `counter` of `arrivals` set back to zero by the unit that `merges` the row, which
+/// every other cube of the row counted in before: nothing counts there again in this launch.
+#[cube]
+fn reset_count_where(arrivals: &[Atomic<u32>], counter: usize, merges: bool) {
+    if merges {
+        arrivals[counter].store(0u32);
     }
 }
 
@@ -161,32 +288,33 @@ impl Microkernel for HypercubeLastArrivalReduceMicrokernel {
 mod tests {
     use super::*;
     use crate::reduce::cube::CubeStagedReduceMicrokernel;
-    use crate::reduce::{ReduceOperation, ReduceWorkItem};
+    use crate::reduce::testing::{HypercubeLastArrivalMicrokernelLauncher, LANE_SLOT_COUNT};
+    use crate::reduce::{ReduceOperation, ReduceWorkItem, empty_estimate};
     use cubek_std::devices;
 
     /// A hypercube's cube holds its part's shared memory and one arrival slot beside it.
     #[test]
     fn a_cube_holds_its_parts_memory_and_an_arrival_slot() {
-        const LANES: usize = 32;
-        const PLANES: usize = 4;
-        const LANE_SLOTS: usize = 32;
-        const WIDTH: usize = 4;
+        const LANE_COUNT: usize = 32;
+        const PLANE_COUNT: usize = 4;
+        const LANE_SLOT_COUNT: usize = 32;
+        const LINE_LANE_COUNT: usize = 4;
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
-        let part = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        let part = CubeStagedReduceMicrokernel::new(item, LANE_COUNT, PLANE_COUNT, LANE_SLOT_COUNT);
         let hypercube = HypercubeLastArrivalReduceMicrokernel::new(part);
         assert_eq!(
-            hypercube.shared_memory_bytes_at_width(WIDTH),
-            part.shared_memory_bytes_at_width(WIDTH) + size_of::<u32>()
+            hypercube.shared_memory_bytes_at_lane_count(LINE_LANE_COUNT),
+            part.shared_memory_bytes_at_lane_count(LINE_LANE_COUNT) + size_of::<u32>()
         );
     }
 
     #[test]
     fn its_widest_line_is_its_parts() {
-        const LANES: usize = 32;
-        const PLANES: usize = 4;
-        const LANE_SLOTS: usize = 32;
+        const LANE_COUNT: usize = 32;
+        const PLANE_COUNT: usize = 4;
+        const LANE_SLOT_COUNT: usize = 32;
         let item = ReduceWorkItem::along_f32(ReduceOperation::TopK { k: 4 });
-        let part = CubeStagedReduceMicrokernel::new(item, LANES, PLANES, LANE_SLOTS);
+        let part = CubeStagedReduceMicrokernel::new(item, LANE_COUNT, PLANE_COUNT, LANE_SLOT_COUNT);
         let hypercube = HypercubeLastArrivalReduceMicrokernel::new(part);
         assert_eq!(hypercube.widest_line(), part.widest_line());
     }
@@ -198,7 +326,12 @@ mod tests {
         devices::features(&mut hw).device_memory_scope = false;
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
         let settings = HypercubeLastArrivalReduceMicrokernel::settings(&hw)[0];
-        assert!(HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings).is_err());
+        assert_eq!(
+            HypercubeLastArrivalReduceMicrokernel::best(&hw, &item, &settings),
+            Err(Decline::Unserved {
+                why: HypercubeLastArrivalReduceMicrokernel::DECLINE
+            })
+        );
     }
 
     /// The merged carrier and one partial, a line each, beside two registers.
@@ -210,7 +343,7 @@ mod tests {
             count: 4,
             width: 32,
         };
-        let mut estimate = crate::reduce::empty_estimate();
+        let mut estimate = empty_estimate();
         HypercubeLastArrivalReduceMicrokernel::new(part).estimate(
             &item,
             &(),
@@ -218,5 +351,69 @@ mod tests {
             &mut estimate,
         );
         assert_eq!(estimate.work.map(|work| work.registers), Some(4));
+    }
+
+    /// Rows 64 values long along the reduced dimension, a value a line, in two parts each shorter than
+    /// a cube's units.
+    mod along_two_short_parts {
+        use super::*;
+
+        const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 2);
+
+        every_operation!(MICROKERNEL, Along, 64, 1);
+    }
+
+    /// Rows 8192 values long along the reduced dimension, four values a line, in eight parts each
+    /// several times a cube's units.
+    mod along_eight_long_parts {
+        use super::*;
+
+        const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 8);
+
+        every_operation!(MICROKERNEL, Along, 8192, 4);
+
+        /// The edge rows, in the same eight parts.
+        mod edges {
+            use super::*;
+            edge_rows!(MICROKERNEL, Along, 8192, 4);
+        }
+    }
+
+    /// Rows 300 values long across the reduced dimension, each lane its own row, in three parts.
+    mod across_three_parts {
+        use super::*;
+
+        const MICROKERNEL: HypercubeLastArrivalMicrokernelLauncher =
+            HypercubeLastArrivalMicrokernelLauncher::new(4, 3);
+
+        every_operation!(MICROKERNEL, Across, 300, 4);
+
+        /// The edge rows, in the same three parts.
+        mod edges {
+            use super::*;
+            edge_rows!(MICROKERNEL, Across, 300, 4);
+        }
+    }
+
+    /// What its part's cube asks of the operands.
+    #[test]
+    fn along_the_row_its_output_takes_a_cell_a_row() {
+        let (lanes, planes) = (32, 4);
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let part = CubeStagedReduceMicrokernel::new(item, lanes, planes, LANE_SLOT_COUNT);
+        let mut vectorization = Vectorization::new();
+        HypercubeLastArrivalReduceMicrokernel::new(part).vectorize(&(), &mut vectorization);
+        assert_eq!(vectorization.width(ReduceOperand::Out, |_| 8), 1);
+    }
+
+    #[test]
+    fn it_displays_its_part() {
+        let (lanes, planes) = (32, 4);
+        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
+        let part = CubeStagedReduceMicrokernel::new(item, lanes, planes, LANE_SLOT_COUNT);
+        let hypercube = HypercubeLastArrivalReduceMicrokernel::new(part);
+        assert_eq!(hypercube.to_string(), part.to_string());
     }
 }

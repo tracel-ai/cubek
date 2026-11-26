@@ -15,16 +15,24 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, KernelResultError, Progress,
 };
 
+/// The input gradient of `problem`'s launch on seeded input and output gradient, its indices
+/// computed by a forward launch where it takes them.
+///
+/// # Errors
+///
+/// [`KernelResultError::Refused`] with the decline either launch returns, and
+/// [`KernelResultError::NotRun`] where a max pool takes no indices, or a launch returns another
+/// error or did not run.
 pub fn strategy_result(
     client: Client,
     problem: PoolBackwardProblem<2>,
     seed: u64,
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     if matches!(&problem.mode, PoolMode::Max(_)) && !problem.with_indices {
-        return Err("max pool backward requires indices".to_string());
+        return Err("max pool backward requires indices".to_string().into());
     }
 
     let dtype = f32_elem_type();
@@ -37,68 +45,46 @@ pub fn strategy_result(
         make_random_f32_host(&client, out_grad_shape.clone(), seed);
     let input_grad_handle = make_zero_handle(&client, input_shape, dtype);
 
-    let indices_handle = if problem.with_indices {
-        let output_handle = make_zero_handle(&client, out_grad_shape.clone(), dtype);
-        let indices_handle = make_zero_handle(&client, out_grad_shape.clone(), indices_dtype);
-
-        let forward_outcome = launch_and_capture_outcome(
-            &client,
-            &[&output_handle.handle, &indices_handle.handle],
-            |c| {
-                pool2d_with_indices(
-                    c,
-                    input_handle.clone().binding(),
-                    output_handle.clone().binding(),
-                    indices_handle.clone().binding(),
-                    problem.mode.clone(),
-                    dtype,
-                )
-                .into()
-            },
-        );
-
-        match forward_outcome {
-            ExecutionOutcome::CompileError(e) => return Err(format!("compile error: {e}")),
-            ExecutionOutcome::Executed => Some(indices_handle),
-        }
-    } else {
-        None
-    };
-
-    let outcome = launch_and_capture_outcome(&client, &[&input_grad_handle.handle], |c| {
-        if let Some(indices) = &indices_handle {
-            pool2d_with_indices_backward(
-                c,
+    match problem.with_indices {
+        true => {
+            let output_handle = make_zero_handle(&client, out_grad_shape.clone(), dtype);
+            let indices_handle = make_zero_handle(&client, out_grad_shape, indices_dtype);
+            pool2d_with_indices(
+                &client,
                 input_handle.clone().binding(),
-                out_grad_handle.clone().binding(),
-                indices.clone().binding(),
+                output_handle.clone().binding(),
+                indices_handle.clone().binding(),
+                problem.mode.clone(),
+                dtype,
+            )?;
+            ExecutionOutcome::of_outputs(&client, &[&output_handle.handle, &indices_handle.handle])
+                .into_kernel_result()?;
+            pool2d_with_indices_backward(
+                &client,
+                input_handle.binding(),
+                out_grad_handle.binding(),
+                indices_handle.binding(),
                 input_grad_handle.clone().binding(),
                 problem.mode.clone(),
                 dtype,
                 indices_dtype,
-            )
-            .into()
-        } else {
-            pool2d_backward(
-                c,
-                input_handle.clone().binding(),
-                out_grad_handle.clone().binding(),
-                input_grad_handle.clone().binding(),
-                problem.mode.clone(),
-                dtype,
-            )
-            .into()
+            )?
         }
-    });
-
-    match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
+        false => pool2d_backward(
             &client,
-            input_grad_handle,
-            HostDataType::F32,
-        )),
+            input_handle.binding(),
+            out_grad_handle.binding(),
+            input_grad_handle.clone().binding(),
+            problem.mode.clone(),
+            dtype,
+        )?,
     }
+    ExecutionOutcome::of_outputs(&client, &[&input_grad_handle.handle]).into_kernel_result()?;
+    Ok(HostData::from_tensor_handle(
+        &client,
+        input_grad_handle,
+        HostDataType::F32,
+    ))
 }
 
 pub fn cpu_reference_result(

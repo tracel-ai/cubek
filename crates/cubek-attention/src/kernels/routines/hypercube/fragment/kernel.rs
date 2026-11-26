@@ -9,6 +9,11 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 /// its queries see, each plane leaving its partial in its slot
 /// ([`cube_staged_attention_partial_microkernel()`]), for the split-keys merge. The output is
 /// read for the shape of what its planes sum into.
+///
+/// - `query`, `key`, `value`, `mask`, `len`, `queries`, `keys`, `scale`: as
+///   `unit_attention_kernel`'s.
+/// - `out`: the output, read only for the shape of what the planes sum into.
+/// - `slot_out`, `slot_max`, `slot_sum`: as `hypercube_attention_arrival_kernel`'s.
 #[allow(
     clippy::extra_unused_type_parameters,
     reason = "the query and keys' stage element is defined from them at launch, which the kernel \
@@ -26,6 +31,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
     mask: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
+    keys: u32,
     scale: f32,
     partitioning: Partitioning,
     #[comptime] microkernel: HypercubeAttentionMicrokernel,
@@ -45,6 +51,7 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
         &ComptimeOption::new_None(),
         &first_step,
         queries,
+        keys,
         &mask,
         visibility,
     );

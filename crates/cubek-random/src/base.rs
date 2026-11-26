@@ -1,5 +1,6 @@
 use crate::kernels::{RandomStrategy, RandomTensor, select};
 use cubecl::prelude::*;
+use cubecl::tile::launch::Decline;
 use cubecl_environment::{rand::get_seeded_rng, sync::Mutex};
 use cubek_microkernel::random::{Distribution, SeedsLaunch};
 use cubek_std::Hardware;
@@ -21,9 +22,9 @@ pub fn next_seed() -> u64 {
 
 /// `output` filled with draws of `distribution` off `seed`, by the kernel `strategy` picks.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Where the kernel `strategy` names cannot run on this device.
+/// Why the kernel `strategy` names cannot run on this device.
 pub(crate) fn random<D: Distribution>(
     client: &Client,
     distribution: D,
@@ -31,7 +32,7 @@ pub(crate) fn random<D: Distribution>(
     element: ElemType,
     strategy: RandomStrategy,
     seed: u64,
-) -> Result<(), LaunchError> {
+) -> Result<(), Decline> {
     // An empty output holds nothing to draw, and a launch of no cubes is refused.
     if output.shape.contains(&0) {
         return Ok(());
@@ -39,15 +40,12 @@ pub(crate) fn random<D: Distribution>(
     let seeds: [u32; 4] = StdRng::seed_from_u64(seed).random();
     let hw = Hardware::from_client(client);
     let tensor = RandomTensor::new(client, output, element, D::LINES_PER_DRAW);
-    select(strategy, &hw)
-        .launch(
-            &hw,
-            &tensor,
-            distribution,
-            SeedsLaunch::new(seeds[0], seeds[1], seeds[2], seeds[3]),
-        )
-        .unwrap_or_else(|why| panic!("{why}"));
-    Ok(())
+    select(strategy, &hw).launch(
+        &hw,
+        &tensor,
+        distribution,
+        SeedsLaunch::new(seeds[0], seeds[1], seeds[2], seeds[3]),
+    )
 }
 
 #[cfg(test)]
@@ -199,7 +197,7 @@ mod tests {
     /// rather than at whatever the allocation held.
     fn draw_over_zeros(
         shape: Vec<usize>,
-        launch: impl FnOnce(&Client, TensorBinding, ElemType) -> Result<(), LaunchError>,
+        launch: impl FnOnce(&Client, TensorBinding, ElemType) -> Result<(), Decline>,
     ) -> Vec<f32> {
         let client = cubecl::test_device().client();
         let dtype = f32::elem_type_native();

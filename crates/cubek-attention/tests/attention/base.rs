@@ -18,7 +18,7 @@ use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
 use cubek_std::routine::Routine;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 use half::f16;
 
 /// The shape of one attention, and how its queries see its keys.
@@ -216,7 +216,7 @@ pub(crate) const DECODE_MASKED: AttentionCase = AttentionCase {
     ..DECODE
 };
 
-/// Every prompt case a routine of many positions is held to.
+/// Every prompt case a routine of many positions is checked on.
 pub(crate) const PROMPTS: [AttentionCase; 4] = [
     PROMPT,
     PROMPT_PLACED_FIRST,
@@ -224,7 +224,7 @@ pub(crate) const PROMPTS: [AttentionCase; 4] = [
     PROMPT_MASKED_PLACED_FIRST,
 ];
 
-/// Every decode case a routine of single positions is held to.
+/// Every decode case a routine of single positions is checked on.
 pub(crate) const DECODES: [AttentionCase; 2] = [DECODE, DECODE_MASKED];
 
 impl AttentionCase {
@@ -466,7 +466,8 @@ impl AttentionCase {
             },
         )
         .expect("the case's tensors are verified")
-        .with_logsumexp();
+        .with_logsumexp()
+        .expect("a float cache's attention writes its logsumexp");
         match self.hidden {
             Some(hidden) => {
                 let (batch, heads, queries, keys) =
@@ -481,11 +482,13 @@ impl AttentionCase {
                         }
                     }
                 }
-                tensors.with_mask(upload(
-                    cells,
-                    shape![batch, heads, queries, keys],
-                    u32::elem_type_native(),
-                ))
+                tensors
+                    .with_mask(upload(
+                        cells,
+                        shape![batch, heads, queries, keys],
+                        u32::elem_type_native(),
+                    ))
+                    .expect("the mask is a cell a score")
             }
             None => tensors,
         }
@@ -575,7 +578,7 @@ impl<L: AttentionLaunch> Forward<L> {
     }
 }
 
-impl<L: AttentionLaunch> ScopeUnderTest for Forward<L> {
+impl<L: AttentionLaunch> ScopeChecker for Forward<L> {
     type Case = ForwardCase<SettingsOf<L>>;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

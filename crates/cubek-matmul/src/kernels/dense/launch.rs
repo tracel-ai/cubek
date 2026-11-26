@@ -9,12 +9,13 @@ use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulRowsKind};
 use cubek_std::Hardware;
 
 use crate::kernels::{
-    MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors, RunStored,
+    MATMUL_TENSORS_READ_FOR_OTHER_ROWS, MatmulBlueprint, MatmulIndexTable, MatmulOutput,
+    MatmulRoutineProblem, MatmulTensors, RunStored,
 };
 use cubecl::tile::{
-    Geometry, TileTensorLaunch,
+    Geometry, Launcher, TileTensorLaunch,
     kind::Write,
-    launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
+    launch::{Bound, Buffered, DestinationLaunch, SinkLaunch, Unbound},
 };
 use cubek_std::routine::{Grid, Routine};
 
@@ -28,6 +29,18 @@ const ALLOCATED: &str = "a launch allocating its output hands it back";
 /// dispatches, and the launch around those is written once, here, whether the microkernel holds
 /// every row whole or tiles them, and however each input is stored: its kernel reads each input
 /// as the tile it is bound as. A routine declines a problem whose inputs it does not read.
+///
+/// # Assumptions
+///
+/// [`bind_extras`](Self::bind_extras) is handed tensors a launch holding its rows as
+/// [`ROWS_KIND`](Self::ROWS_KIND) says reads ([`MatmulTensors::is_read_for`]), and
+/// [`dispatch`](Self::dispatch) the binding [`MatmulTensors::bind`] and the extras
+/// [`bind_extras`](Self::bind_extras) returned for the same tensors, blueprint and grid.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     Routine<Problem = MatmulRoutineProblem, Microkernel = M, Blueprint = MatmulBlueprint<M, SM>>
 {
@@ -39,12 +52,32 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     /// How the routine's cubes reach the output.
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::Replace;
 
-    /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its kernel reaching the
-    /// output through the destination `O`, whatever `tensors`' output is.
+    /// What its kernel reads beside the three operands its tensors bind, bound with them before
+    /// its kernel launches: `()` for a kernel that reads nothing more.
+    type Extras;
+
+    /// What its kernel reads beside `tensors`' operands, bound under `launcher` as `blueprint`
+    /// states it: what [`dispatch`](Self::dispatch) launches beside them. Binding them may
+    /// allocate scratch and zero it.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where binding finds false what `prepare` claimed of the launch.
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        tensors: &MatmulTensors<Out>,
+        launcher: &Launcher,
+        blueprint: &MatmulBlueprint<M, SM>,
+    ) -> Result<Self::Extras, Decline>;
+
+    /// Launch the kernel `blueprint` compiles, on `grid`, over `binding` and `extras`, the latter
+    /// as [`bind_extras`](Self::bind_extras) bound them, its kernel reaching the output through the
+    /// destination `O`, whatever `tensors`' output is.
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        extras: Self::Extras,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
     );
@@ -54,26 +87,64 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     ///
     /// # Errors
     ///
-    /// Why the tile engine refuses to bind a float input as it is stored under the launch: one
-    /// stored in tiles that the launch's last cubes reach past, which the routine, reading the
-    /// problem and not the tensors, could not see.
+    /// [`MATMUL_TENSORS_READ_FOR_OTHER_ROWS`]. As [`MatmulTensors::bind`] and
+    /// [`bind_extras`](Self::bind_extras).
     fn dispatch_into_buffer(
         &self,
         tensors: &MatmulTensors,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
     ) -> Result<(), Decline> {
-        let binding = tensors.bind(&blueprint, &grid)?;
-        match tensors.indexes_output() {
-            false => {
-                let binding = binding.map_out(|out| (out, Write::Replace));
-                self.dispatch::<Buffered, _>(tensors, binding, blueprint, grid);
-            }
-            true => {
-                let binding = binding.map_out(|out| tensors.output_through_table(out));
-                self.dispatch::<RunStored, _>(tensors, binding, blueprint, grid);
-            }
+        if !tensors.is_read_for(Self::ROWS_KIND) {
+            return Err(MATMUL_TENSORS_READ_FOR_OTHER_ROWS);
         }
+        let binding = tensors.bind(&blueprint, &grid)?;
+        let extras = self.bind_extras(tensors, &binding.launcher, &blueprint)?;
+        match tensors.indexes_output() {
+            false => self.dispatch_replacing(tensors, binding, extras, blueprint, grid),
+            true => self.dispatch_placed(tensors, binding, extras, blueprint, grid),
+        }
+    }
+
+    /// [`dispatch`](Self::dispatch) through [`Buffered`], replacing `tensors`' output buffer.
+    ///
+    /// # Errors
+    ///
+    /// Never; it shares the signature of [`dispatch_placed`](Self::dispatch_placed).
+    fn dispatch_replacing(
+        &self,
+        tensors: &MatmulTensors,
+        binding: MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>,
+        extras: Self::Extras,
+        blueprint: MatmulBlueprint<M, SM>,
+        grid: Grid,
+    ) -> Result<(), Decline> {
+        let binding = binding.map_out(|out| (out, Write::Replace));
+        self.dispatch::<Buffered, _>(tensors, binding, extras, blueprint, grid);
+        Ok(())
+    }
+
+    /// [`dispatch`](Self::dispatch) through [`RunStored`], the output placed by its table.
+    ///
+    /// # Errors
+    ///
+    /// Why the tile engine refuses to place the output by its table.
+    fn dispatch_placed(
+        &self,
+        tensors: &MatmulTensors,
+        binding: MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>,
+        extras: Self::Extras,
+        blueprint: MatmulBlueprint<M, SM>,
+        grid: Grid,
+    ) -> Result<(), Decline> {
+        let out = tensors.output_through_table(binding.out)?;
+        let binding = MatmulBinding {
+            launcher: binding.launcher,
+            lhs: binding.lhs,
+            rhs: binding.rhs,
+            out,
+        };
+        self.dispatch::<RunStored, _>(tensors, binding, extras, blueprint, grid);
         Ok(())
     }
 
@@ -140,8 +211,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     ) -> Result<(), Decline> {
         let tensors = MatmulTensors::writing_into(client, lhs, rhs, out, Self::ROWS_KIND)?;
         let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
-        Ok(())
+        self.dispatch_into_buffer(&tensors, blueprint, grid)
     }
 
     /// `lhs · rhs` on `client`'s device, every batch reading its entry of `table`, written into
@@ -168,8 +238,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     ) -> Result<(), Decline> {
         let tensors = MatmulTensors::indexed(client, lhs, rhs, table, out, Self::ROWS_KIND)?;
         let (blueprint, grid) = Self::prepare(hw, &tensors.problem(), settings)?;
-        self.dispatch_into_buffer(&tensors, blueprint, grid)?;
-        Ok(())
+        self.dispatch_into_buffer(&tensors, blueprint, grid)
     }
 
     /// `lhs · rhs` at the first of the routine's own settings that prepares a launch on `hw`
@@ -221,12 +290,13 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
 ///
 /// A fused element-wise tail is one such sink: its block stores in lines of the width the kernel
 /// settled ([`SinkLaunch::width`]), so the caller plans it around this launch before binding it.
-pub struct MatmulSinkLaunch<R, M, SM = ()> {
+pub struct MatmulSinkLaunch<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM = ()> {
     routine: R,
     tensors: MatmulTensors<Geometry>,
     blueprint: MatmulBlueprint<M, SM>,
     grid: Grid,
     binding: MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>,
+    extras: R::Extras,
 }
 
 impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, SM> {
@@ -235,31 +305,37 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, S
     ///
     /// # Errors
     ///
-    /// Why the tile engine refuses to bind a float input as it is stored under the launch.
+    /// [`MATMUL_TENSORS_READ_FOR_OTHER_ROWS`]. As [`MatmulTensors::bind`] and
+    /// [`MatmulRoutine::bind_extras`].
     pub fn new(
         routine: R,
         tensors: MatmulTensors<Geometry>,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
     ) -> Result<Self, Decline> {
+        if !tensors.is_read_for(R::ROWS_KIND) {
+            return Err(MATMUL_TENSORS_READ_FOR_OTHER_ROWS);
+        }
         let binding = tensors.bind(&blueprint, &grid)?;
+        let extras = routine.bind_extras(&tensors, &binding.launcher, &blueprint)?;
         Ok(Self {
             routine,
             tensors,
             blueprint,
             grid,
             binding,
+            extras,
         })
     }
 }
 
 impl<R, M, SM> core::fmt::Debug for MatmulSinkLaunch<R, M, SM>
 where
-    R: core::fmt::Debug,
-    M: core::fmt::Debug,
+    R: MatmulRoutine<M, SM> + core::fmt::Debug,
+    M: MatmulMicrokernel + core::fmt::Debug,
     SM: core::fmt::Debug,
 {
-    // The binding is left out: the tile DSL's `Launcher` is not `Debug`.
+    // The binding and the extras are left out: the tile DSL's `Launcher` is not `Debug`.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MatmulSinkLaunch")
             .field("routine", &self.routine)
@@ -281,7 +357,77 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> SinkLaunch for MatmulSin
 
     fn launch<O: DestinationLaunch>(self, sink: impl FnOnce(Unbound) -> O::Operand) {
         let binding = self.binding.map_out(sink);
-        self.routine
-            .dispatch::<O, _>(&self.tensors, binding, self.blueprint, self.grid);
+        self.routine.dispatch::<O, _>(
+            &self.tensors,
+            binding,
+            self.extras,
+            self.blueprint,
+            self.grid,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::UnitRegistersMatmulRoutine;
+    use cubecl::ir::FloatKind;
+    use cubek_test_utils::client;
+
+    /// Zeros of `shape` in `f32`.
+    fn zeros(shape: &[usize]) -> StoredTensor {
+        let element = ElemType::Float(FloatKind::F32);
+        StoredTensor::Plain(PlainTensor::of_handle(TensorHandle::zeros(
+            &client(),
+            shape.to_vec(),
+            element,
+        )))
+    }
+
+    #[test]
+    fn tensors_read_for_other_rows_decline() {
+        let (client, hw) = (client(), Hardware::from_client(&client()));
+        let tensors = |rows_kind| {
+            MatmulTensors::new(&client, zeros(&[4, 8]), zeros(&[8, 16]), rows_kind)
+                .expect("dense float operands")
+        };
+        let (blueprint, grid) = UnitRegistersMatmulRoutine::prepare_first_served(
+            &hw,
+            &tensors(MatmulRowsKind::Tiled).problem(),
+        )
+        .expect("the unit routine serves a small product");
+
+        let declined = UnitRegistersMatmulRoutine
+            .dispatch_into_buffer(&tensors(MatmulRowsKind::Whole), blueprint, grid)
+            .err();
+
+        assert_eq!(declined, Some(MATMUL_TENSORS_READ_FOR_OTHER_ROWS));
+    }
+
+    #[test]
+    fn a_sink_read_for_other_rows_declines() {
+        let (client, hw) = (client(), Hardware::from_client(&client()));
+        let tiled = MatmulTensors::new(
+            &client,
+            zeros(&[4, 8]),
+            zeros(&[8, 16]),
+            MatmulRowsKind::Tiled,
+        )
+        .expect("dense float operands");
+        let (blueprint, grid) =
+            UnitRegistersMatmulRoutine::prepare_first_served(&hw, &tiled.problem())
+                .expect("the unit routine serves a small product");
+        let sink = MatmulTensors::sink(
+            &client,
+            zeros(&[4, 8]),
+            zeros(&[8, 16]),
+            MatmulRowsKind::Whole,
+        )
+        .expect("dense float operands");
+
+        let declined =
+            MatmulSinkLaunch::new(UnitRegistersMatmulRoutine, sink, blueprint, grid).err();
+
+        assert_eq!(declined, Some(MATMUL_TENSORS_READ_FOR_OTHER_ROWS));
     }
 }

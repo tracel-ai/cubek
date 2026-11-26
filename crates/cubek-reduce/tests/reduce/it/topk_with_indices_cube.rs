@@ -6,8 +6,9 @@
 //! unrolled over `k`).
 
 use cubecl::zspace::{Shape, Strides};
+use cubek_test_utils::ScopeChecker;
 
-use crate::reduce::it::test_case::{CUBE, TestCase};
+use crate::reduce::it::test_case::{CUBE, Op, ReduceScopeChecker, TestCase};
 
 fn case() -> TestCase {
     TestCase::new::<f32>(Shape::new([4, 256]), Strides::new(&[256, 1]), Some(1), CUBE)
@@ -17,42 +18,42 @@ fn case() -> TestCase {
 // stays correct even if the per-k slots are not merged.
 #[test]
 fn cube_topk_with_indices_k1() {
-    case().test_topk_with_indices(1);
+    ReduceScopeChecker.check([case().reduced_by(Op::TopKWithIndices(1))]);
 }
 
 #[test]
 fn cube_topk_with_indices_k2() {
-    case().test_topk_with_indices(2);
+    ReduceScopeChecker.check([case().reduced_by(Op::TopKWithIndices(2))]);
 }
 
 #[test]
 fn cube_topk_with_indices_k3() {
-    case().test_topk_with_indices(3);
+    ReduceScopeChecker.check([case().reduced_by(Op::TopKWithIndices(3))]);
 }
 
 #[test]
 fn cube_topk_with_indices_k5() {
-    case().test_topk_with_indices(5);
+    ReduceScopeChecker.check([case().reduced_by(Op::TopKWithIndices(5))]);
 }
 
 #[test]
 fn cube_min_with_indices() {
-    case().test_min_with_indices();
+    ReduceScopeChecker.check([case().reduced_by(Op::MinWithIndices)]);
 }
 
 #[test]
 fn cube_max_with_indices() {
-    case().test_max_with_indices();
+    ReduceScopeChecker.check([case().reduced_by(Op::MaxWithIndices)]);
 }
 
 // The values-only and indices-only paths, for comparison: a failure here means the breakage is not
 // specific to writing both.
 #[test]
 fn cube_topk_values_only_k3() {
-    case().test_topk(3);
+    ReduceScopeChecker.check([case().reduced_by(Op::TopK(3))]);
 }
 
 #[test]
 fn cube_argtopk_k3() {
-    case().test_argtopk(3);
+    ReduceScopeChecker.check([case().reduced_by(Op::ArgTopK(3))]);
 }

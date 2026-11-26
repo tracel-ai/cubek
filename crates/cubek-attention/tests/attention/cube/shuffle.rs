@@ -1,7 +1,7 @@
 //! The cube shuffle routine: a cube's planes of shuffles reading each step's keys where they lie.
 
 use cubek_attention::kernels::CubeShuffleAttentionRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::attention::{
     DECODES, DECODES_WIDE_FP8, DECODES_WIDE_PER_TENSOR, Forward, PROMPTS, PROMPTS_WIDE_FP8,
