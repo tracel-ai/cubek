@@ -45,8 +45,9 @@ pub trait AttentionBackwardLaunch {
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`]: the routines before the one that errs have launched,
-    /// and the gradients hold nothing a caller may read until another strategy writes them.
+    /// [`Decline::Broken`] where the tile engine refuses what a routine prepared: the routines
+    /// before the one that errs have launched, and the gradients hold nothing a caller may read
+    /// until another strategy writes them.
     fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

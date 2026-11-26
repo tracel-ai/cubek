@@ -68,10 +68,12 @@ impl PlaneDeltaRoutine {
             (),
         ))
     }
+
+    /// The planes of `walk` writing `tensors`' dot products of the output with its gradient.
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`].
+    /// [`Decline::Broken`], nothing launched, where the tile engine refuses what `walk` prepared.
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

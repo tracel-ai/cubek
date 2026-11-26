@@ -27,10 +27,12 @@ impl CubeStagedKeyGradientRoutine {
     ) -> Result<CubeStagedKeyWalkBlueprint, Decline> {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
     }
+
+    /// The cubes of `walk` writing `tensors`' keys' and values' gradients.
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`].
+    /// [`Decline::Broken`], nothing launched, where the tile engine refuses what `walk` prepared.
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

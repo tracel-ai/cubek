@@ -81,10 +81,12 @@ impl PlaneFragmentKeyGradientRoutine {
             PlaneFragmentAttentionBackwardSharedMemory { ring, planes },
         ))
     }
+
+    /// The planes of `walk` writing `tensors`' keys' and values' gradients.
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`].
+    /// [`Decline::Broken`], nothing launched, where the tile engine refuses what `walk` prepared.
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

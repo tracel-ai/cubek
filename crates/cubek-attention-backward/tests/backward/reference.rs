@@ -10,7 +10,7 @@ use cubek_attention_backward::{AttentionBackwardGradients, AttentionBackwardTens
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention::{AttentionVisibility, QueryPlacement};
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 /// The shape of one backward pass, and how its queries see its keys.
 #[derive(Debug, Clone, Copy)]
@@ -230,7 +230,10 @@ impl Reference {
                 reference.check(&client, gradients, tolerance)
             }
             Err(broken) if broken.is_broken() => panic!("{settings}: {broken}"),
-            Err(decline) => eprintln!("{settings}: declined on this device, {decline:?}"),
+            Err(decline) => TestOutcome::Validated(ValidationResult::Skipped(format!(
+                "{settings}: declined on this device, {decline}"
+            )))
+            .enforce(),
         }
     }
 

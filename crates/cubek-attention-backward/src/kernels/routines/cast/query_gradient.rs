@@ -54,10 +54,13 @@ impl CastQueryGradientRoutine {
         });
         walk
     }
+
+    /// Every plane of `walk` casting its queries' gradient out of `sum` into the gradient of
+    /// `tensors`.
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`].
+    /// [`Decline::Broken`], nothing launched, where the tile engine refuses what `walk` prepared.
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,

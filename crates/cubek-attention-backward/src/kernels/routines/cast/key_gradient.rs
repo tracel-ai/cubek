@@ -50,10 +50,13 @@ impl CastKeyGradientRoutine {
     ) -> CastKeyGradientBlueprint {
         summed.placement()
     }
+
+    /// Every plane of `walk` casting its keys' and values' gradients out of `sums` into the
+    /// gradients of `tensors`.
     ///
     /// # Errors
     ///
-    /// As [`AttentionBackwardTensors::bind`].
+    /// [`Decline::Broken`], nothing launched, where the tile engine refuses what `walk` prepared.
     pub fn dispatch(
         &self,
         tensors: &AttentionBackwardTensors,
