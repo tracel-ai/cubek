@@ -1,3 +1,10 @@
+//! What cubek's tests and benchmarks share: inputs built on the device with their values kept on
+//! the host ([`TestInput`], [`TileInput`], [`QuantizedTileInput`]), the comparison of a kernel's
+//! output with a reference under the test policy `cubek.toml` sets ([`assert_equals_approx`],
+//! [`TestOutcome`]), one shape for testing a kernel or a microkernel against its own reference
+//! ([`ScopeChecker`]), and the catalogue a benchmark harness runs ([`Category`]), whose rows
+//! report their progress through a [`Progress`].
+
 mod config;
 mod correctness;
 pub mod hardware;

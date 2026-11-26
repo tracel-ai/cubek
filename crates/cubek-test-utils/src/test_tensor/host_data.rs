@@ -244,7 +244,7 @@ impl HostData {
         self.data.get_i32(self.strided_index(index))
     }
 
-    /// Like [`get_f32`], but returns `None` if the underlying data isn't `F32`
+    /// Like [`get_f32`](Self::get_f32), but returns `None` if the underlying data isn't `F32`
     /// (or the index is out of bounds), instead of panicking.
     pub fn try_get_f32(&self, index: &[usize]) -> Option<f32> {
         self.data.try_get_f32(self.strided_index(index))
@@ -325,7 +325,7 @@ impl HostData {
         self.pretty_print_filtered(None)
     }
 
-    /// Like [`pretty_print`], but only prints slices whose leading-dim indices
+    /// Like [`pretty_print`](Self::pretty_print), but only prints slices whose leading-dim indices
     /// match the filter. Wildcards (`DimFilter::Any`) iterate every value.
     ///
     /// `filter` accepts both `Vec<std::ops::Range<usize>>` and the canonical

@@ -1,12 +1,4 @@
-//! Benchmark / correctness registry traits shared across kernel crates.
-//!
-//! Each kernel crate exposes a `pub mod benchmarks` (gated behind its
-//! `benchmarks` cargo feature) that defines a [`Category`] over the kernel's
-//! own problem and strategy types. The top-level `benchmarks` crate then
-//! collects those into a single `all()` slice for harnesses (Cargo benches)
-//! and for the tuner-runner.
-
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -18,8 +10,6 @@ use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
 use cubecl::throughput::{
     AchievedThroughput, MemoryAccess, MemoryCurve, ResourceBound, ThroughputKey, ThroughputMode,
 };
-
-use crate::{HostData, Progress};
 
 /// `CUBEK_BENCH_TIMING`'s override, read once: it can't change over a
 /// process's life, and every category consults it once per row.
@@ -88,7 +78,7 @@ static CURVES: LazyLock<Mutex<HashMap<MemoryAccess, MemoryCurve>>> =
 ///
 /// Zero when the sweep measured nothing, which leaves the resource unscored
 /// rather than dividing by a ceiling that does not exist.
-fn curve_ceiling(access: MemoryAccess, bytes: usize) -> f64 {
+pub(super) fn curve_ceiling(access: MemoryAccess, bytes: usize) -> f64 {
     let mut curves = CURVES.lock().expect("curves mutex is not poisoned");
     let curve = curves
         .entry(access)
@@ -106,7 +96,7 @@ fn curve_ceiling(access: MemoryAccess, bytes: usize) -> f64 {
 ///
 /// NaN when the device has no peak for the key, which leaves the resource
 /// unscored rather than dividing by a ceiling that does not exist.
-fn peak_per_s(key: ThroughputKey) -> f64 {
+pub(super) fn peak_per_s(key: ThroughputKey) -> f64 {
     let mut peaks = PEAKS.lock().expect("peaks mutex is not poisoned");
     *peaks.entry(key).or_insert_with(|| {
         let Ok(value) = measure_peak_throughput(&client(), key) else {
@@ -171,7 +161,7 @@ impl<T> CatalogEntry<T> {
 /// is read, so two rows of different sizes share one sweep instead of each
 /// asking the device for a probe of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Ceiling {
+pub(super) enum Ceiling {
     Probe(ThroughputKey),
     Curve(MemoryAccess),
 }
@@ -307,7 +297,10 @@ impl CategoryWork {
     /// traffic itself: that is the grid [`MemoryCurve`] is measured on, so rows
     /// of neighbouring sizes share one probe instead of each paying for their
     /// own. The amount stays exact, since that is what the kernel moves.
-    fn declared_resources(&self, timing: TimingMethod) -> Vec<(ResourceKind, usize, Ceiling)> {
+    pub(super) fn declared_resources(
+        &self,
+        timing: TimingMethod,
+    ) -> Vec<(ResourceKind, usize, Ceiling)> {
         let mut out = Vec::with_capacity(4);
 
         if let Some(compute) = self.compute.filter(|c| c.ops > 0) {
@@ -354,7 +347,11 @@ impl CategoryWork {
 
 /// Scores `work` against measured device peaks, from the median sample
 /// duration. Left unfilled when there are no samples or the median is zero.
-fn score(mut samples: RunSamples, work: &CategoryWork, timing: TimingMethod) -> RunSamples {
+pub(super) fn score(
+    mut samples: RunSamples,
+    work: &CategoryWork,
+    timing: TimingMethod,
+) -> RunSamples {
     let Some(median_secs) = samples.median_secs() else {
         return samples;
     };
@@ -396,245 +393,6 @@ fn score_bounds(
     });
 
     (tflops, binding)
-}
-
-/// Typed per-category definition. Implementors expose their problem and
-/// strategy catalogues with the actual payloads attached, plus a typed
-/// `bench` closure. The blanket impl below adapts to the string-keyed
-/// [`BenchmarkCategory`] consumed by the public registry, so categories no
-/// longer have to write the lookup boilerplate.
-pub trait Category: Sync {
-    type Problem;
-    type Strategy;
-
-    /// Stable identifier — persisted in tuner-results history. Don't rename.
-    fn id(&self) -> &'static str;
-    fn label(&self) -> &'static str;
-    fn problems(&self) -> Vec<CatalogEntry<Self::Problem>>;
-    fn strategies(&self) -> Vec<CatalogEntry<Self::Strategy>>;
-    fn bench(
-        &self,
-        strategy: &Self::Strategy,
-        problem: &Self::Problem,
-        num_samples: usize,
-    ) -> Result<RunSamples, String>;
-
-    /// The work `problem` represents, the same for every strategy that runs it.
-    /// `None` leaves the run unscored, reporting plain durations.
-    fn work(&self, _problem: &Self::Problem) -> Option<CategoryWork> {
-        None
-    }
-
-    /// Which timing method [`Self::bench`] uses internally — used by the bench
-    /// runner to label its printed stats. Defaults to `System`; categories
-    /// running on the device timing method (unary/contiguous/memcpy_async)
-    /// override this.
-    fn timing_method(&self) -> TimingMethod {
-        crate::timing_method(TimingMethod::System)
-    }
-
-    /// Override to expose seeded `kernel_result` / `reference_result`. Decoupled
-    /// from `Category` itself so unary/contiguous/memcpy_async don't need
-    /// `cfg`-gated stub methods.
-    fn correctness(
-        &self,
-    ) -> Option<&dyn Correctness<Problem = Self::Problem, Strategy = Self::Strategy>> {
-        None
-    }
-}
-
-/// Optional correctness surface for a category. Both methods take a `seeds`
-/// slice instead of fixed `seed_lhs`/`seed_rhs` so unary ops use just
-/// `seeds[0]` and future ops with more inputs can take more seeds without
-/// churning the trait.
-///
-/// Convention: `seeds[0]` is the lhs seed, `seeds[1]` (when present) the rhs
-/// seed. The registry's `BenchmarkCategory` adapter always passes a 2-element
-/// slice today.
-pub trait Correctness: Sync {
-    type Problem;
-    type Strategy;
-
-    /// Run `strategy` on `problem` with the given seeded inputs and return its
-    /// output as [`HostData`]. Output must be deterministic under
-    /// `(strategy, problem, seeds)` so the same call on two commits produces
-    /// directly-comparable bits.
-    fn kernel_result(
-        &self,
-        strategy: &Self::Strategy,
-        problem: &Self::Problem,
-        seeds: &[u64],
-    ) -> Result<HostData, String>;
-
-    /// CPU-side ground-truth counterpart of [`Self::kernel_result`] for the
-    /// same `(problem, seeds)`. `progress`, when provided, is `set_total`'d
-    /// to the output-write count and bumped once per write so callers can
-    /// stream a progression bar.
-    fn reference_result(
-        &self,
-        problem: &Self::Problem,
-        seeds: &[u64],
-        progress: Option<&Progress>,
-    ) -> Result<HostData, String>;
-}
-
-/// Public, string-keyed registry surface. Implemented automatically for any
-/// type that implements [`Category`]; categories should implement `Category`
-/// rather than this trait directly.
-pub trait BenchmarkCategory: Sync {
-    /// Stable identifier — persisted in tuner-results history. Don't rename.
-    fn id(&self) -> &'static str;
-    fn label(&self) -> &'static str;
-    fn strategies(&self) -> Vec<ItemDescriptor>;
-    fn problems(&self) -> Vec<ItemDescriptor>;
-    fn timing_method(&self) -> TimingMethod {
-        TimingMethod::System
-    }
-
-    /// Measures and memoizes every distinct peak the named problems declare, so
-    /// the first timed row never pays for a probe. Returns how many distinct
-    /// keys it warmed.
-    fn warm_peaks(&self, problem_ids: &[String]) -> usize;
-
-    fn run(
-        &self,
-        strategy_id: &str,
-        problem_id: &str,
-        num_samples: usize,
-    ) -> Result<RunSamples, String>;
-
-    /// `None` means the category doesn't expose a kernel result (e.g.
-    /// memcpy_async: no semantic-level output).
-    fn kernel_result(
-        &self,
-        _strategy_id: &str,
-        _problem_id: &str,
-        _seed_lhs: u64,
-        _seed_rhs: u64,
-    ) -> Option<Result<HostData, String>> {
-        None
-    }
-
-    /// `None` when the category has no CPU-equivalent reference (e.g. unary,
-    /// contiguous).
-    fn reference_result(
-        &self,
-        _problem_id: &str,
-        _seed_lhs: u64,
-        _seed_rhs: u64,
-        _progress: Option<&Progress>,
-    ) -> Option<Result<HostData, String>> {
-        None
-    }
-}
-
-impl<C: Category> BenchmarkCategory for C {
-    fn id(&self) -> &'static str {
-        Category::id(self)
-    }
-
-    fn label(&self) -> &'static str {
-        Category::label(self)
-    }
-
-    fn strategies(&self) -> Vec<ItemDescriptor> {
-        Category::strategies(self)
-            .iter()
-            .map(CatalogEntry::descriptor)
-            .collect()
-    }
-
-    fn problems(&self) -> Vec<ItemDescriptor> {
-        Category::problems(self)
-            .iter()
-            .map(CatalogEntry::descriptor)
-            .collect()
-    }
-
-    fn timing_method(&self) -> TimingMethod {
-        Category::timing_method(self)
-    }
-
-    fn warm_peaks(&self, problem_ids: &[String]) -> usize {
-        let mut seen = HashSet::new();
-        for problem in Category::problems(self) {
-            if !problem_ids.contains(&problem.id) {
-                continue;
-            }
-            let Some(work) = Category::work(self, &problem.value) else {
-                continue;
-            };
-            for (_, amount, ceiling) in work.declared_resources(Category::timing_method(self)) {
-                if seen.insert(ceiling) {
-                    match ceiling {
-                        Ceiling::Probe(key) => peak_per_s(key),
-                        Ceiling::Curve(access) => curve_ceiling(access, amount),
-                    };
-                }
-            }
-        }
-        seen.len()
-    }
-
-    fn run(
-        &self,
-        strategy_id: &str,
-        problem_id: &str,
-        num_samples: usize,
-    ) -> Result<RunSamples, String> {
-        let problems = Category::problems(self);
-        let problem = problems
-            .iter()
-            .find(|e| e.id == problem_id)
-            .ok_or_else(|| format!("unknown problem: {problem_id}"))?;
-        let strategies = Category::strategies(self);
-        let strategy = strategies
-            .iter()
-            .find(|e| e.id == strategy_id)
-            .ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
-        let samples = Category::bench(self, &strategy.value, &problem.value, num_samples)?;
-        Ok(match Category::work(self, &problem.value) {
-            Some(work) => score(samples, &work, Category::timing_method(self)),
-            None => samples,
-        })
-    }
-
-    fn kernel_result(
-        &self,
-        strategy_id: &str,
-        problem_id: &str,
-        seed_lhs: u64,
-        seed_rhs: u64,
-    ) -> Option<Result<HostData, String>> {
-        let correctness = Category::correctness(self)?;
-        let problems = Category::problems(self);
-        let problem = match problems.iter().find(|e| e.id == problem_id) {
-            Some(p) => p,
-            None => return Some(Err(format!("unknown problem: {problem_id}"))),
-        };
-        let strategies = Category::strategies(self);
-        let strategy = match strategies.iter().find(|e| e.id == strategy_id) {
-            Some(s) => s,
-            None => return Some(Err(format!("unknown strategy: {strategy_id}"))),
-        };
-        Some(correctness.kernel_result(&strategy.value, &problem.value, &[seed_lhs, seed_rhs]))
-    }
-
-    fn reference_result(
-        &self,
-        problem_id: &str,
-        seed_lhs: u64,
-        seed_rhs: u64,
-        progress: Option<&Progress>,
-    ) -> Option<Result<HostData, String>> {
-        let correctness = Category::correctness(self)?;
-        let problems = Category::problems(self);
-        let problem = match problems.iter().find(|e| e.id == problem_id) {
-            Some(p) => p,
-            None => return Some(Err(format!("unknown problem: {problem_id}"))),
-        };
-        Some(correctness.reference_result(&problem.value, &[seed_lhs, seed_rhs], progress))
-    }
 }
 
 #[cfg(test)]
