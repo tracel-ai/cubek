@@ -8,8 +8,7 @@
 use cubecl::{prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataVec, Progress, StridedLayout, TestInput,
-    launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataVec, KernelResultError, Progress, StridedLayout, TestInput,
 };
 
 use crate::{
@@ -29,7 +28,7 @@ pub fn strategy_result(
     strategy: Strategy,
     seed_lhs: u64,
     seed_rhs: u64,
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     produce_with(
         client,
         problem,
@@ -69,7 +68,7 @@ pub(crate) fn produce_with<F>(
     seed_lhs: u64,
     seed_rhs: u64,
     launch: F,
-) -> Result<HostData, String>
+) -> Result<HostData, KernelResultError>
 where
     F: FnOnce(
         &Client,
@@ -88,12 +87,17 @@ where
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
-        launch(c, lhs_handle, rhs_handle, out_handle, &mut dtypes).into()
-    });
+    let outcome = match launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes) {
+        Ok(()) => ExecutionOutcome::of_outputs(&client, &[&out.handle]),
+        #[cfg(feature = "tiled")]
+        Err(MatmulSetupError::Broken(broken)) => return Err(KernelResultError::Refused(broken)),
+        Err(error) => ExecutionOutcome::CompileError(format!("Test did not run: {error}")),
+    };
 
     match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
+        ExecutionOutcome::CompileError(e) => {
+            Err(KernelResultError::NotRun(format!("compile error: {e}")))
+        }
         ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
             &client,
             out,

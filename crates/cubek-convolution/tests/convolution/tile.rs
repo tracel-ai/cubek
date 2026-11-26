@@ -13,9 +13,10 @@ use cubek_convolution::kernels::tiled::{
     ConvDecline, ConvRoutineKind, CubeStagedConvCandidate, CubeStagedConvSettings,
 };
 use cubek_convolution::{ConvolutionArgs, ConvolutionInputs, Strategy, launch_ref};
+use cubek_matmul::definition::{MatmulAvailabilityError, MatmulSetupError};
 use cubek_std::routine::ROUTINE_LISTS_NO_SETTING;
 use cubek_std::{Hardware, InputBinding};
-use cubek_test_utils::{HostData, HostDataType, ScopeUnderTest};
+use cubek_test_utils::{HostData, HostDataType, ScopeChecker};
 
 use crate::convolution::{
     ByStrategy, Conv, ConvCase, ConvRoutine, ConvTensors, Convolves, Declines, F16, F32, Pass,
@@ -123,24 +124,30 @@ enum Accepts {
 }
 
 impl Accepts {
-    fn covers(self, message: &str) -> bool {
+    fn covers(self, error: &ConvSetupError) -> bool {
+        let message = format!("{error:?}");
         let states = |refusal| message.contains(why(refusal));
         match self {
             Self::Instruction => {
                 states(ConvDecline::InstructionUnoffered) || states(ConvDecline::RowsNotPicked)
             }
-            Self::Listed => Self::Instruction.covers(message) || Self::listed_alone(message),
+            Self::Listed => Self::Instruction.covers(error) || Self::listed_alone(error),
             Self::Unlisted => {
-                Self::Instruction.covers(message) || message.contains(why(ROUTINE_LISTS_NO_SETTING))
+                Self::Instruction.covers(error) || message.contains(why(ROUTINE_LISTS_NO_SETTING))
             }
         }
     }
 
     /// The refusals only a listed setting meets: a holder other than a plane, and a stage past
     /// the device's shared memory.
-    fn listed_alone(message: &str) -> bool {
-        message.contains(why(ConvDecline::WgmmaUnserved))
-            || message.contains("SharedMemoryPastDevice")
+    fn listed_alone(error: &ConvSetupError) -> bool {
+        format!("{error:?}").contains(why(ConvDecline::WgmmaUnserved))
+            || matches!(
+                error,
+                ConvSetupError::Matmul(MatmulSetupError::Unavailable(
+                    MatmulAvailabilityError::SharedMemoryTooBig { .. }
+                ))
+            )
     }
 }
 
@@ -172,7 +179,7 @@ impl<const N: usize> ConvRoutine<N> for Tile {
         );
         launched.inspect_err(|error| {
             assert!(
-                self.accepts.covers(&format!("{error:?}")),
+                self.accepts.covers(error),
                 "a setting that serves this problem refused it: {error:?}"
             )
         })

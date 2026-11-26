@@ -64,6 +64,30 @@ pub enum ValidationResult {
     Skipped(String),
 }
 
+/// Why a kernel gave no result to check against its reference.
+#[derive(Debug)]
+pub enum KernelResultError {
+    /// Its routine refused the problem for this reason.
+    Refused(Decline),
+    /// It did not run for the reason given: it did not compile, or its inputs could not be built.
+    NotRun(String),
+}
+
+impl Display for KernelResultError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Refused(why) => write!(f, "declined: {why}"),
+            Self::NotRun(why) => f.write_str(why),
+        }
+    }
+}
+
+impl From<String> for KernelResultError {
+    fn from(why: String) -> Self {
+        Self::NotRun(why)
+    }
+}
+
 #[derive(Debug)]
 /// The overall outcome of a test, combining execution and validation.
 /// Either the kernel was validated or failed to compile.
@@ -82,6 +106,15 @@ impl TestOutcome {
         match why.is_broken() {
             true => TestOutcome::Validated(ValidationResult::Fail(reason)),
             false => TestOutcome::Validated(ValidationResult::Skipped(reason)),
+        }
+    }
+
+    /// The outcome of a check of `case` whose kernel gave no result: [`refused`](Self::refused)
+    /// for a refusal, else a compile error.
+    pub fn unrun(case: &impl Debug, error: KernelResultError) -> Self {
+        match error {
+            KernelResultError::Refused(why) => Self::refused(case, &why),
+            KernelResultError::NotRun(why) => TestOutcome::CompileError(why),
         }
     }
 

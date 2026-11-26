@@ -12,8 +12,8 @@ use cubecl::{
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulSetupError};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
-    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, KernelResultError, Progress,
+    StridedLayout, TestInput, ValidationResult, assert_equals_approx,
 };
 
 use crate::{
@@ -28,18 +28,12 @@ const HOST_HAS_NO_TRANSPOSED: &str = "the host states no transposed forward";
 /// Run `strategy` against `operation` over `spec`'s geometry with seeded operands and return its
 /// output as a [`HostData`]: the forward's activation, the weight gradient or the data gradient.
 ///
-/// # Assumptions
-///
-/// The strategy's routines hold what they prepare.
-///
 /// # Errors
 ///
-/// Why the strategy refused the convolution, or why its launch failed, which a test skips.
-///
-/// # Panics
-///
-/// Where a launch returns a [`MatmulSetupError::Broken`], against its Assumption: a bug, which a
-/// test fails on rather than skips.
+/// [`KernelResultError::Refused`] with the [`Broken`](cubecl::tile::launch::Decline::Broken) a
+/// launch returns where a routine breaks what it prepared, which a test fails on;
+/// [`KernelResultError::NotRun`] where the strategy refused the convolution or its launch failed,
+/// which a test skips.
 pub fn strategy_result(
     client: Client,
     spec: ConvSpec,
@@ -47,11 +41,11 @@ pub fn strategy_result(
     strategy: Strategy,
     dtypes: MatmulElems,
     seeds: [u64; 2],
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     let inputs = seed_inputs(&client, &spec, operation, &dtypes, seeds)?;
     let out_handle = inputs.out.clone();
 
-    let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
+    let launched = {
         let lhs = InputBinding::new(inputs.lhs.clone().binding(), dtypes.lhs_global);
         let rhs = InputBinding::new(inputs.rhs.clone().binding(), dtypes.rhs_global);
         let out = out_handle.clone().binding();
@@ -74,17 +68,20 @@ pub fn strategy_result(
                 in_grad: out,
             },
         };
-        match launch_ref::<2>(&strategy, c, conv_inputs, spec.args, dtypes.clone()) {
-            Ok(()) => ExecutionOutcome::Executed,
-            Err(ConvSetupError::Matmul(MatmulSetupError::Broken(broken))) => {
-                panic!("{strategy:?} broke what it prepared: {broken}")
-            }
-            Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
+        launch_ref::<2>(&strategy, &client, conv_inputs, spec.args, dtypes.clone())
+    };
+    let outcome = match launched {
+        Ok(()) => ExecutionOutcome::of_outputs(&client, &[&out_handle.handle]),
+        Err(ConvSetupError::Matmul(MatmulSetupError::Broken(broken))) => {
+            return Err(KernelResultError::Refused(broken));
         }
-    });
+        Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
+    };
 
     match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
+        ExecutionOutcome::CompileError(e) => {
+            Err(KernelResultError::NotRun(format!("compile error: {e}")))
+        }
         ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
             &client,
             out_handle,

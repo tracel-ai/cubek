@@ -1,5 +1,7 @@
 use cubecl::client::Client;
-use cubek_test_utils::{HostData, Progress, ValidationResult, assert_equals_approx};
+use cubek_test_utils::{
+    HostData, KernelResultError, Progress, ValidationResult, assert_equals_approx,
+};
 
 use crate::eval::benchmarks::benchmark::two_launch_operations;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
@@ -119,10 +121,14 @@ impl cubek_test_utils::Correctness for ReduceVerifier {
         strategy: &ReduceOpStrategy,
         problem: &ReduceProblem,
         seeds: &[u64],
-    ) -> Result<HostData, String> {
+    ) -> Result<HostData, KernelResultError> {
         let client = cubecl::test_device().client();
-        Self::kernel_output(client, strategy, problem, seeded_input(problem, seeds))
-            .map_err(|why| why.to_string())
+        Self::kernel_output(client, strategy, problem, seeded_input(problem, seeds)).map_err(
+            |why| match why {
+                ReduceRunError::Declined(decline) => KernelResultError::Refused(decline),
+                other => KernelResultError::NotRun(other.to_string()),
+            },
+        )
     }
 
     fn reference_result(

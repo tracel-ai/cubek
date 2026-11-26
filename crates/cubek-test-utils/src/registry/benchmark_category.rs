@@ -144,7 +144,11 @@ impl<C: Category> BenchmarkCategory for C {
             Some(s) => s,
             None => return Some(Err(format!("unknown strategy: {strategy_id}"))),
         };
-        Some(correctness.kernel_result(&strategy.value, &problem.value, &[seed_lhs, seed_rhs]))
+        Some(
+            correctness
+                .kernel_result(&strategy.value, &problem.value, &[seed_lhs, seed_rhs])
+                .map_err(|error| error.to_string()),
+        )
     }
 
     fn reference_result(
