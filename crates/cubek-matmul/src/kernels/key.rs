@@ -15,7 +15,9 @@ use crate::kernels::select::problem::{MatmulProblem, OperandKind};
 use cubecl::ir::ElemType;
 use cubecl::tile::Dimension;
 use cubecl::{self as cubecl, AutotuneKey};
-use cubek_microkernel::matmul::{MatmulLayout, MatmulOperand, MatmulOperands, MatmulStoredTile};
+use cubek_microkernel::matmul::{
+    MatmulDimensions, MatmulLayout, MatmulOperand, MatmulOperands, MatmulStoredTile,
+};
 use serde::{Deserialize, Serialize};
 
 use cubecl::zspace::metadata::Metadata;
@@ -203,8 +205,9 @@ impl MatmulTuneKey {
     /// The problem a packed key describes on `hw`: the one the tensors it was read off state
     /// ([`MatmulTensors::problem`](crate::kernels::MatmulTensors::problem)), each packed input
     /// read as its scheme, its layout and its strips say, a float input dense in the key's
-    /// element, the batches merged into the rows. `None` for a key with no packed input, or a
-    /// packed input no read takes as stated.
+    /// element and laid as the key says, the batches merged into the rows. `None` for a key with
+    /// no packed input, a packed input no read takes as stated, or a float input stored in tiles
+    /// ([`OperandKey::float_layout`]).
     pub fn packed_problem(&self, hw: &Hardware) -> Option<MatmulRoutineProblem> {
         if !self.is_packed() {
             return None;
@@ -223,7 +226,14 @@ impl MatmulTuneKey {
             Some(_) => MatmulRoutineProblem::PACKED,
             None => self.elem,
         };
-        Some(MatmulRoutineProblem {
+        let lay =
+            |problem: MatmulRoutineProblem, input: MatmulOperand, key: OperandKey| match packings
+                .get(input)
+            {
+                Some(_) => Some(problem),
+                None => Some(problem.laid(input, key.float_layout(input)?)),
+            };
+        let problem = MatmulRoutineProblem {
             stored_tiles: MatmulOperands {
                 lhs: stored_tile(packings.lhs),
                 rhs: stored_tile(packings.rhs),
@@ -241,7 +251,9 @@ impl MatmulTuneKey {
                 self.elem,
                 packings,
             )
-        })
+        };
+        let problem = lay(problem, MatmulOperand::Lhs, self.lhs)?;
+        lay(problem, MatmulOperand::Rhs, self.rhs)
     }
 
     /// The problem this key describes, as a candidate list prioritizes against it.
@@ -313,6 +325,19 @@ impl OperandKey {
             OperandLayout::Along(_) | OperandLayout::Strided => operand,
         };
         Some(Some(Packing { operand, scheme }))
+    }
+
+    /// How this key lays `input`, a float input: in rows where it is contiguous along the second
+    /// of the dimensions the product names it by, in columns along the first, strided along
+    /// neither. `None` for one stored in tiles, which no dense layout states.
+    pub fn float_layout(self, input: MatmulOperand) -> Option<MatmulLayout> {
+        let [first, second] = input.dims().map(|dim| MatmulDimensions::MNK.of(dim));
+        match self.layout {
+            OperandLayout::Along(dimension) if dimension == second => Some(MatmulLayout::Row),
+            OperandLayout::Along(dimension) if dimension == first => Some(MatmulLayout::Col),
+            OperandLayout::Along(_) | OperandLayout::Tiles(..) => None,
+            OperandLayout::Strided => Some(MatmulLayout::Strided),
+        }
     }
 
     /// A float input contiguous along `dimension`, strided where it names none, batched as
@@ -523,6 +548,31 @@ mod tests {
         assert_eq!(MatmulTuneKey::anchored(65, 8192), 128);
         assert_eq!(MatmulTuneKey::anchored(100_000, 8192), 8192);
         assert_eq!(MatmulTuneKey::anchored(0, 64), 1);
+    }
+
+    /// A float input is laid as its key says: in rows along the second of its dimensions, in
+    /// columns along the first, strided along neither, and stated by no dense layout in tiles.
+    #[test]
+    fn a_float_input_is_laid_as_its_key_says() {
+        let laid = |layout, input| {
+            OperandKey {
+                kind: OperandKind::Float,
+                layout,
+                batching: MatmulBatching::Shared,
+            }
+            .float_layout(input)
+        };
+        let (lhs, rhs) = (MatmulOperand::Lhs, MatmulOperand::Rhs);
+        assert_eq!(laid(OperandLayout::Along(K), lhs), Some(MatmulLayout::Row));
+        assert_eq!(laid(OperandLayout::Along(M), lhs), Some(MatmulLayout::Col));
+        assert_eq!(laid(OperandLayout::Along(N), rhs), Some(MatmulLayout::Row));
+        assert_eq!(laid(OperandLayout::Along(K), rhs), Some(MatmulLayout::Col));
+        assert_eq!(
+            laid(OperandLayout::Strided, lhs),
+            Some(MatmulLayout::Strided)
+        );
+        let tiles = OperandLayout::Tiles(K, (8, 8), TileWords::RowByRow, TileStrips::BackToBack);
+        assert_eq!(laid(tiles, rhs), None);
     }
 
     /// An input broadcast along the batch dims is shared, however many batches the other one

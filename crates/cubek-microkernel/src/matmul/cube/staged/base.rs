@@ -960,26 +960,50 @@ impl Microkernel for CubeStagedMicrokernel {
         staging.readers.lhs = self.readers(MatmulOperand::Lhs, staging.readers.lhs);
         staging.readers.rhs = self.readers(MatmulOperand::Rhs, staging.readers.rhs);
         staging.count(item, &cube_space.space, estimate);
-        self.count_shared(estimate);
+        self.count_shared(item, staging.boxes(&cube_space.space), estimate);
         self.plane.estimate(item, &(), planes, estimate);
     }
 }
 
 impl CubeStagedMicrokernel {
-    /// Set the shared-memory traffic of `estimate`'s staging: the cube writes every stage of its
-    /// box of either input once, and each of its planes reads its own rows of the lhs and columns
-    /// of the rhs, so a box of the lhs is read once for every plane along `N`, and a box of the
-    /// rhs once for every plane along `M`.
-    pub fn count_shared(&self, estimate: &mut KernelEstimate) {
+    /// Set the shared-memory traffic of `estimate`'s staging, its cube walking `boxes` values of
+    /// each input of `item`: the cube writes its box of every input it stages once, as its stages
+    /// hold it, and each of its planes reads its own rows of the lhs and columns of the rhs, so a
+    /// box of the lhs is read once for every plane along `N`, and a box of the rhs once for every
+    /// plane along `M`. An input its planes read where it lies moves nothing through shared
+    /// memory.
+    pub fn count_shared(
+        &self,
+        item: &MatmulWorkItem,
+        boxes: MatmulOperands<u64>,
+        estimate: &mut KernelEstimate,
+    ) {
         let Some(staging) = estimate.staging.as_mut() else {
             return;
         };
-        let [lhs, rhs] =
-            [0, 1].map(|operand| staging.reads.get(operand).map_or(0, |stream| stream.bytes));
+        let lhs = self.stage_bytes(item, MatmulOperand::Lhs, boxes.lhs);
+        let rhs = self.stage_bytes(item, MatmulOperand::Rhs, boxes.rhs);
         let along_m = self.planes.along_m.get() as u64;
         let along_n = self.planes.along_n.get() as u64;
         staging.shared_writes = lhs + rhs;
         staging.shared_reads = along_n * lhs + along_m * rhs;
+    }
+}
+
+impl CubeStagedMicrokernel {
+    /// Bytes its stages hold of `values` values of `input`, an input of `item`: none where it does
+    /// not stage it; at the element its fill decodes them into where it does, without their
+    /// scales; a packed input's words and block scales where it stages them as they are stored, a
+    /// float one's values as bound.
+    fn stage_bytes(&self, item: &MatmulWorkItem, input: MatmulOperand, values: u64) -> u64 {
+        if !self.stages(input) {
+            return 0;
+        }
+        match (self.reads.get(input).staged(), item.packings().get(input)) {
+            (Some(decoded), _) => values * decoded.size() as u64,
+            (None, Some(packing)) => packing.bytes(values as usize) as u64,
+            (None, None) => values * item.elements.get(input).size() as u64,
+        }
     }
 }
 
@@ -1186,6 +1210,106 @@ mod tests {
                 .unwrap();
         let [_, _, (_, k)] = staged.plane.instruction.shape();
         assert_eq!(k, 16);
+    }
+
+    /// An input its planes read where it lies moves nothing through shared memory: a cube staging
+    /// only the rhs, four planes along `N`, counts the rhs's box written once and read by its one
+    /// plane along `M`, and none of the lhs.
+    #[test]
+    fn an_input_read_where_it_lies_counts_no_shared_traffic() {
+        let f16 = ElemType::Float(FloatKind::F16);
+        let item = MatmulWorkItem {
+            elements: MatmulOperands::all(f16),
+            sum: ElemType::Float(FloatKind::F32),
+            layouts: MatmulOperands::all(MatmulLayout::Row),
+            blocks: None,
+            rows: MatmulRows::Tiled,
+            destination: MatmulDestination::Buffer,
+            dimensions: MatmulDimensions::MNK,
+            reading: MatmulReading::AsStored,
+        };
+        let staged = CubeStagedMicrokernel::best(
+            &offering_f16(),
+            &item,
+            &CubeStagedMicrokernelSettings::DEFAULT,
+        )
+        .unwrap();
+        let rhs_only = CubeStagedMicrokernel {
+            staged: StagedOperands::Rhs,
+            planes: MatmulPlaneLayout::new(1, 4),
+            ..staged
+        };
+        let mut estimate = staged_estimate();
+        rhs_only.count_shared(&item, BOXES, &mut estimate);
+        let staging = estimate.staging.unwrap();
+        let rhs = BOXES.rhs * f16.size() as u64;
+        assert_eq!(staging.shared_writes, rhs);
+        assert_eq!(staging.shared_reads, rhs);
+    }
+
+    /// A packed input its fill decodes is held in its stages at the element it decodes into, not
+    /// as its words: an NVFP4 rhs decoded to `f16` moves two bytes a value through shared memory.
+    #[test]
+    fn a_decoded_stage_counts_its_decoded_bytes() {
+        let f16 = ElemType::Float(FloatKind::F16);
+        let item = decoding_nvfp4(None, f16, ElemType::Float(FloatKind::F32));
+        let staged = CubeStagedMicrokernel::best(
+            &offering_f16(),
+            &item,
+            &CubeStagedMicrokernelSettings::DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(staged.decoded_stage(), Some(f16));
+        let mut estimate = staged_estimate();
+        staged.count_shared(&item, BOXES, &mut estimate);
+        let bytes = (BOXES.lhs + BOXES.rhs) * f16.size() as u64;
+        assert_eq!(estimate.staging.unwrap().shared_writes, bytes);
+    }
+
+    /// Values of each operand one cube walks in the shared-traffic tests.
+    const BOXES: MatmulOperands<u64> = MatmulOperands {
+        lhs: 128 * 4096,
+        rhs: 4096 * 256,
+        out: 128 * 256,
+    };
+
+    /// An H100 offering the `16×16×16` instruction for `f16`, summed in `f32`.
+    fn offering_f16() -> Hardware {
+        let f16 = ElemType::Float(FloatKind::F16);
+        devices::offering_cmma(
+            devices::h100(),
+            [MmaConfig {
+                a_type: f16,
+                b_type: f16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 16,
+                n: 16,
+                k: 16,
+            }],
+        )
+    }
+
+    /// An estimate whose staging moves nothing through shared memory yet.
+    fn staged_estimate() -> KernelEstimate {
+        KernelEstimate {
+            cubes: Some(1),
+            cube: cubek_std::microkernel::CubeFootprint {
+                units: 128,
+                shared_memory: 0,
+            },
+            demand: None,
+            staging: Some(cubek_std::microkernel::CubeStaging {
+                operations: 0.0,
+                reads: Vec::new(),
+                writes: Vec::new(),
+                stages: 1,
+                stages_in_flight: 1,
+                drain_atomics: 0,
+                shared_reads: 0,
+                shared_writes: 0,
+            }),
+            work: None,
+        }
     }
 
     fn nvfp4() -> Option<Packing> {

@@ -336,7 +336,9 @@ impl Microkernel for CubeAttentionMicrokernel {
 impl CubeAttentionMicrokernel {
     /// Set the shared-memory traffic of `estimate`'s staging where the cube stages its keys and
     /// values: it writes every one of them once, and each group of planes holding different rows
-    /// reads all of them. Planes reading their own from global memory stage nothing.
+    /// reads all of them. Where it stages its query too, it writes its box of it once before the
+    /// walk, and every plane reads its own rows of it on every stage. Planes reading their own
+    /// keys from global memory stage nothing.
     fn count_shared(&self, estimate: &mut KernelEstimate) {
         let Some(staging) = estimate.staging.as_mut() else {
             return;
@@ -345,8 +347,13 @@ impl CubeAttentionMicrokernel {
             return;
         }
         let staged: u64 = staging.reads[1..].iter().map(|stream| stream.bytes).sum();
-        staging.shared_writes = staged;
-        staging.shared_reads = self.layout().row_groups() as u64 * staged;
+        let query = match self.plane.stages_query() {
+            true => staging.reads[0].bytes,
+            false => 0,
+        };
+        let query_reads = staging.stages * self.layout().planes_along_keys as u64 * query;
+        staging.shared_writes = staged + query;
+        staging.shared_reads = self.layout().row_groups() as u64 * staged + query_reads;
     }
 }
 

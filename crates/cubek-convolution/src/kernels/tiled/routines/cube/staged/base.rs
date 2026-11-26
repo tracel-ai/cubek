@@ -52,11 +52,14 @@ impl Routine for CubeStagedConvRoutine {
                 .partitioning
                 .staging(&problem.elements, blueprint.microkernel.ring),
         );
-        blueprint.microkernel.count_shared(estimate);
+        let item = problem.work_item();
+        blueprint
+            .microkernel
+            .count_shared(&item, blueprint.partitioning.boxes(), estimate);
         blueprint
             .microkernel
             .plane
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
+            .estimate(&item, &(), grid.planes(), estimate);
     }
 
     /// The cube microkernel over the instruction `settings` ask for, a cube a box of the output,

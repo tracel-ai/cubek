@@ -1639,6 +1639,73 @@ mod base {
         }
         assert!(estimated > 0, "no packed setting prepared");
     }
+
+    /// A packed input its stages decode moves through shared memory as its stages hold it: an
+    /// NVFP4 weight beside an `f16` activation is written into its stages at two bytes a value,
+    /// not as its words and scales.
+    #[test]
+    fn a_decoded_input_is_written_into_its_stages_decoded() {
+        use cubek_std::layout::stored::{Operand, Packing};
+        use cubek_std::layout::tile_order;
+        use cubek_std::matmul_dimensions::{MI, NI};
+        use cubek_std::microkernel::KernelEstimate;
+
+        let f16 = ElemType::Float(FloatKind::F16);
+        // The M2 as Metal reports it: its simdgroup matrix, `8 × 8 × 8` over `f16` into `f32`.
+        let hw = devices::offering_cmma(
+            devices::m2_pro(),
+            [MmaConfig {
+                a_type: f16,
+                b_type: f16,
+                cd_type: ElemType::Float(FloatKind::F32),
+                m: 8,
+                n: 8,
+                k: 8,
+            }],
+        );
+        let scheme = tile_order::nvfp4_scheme();
+        let weight = Packing {
+            operand: Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 is one block along k"),
+            scheme,
+        };
+        let k = 1024;
+        let problem = MatmulRoutineProblem::packed(
+            128,
+            256,
+            k,
+            f16,
+            MatmulOperands {
+                lhs: None,
+                rhs: Some(weight),
+                out: None,
+            },
+        );
+        let mut estimated = 0;
+        for settings in CubeStagedMatmulRoutine.packed_settings(&hw) {
+            let Ok((blueprint, grid)) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
+            else {
+                continue;
+            };
+            let cube = blueprint.partitioning.cube_space();
+            let microkernel = blueprint.microkernel;
+            let staged = |input, extent: usize| match microkernel.stages(input) {
+                true => (extent * k * f16.size()) as u64,
+                false => 0,
+            };
+            let mut estimate = KernelEstimate::from(&grid);
+            CubeStagedMatmulRoutine::estimate(&problem, &blueprint, &grid, &mut estimate);
+            let staging = estimate.staging.expect("a staged estimate");
+            assert_eq!(
+                staging.shared_writes,
+                staged(MatmulOperand::Lhs, cube.extent(MI))
+                    + staged(MatmulOperand::Rhs, cube.extent(NI)),
+                "{settings}"
+            );
+            estimated += 1;
+        }
+        assert!(estimated > 0, "no packed setting prepared");
+    }
+
     /// A stage decoding an MXFP4 weight holds the steps its settings count, each one 32-wide
     /// block of `K`, the weight's finest read: four are a word of its scales, 128 of `K`, which
     /// on an RTX PRO 6000 the box with a second stage in flight that leads NVFP4 at a prompt's

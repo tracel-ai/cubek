@@ -61,30 +61,45 @@ impl MatmulStagingCount {
     /// box of the output as many times as the output has readers. A box the problem's edge cuts
     /// short is still read, computed and written whole, since that is what its cube spends.
     pub fn count(&self, item: &MatmulWorkItem, cube_space: &Space, estimate: &mut KernelEstimate) {
-        let (rows, columns) = (cube_space.extent(M) as u64, cube_space.extent(N) as u64);
-        let stages = cube_space.extent(K).div_ceil(self.depth.max(1)) as u64;
-        let depth = stages * self.depth as u64;
-        let stream = |operand: MatmulOperand, elements: u64| {
+        let boxes = self.boxes(cube_space);
+        let stream = |operand: MatmulOperand| {
             let size = item.elements.get(operand).size();
             GlobalStream {
-                bytes: self.readers.get(operand) * elements * size as u64,
+                bytes: self.readers.get(operand) * boxes.get(operand) * size as u64,
                 run_bytes: self.runs.get(operand) * size,
             }
         };
-        let reads = vec![
-            stream(MatmulOperand::Lhs, rows * depth),
-            stream(MatmulOperand::Rhs, depth * columns),
-        ];
-        let writes = vec![stream(MatmulOperand::Out, rows * columns)];
+        let reads = vec![stream(MatmulOperand::Lhs), stream(MatmulOperand::Rhs)];
+        let writes = vec![stream(MatmulOperand::Out)];
         estimate.staging = Some(CubeStaging {
             shared_reads: 0,
             shared_writes: 0,
-            operations: 2.0 * (rows * columns * depth) as f64,
+            operations: 2.0 * (boxes.lhs * cube_space.extent(N) as u64) as f64,
             reads,
             writes,
-            stages,
+            stages: self.stages(cube_space),
             stages_in_flight: self.stages_in_flight,
             drain_atomics: self.drain_atomics,
         });
+    }
+
+    /// Values of each operand one cube walks over the space `cube_space`, each read once: its box's
+    /// rows of the lhs and columns of the rhs over the `K` its stages cover, and its box of the
+    /// output.
+    pub fn boxes(&self, cube_space: &Space) -> MatmulOperands<u64> {
+        let (rows, columns) = (cube_space.extent(M) as u64, cube_space.extent(N) as u64);
+        let depth = self.stages(cube_space) * self.depth as u64;
+        MatmulOperands {
+            lhs: rows * depth,
+            rhs: depth * columns,
+            out: rows * columns,
+        }
+    }
+}
+
+impl MatmulStagingCount {
+    /// Stages one cube walks over the `K` of the space `cube_space`.
+    fn stages(&self, cube_space: &Space) -> u64 {
+        cube_space.extent(K).div_ceil(self.depth.max(1)) as u64
     }
 }
