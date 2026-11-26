@@ -204,7 +204,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
         out_scale,
         &global,
         scales_layout,
-        scheme.scale_dtype(),
+        scheme.finest().dtype,
     );
 
     output.write(
@@ -247,7 +247,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
         out_scale,
         &global,
         scales_layout,
-        scheme.scale_dtype(),
+        scheme.finest().dtype,
     );
 
     if input.vector_size().comptime() == num_quants {
@@ -295,7 +295,7 @@ pub fn launch_ref(
     check_scale_bindings(scheme, scales.len());
     check_scale_bindings(scheme, out_scales.len());
 
-    let scale_dtype = ElemType::from_scale_dtype(scheme.scale_dtype());
+    let scale_dtype = ElemType::from_scale_dtype(scheme.finest().dtype);
     let (scale, global) = split_levels(scales);
     let (out_scale, out_global) = split_levels(out_scales);
 

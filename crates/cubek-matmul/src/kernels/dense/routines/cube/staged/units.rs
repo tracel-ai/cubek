@@ -6,6 +6,7 @@ use crate::kernels::{
 };
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::CubeOrder;
+use cubecl::tile::stage::StagedOperands;
 use cubecl::tile::{Launcher, StageStorage, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_microkernel::matmul::MatmulRowsKind;
@@ -156,7 +157,8 @@ impl CubeStagedMatmulRoutine {
     /// steps tall the float routine races, one stage at a time, with a second in flight, and one
     /// stage with the next held in registers while it is contracted, each
     /// at every count of steps of `K` a stage holds ([`PACKED_STAGE_STEPS`](Self::PACKED_STAGE_STEPS)),
-    /// then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
+    /// the same boxes one stage at a time with the lhs read where it lies, on a device whose units
+    /// load the 8-bit values they contract themselves, then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
     /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
     /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
     /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
@@ -185,8 +187,16 @@ impl CubeStagedMatmulRoutine {
             .into_iter()
             .map(|settings| settings.microkernel);
         let stored = Self::STORED.into_iter().filter(|_| !hw.unit_async_copy());
+        let lhs_in_place = Self::PACKED_BOXES
+            .map(|(steps, planes)| {
+                CubeStagedMicrokernelSettings::in_steps(steps, planes, StageRing::SINGLE)
+                    .staging(StagedOperands::Rhs)
+            })
+            .into_iter()
+            .flat_map(|settings| Self::PACKED_STAGE_STEPS.map(|steps| settings.stage_steps(steps)))
+            .filter(|_| hw.contracts_fp8_in_registers());
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
-        for candidate in boxed.chain(one_step).chain(stored) {
+        for candidate in boxed.chain(lhs_in_place).chain(one_step).chain(stored) {
             let merges = candidate.planes_along_k.get() > 1;
             if (!merges || hw.shared_f32_atomic_add()) && !settings.contains(&candidate) {
                 settings.push(candidate);

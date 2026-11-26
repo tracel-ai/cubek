@@ -56,10 +56,7 @@ impl RoundTrip {
     /// `expected` exactly, in `f32`: the codec's answer and nothing else.
     pub(crate) fn at_unit_scale(scheme: QuantScheme, input: &[f32], expected: &[f32]) -> Self {
         Self {
-            global: scheme
-                .tensor_scale()
-                .filter(|_| scheme.block_scale().is_some())
-                .map(|_| 1.0),
+            global: scheme.levels().nth(1).map(|_| 1.0),
             scheme,
             shape: shape![1, input.len()],
             input: input.to_vec(),

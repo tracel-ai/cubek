@@ -58,8 +58,8 @@ fn round_trip(scheme: &QuantScheme, data: &[f32]) -> Vec<f32> {
     // One, so the level composes without moving anything: a two-level scheme that lost the factor
     // would still be caught by `two_level.rs`, and here it would only blur what is being asked.
     let global = scheme
-        .tensor_scale()
-        .filter(|_| scheme.block_scale().is_some())
+        .levels()
+        .nth(1)
         .map(|_| f32_tensor(&client, &[1.0], shape![1]));
 
     let (values, scales, out_global) =

@@ -1,7 +1,7 @@
 use crate::kernels::tensor::{PackedTensor, PlainTensor};
 use cubecl::tile::launch::{Bound, Decline, Delivery};
 use cubecl::tile::{Launcher, TileTensorLaunch};
-use cubek_std::layout::stored::BlockScales;
+use cubek_std::layout::stored::{BlockScales, OuterScale};
 use cubek_std::matmul_dimensions::{K, N};
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
@@ -68,7 +68,13 @@ impl MatmulDequantizeBinding {
             .vectorize(operand.read(lined))
             .build()
             .or_broken(ADMITTED_PLAN_RUNS)?;
-        let packed = packed.bind(&launcher, width, BlockScales::Fields, Delivery::SyncPerUnit)?;
+        let packed = packed.bind(
+            &launcher,
+            width,
+            BlockScales::Fields,
+            OuterScale::Kept,
+            Delivery::SyncPerUnit,
+        )?;
         Ok(Self {
             launcher,
             packed,

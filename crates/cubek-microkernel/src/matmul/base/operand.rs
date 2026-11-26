@@ -3,6 +3,7 @@ use crate::matmul::{
 };
 use cubecl::ir::FloatKind;
 use cubecl::tile::launch::Decline;
+use cubecl::tile::stage::StagedOperands;
 use cubecl::tile::{BaseRegion, Dimension, Space, Tile, VectorRegion};
 use cubecl::{self as cubecl, cube, ir::ElemType, prelude::*};
 use cubek_std::layout::BindingOrder;
@@ -33,6 +34,22 @@ impl MatmulOperand {
             Self::Lhs => [MatmulDim::M, MatmulDim::K],
             Self::Rhs => [MatmulDim::K, MatmulDim::N],
             Self::Out => [MatmulDim::M, MatmulDim::N],
+        }
+    }
+
+    /// The inputs `staged` names.
+    pub fn staged(staged: StagedOperands) -> impl Iterator<Item = Self> {
+        Self::INPUTS
+            .into_iter()
+            .filter(move |operand| operand.staged_by(staged))
+    }
+
+    /// Whether a walk staging the inputs `staged` names stages it.
+    pub fn staged_by(self, staged: StagedOperands) -> bool {
+        match self {
+            Self::Lhs => staged.lhs(),
+            Self::Rhs => staged.rhs(),
+            Self::Out => false,
         }
     }
 
@@ -278,5 +295,21 @@ impl MatmulRead {
             MatmulRead::AsBound => operand.clone(),
             MatmulRead::Dequantized(element) => sum.dequantized(operand, element),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MatmulOperand;
+    use cubecl::tile::stage::StagedOperands;
+
+    #[test]
+    fn staging_the_rhs_leaves_the_lhs_where_it_lies() {
+        assert!(!MatmulOperand::Lhs.staged_by(StagedOperands::Rhs));
+    }
+
+    #[test]
+    fn the_output_is_never_staged_as_an_input() {
+        assert!(!MatmulOperand::Out.staged_by(StagedOperands::Both));
     }
 }

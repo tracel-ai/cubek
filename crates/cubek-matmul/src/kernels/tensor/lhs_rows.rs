@@ -3,7 +3,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Bound, Decline, Delivery};
 use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::row_store::{ROWS, RowStore, WIDTH};
-use cubek_std::layout::stored::BlockScales;
+use cubek_std::layout::stored::{BlockScales, OuterScale};
 use cubek_std::matmul_dimensions::{K, M};
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
@@ -129,6 +129,7 @@ impl PackedRows {
             launcher,
             self.packed.scheme().num_quants().max(width),
             BlockScales::Fields,
+            OuterScale::Kept,
             Delivery::SyncPerUnit,
         )
     }

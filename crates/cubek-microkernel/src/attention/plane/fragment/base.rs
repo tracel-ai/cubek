@@ -11,6 +11,7 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Space, StageStorage};
 use cubek_std::Hardware;
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::microkernel::{
     ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, StageLayout, UnitWork,
 };
@@ -360,6 +361,11 @@ impl AttentionMicrokernel for PlaneFragmentAttentionMicrokernel {
             key: self.score.orders().rhs.into(),
             value: self.settings.value_lines,
         }
+    }
+
+    /// Its output's sum's.
+    fn values_outer_scale(&self) -> OuterScale {
+        self.value.outer_scale()
     }
 
     /// Its operands in the element its instruction reads them in, a query held in registers as it

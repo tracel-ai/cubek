@@ -25,6 +25,7 @@ use cubek_matmul::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
 use cubek_microkernel::attention::{
     AttentionMicrokernel, AttentionOperand, AttentionOperands, B, CacheLines, D, DV, G, KV, Q, S,
 };
+use cubek_std::layout::stored::OuterScale;
 use cubek_std::routine::Grid;
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
@@ -907,16 +908,20 @@ impl AttentionTensors {
                     width: usize,
                     operand: AttentionOperand,
                     scale: Option<&PlainTensor>,
-                    head: Dimension| {
+                    head: Dimension,
+                    outer: OuterScale| {
             let arg = match operand.lines(order) {
                 CacheLines::AsStored => read_side(tensor, stored, width, operand)?,
                 CacheLines::AlongKeys => {
                     read_side(&tensor.transposed(), along_keys, width, operand)?
                 }
             };
-            let arg = match scale {
-                Some(scale) => arg.scales(per_tensor(scale, head)),
-                None => arg,
+            let arg = match (scale, outer) {
+                (Some(scale), OuterScale::Factored) => arg.scales(per_tensor(scale, head)),
+                (Some(scale), OuterScale::Kept) => arg
+                    .scales(per_tensor(scale, head))
+                    .scales(TileTensorLaunch::one()),
+                (None, OuterScale::Factored | OuterScale::Kept) => arg,
             };
             match &self.kv.pages {
                 Some(pages) => arg
@@ -934,6 +939,7 @@ impl AttentionTensors {
             AttentionOperand::Key,
             scales.key.as_ref(),
             D,
+            OuterScale::Factored,
         )?;
         let value = bind(
             value,
@@ -943,6 +949,7 @@ impl AttentionTensors {
             AttentionOperand::Value,
             scales.value.as_ref(),
             DV,
+            blueprint.microkernel.values_outer_scale(),
         )?;
         Ok(AttentionCacheBinding::Tiles { key, value })
     }

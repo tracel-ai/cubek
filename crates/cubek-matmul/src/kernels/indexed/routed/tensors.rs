@@ -6,8 +6,8 @@ use crate::kernels::indexed::stack::{SlabDimension, SlabView};
 use crate::kernels::select::problem::OperandKind;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
-    MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulRoutine,
-    MatmulTensors,
+    MATMUL_SCALED_BESIDE_FLOAT, MATMUL_SLABS_TAKE_NO_STORED_TILES, MatmulIndex, MatmulIndexTable,
+    MatmulInputs, MatmulRoutine, MatmulTensors,
 };
 use crate::kernels::{MatmulTuneKey, OperandLayout};
 use cubecl::client::Client;
@@ -109,6 +109,7 @@ impl RoutedMatmulTensors {
         }
         let rhs = match rhs {
             StoredTensor::Packed(packed) => StoredTensor::Packed(packed),
+            StoredTensor::Scaled(_) => return Err(MATMUL_SCALED_BESIDE_FLOAT),
             StoredTensor::Plain(rhs) => {
                 let (_, rhs) = MatmulInputs::new(client, lhs.clone(), rhs)?.into_parts();
                 StoredTensor::Plain(SlabView::readable(client, rhs))

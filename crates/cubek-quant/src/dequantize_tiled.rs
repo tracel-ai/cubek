@@ -8,7 +8,7 @@ use cubecl::tile::{
 use cubecl::{
     ir::ElemType,
     prelude::*,
-    quant::scheme::{QuantScheme, QuantStore, ScaleDtype},
+    quant::scheme::{BlockSize, QuantScheme, QuantStore, ScaleDtype},
 };
 use cubek_std::matmul_dimensions::{M, N};
 
@@ -83,10 +83,10 @@ pub fn launch_ref(
     if scheme.store != QuantStore::Native {
         return Err(DEQUANTIZE_TILED_STORE_NOT_NATIVE);
     }
-    if scheme.num_levels() != 1 || scheme.block_size().is_some() {
+    if scheme.levels().count() != 1 || scheme.finest().size != BlockSize::TENSOR {
         return Err(DEQUANTIZE_TILED_SCALE_NOT_PER_TENSOR);
     }
-    if scheme.scale_dtype() != ScaleDtype::F32 {
+    if scheme.finest().dtype != ScaleDtype::F32 {
         return Err(DEQUANTIZE_TILED_SCALE_NOT_F32);
     }
     if input.shape.len() != 2 || output.shape.len() != 2 {

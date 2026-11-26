@@ -7,10 +7,10 @@ use cubek_std::plan::{Declined, Step};
 
 /// Every packed input decoded into a float one of the call's element by this crate's decode
 /// ([`PlaneDequantizeMatmulRoutine`]), or by the framework's dequantize where the decode declines
-/// it. A float input passes through as it is.
+/// it, and every scaled input dequantized by the framework. A float input passes through as it is.
 pub struct Decoded;
 
-/// Every packed input dequantized by the framework into a float one of the call's element: what a
+/// Every packed or scaled input dequantized by the framework into a float one of the call's element: what a
 /// scheme no kernel here reads goes through. A float input passes through as it is.
 pub struct FrameworkDequantized;
 
@@ -40,14 +40,10 @@ impl Decoded {
         call: &MatmulCall,
         input: &MatmulCallInput,
     ) -> Result<MatmulCallInput, Declined> {
-        let StoredTensor::Packed(packed) = &input.tensor else {
-            return Ok(input.clone());
-        };
-        match decode(call, packed) {
-            Ok(decoded) => Ok(decoded),
-            Err(why) if why.is_broken() => Err(why.to_string()),
-            Err(why) if packed.words().is_tiled() => Err(format!("{TILED_INPUT_UNDECODED}: {why}")),
-            Err(_) => framework_dequantized(input).map_err(|why| why.to_string()),
+        match &input.tensor {
+            StoredTensor::Plain(_) => Ok(input.clone()),
+            StoredTensor::Scaled(_) => framework_dequantized(input).map_err(|why| why.to_string()),
+            StoredTensor::Packed(packed) => decoded(call, input, packed),
         }
         .map_err(|why| Declined {
             plan: self.name(),
@@ -77,10 +73,11 @@ impl Step<MatmulCall> for FrameworkDequantized {
     fn apply(&self, call: &MatmulCall) -> Result<MatmulCall, Declined> {
         let dequantized = |input: &MatmulCallInput| match &input.tensor {
             StoredTensor::Plain(_) => Ok(input.clone()),
-            StoredTensor::Packed(_) => framework_dequantized(input).map_err(|why| Declined {
-                plan: self.name(),
-                why: why.to_string(),
-            }),
+            StoredTensor::Scaled(_) | StoredTensor::Packed(_) => framework_dequantized(input)
+                .map_err(|why| Declined {
+                    plan: self.name(),
+                    why: why.to_string(),
+                }),
         };
         Ok(MatmulCall {
             lhs: dequantized(&call.lhs)?,
@@ -91,6 +88,21 @@ impl Step<MatmulCall> for FrameworkDequantized {
 
     fn name(&self) -> String {
         "framework-dequantized".to_string()
+    }
+}
+
+/// `packed`, `input`'s words, decoded by this crate's decode, or by the framework's dequantize
+/// where the decode declines an input not stored in tiles.
+fn decoded(
+    call: &MatmulCall,
+    input: &MatmulCallInput,
+    packed: &PackedTensor,
+) -> Result<MatmulCallInput, String> {
+    match decode(call, packed) {
+        Ok(decoded) => Ok(decoded),
+        Err(why) if why.is_broken() => Err(why.to_string()),
+        Err(why) if packed.words().is_tiled() => Err(format!("{TILED_INPUT_UNDECODED}: {why}")),
+        Err(_) => framework_dequantized(input).map_err(|why| why.to_string()),
     }
 }
 

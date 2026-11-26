@@ -13,7 +13,9 @@
 //! to whole numbers first would land on the integer grid however faithful the conversion after it.
 
 use cubecl::{prelude::*, zspace::shape};
-use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubek_quant::scheme::{
+    BlockExtent, BlockSize, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+};
 
 use super::harness::{dequantize, f32_tensor, quantize};
 use super::{Needs, Quantized, RoundTrip};
@@ -74,6 +76,49 @@ fn e5m2_code_points_survive_the_round_trip() {
     let data = [0.5f32, 1.5, 3.0, -0.5, -1.5, 0.0625, 49152.0, -49152.0];
     let packed = scheme(QuantValue::E5M2, QuantStore::PackedU32(0));
     Quantized.check([RoundTrip::at_unit_scale(packed, &data, &data)]);
+}
+
+/// `ROWS` rows of `COLUMNS` values under the blocks `extents` reach, `block_of` the one a value is
+/// in of its `blocks`: each value a code times its block's scale, so the round trip is exact but for
+/// the division.
+fn under_blocks(
+    extents: [BlockExtent; 2],
+    blocks: usize,
+    block_of: fn(usize) -> usize,
+) -> RoundTrip {
+    let scale = |block: usize| 1.0 + block as f32;
+    let input: Vec<f32> = (0..ROWS * COLUMNS)
+        .map(|at| ((at % 7) as f32 - 3.0) * scale(block_of(at)))
+        .collect();
+    RoundTrip {
+        scheme: QuantScheme::fp8_per_row().per_block(
+            BlockSize::with_rest(&extents, BlockExtent::VALUE),
+            ScaleDtype::F32,
+        ),
+        shape: shape![ROWS, COLUMNS],
+        expected: input.clone(),
+        input,
+        scales: (0..blocks).map(scale).collect(),
+        global: None,
+        out: f32::elem_type_native(),
+        tolerance: 1e-5,
+        needs: Needs::Nothing,
+    }
+}
+
+const ROWS: usize = 3;
+const COLUMNS: usize = 40;
+
+#[test]
+fn a_scale_covers_the_whole_last_axis() {
+    let row = [BlockExtent::VALUE, BlockExtent::WholeAxis];
+    Quantized.check([under_blocks(row, ROWS, |at| at / COLUMNS)]);
+}
+
+#[test]
+fn a_scale_covers_the_whole_of_an_outer_axis() {
+    let columns = [BlockExtent::WholeAxis, BlockExtent::from(8)];
+    Quantized.check([under_blocks(columns, COLUMNS / 8, |at| at % COLUMNS / 8)]);
 }
 
 /// Magnitudes above what a byte read as two's complement can hold. A field cast from the value

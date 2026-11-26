@@ -32,7 +32,9 @@ use crate::layout::stored::Operand;
 use crate::layout::{Fragments, assemble, fragments_of};
 use crate::matmul_dimensions::{K, KB, KI, blocked};
 use cubecl::ir::ElemType;
-use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{
+    BlockExtent, BlockSize, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+};
 use cubecl::tile::Dimension;
 use cubecl::tile::layout::{Stagger, StorageLevels, StoragePartitioning};
 use cubecl::zspace::metadata::Metadata;
@@ -220,13 +222,19 @@ impl TileOrder {
         let QuantStore::PackedU32(1) = scheme.store else {
             return None;
         };
-        let dims = scheme.block_size()?.to_dim_vec(2);
-        let byte_scales = ElemType::from_scale_dtype(scheme.block_scale()?.dtype).size_bits() == 8;
+        let finest = scheme.finest();
+        let coarser = scheme.levels().nth(1).map(|level| level.size);
+        let ([BlockExtent::Values(block), BlockExtent::VALUE], None | Some(BlockSize::TENSOR)) =
+            (finest.size.extents_in(), coarser)
+        else {
+            return None;
+        };
+        let byte_scales = ElemType::from_scale_dtype(finest.dtype).size_bits() == 8;
         let symmetric = scheme.mode == QuantMode::Symmetric;
-        if !(symmetric && byte_scales && dims[1] == 1) {
+        if !(symmetric && byte_scales) {
             return None;
         }
-        Self::in_whole_words(dims[0] as usize, scheme.num_quants())
+        Self::in_whole_words(block.get() as usize, scheme.num_quants())
     }
 
     /// A scale every `block` values, `values_per_word` to a word: `None` unless the words pack
@@ -267,9 +275,13 @@ impl TileOrder {
     /// block by block where a block's words of one row are followed by the next row's, row by row
     /// where by that row's next block. A tile one block deep or one row wide lies the same either
     /// way, and a tile too shallow for whole words of block scales is never laid block by block:
-    /// both read as row by row. Its stagger is read off its coarsest stride ([`strips_of`]).
+    /// both read as row by row. Its stagger is read off its coarsest stride ([`strips_of`]). `None`
+    /// where a dim's fragments are not each inside the coarser ones, as none laid in tile order is.
     fn read_off(block: usize, values_per_word: usize, matrix: &Metadata) -> Option<Self> {
         let [k, rows] = matrix_fragments(matrix)?;
+        if !is_nested(&k) || !is_nested(&rows) {
+            return None;
+        }
         let (blocks, _) = k.split_at(block_split(block, &k)?);
         let inside =
             |dim: &[(usize, usize)]| dim.iter().skip(1).map(|&(extent, _)| extent).product();
@@ -482,6 +494,13 @@ impl TileOrder {
         let (kb, ki) = k.split_at(block_split(self.block, &k)?);
         Some(assemble(&[&n, kb, ki]))
     }
+}
+
+/// Whether each of a dim's fragments, coarsest first, lies inside the coarser ones.
+fn is_nested(dim: &[(usize, usize)]) -> bool {
+    dim.iter()
+        .filter(|&&(extent, _)| extent > 1)
+        .is_sorted_by_key(|&(_, stride)| core::cmp::Reverse(stride))
 }
 
 /// Where `k`'s fragments split into the blocks of `block` values and the values inside one: its
@@ -751,6 +770,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A matrix whose `k` steps finer across blocks than inside one is in no tile order.
+    #[test]
+    fn a_matrix_whose_fragments_do_not_nest_is_in_no_tile_order() {
+        let scheme = nvfp4_scheme();
+        let order = nvfp4(TileWords::RowByRow, (128, 8));
+        let matrix = matrix_values(&order.kernel_values_read(256, (N, 48), 1));
+        let [k, rows] = fragments_of::<2>(&matrix).unwrap();
+        let mut scattered = k.clone();
+        let finest = scattered.len() - 1;
+        (scattered[finest].1, scattered[finest - 1].1) = (k[finest - 1].1, k[finest].1);
+        assert_eq!(
+            TileOrder::of_matrix(&scheme, &assemble(&[&scattered, &rows])),
+            None
+        );
     }
 
     /// The kernel recovers its own statement from the one the rhs carries, fragment for
