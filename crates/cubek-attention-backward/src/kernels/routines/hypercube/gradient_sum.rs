@@ -2,14 +2,16 @@
 //! as a sum.
 
 use super::kernel::hypercube_gradient_sum_kernel;
-use super::{HypercubeKeyWalkBlueprint, HypercubeKeyWalkSettings, key_walk};
+use super::{HypercubeKeyWalkBlueprint, HypercubeKeyWalkSettings, key_walk, key_walk_estimate};
 use crate::kernels::routines::heads_apart::cubes_with_heads_apart;
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardTensors, KeyGradientSums, QueryGradientSum,
+    AttentionBackwardProblem, AttentionBackwardTensors, KeyGradientElement, KeyGradientSums,
+    QueryGradientSum,
 };
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 use cubek_std::Hardware;
+use cubek_std::microkernel::KernelEstimate;
 
 /// [`HypercubeKeyGradientQuerySumRoutine`](super::HypercubeKeyGradientQuerySumRoutine) with the heads of a group
 /// split over cubes: every cube walks one head and adds its part of the keys' and values'
@@ -35,6 +37,16 @@ impl HypercubeGradientSumRoutine {
         key_walk(hw, problem, settings, |tiling| {
             cubes_with_heads_apart(tiling, problem.group)
         })
+    }
+
+    /// Its cubes' walk owned by the keys, one head a cube, adding every gradient into its sum
+    /// ([`key_walk_estimate`]).
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &HypercubeKeyWalkBlueprint,
+    ) -> KernelEstimate {
+        key_walk_estimate(problem, walk, KeyGradientElement::Summed)
     }
 
     pub fn dispatch(

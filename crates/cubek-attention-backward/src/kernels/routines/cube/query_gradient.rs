@@ -2,16 +2,18 @@
 
 use super::kernel::cube_staged_query_gradient_kernel;
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
+    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkCount,
+    WalkSharing, WalkStages,
 };
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Decline;
+use cubecl::tile::space::ComputeScope;
 use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, CubeQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::{Microkernel, StageRing};
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 
 /// Every cube owns a box of queries of some heads of a group and writes their gradient and their
 /// dot product of the output with its gradient, over the keys they see.
@@ -70,6 +72,30 @@ impl CubeStagedQueryGradientRoutine {
             grid,
             ring,
         ))
+    }
+
+    /// Its cubes' walk owned by the queries ([`WalkCount::query_walk`]), each cube staging every
+    /// stage of keys and values once on its ring for all its planes, which each read it, beside
+    /// their windows; its microkernel holds the work.
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &CubeStagedQueryGradientBlueprint,
+    ) -> KernelEstimate {
+        let microkernel = &walk.microkernel;
+        let planes = microkernel.plane_count();
+        let windows = planes * microkernel.plane.walk_bytes(&problem.work_item());
+        let count = WalkCount::query_walk(
+            problem,
+            &walk.partitioning,
+            ComputeScope::Cube,
+            microkernel.seq_kv(),
+        )
+        .staged(
+            &walk.shared_memory,
+            WalkSharing::query_walk(planes, windows),
+        );
+        walk.estimate(problem, &count)
     }
 
     pub fn dispatch(

@@ -4,7 +4,9 @@ use core::num::NonZeroUsize;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Levels, Partitioning};
 use cubek_std::Hardware;
-use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
+use cubek_std::microkernel::{
+    ArithmeticInstruction, CubePlanes, KernelEstimate, Microkernel, UnitWork,
+};
 
 /// Queries of one head a plane owns, one a unit: each unit's dot product of the output with its
 /// gradient along the whole value dim, a line of each at a time.
@@ -96,13 +98,19 @@ impl Microkernel for PlaneDeltaMicrokernel {
         });
     }
 
-    /// No multiplication: its reads are its routine's to count, which places its planes.
+    /// No multiplication: each unit keeps its query's sum and a value of the output and of its
+    /// gradient at a time, on plain arithmetic. Its reads are its routine's to count, which
+    /// places its planes.
     fn estimate(
         &self,
         _item: &AttentionBackwardWorkItem,
         _partitioning: &Partitioning,
         _planes: CubePlanes,
-        _estimate: &mut KernelEstimate,
+        estimate: &mut KernelEstimate,
     ) {
+        estimate.work = Some(UnitWork {
+            instruction: ArithmeticInstruction::Vector,
+            registers: 3,
+        });
     }
 }

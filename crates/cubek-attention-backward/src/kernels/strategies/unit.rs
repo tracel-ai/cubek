@@ -14,8 +14,7 @@ use cubek_microkernel::attention_backward::query_gradient::unit::{
     UnitQueryGradientMicrokernel, UnitQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
-use cubek_std::routine::Grid;
+use cubek_std::microkernel::{KernelEstimate, Microkernel};
 
 /// The backward pass on the unit routines: [`UnitQueryGradientRoutine`], then
 /// [`UnitKeyGradientRoutine`]. This kind's floor: it asks nothing of the hardware, so it runs
@@ -121,7 +120,13 @@ impl AttentionBackwardLaunch for UnitAttentionBackward {
         UnitKeyGradientRoutine.dispatch(tensors, &blueprint.keys);
     }
 
-    fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {
-        &blueprint.keys.grid
+    fn estimates(
+        problem: &AttentionBackwardProblem,
+        blueprint: &Self::Blueprint,
+    ) -> Vec<KernelEstimate> {
+        vec![
+            UnitQueryGradientRoutine.estimate(problem, &blueprint.queries),
+            UnitKeyGradientRoutine.estimate(problem, &blueprint.keys),
+        ]
     }
 }

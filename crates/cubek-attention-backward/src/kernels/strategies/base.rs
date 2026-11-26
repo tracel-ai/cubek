@@ -6,7 +6,7 @@ use crate::kernels::{
 };
 use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
-use cubek_std::routine::Grid;
+use cubek_std::microkernel::KernelEstimate;
 
 /// A strategy of the backward pass: routines launched in order, each one kernel, which together
 /// write the three gradients. What a test, a benchmark row or an autotune candidate launches, as
@@ -44,9 +44,13 @@ pub trait AttentionBackwardLaunch {
     /// Launch every routine `blueprint` holds, in order, over `tensors`.
     fn dispatch(&self, tensors: &AttentionBackwardTensors, blueprint: Self::Blueprint);
 
-    /// The grid of its largest launch, which autotune ranks the setting by: the walk owned by the
-    /// keys.
-    fn widest_grid(blueprint: &Self::Blueprint) -> &Grid;
+    /// The estimate of every launch `blueprint` holds for `problem`, in the order they launch,
+    /// each stating its own demand: what a caller that measures the strategies ranks the setting
+    /// by, the launches' times added up, before timing it.
+    fn estimates(
+        problem: &AttentionBackwardProblem,
+        blueprint: &Self::Blueprint,
+    ) -> Vec<KernelEstimate>;
 
     /// The gradients `tensors` state, launched on their client's device, prepared for `hw`.
     ///

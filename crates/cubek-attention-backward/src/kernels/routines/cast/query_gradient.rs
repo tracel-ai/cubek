@@ -1,11 +1,15 @@
 //! [`CastQueryGradientRoutine`], and the sum it reads.
 
 use super::kernel::cast_query_gradient_kernel;
-use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
+use crate::kernels::{
+    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkCount,
+};
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::space::ComputeScope;
 use cubek_matmul::kernels::tensor::PlainTensor;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
 use cubek_std::Hardware;
+use cubek_std::microkernel::KernelEstimate;
 
 /// The queries' gradient, summed in `f32` by every cube that owns keys those queries see: what
 /// the hypercube walks add into.
@@ -52,6 +56,20 @@ impl CastQueryGradientRoutine {
             _ => width,
         });
         walk
+    }
+
+    /// Every plane's cast of its queries' gradient out of the sum ([`WalkCount::cast`]).
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &CastQueryGradientBlueprint,
+    ) -> KernelEstimate {
+        let count = WalkCount::cast(
+            problem,
+            WalkCount::owners(&walk.partitioning, ComputeScope::Plane),
+            &[AttentionBackwardOperand::QueryGradient],
+        );
+        walk.cast_estimate(problem, &count)
     }
 
     pub fn dispatch(

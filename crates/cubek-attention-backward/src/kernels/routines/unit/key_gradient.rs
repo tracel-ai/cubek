@@ -2,16 +2,20 @@
 
 use super::kernel::unit_key_gradient_kernel;
 use super::unit_cube;
-use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
+use crate::kernels::{
+    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, KeyGradientElement,
+    WalkCount,
+};
 use core::num::NonZeroUsize;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Decline;
+use cubecl::tile::space::ComputeScope;
 use cubek_microkernel::attention::{B, KV, S};
 use cubek_microkernel::attention_backward::key_gradient::unit::{
     UnitKeyGradientMicrokernel, UnitKeyGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
+use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::Grid;
 
 /// Every unit owns keys of one key head, taken in turn and on into the next head, and writes their
@@ -58,6 +62,24 @@ impl UnitKeyGradientRoutine {
             grid,
             (),
         ))
+    }
+
+    /// Its units' walk owned by the keys ([`WalkCount::key_walk`]), a step of its microkernel's
+    /// queries at a time, each unit reading every query of its group where it lies; its
+    /// microkernel holds the work.
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &UnitKeyGradientBlueprint,
+    ) -> KernelEstimate {
+        let count = WalkCount::key_walk(
+            problem,
+            &walk.partitioning,
+            ComputeScope::Unit,
+            walk.microkernel.seq_q(),
+            KeyGradientElement::Stored,
+        );
+        walk.estimate(problem, &count)
     }
 
     pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &UnitKeyGradientBlueprint) {

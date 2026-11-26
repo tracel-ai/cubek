@@ -3,18 +3,19 @@
 use super::PlaneFragmentAttentionBackwardSharedMemory;
 use super::kernel::plane_fragment_key_gradient_kernel;
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
+    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, KeyGradientElement,
+    WalkCount, WalkSharing, WalkStages,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Decline;
-use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubek_microkernel::attention::{B, KV, Q, S};
 use cubek_microkernel::attention_backward::key_gradient::plane::{
     PlaneKeyGradientMicrokernel, PlaneKeyGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::{Microkernel, StageRing};
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 
 /// Every plane owns a box of keys of one key head and writes their gradient and their values',
 /// over every query of the group's heads that sees them. It reads the queries' dot products of
@@ -80,6 +81,29 @@ impl PlaneFragmentKeyGradientRoutine {
             grid,
             PlaneFragmentAttentionBackwardSharedMemory { ring, planes },
         ))
+    }
+
+    /// Its planes' walk owned by the keys ([`WalkCount::key_walk`]), each plane staging its own
+    /// queries and output's gradient on its ring and reading them alone, beside its windows; its
+    /// microkernel holds the work.
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &PlaneFragmentKeyGradientBlueprint,
+    ) -> KernelEstimate {
+        let microkernel = &walk.microkernel;
+        let count = WalkCount::key_walk(
+            problem,
+            &walk.partitioning,
+            ComputeScope::Plane,
+            microkernel.seq_q(),
+            KeyGradientElement::Stored,
+        )
+        .staged(
+            &walk.shared_memory.ring,
+            WalkSharing::key_walk(1, microkernel.walk_bytes(&problem.work_item())),
+        );
+        walk.estimate(problem, &count)
     }
 
     pub fn dispatch(

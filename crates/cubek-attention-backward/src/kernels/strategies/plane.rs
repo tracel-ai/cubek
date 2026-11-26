@@ -16,8 +16,7 @@ use cubek_microkernel::attention_backward::query_gradient::plane::{
     PlaneQueryGradientMicrokernel, PlaneQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::{Microkernel, StageRing};
-use cubek_std::routine::Grid;
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 
 /// The backward pass on the plane fragment routines: [`PlaneFragmentQueryGradientRoutine`], then
 /// [`PlaneFragmentKeyGradientRoutine`], both on the same planes a cube and the same ring.
@@ -128,7 +127,13 @@ impl AttentionBackwardLaunch for PlaneFragmentAttentionBackward {
         PlaneFragmentKeyGradientRoutine.dispatch(tensors, &blueprint.keys);
     }
 
-    fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {
-        &blueprint.keys.grid
+    fn estimates(
+        problem: &AttentionBackwardProblem,
+        blueprint: &Self::Blueprint,
+    ) -> Vec<KernelEstimate> {
+        vec![
+            PlaneFragmentQueryGradientRoutine.estimate(problem, &blueprint.queries),
+            PlaneFragmentKeyGradientRoutine.estimate(problem, &blueprint.keys),
+        ]
     }
 }

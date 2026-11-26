@@ -1,7 +1,9 @@
 //! [`PlaneDeltaRoutine`]: each query's dot product of the output with its gradient, alone.
 
 use super::kernel::plane_delta_kernel;
-use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
+use crate::kernels::{
+    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkCount,
+};
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Decline;
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
@@ -10,7 +12,7 @@ use cubek_microkernel::attention_backward::delta::plane::{
     PlaneDeltaMicrokernel, PlaneDeltaMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
+use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid};
 
 /// Every plane owns a box of queries of one head, a plane a cube, and writes their dot product of
@@ -67,6 +69,16 @@ impl PlaneDeltaRoutine {
             grid,
             (),
         ))
+    }
+
+    /// Its planes' reads of the output and its gradient and writes of the dot products
+    /// ([`WalkCount::delta`]); its microkernel holds the work.
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &PlaneDeltaBlueprint,
+    ) -> KernelEstimate {
+        walk.estimate(problem, &WalkCount::delta(problem, &walk.partitioning))
     }
 
     pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &PlaneDeltaBlueprint) {

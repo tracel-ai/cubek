@@ -6,7 +6,7 @@ use crate::kernels::{
     AttentionBackwardTensors,
 };
 use cubek_std::Hardware;
-use cubek_std::routine::LaunchSettings;
+use cubek_std::microkernel::KernelEstimate;
 
 /// A strategy of the backward pass at one of its settings, prepared for the device it was listed
 /// for: what a caller that measures the strategies races.
@@ -52,14 +52,16 @@ impl<S: AttentionBackwardLaunch> AttentionBackwardCandidate<S> {
             .map_err(|why| format!("{} does not serve this problem: {why:?}", self.settings))
     }
 
-    /// The cubes and units of the widest launch, the walk owned by the keys, this candidate
-    /// prepares for the problem `key` describes on the device it was listed for, or `None` where
-    /// the strategy declines it.
-    pub fn widest_launch(&self, key: &AttentionBackwardKey) -> Option<LaunchSettings> {
+    /// The estimate of every launch this candidate prepares for the problem `key` describes on
+    /// the device it was listed for, in the order they launch, each stating its own demand
+    /// ([`AttentionBackwardLaunch::estimates`]); `None` where the strategy declines the problem.
+    /// The problem's own demand, which the launches share, is its
+    /// [`EstimatedProblem::demand`](cubek_std::routine::EstimatedProblem::demand).
+    pub fn estimates(&self, key: &AttentionBackwardKey) -> Option<Vec<KernelEstimate>> {
         let problem = AttentionBackwardProblem::try_from(key).ok()?;
         self.strategy
             .prepare(&self.hw, &problem, &self.settings)
             .ok()
-            .map(|blueprint| S::widest_grid(&blueprint).launch.clone())
+            .map(|blueprint| S::estimates(&problem, &blueprint))
     }
 }

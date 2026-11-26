@@ -1,10 +1,15 @@
 //! [`CastKeyGradientRoutine`], and the sums it reads.
 
 use super::kernel::cast_key_gradient_kernel;
-use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
+use crate::kernels::{
+    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkCount,
+};
 use cubecl::std::tensor::TensorHandle;
+use cubecl::tile::space::ComputeScope;
 use cubek_matmul::kernels::tensor::PlainTensor;
+use cubek_microkernel::attention::G;
 use cubek_microkernel::attention_backward::AttentionBackwardOperand;
+use cubek_std::microkernel::KernelEstimate;
 
 /// The keys' and the values' gradients, summed in `f32` by every cube of a group, each holding
 /// fewer heads than the group's: what a walk owned by the keys with its heads apart adds into.
@@ -48,6 +53,26 @@ impl CastKeyGradientRoutine {
         summed: &AttentionBackwardWalk<M, SM>,
     ) -> CastKeyGradientBlueprint {
         summed.placement()
+    }
+
+    /// The cast of the keys' and values' gradients out of their sums ([`WalkCount::cast`]) by the
+    /// cubes on a group's first head; the summing walk's other cubes cast nothing.
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &CastKeyGradientBlueprint,
+    ) -> KernelEstimate {
+        let (owner, owners) = WalkCount::owners(&walk.partitioning, ComputeScope::Cube);
+        let heads_apart = problem.group.div_ceil(owner.extent(G).max(1)) as u64;
+        let count = WalkCount::cast(
+            problem,
+            (owner, owners / heads_apart),
+            &[
+                AttentionBackwardOperand::KeyGradient,
+                AttentionBackwardOperand::ValueGradient,
+            ],
+        );
+        walk.cast_estimate(problem, &count)
     }
 
     pub fn dispatch(

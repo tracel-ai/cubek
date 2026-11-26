@@ -1,11 +1,12 @@
 //! [`CubeStagedKeyGradientRoutine`]: the cube staged walk owned by the keys.
 
 use super::kernel::cube_staged_key_gradient_kernel;
-use super::{CubeStagedKeyWalkBlueprint, CubeStagedKeyWalkSettings, key_walk};
-use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors};
+use super::{CubeStagedKeyWalkBlueprint, CubeStagedKeyWalkSettings, key_walk, key_walk_estimate};
+use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, KeyGradientElement};
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::attention::S;
 use cubek_std::Hardware;
+use cubek_std::microkernel::KernelEstimate;
 
 /// Every cube owns a box of keys of one key head and writes their gradient and their values',
 /// over every query of every head of the group that sees them. It reads the queries' dot products
@@ -26,6 +27,16 @@ impl CubeStagedKeyGradientRoutine {
         settings: &CubeStagedKeyWalkSettings,
     ) -> Result<CubeStagedKeyWalkBlueprint, Decline> {
         key_walk(hw, problem, settings, |tiling| Ok(tiling.cubes(&[S])))
+    }
+
+    /// Its cubes' walk owned by the keys, writing the gradients
+    /// ([`key_walk_count`](super::key_walk_count)).
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &CubeStagedKeyWalkBlueprint,
+    ) -> KernelEstimate {
+        key_walk_estimate(problem, walk, KeyGradientElement::Stored)
     }
 
     pub fn dispatch(&self, tensors: &AttentionBackwardTensors, walk: &CubeStagedKeyWalkBlueprint) {
