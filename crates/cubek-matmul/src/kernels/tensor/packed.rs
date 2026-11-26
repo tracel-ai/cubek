@@ -166,7 +166,7 @@ impl PackedTensor {
     /// embedding read as a head, is the matrix it views, its rows along the dimension its words do
     /// not run along. The scales are laid in rows and bound on whole words, as [`new`](Self::new)
     /// takes them. Values laid in tile order are read in tile order
-    /// ([`of_tile_order`](Self::of_tile_order)).
+    /// (`of_tile_order`).
     ///
     /// # Errors
     ///
