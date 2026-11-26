@@ -1,7 +1,7 @@
 //! The cube routine: a row a cube, its planes each a run of it.
 
 use cubek_rms_norm::kernels::CubeRmsNormRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::rms_norm::{Declines, RmsNorm};
 

@@ -18,7 +18,7 @@ use cubek_matmul::kernels::{
 };
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, ScopeChecker, TestInput, Written};
 
 use crate::matmul::{Declines, F16, F32, I32, Product};
 
@@ -167,7 +167,7 @@ where
     }
 }
 
-impl<R, M, SM, P> ScopeUnderTest for ByRoutine<R, M, SM, P>
+impl<R, M, SM, P> ScopeChecker for ByRoutine<R, M, SM, P>
 where
     R: MatmulRoutine<M, SM>,
     M: MatmulMicrokernel,

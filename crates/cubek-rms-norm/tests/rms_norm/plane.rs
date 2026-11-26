@@ -1,7 +1,7 @@
 //! The plane routine: a row a plane, held in its lanes' registers.
 
 use cubek_rms_norm::kernels::PlaneRmsNormRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::rms_norm::{Declines, RmsNorm};
 

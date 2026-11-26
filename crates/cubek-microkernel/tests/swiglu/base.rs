@@ -9,7 +9,7 @@ use cubecl::tile::launch::Decline;
 use cubecl::zspace::shape;
 use cubek_microkernel::swiglu::cube::CubeSwigluMicrokernelSettings;
 use cubek_std::Hardware;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
 pub(crate) const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -67,7 +67,7 @@ impl Swiglu {
     }
 }
 
-impl ScopeUnderTest for Swiglu {
+impl ScopeChecker for Swiglu {
     type Case = SwigluCase;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {

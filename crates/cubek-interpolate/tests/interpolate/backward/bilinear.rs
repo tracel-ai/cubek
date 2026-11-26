@@ -2,7 +2,7 @@
 //! under both corner conventions, since they invert to different support intervals.
 
 use cubek_interpolate::definition::{InterpolateMode, InterpolateOptions};
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::interpolate::backward::{Backward, BackwardCase};
 

@@ -1,6 +1,9 @@
-use super::microkernel::plane_shuffle_reduce_microkernel;
+use crate::reduce::plane::{
+    PlaneColumnsReduceMicrokernel, PlaneLineReduceMicrokernel, plane_columns_reduce_microkernel,
+    plane_line_reduce_microkernel,
+};
 use crate::reduce::{
-    ReduceAccumulator, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOTS, lines_across, plane_levels,
+    Accumulable, ReduceOperand, ReduceWorkItem, TOP_K_LANE_SLOT_COUNTS, lines_across, plane_levels,
 };
 use cubecl::tile::launch::Vectorization;
 use cubecl::tile::{Dimension, Levels, Region, Tile};
@@ -8,14 +11,14 @@ use cubecl::{self as cubecl, CubeType, IntoRuntime, cube, prelude::*};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel};
 
-/// A row reduced by one plane: its lanes read consecutive lines, each accumulating every `lanes`-th
-/// into a partial of its own, and the partials meet across the plane in its instructions. Where
+/// A row reduced by one plane: its lanes read the lines in turns, each into a partial of its own, and
+/// the partials meet across the plane in its instructions. Where
 /// its lines run across the reduced dimension, its units lie across
 /// [`lines_across`](Self::lines_across) lines of rows instead, a column of them for each, and
 /// each column's partials meet within it.
 ///
-/// It runs where the device commits to a plane width: the partials meet across the plane, so a
-/// plane launched wider than the device runs would leave part of the row out.
+/// Its partials meet across the plane, so it runs where the device commits to a plane width: a plane
+/// wider than the one that runs leaves some of them out.
 #[derive(CubeType, IntoRuntime, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleReduceMicrokernel {
     #[cube(comptime)]
@@ -31,7 +34,6 @@ pub struct PlaneShuffleReduceMicrokernel {
 }
 
 impl PlaneShuffleReduceMicrokernel {
-    /// A plane of `lanes` units reducing `item`, keeping `lane_slots` top-k slots across a line.
     pub fn new(item: ReduceWorkItem, lanes: usize, lane_slots: usize) -> Self {
         Self {
             item,
@@ -45,9 +47,13 @@ impl PlaneShuffleReduceMicrokernel {
     /// transaction of `hw` holds, where its lines run across the reduced dimension and `rows`
     /// rows there are; one line of rows where its lines run along it.
     ///
+    /// # Assumptions
+    ///
+    /// - `width` is at least one.
+    ///
     /// # Panics
     ///
-    /// Where `width` is zero.
+    /// Where its Assumption is broken.
     pub fn across_rows(self, hw: &Hardware, width: usize, rows: usize) -> Self {
         Self {
             lines_across: lines_across(hw, &self.item, width, rows.div_ceil(width), self.lanes),
@@ -67,10 +73,6 @@ impl PlaneShuffleReduceMicrokernel {
         plane_levels(owner, self.lines_across, self.lanes)
     }
 
-    pub fn item(&self) -> ReduceWorkItem {
-        self.item
-    }
-
     pub fn lanes(&self) -> usize {
         self.lanes
     }
@@ -79,11 +81,12 @@ impl PlaneShuffleReduceMicrokernel {
     ///
     /// # Panics
     ///
-    /// As it does.
+    /// Where its item breaks an Assumption of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem): a
+    /// top-k that keeps no value.
     pub fn widest_line(&self) -> Option<usize> {
         self.item
             .operation
-            .widest_line_at_lane_slots(self.lane_slots)
+            .widest_line_at_lane_slot_count(self.lane_slots)
     }
 }
 
@@ -93,17 +96,23 @@ impl PlaneShuffleReduceMicrokernel {
     /// (`plane_shuffle_reduce_microkernel`), `plane` a region of the levels
     /// [`levels`](PlaneShuffleReduceMicrokernel::levels) states.
     ///
+    /// # Assumptions
+    ///
+    /// - Those of [`ReduceWorkItem`](crate::reduce::ReduceWorkItem), of its item.
+    ///
     /// # Panics
     ///
-    /// Where `indices` is there and its item does not write them beside the values, or the other
-    /// way around; or where it writes indices its carrier does not keep.
+    /// When the kernel compiles, where the item breaks
+    /// [`ReduceWorkItem`](crate::reduce::ReduceWorkItem)'s Assumptions on `indices`: a tile handed
+    /// where the item writes no indices, none where it writes them, or indices written that its
+    /// carrier does not keep.
     pub fn reduce<
         In: Numeric,
         Acc: Numeric,
         Out: Numeric,
         Idx: Numeric,
         N: Size,
-        C: ReduceAccumulator<Acc, N> + Clone,
+        C: Accumulable<Acc, N> + Clone,
     >(
         &self,
         plane: &Region,
@@ -130,12 +139,12 @@ impl PlaneShuffleReduceMicrokernel {
 /// device's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaneShuffleReduceMicrokernelSettings {
-    pub lane_slots: usize,
+    pub lane_slot_count: usize,
 }
 
 impl core::fmt::Display for PlaneShuffleReduceMicrokernelSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "lane_slots={}", self.lane_slots)
+        write!(f, "lane_slots={}", self.lane_slot_count)
     }
 }
 
@@ -149,6 +158,20 @@ impl core::fmt::Display for PlaneShuffleReduceMicrokernel {
     }
 }
 
+/// The plane microkernel at `settings`, where `hw` commits to a plane width.
+fn candidate_of(
+    hw: &Hardware,
+    item: ReduceWorkItem,
+    settings: &PlaneShuffleReduceMicrokernelSettings,
+) -> Option<PlaneShuffleReduceMicrokernel> {
+    let lanes = hw.plane_dim().ok()?;
+    Some(PlaneShuffleReduceMicrokernel::new(
+        item,
+        lanes as usize,
+        settings.lane_slot_count,
+    ))
+}
+
 impl Microkernel for PlaneShuffleReduceMicrokernel {
     type WorkItem = ReduceWorkItem;
     type Settings = PlaneShuffleReduceMicrokernelSettings;
@@ -158,8 +181,8 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
     const DECLINE: &'static str = "the plane reduce needs a plane width the device commits to";
 
     fn settings(_hw: &Hardware) -> Vec<Self::Settings> {
-        TOP_K_LANE_SLOTS
-            .map(|lane_slots| PlaneShuffleReduceMicrokernelSettings { lane_slots })
+        TOP_K_LANE_SLOT_COUNTS
+            .map(|lane_slot_count| PlaneShuffleReduceMicrokernelSettings { lane_slot_count })
             .to_vec()
     }
 
@@ -168,12 +191,7 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
         item: &ReduceWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        hw.plane_dim().ok().into_iter().map(|lanes| Self {
-            item: *item,
-            lanes: lanes as usize,
-            lane_slots: settings.lane_slots,
-            lines_across: 1,
-        })
+        candidate_of(hw, *item, settings).into_iter()
     }
 
     fn vectorize(&self, _: &(), vectorization: &mut Vectorization<ReduceOperand>) {
@@ -192,10 +210,56 @@ impl Microkernel for PlaneShuffleReduceMicrokernel {
     }
 }
 
+/// One plane's rows, `plane`'s region of `input`, reduced into `out` and `indices` at the same
+/// region: read one line of rows wide ([`PlaneLineReduceMicrokernel`]), or
+/// [`lines_across`](PlaneShuffleReduceMicrokernel::lines_across) lines of rows wide
+/// ([`PlaneColumnsReduceMicrokernel`]).
+#[cube]
+pub(crate) fn plane_shuffle_reduce_microkernel<
+    In: Numeric,
+    Acc: Numeric,
+    Out: Numeric,
+    Idx: Numeric,
+    N: Size,
+    C: Accumulable<Acc, N> + Clone,
+>(
+    plane: &Region,
+    input: &Tile,
+    out: &Tile,
+    indices: &ComptimeOption<Tile>,
+    #[comptime] microkernel: PlaneShuffleReduceMicrokernel,
+) {
+    match microkernel.lines_across == 1 {
+        true => plane_line_reduce_microkernel::<In, Acc, Out, Idx, N, C>(
+            plane,
+            input,
+            out,
+            indices,
+            comptime!(PlaneLineReduceMicrokernel::new(
+                microkernel.item,
+                microkernel.lanes
+            )),
+        ),
+        false => plane_columns_reduce_microkernel::<In, Acc, Out, Idx, N, C>(
+            plane,
+            input,
+            out,
+            indices,
+            comptime!(PlaneColumnsReduceMicrokernel::new(
+                microkernel.item,
+                microkernel.lanes,
+                microkernel.lines_across
+            )),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reduce::ReduceOperation;
+    use crate::reduce::plane::PlaneShuffleReduceMicrokernel;
+    use crate::reduce::testing::PlaneShuffleMicrokernelLauncher;
+    use crate::reduce::{BATCH, ReduceOperation};
     use cubek_std::devices;
 
     /// Whether the plane microkernel runs on `hw`, at its first setting.
@@ -224,19 +288,21 @@ mod tests {
     /// Where its lines run across the rows, its units lie across a transaction of them.
     #[test]
     fn lines_across_the_rows_lie_a_transaction_across() {
-        const LANES: usize = 32;
-        const LANE_SLOTS: usize = 32;
-        const WIDTH: usize = 4;
-        const ROWS: usize = 64;
+        const LANE_COUNT: usize = 32;
+        const LANE_SLOT_COUNT: usize = 32;
+        const LINE_LANE_COUNT: usize = 4;
+        const ROW_COUNT: usize = 64;
         let hw = devices::m2_pro();
         let item = ReduceWorkItem {
-            lines_along: crate::reduce::BATCH,
+            lines_along: BATCH,
             ..ReduceWorkItem::along_f32(ReduceOperation::Sum)
         };
-        let plane = PlaneShuffleReduceMicrokernel::new(item, LANES, LANE_SLOTS);
+        let plane = PlaneShuffleReduceMicrokernel::new(item, LANE_COUNT, LANE_SLOT_COUNT);
         assert_eq!(
-            plane.across_rows(&hw, WIDTH, ROWS).lines_across(),
-            hw.transaction_bytes() / (WIDTH * size_of::<f32>())
+            plane
+                .across_rows(&hw, LINE_LANE_COUNT, ROW_COUNT)
+                .lines_across(),
+            hw.transaction_bytes() / (LINE_LANE_COUNT * size_of::<f32>())
         );
     }
 
@@ -257,18 +323,18 @@ mod tests {
     /// Where its lines run along the row, its units read one line of rows.
     #[test]
     fn lines_along_the_row_lie_one_across() {
-        const LANES: usize = 32;
-        const LANE_SLOTS: usize = 32;
-        const WIDTH: usize = 4;
-        const ROWS: usize = 64;
+        const LANE_COUNT: usize = 32;
+        const LANE_SLOT_COUNT: usize = 32;
+        const LINE_LANE_COUNT: usize = 4;
+        const ROW_COUNT: usize = 64;
         let plane = PlaneShuffleReduceMicrokernel::new(
             ReduceWorkItem::along_f32(ReduceOperation::Sum),
-            LANES,
-            LANE_SLOTS,
+            LANE_COUNT,
+            LANE_SLOT_COUNT,
         );
         assert_eq!(
             plane
-                .across_rows(&devices::m2_pro(), WIDTH, ROWS)
+                .across_rows(&devices::m2_pro(), LINE_LANE_COUNT, ROW_COUNT)
                 .lines_across(),
             1
         );
@@ -277,12 +343,12 @@ mod tests {
     /// Only a top-k bounds the line.
     #[test]
     fn its_widest_line_is_its_carriers() {
-        const LANES: usize = 32;
-        const LANE_SLOTS: usize = 32;
+        const LANE_COUNT: usize = 32;
+        const LANE_SLOT_COUNT: usize = 32;
         let sum = PlaneShuffleReduceMicrokernel::new(
             ReduceWorkItem::along_f32(ReduceOperation::Sum),
-            LANES,
-            LANE_SLOTS,
+            LANE_COUNT,
+            LANE_SLOT_COUNT,
         );
         assert_eq!(sum.widest_line(), None);
     }
@@ -290,7 +356,7 @@ mod tests {
     fn sum() -> PlaneShuffleReduceMicrokernel {
         let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
         let lanes = 32;
-        PlaneShuffleReduceMicrokernel::new(item, lanes, TOP_K_LANE_SLOTS[0])
+        PlaneShuffleReduceMicrokernel::new(item, lanes, TOP_K_LANE_SLOT_COUNTS[0])
     }
 
     #[test]
@@ -300,17 +366,7 @@ mod tests {
         assert_eq!(vectorization.width(ReduceOperand::Out, |_| 8), 1);
     }
 
-    #[test]
-    fn its_estimate_is_its_items_work() {
-        let item = ReduceWorkItem::along_f32(ReduceOperation::Sum);
-        let planes = CubePlanes {
-            count: 4,
-            width: 32,
-        };
-        let mut estimate = crate::reduce::empty_estimate();
-        sum().estimate(&item, &(), planes, &mut estimate);
-        assert_eq!(estimate.work, Some(item.unit_work()));
-    }
+    estimates_its_items_work!(sum());
 
     #[test]
     fn it_displays_what_it_compiles() {
@@ -318,5 +374,55 @@ mod tests {
             sum().to_string(),
             "Sum Dimension(1) lanes=32 lines_across=1"
         );
+    }
+
+    /// The plane's rows 37 values long along the reduced dimension, a value a line.
+    mod along_37_long_one_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Along, 37, 1);
+    }
+
+    /// Rows 20 values long along the reduced dimension, four values a line: fewer lines than lanes.
+    mod along_20_long_four_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Along, 20, 4);
+    }
+
+    /// Rows 1024 values long along the reduced dimension, four values a line: many lines a lane.
+    mod along_1024_long_four_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Along, 1024, 4);
+    }
+
+    /// The plane's rows 37 values long across the reduced dimension, a row a line.
+    mod across_37_long_one_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Across, 37, 1);
+    }
+
+    /// The plane's rows 300 values long across the reduced dimension, each lane its own row.
+    mod across_300_long_four_wide {
+        use super::*;
+        every_operation!(PlaneShuffleMicrokernelLauncher, Across, 300, 4);
+    }
+
+    /// The plane's edge rows, 1024 values long along the reduced dimension, four values a line.
+    mod edges_along {
+        use super::*;
+        edge_rows!(PlaneShuffleMicrokernelLauncher, Along, 1024, 4);
+    }
+
+    /// The plane's edge rows, 300 values long across the reduced dimension, each lane its own row.
+    mod edges_across {
+        use super::*;
+        edge_rows!(PlaneShuffleMicrokernelLauncher, Across, 300, 4);
+    }
+
+    #[test]
+    fn its_settings_display_their_lane_slots() {
+        let settings = PlaneShuffleReduceMicrokernelSettings {
+            lane_slot_count: 32,
+        };
+        assert_eq!(settings.to_string(), "lane_slots=32");
     }
 }

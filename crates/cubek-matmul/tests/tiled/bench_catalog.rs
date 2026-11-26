@@ -32,7 +32,7 @@ fn run_gemm(strategy_id: &str, problem_id: &str) {
 
     let actual = match GemmCorrectness.kernel_result(&strategy, &problem, &SEEDS) {
         Ok(host) => host,
-        Err(e) => return TestOutcome::CompileError(e).enforce(),
+        Err(e) => return TestOutcome::unrun(&problem_id, e).enforce(),
     };
     let expected = GemmCorrectness
         .reference_result(&problem, &SEEDS, None)

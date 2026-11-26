@@ -11,12 +11,35 @@ use cubecl::tile::launch::{Bound, BoundaryPolicy, Decline};
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Launcher, Partitioning};
 use cubek_std::Hardware;
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid, Routine};
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid, Routine};
 
 /// A routine of this kind: it prepares a launch of a max pooling and launches it on tensors.
+///
+/// # Assumptions
+///
+/// [`dispatch`](Self::dispatch) is handed the binding [`bind`](Self::bind) returned for the same
+/// tensors, blueprint and grid.
+///
+/// # Guarantees
+///
+/// [`dispatch`](Self::dispatch) launches whatever it is handed: every refusal of a launch is met
+/// while binding, before its kernel launches.
 pub trait PoolRoutine: Routine<Problem = PoolRoutineProblem> {
-    /// Launch the kernel `blueprint` compiles, on `grid`, over `tensors`.
-    fn dispatch(&self, tensors: &PoolTensors, blueprint: Self::Blueprint, grid: Grid);
+    /// `tensors`' operands bound as `blueprint` states them, on `grid`.
+    ///
+    /// # Errors
+    ///
+    /// As [`PoolTensors::bind`].
+    fn bind(
+        &self,
+        tensors: &PoolTensors,
+        blueprint: &Self::Blueprint,
+        grid: &Grid,
+    ) -> Result<PoolBinding, Decline>;
+
+    /// Launch its kernel on `grid` over `binding`, `tensors`' operands as [`bind`](Self::bind)
+    /// bound them, which carry every decision of its blueprint.
+    fn dispatch(&self, tensors: &PoolTensors, binding: PoolBinding, grid: Grid);
 }
 
 /// `tensors` pooled by `routine` at `settings` on `hw`.
@@ -31,7 +54,8 @@ pub fn launch_pool_routine<R: PoolRoutine>(
     settings: &R::Settings,
 ) -> Result<(), Decline> {
     let (blueprint, grid) = R::prepare(hw, tensors.problem(), settings)?;
-    routine.dispatch(tensors, blueprint, grid);
+    let binding = routine.bind(tensors, &blueprint, &grid)?;
+    routine.dispatch(tensors, binding, grid);
     Ok(())
 }
 
@@ -82,16 +106,20 @@ impl PoolTensors {
     /// Both operands bound on `grid` at `width`, placed by `partitioning`: the input gathered over
     /// every output position's window, its reads masked where `checked`, past which the reduce
     /// reads the max's identity.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
     pub fn bind(
         &self,
         partitioning: &Partitioning,
         width: usize,
         checked: bool,
         grid: &Grid,
-    ) -> PoolBinding {
+    ) -> Result<PoolBinding, Decline> {
         let launcher = grid.launcher(&self.client, || {
             (partitioning.clone(), partitioning.space().clone())
-        });
+        })?;
         let problem = &self.problem;
         let boundary = match checked {
             true => BoundaryPolicy::Every(Boundary::Zero),
@@ -104,18 +132,18 @@ impl PoolTensors {
             .boundary(boundary)
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
+            .or_broken(ADMITTED_PLAN_RUNS)?;
         let output = launcher
             .arg(self.output.clone(), problem.element)
             .dimensions(&[BATCH, OUTPUT_H, OUTPUT_W, CHANNEL])
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        PoolBinding {
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(PoolBinding {
             launcher,
             input,
             output,
-        }
+        })
     }
 }
 

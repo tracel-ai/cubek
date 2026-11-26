@@ -1,6 +1,6 @@
 //! The values themselves, pointwise on the line: a sum, a product, a max, a mean.
 
-use crate::reduce::{ReduceAccumulator, ReduceCarrierFamily};
+use crate::reduce::{Accumulable, ReduceCarrierFamily};
 use cubecl::tile::Monoid;
 use cubecl::{self as cubecl, cube, prelude::*};
 
@@ -12,7 +12,7 @@ impl ReduceCarrierFamily for ValuesReduceCarrierFamily {
 }
 
 #[cube]
-impl<Acc: Numeric, N: Size> ReduceAccumulator<Acc, N> for Vector<Acc, N> {
+impl<Acc: Numeric, N: Size> Accumulable<Acc, N> for Vector<Acc, N> {
     fn accumulate(
         acc: &mut Self,
         line: Vector<Acc, N>,

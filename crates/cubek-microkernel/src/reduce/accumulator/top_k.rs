@@ -1,7 +1,7 @@
 //! The `K` best values with their indices: the top-k.
 
-use crate::reduce::{ReduceAccumulator, ReduceCarrierFamily, lane_indices};
-use cubecl::tile::{Carrier, Monoid, TOP_K_UNROLL_BUDGET, TopK};
+use crate::reduce::{Accumulable, ReduceCarrierFamily, lane_indices, unrolls_a_walk_of_count};
+use cubecl::tile::{Carrier, Monoid, TopK};
 use cubecl::{self as cubecl, cube, prelude::*};
 
 /// [`ReduceCarrier::TopK`](crate::reduce::ReduceCarrier::TopK): its carrier is [`TopK`].
@@ -12,7 +12,7 @@ impl ReduceCarrierFamily for TopKReduceCarrierFamily {
 }
 
 #[cube]
-impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, K> {
+impl<Acc: Numeric, N: Size, K: Size> Accumulable<Acc, N> for TopK<Acc, N, K> {
     fn accumulate(
         acc: &mut Self,
         line: Vector<Acc, N>,
@@ -40,7 +40,7 @@ impl<Acc: Numeric, N: Size, K: Size> ReduceAccumulator<Acc, N> for TopK<Acc, N, 
     /// row's list where the lanes hold one row.
     fn one_row(acc: Self, #[comptime] monoid: Monoid) -> Self {
         let k = K::value();
-        let unrolled = comptime!(k * k <= TOP_K_UNROLL_BUDGET);
+        let unrolled = comptime!(unrolls_a_walk_of_count(k));
         let mut best = TopK::<Acc, Const<1>, K>::identity(monoid);
         #[unroll]
         for lane in 0..N::value() {

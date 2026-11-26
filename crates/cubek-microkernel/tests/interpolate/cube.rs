@@ -3,7 +3,7 @@
 
 use crate::launch::interpolate::WindowDimension;
 use cubek_std::Hardware;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::interpolate::{F16, F32, Interpolate, InterpolateCase};
 

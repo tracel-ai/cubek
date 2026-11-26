@@ -1,7 +1,7 @@
 //! The unit routine: each unit a box of one head's queries over every key it sees.
 
 use cubek_attention::kernels::UnitAttentionRoutine;
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 use crate::attention::{AttentionCase, DECODE, DECODES, Forward, PER_TENSOR, PROMPT, PROMPTS};
 

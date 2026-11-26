@@ -5,7 +5,7 @@ use cubek_convolution::ConvAlgorithm;
 use cubek_matmul::multi_level::{
     PartitionSize, StageSize, components::tile::TileMatmulKind, definition::TilingScheme,
 };
-use cubek_test_utils::{ScopeUnderTest, TestOutcome, ValidationResult};
+use cubek_test_utils::{ScopeChecker, TestOutcome, ValidationResult};
 
 use crate::convolution::multi_level::Forced;
 use crate::convolution::{Conv, Convolves, Declines, F16, Pass, Values};

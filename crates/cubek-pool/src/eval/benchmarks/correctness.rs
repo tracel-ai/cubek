@@ -1,4 +1,4 @@
-use cubek_test_utils::{HostData, Progress};
+use cubek_test_utils::{HostData, KernelResultError, Progress};
 
 use crate::definition::PoolProblem;
 use crate::eval::benchmarks::strategy::PoolStrategy;
@@ -15,7 +15,7 @@ impl cubek_test_utils::Correctness for PoolCorrectness {
         _strategy: &PoolStrategy,
         problem: &PoolProblem,
         seeds: &[u64],
-    ) -> Result<HostData, String> {
+    ) -> Result<HostData, KernelResultError> {
         let device = cubecl::test_device();
         let client = device.client();
         strategy_result(client, problem.clone(), seeds[0])

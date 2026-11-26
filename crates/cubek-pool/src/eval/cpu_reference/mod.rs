@@ -19,7 +19,7 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
-use cubek_test_utils::{HostData, HostDataVec, Progress, TestInput};
+use cubek_test_utils::{HostData, HostDataVec, KernelResultError, Progress, TestInput};
 
 pub(crate) fn f32_elem_type() -> ElemType {
     f32::elem_type_native()
@@ -50,18 +50,29 @@ pub(crate) fn make_zero_handle(
         .generate_without_host_data()
 }
 
+/// The output of `problem`'s launch on seeded operands.
+///
+/// # Errors
+///
+/// [`KernelResultError::Refused`] with the decline a launch returns, and
+/// [`KernelResultError::NotRun`] where `problem` is not a 2d pool, or a launch returns another
+/// error or did not run.
 pub fn strategy_result(
     client: Client,
     problem: PoolProblem,
     seed: u64,
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     match problem {
         PoolProblem::Forward(PoolForward::D2(prob)) => forward::strategy_result(client, prob, seed),
-        PoolProblem::Forward(_) => Err("cpu reference only supports 2d pool forward".to_string()),
+        PoolProblem::Forward(_) => Err("cpu reference only supports 2d pool forward"
+            .to_string()
+            .into()),
         PoolProblem::Backward(PoolBackward::D2(prob)) => {
             backward::strategy_result(client, prob, seed)
         }
-        PoolProblem::Backward(_) => Err("cpu reference only supports 2d pool backward".to_string()),
+        PoolProblem::Backward(_) => Err("cpu reference only supports 2d pool backward"
+            .to_string()
+            .into()),
     }
 }
 

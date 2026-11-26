@@ -119,6 +119,7 @@ impl ScoreHolder {
     /// `kept`'s cells as they lie ([`PlaneFragmentMicrokernel::kept_sum`]). Held cells name no
     /// element, so the tile picks nothing for them against values a stage's fill decodes
     /// ([`FragmentSource::Decoded`]).
+    #[cfg(feature = "attention-backward")]
     pub(crate) fn reader_plane(
         self,
         hw: &Hardware,

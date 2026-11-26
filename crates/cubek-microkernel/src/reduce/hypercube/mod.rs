@@ -1,4 +1,5 @@
+mod atomic;
 mod base;
-mod microkernel;
 
+pub use atomic::*;
 pub use base::*;

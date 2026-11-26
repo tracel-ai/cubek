@@ -5,12 +5,18 @@ use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::row_store::{ROWS, RowStore, WIDTH};
 use cubek_std::layout::stored::{BlockScales, OuterScale};
 use cubek_std::matmul_dimensions::{K, M};
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
 /// What a tiled launch declines before preparing anything: an output that is not a float matrix
 /// of the producer's rows stored in tiles, at the producer's element.
 pub const TILED_ROWS_UNSERVED: Decline = Decline::Unserved {
     why: "a tiled output is a float matrix of the producer's rows, stored in tiles, at its element",
+};
+
+/// What a packed launch declines before preparing anything: an output that is not a product's lhs
+/// (`[M, K]`) holding the producer's rows.
+pub const PACKED_ROWS_UNSERVED: Decline = Decline::Unserved {
+    why: "a packed output is a product's [M, K] lhs, the producer's rows by their width",
 };
 
 /// A matrix of a producer's rows, allocated by the caller, laid out the way a product reads its
@@ -58,13 +64,17 @@ impl TiledRows {
     }
 
     /// The matrix bound under `launcher` over the rows and the row span, `width` elements a line.
-    pub fn bind(&self, launcher: &Launcher, width: usize) -> Bound {
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses to bind the matrix the routine prepared.
+    pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<Bound, Decline> {
         launcher
             .arg(self.tensor.binding.clone(), self.tensor.elem)
             .dimensions(&[ROWS, WIDTH])
             .vectorize(width)
             .build()
-            .expect(ADMITTED_PLAN_RUNS)
+            .or_broken(ADMITTED_PLAN_RUNS)
     }
 }
 
@@ -91,23 +101,13 @@ impl PackedRows {
     ///
     /// # Errors
     ///
+    /// [`PACKED_ROWS_UNSERVED`] for an `out` not over `[M, K]` or not `rows` by `width`, and
     /// [`PACKED_STORE_UNSERVED`](cubek_microkernel::row_store::PACKED_STORE_UNSERVED) for a scheme
     /// the store does not write.
-    ///
-    /// # Panics
-    ///
-    /// On an `out` not over `[M, K]` or not `rows` by `width`.
     pub fn new(out: PackedTensor, rows: usize, width: usize) -> Result<Self, Decline> {
-        assert_eq!(
-            out.dimensions(),
-            [M, K],
-            "a packed output is a product's lhs"
-        );
-        assert_eq!(
-            [out.extent(M), out.extent(K)],
-            [rows, width],
-            "a packed output holds the producer's rows"
-        );
+        if out.dimensions() != [M, K] || [out.extent(M), out.extent(K)] != [rows, width] {
+            return Err(PACKED_ROWS_UNSERVED);
+        }
         let store = RowStore::packed(&out.scheme(), width)?;
         Ok(Self { packed: out, store })
     }
@@ -120,7 +120,11 @@ impl PackedRows {
     /// The matrix as one tile of its words under their scales under `launcher`, a load as wide as
     /// a line of the producer's rows, `width`, or a word, whichever is wider: a line of the stage
     /// the rows are encoded from lies inside one load.
-    pub fn bind(&self, launcher: &Launcher, width: usize) -> TileTensorLaunch {
+    ///
+    /// # Errors
+    ///
+    /// As [`PackedTensor::bind`](crate::kernels::tensor::PackedTensor::bind).
+    pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<TileTensorLaunch, Decline> {
         self.packed.bind(
             launcher,
             self.packed.scheme().num_quants().max(width),
@@ -128,5 +132,48 @@ impl PackedRows {
             OuterScale::Kept,
             Delivery::SyncPerUnit,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernels::select::packed::nvfp4_scheme;
+    use cubecl::ir::UIntKind;
+    use cubecl::std::tensor::TensorHandle;
+    use cubek_std::layout::stored::Operand;
+    use cubek_test_utils::client;
+
+    /// A packed NVFP4 matrix over `dimensions`, sixteen rows of sixty-four values along `K`.
+    fn packed(dimensions: [cubecl::tile::Dimension; 2]) -> PackedTensor {
+        let scheme = nvfp4_scheme();
+        let u32 = ElemType::UInt(UIntKind::U32);
+        let zeros = |shape: [usize; 2]| {
+            PlainTensor::of_handle(TensorHandle::zeros(&client(), shape.to_vec(), u32))
+        };
+        let operand = Operand::of_scheme(&scheme, K, dimensions).expect("one block along k");
+        PackedTensor::new(
+            zeros([16, 64 / scheme.num_quants()]),
+            // A scale byte a block of sixteen values, four a word.
+            zeros([16, 1]),
+            Some(zeros([1, 1])),
+            scheme,
+            operand,
+            [(dimensions[0], 16), (K, 64)],
+        )
+    }
+
+    #[test]
+    fn a_packed_output_of_other_rows_declines() {
+        let declined = PackedRows::new(packed([M, K]), 8, 64).err();
+
+        assert_eq!(declined, Some(PACKED_ROWS_UNSERVED));
+    }
+
+    #[test]
+    fn a_packed_output_over_other_dimensions_declines() {
+        let declined = PackedRows::new(packed([cubek_std::matmul_dimensions::N, K]), 16, 64).err();
+
+        assert_eq!(declined, Some(PACKED_ROWS_UNSERVED));
     }
 }

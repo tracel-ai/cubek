@@ -7,10 +7,10 @@ use cubek_std::plan::{Declined, Step};
 
 /// Every packed input decoded into a float one of the call's element by this crate's decode
 /// ([`PlaneDequantizeMatmulRoutine`]), or by the framework's dequantize where the decode declines
-/// it. A float input passes through as it is.
+/// it, and every scaled input dequantized by the framework. A float input passes through as it is.
 pub struct Decoded;
 
-/// Every packed input dequantized by the framework into a float one of the call's element: what a
+/// Every packed or scaled input dequantized by the framework into a float one of the call's element: what a
 /// scheme no kernel here reads goes through. A float input passes through as it is.
 pub struct FrameworkDequantized;
 
@@ -19,18 +19,22 @@ const NO_FRAMEWORK_DEQUANTIZE: Decline = Decline::Unserved {
     why: "the caller states no framework dequantize for this packed input",
 };
 
+/// A packed input stored in tiles that the decode declines, which the framework's dequantize is
+/// not asked about: it reads a buffer by its strides alone, and would answer wrong.
+const TILED_INPUT_UNDECODED: Decline = Decline::Unserved {
+    why: "a packed input stored in tiles is decoded by this crate's decode alone, and it declines \
+          this one",
+};
+
 impl Decoded {
     /// `input`, one of `call`'s, decoded where it is packed: what a candidate that decodes one
     /// input and reads the other as stored decodes.
     ///
     /// # Errors
     ///
-    /// Where the decode declines the input and the caller states no framework dequantize for it.
-    ///
-    /// # Panics
-    ///
-    /// Where the decode declines an input stored in tiles, which the framework's dequantize reads
-    /// by its strides alone and would answer wrong.
+    /// A [`Decline::Broken`] of the decode, as it is. Where the decode declines the input:
+    /// [`TILED_INPUT_UNDECODED`] with the decode's reason for an input stored in tiles, and where
+    /// the caller states no framework dequantize for it, why that declines.
     pub fn input(
         &self,
         call: &MatmulCall,
@@ -38,27 +42,18 @@ impl Decoded {
     ) -> Result<MatmulCallInput, Declined> {
         match &input.tensor {
             StoredTensor::Plain(_) => Ok(input.clone()),
-            StoredTensor::Scaled(_) => framework_dequantized(input).map_err(|why| Declined {
-                plan: self.name(),
-                why: why.to_string(),
-            }),
-            StoredTensor::Packed(packed) => decode(call, packed)
-                .or_else(|why| match packed.words().is_tiled() {
-                    true => panic!(
-                        "the decode declines this input stored in tiles ({why}); store it untiled"
-                    ),
-                    false => framework_dequantized(input),
-                })
-                .map_err(|why| Declined {
-                    plan: self.name(),
-                    why: why.to_string(),
-                }),
+            StoredTensor::Scaled(_) => framework_dequantized(input).map_err(|why| why.to_string()),
+            StoredTensor::Packed(packed) => decoded(call, input, packed),
         }
+        .map_err(|why| Declined {
+            plan: self.name(),
+            why,
+        })
     }
 }
 
 impl Step<MatmulCall> for Decoded {
-    /// # Panics
+    /// # Errors
     ///
     /// As [`Decoded::input`].
     fn apply(&self, call: &MatmulCall) -> Result<MatmulCall, Declined> {
@@ -93,6 +88,21 @@ impl Step<MatmulCall> for FrameworkDequantized {
 
     fn name(&self) -> String {
         "framework-dequantized".to_string()
+    }
+}
+
+/// `packed`, `input`'s words, decoded by this crate's decode, or by the framework's dequantize
+/// where the decode declines an input not stored in tiles.
+fn decoded(
+    call: &MatmulCall,
+    input: &MatmulCallInput,
+    packed: &PackedTensor,
+) -> Result<MatmulCallInput, String> {
+    match decode(call, packed) {
+        Ok(decoded) => Ok(decoded),
+        Err(why) if why.is_broken() => Err(why.to_string()),
+        Err(why) if packed.words().is_tiled() => Err(format!("{TILED_INPUT_UNDECODED}: {why}")),
+        Err(_) => framework_dequantized(input).map_err(|why| why.to_string()),
     }
 }
 

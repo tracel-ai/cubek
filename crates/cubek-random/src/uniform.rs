@@ -1,9 +1,19 @@
 use crate::base::random;
 use crate::kernels::RandomStrategy;
 use cubecl::prelude::*;
+use cubecl::tile::launch::Decline;
 use cubek_microkernel::random::Uniform;
 
 /// `out` filled with values spread evenly over `[lower_bound, upper_bound)`, drawn off `seed`.
+///
+/// # Assumptions
+///
+/// - `dtype` is the element `out`'s buffer stores.
+/// - `lower_bound` is below `upper_bound`.
+///
+/// # Errors
+///
+/// As [`random_normal`](crate::random_normal).
 pub fn random_uniform(
     client: &Client,
     lower_bound: f32,
@@ -11,7 +21,7 @@ pub fn random_uniform(
     out: TensorBinding,
     dtype: ElemType,
     seed: u64,
-) -> Result<(), LaunchError> {
+) -> Result<(), Decline> {
     random_uniform_with_strategy(
         client,
         lower_bound,
@@ -31,7 +41,7 @@ pub(crate) fn random_uniform_with_strategy(
     dtype: ElemType,
     strategy: RandomStrategy,
     seed: u64,
-) -> Result<(), LaunchError> {
+) -> Result<(), Decline> {
     random(
         client,
         Uniform {

@@ -10,7 +10,7 @@ use cubek_convolution::{
 };
 use cubek_matmul::definition::MatmulElems;
 use cubek_std::InputBinding;
-use cubek_test_utils::{ExecutionOutcome, ScopeUnderTest, TestOutcome, launch_and_capture_outcome};
+use cubek_test_utils::{ExecutionOutcome, KernelResultError, ScopeChecker, TestOutcome};
 
 use crate::convolution::{Conv, ConvRoutine, ConvTensors, Convolves, Declines, F32, Pass, Storage};
 
@@ -164,33 +164,29 @@ fn check_reduced_precision<E: CubeElement + Numeric + PartialEq>() {
         PartialColumnOrder::SpatialLast,
     ] {
         let output = TensorHandle::empty(&client, [8, 1, 4], dtype);
-        let outcome = launch_and_capture_outcome(&client, &[&output.handle], |client| {
-            let args = ConvolutionArgs {
-                stride: [1],
-                padding: [0],
-                dilation: [1],
-            };
-            let input = InputBinding::new(input.clone().binding(), dtype);
-            let grad = InputBinding::new(grad.clone().binding(), dtype);
-            let result = launch_accelerated::<1>(
-                client,
-                input,
-                grad,
-                output.clone().binding(),
-                args,
-                AcceleratedSplitStrategy {
-                    tile_kind: AcceleratedTileKind::Mma,
-                    column_order,
-                },
-                MatmulElems::from_single_dtype(dtype),
-            );
-            match result {
-                Ok(()) => ExecutionOutcome::Executed,
-                Err(error) => ExecutionOutcome::CompileError(format!("{error:?}")),
-            }
+        let args = ConvolutionArgs {
+            stride: [1],
+            padding: [0],
+            dilation: [1],
+        };
+        let launched = launch_accelerated::<1>(
+            &client,
+            InputBinding::new(input.clone().binding(), dtype),
+            InputBinding::new(grad.clone().binding(), dtype),
+            output.clone().binding(),
+            args,
+            AcceleratedSplitStrategy {
+                tile_kind: AcceleratedTileKind::Mma,
+                column_order,
+            },
+            MatmulElems::from_single_dtype(dtype),
+        )
+        .map_err(KernelResultError::from)
+        .and_then(|()| {
+            ExecutionOutcome::of_outputs(&client, &[&output.handle]).into_kernel_result()
         });
-        if let ExecutionOutcome::CompileError(error) = outcome {
-            TestOutcome::CompileError(error).enforce();
+        if let Err(error) = launched {
+            TestOutcome::unrun(&column_order, error).enforce();
             return;
         }
         let strides = output.strides().to_vec();

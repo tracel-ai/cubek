@@ -9,6 +9,16 @@ use cubek_std::microkernel::{CubeFootprint, KernelEstimate};
 /// A reduced row as its microkernels see it: what it reduces with, what it reads and accumulates,
 /// and which dimension its lines run along. Not how long it is: a microkernel reads its row's length off its tile, so
 /// whether the length is compiled in is its launch's choice.
+///
+/// # Assumptions
+///
+/// - A top-k keeps at least one value (`k > 0`).
+/// - The indices are written beside the values (`with_indices`) only where the operation's carrier
+///   keeps them ([`ReduceCarrier::carries_indices`](crate::reduce::ReduceCarrier::carries_indices)):
+///   a microkernel writes the indices its carrier keeps.
+/// - A microkernel of the item is handed a tile of `indices` exactly where the item writes the
+///   indices beside the values ([`ReduceWrites::Both`](crate::reduce::ReduceWrites::Both)), and a
+///   tile of `partial_indices` exactly where its carrier keeps indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReduceWorkItem {
     pub operation: ReduceOperation,
@@ -32,6 +42,15 @@ impl ReduceWorkItem {
         UnitWork {
             instruction: ArithmeticInstruction::Vector,
             registers: self.operation.carrier().lines() as u32 + 2,
+        }
+    }
+
+    /// What a unit that merges stored partials works with: registers for the merged carrier's lines and
+    /// one partial's, beside two of its own.
+    pub fn merge_work(&self) -> UnitWork {
+        UnitWork {
+            instruction: ArithmeticInstruction::Vector,
+            registers: 2 * self.operation.carrier().lines() as u32 + 2,
         }
     }
 
@@ -69,7 +88,7 @@ impl ReduceWorkItem {
 
     /// Whether it is rightly handed an output of indices (`handed`): exactly where it writes them
     /// beside the values.
-    pub(crate) fn takes_indices(&self, handed: bool) -> bool {
+    pub(crate) fn takes_handed_indices(&self, handed: bool) -> bool {
         handed == (self.writes() == ReduceWrites::Both)
     }
 }
@@ -108,6 +127,7 @@ pub(crate) fn empty_estimate() -> KernelEstimate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reduce::BATCH;
     use cubecl::ir::FloatKind;
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
@@ -140,7 +160,7 @@ mod tests {
     #[test]
     fn across_the_axis_an_input_line_is_an_output_line() {
         assert_eq!(
-            item(ReduceOperation::Sum, crate::reduce::BATCH, false).requirement(),
+            item(ReduceOperation::Sum, BATCH, false).requirement(),
             VectorRequirement::Together {
                 operand: ReduceOperand::Input,
                 with: ReduceOperand::Out,
@@ -151,9 +171,30 @@ mod tests {
     /// A unit holds its carrier's lines, beside two registers of its own.
     #[test]
     fn a_unit_holds_its_carriers_lines_and_two() {
-        const K: u32 = 3;
-        let work = item(ReduceOperation::ArgTopK { k: K as usize }, REDUCED, false).unit_work();
-        assert_eq!(work.registers, 2 * K + 2);
+        const KEPT_COUNT: u32 = 3;
+        let work = item(
+            ReduceOperation::ArgTopK {
+                k: KEPT_COUNT as usize,
+            },
+            REDUCED,
+            false,
+        )
+        .unit_work();
+        assert_eq!(work.registers, 2 * KEPT_COUNT + 2);
+    }
+
+    #[test]
+    fn a_merge_holds_two_carriers_lines_and_two() {
+        const KEPT_COUNT: u32 = 3;
+        let work = item(
+            ReduceOperation::TopK {
+                k: KEPT_COUNT as usize,
+            },
+            REDUCED,
+            false,
+        )
+        .merge_work();
+        assert_eq!(work.registers, 2 * KEPT_COUNT + 2);
     }
 
     #[test]
@@ -174,12 +215,12 @@ mod tests {
 
     #[test]
     fn an_item_that_writes_both_takes_indices() {
-        assert!(item(ReduceOperation::ArgMax, REDUCED, true).takes_indices(true));
+        assert!(item(ReduceOperation::ArgMax, REDUCED, true).takes_handed_indices(true));
     }
 
     #[test]
     fn an_item_that_writes_one_half_refuses_indices() {
-        assert!(!item(ReduceOperation::ArgMax, REDUCED, false).takes_indices(true));
+        assert!(!item(ReduceOperation::ArgMax, REDUCED, false).takes_handed_indices(true));
     }
 
     #[test]

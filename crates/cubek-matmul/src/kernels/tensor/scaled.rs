@@ -12,7 +12,7 @@ use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulBlocks;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_dimensions::{K, blocked};
-use cubek_std::routine::ADMITTED_PLAN_RUNS;
+use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 
 /// What [`ScaledTensor::of_quantized`] declines: a scheme it does not read
 /// ([`ScaledTensor::reads`]).
@@ -76,12 +76,16 @@ impl ScaledTensor {
     }
 
     /// `values`, bound as a tile, under the scales: one operand the kernel factors them out of.
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses the scales as the routine prepared them.
     pub fn under_scales(
         &self,
         launcher: &Launcher,
         blocks: &MatmulBlocks,
         values: TileTensorLaunch,
-    ) -> TileTensorLaunch {
+    ) -> Result<TileTensorLaunch, Decline> {
         // A dimension no scale groups is one block, the position inside it the whole of it.
         let (position, axis, count) = match self.scaled_along {
             Some(dimension) => Self::varying(blocks, dimension),
@@ -97,8 +101,8 @@ impl ScaledTensor {
                 &[axis, PhysicalAxisMap::broadcast()],
             ))
             .build()
-            .expect(ADMITTED_PLAN_RUNS);
-        values.scales(scales.arg())
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(values.scales(scales.arg()))
     }
 
     /// The position inside `dimension`'s one block, the axis of scales along it, and how many.

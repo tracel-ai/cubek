@@ -10,8 +10,8 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
-    launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, KernelResultError, Progress,
+    StridedLayout, TestInput,
 };
 use num_complex::Complex;
 
@@ -19,6 +19,11 @@ use crate::fft::{FftMode, irfft_launch, rfft_launch};
 
 /// Run the FFT kernel for `mode` against the given problem with seeded inputs
 /// and return its output as a [`HostData`].
+///
+/// # Errors
+///
+/// [`KernelResultError::NotRun`] where the launch returns an error or did not run: the FFT
+/// declines nothing.
 pub fn kernel_result(
     client: Client,
     shape: Vec<usize>,
@@ -26,7 +31,7 @@ pub fn kernel_result(
     mode: FftMode,
     seed_lhs: u64,
     seed_rhs: u64,
-) -> Result<HostData, String> {
+) -> Result<HostData, KernelResultError> {
     let dtype = f32::elem_type_native();
 
     match mode {
@@ -48,26 +53,20 @@ pub fn kernel_result(
                 .zeros()
                 .generate_without_host_data();
 
-            let outcome = launch_and_capture_outcome(&client, &[&re.handle, &im.handle], |c| {
-                rfft_launch(
-                    c,
-                    signal.clone().binding(),
-                    re.clone().binding(),
-                    im.clone().binding(),
-                    dim,
-                    dtype,
-                )
-                .into()
-            });
-
-            match outcome {
-                ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-                ExecutionOutcome::Executed => {
-                    let re_host = HostData::from_tensor_handle(&client, re, HostDataType::F32);
-                    let im_host = HostData::from_tensor_handle(&client, im, HostDataType::F32);
-                    Ok(stack_re_im(re_host, im_host))
-                }
-            }
+            rfft_launch(
+                &client,
+                signal.binding(),
+                re.clone().binding(),
+                im.clone().binding(),
+                dim,
+                dtype,
+            )
+            .map_err(|error| KernelResultError::NotRun(error.to_string()))?;
+            ExecutionOutcome::of_outputs(&client, &[&re.handle, &im.handle])
+                .into_kernel_result()?;
+            let re_host = HostData::from_tensor_handle(&client, re, HostDataType::F32);
+            let im_host = HostData::from_tensor_handle(&client, im, HostDataType::F32);
+            Ok(stack_re_im(re_host, im_host))
         }
         FftMode::Inverse => {
             let mut spectrum_shape = shape.clone();
@@ -87,26 +86,21 @@ pub fn kernel_result(
                 .zeros()
                 .generate_without_host_data();
 
-            let outcome = launch_and_capture_outcome(&client, &[&signal.handle], |c| {
-                irfft_launch(
-                    c,
-                    re.binding(),
-                    im.binding(),
-                    signal.clone().binding(),
-                    dim,
-                    dtype,
-                )
-                .into()
-            });
-
-            match outcome {
-                ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-                ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-                    &client,
-                    signal,
-                    HostDataType::F32,
-                )),
-            }
+            irfft_launch(
+                &client,
+                re.binding(),
+                im.binding(),
+                signal.clone().binding(),
+                dim,
+                dtype,
+            )
+            .map_err(|error| KernelResultError::NotRun(error.to_string()))?;
+            ExecutionOutcome::of_outputs(&client, &[&signal.handle]).into_kernel_result()?;
+            Ok(HostData::from_tensor_handle(
+                &client,
+                signal,
+                HostDataType::F32,
+            ))
         }
     }
 }

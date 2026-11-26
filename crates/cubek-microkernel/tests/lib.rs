@@ -15,13 +15,9 @@ mod matmul;
 mod pool;
 #[cfg(feature = "random")]
 mod random;
-#[cfg(feature = "reduce")]
-mod reduce;
 #[cfg(feature = "rms-norm")]
 mod rms_norm;
 #[cfg(feature = "attention")]
 mod split_keys_merge;
 #[cfg(feature = "swiglu")]
 mod swiglu;
-#[cfg(feature = "zero")]
-mod zero;

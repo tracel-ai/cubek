@@ -1,12 +1,15 @@
 use crate::kernels::{
-    AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionPartitioning,
-    AttentionRoutineProblem, HypercubeMerge, PACKED_QUERIES_UNREAD, QueryOrder,
+    AttentionBinding, AttentionBlueprint, AttentionCacheBinding, AttentionCacheLayout,
+    AttentionPartitioning, AttentionRoutineProblem, AttentionSplitSlots, AttentionTensors,
+    HypercubeMerge, PACKED_QUERIES_UNREAD, PLANE_SHUFFLE_ONE_WIDTH, QueryOrder,
 };
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
-use cubecl::tile::StageStorage;
+use cubecl::client::Client;
+use cubecl::ir::ElemType;
+use cubecl::prelude::{CubeCount, CubeDim, TensorArg};
 use cubecl::tile::launch::{Decline, Vectorization};
-use cubek_microkernel::attention::AttentionOperand;
+use cubecl::tile::{Launcher, StageStorage, TileTensorLaunch};
 use cubek_microkernel::attention::cube::{
     CubeAttentionMicrokernelSettings, CubeAttentionPlaneSettings,
 };
@@ -14,10 +17,11 @@ use cubek_microkernel::attention::hypercube::{
     HypercubeAttentionMicrokernel, HypercubeAttentionMicrokernelSettings,
 };
 use cubek_microkernel::attention::plane::PlaneShuffleAttentionMicrokernelSettings;
+use cubek_microkernel::attention::{AttentionOperand, AttentionVisibility};
 use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
-use cubek_std::routine::{CubeResources, Grid, Routine};
+use cubek_std::routine::{Breakable, CubeResources, Grid, Routine};
 
 /// Attention with several cubes owning every box of queries, every cube walking its own run of the
 /// keys: the hypercube microkernel runs a cube of plane shuffles over a cube's run, its planes
@@ -40,6 +44,68 @@ pub trait HypercubeShuffleMerge: core::fmt::Debug + Copy + Eq + core::hash::Hash
     const MERGE: HypercubeMerge;
     /// What a report calls the routine, in kebab-case.
     const NAME: &'static str;
+}
+
+/// What a hypercube shuffle's kernel takes alike whether it reads its keys and values as tiles or
+/// decodes a packed cache, each built once: the launch's grid, the operands bound beside the cache
+/// under their launcher, the slots, and the problem's scalars.
+pub(crate) struct HypercubeShuffleLaunch<'a> {
+    pub client: &'a Client,
+    pub cube_count: CubeCount,
+    pub cube_dim: CubeDim,
+    /// Scalars a vector of every operand holds: the plane shuffle lines every one alike.
+    pub width_scalars: usize,
+    pub launcher: Launcher,
+    pub query: TileTensorLaunch,
+    pub mask: Option<TileTensorLaunch>,
+    pub lengths: TensorArg,
+    pub slots: [TensorArg; 3],
+    pub query_count: u32,
+    pub key_count: u32,
+    pub scale: f32,
+    pub microkernel: HypercubeAttentionMicrokernel,
+    pub shape: HypercubeMergeShape,
+    pub visibility: AttentionVisibility,
+    /// The elements a kernel over tiles reads each operand in.
+    pub operand_elements: [ElemType; 5],
+    /// The elements a kernel over a packed cache computes in.
+    pub kernel_elements: [ElemType; 2],
+}
+
+impl<'a> HypercubeShuffleLaunch<'a> {
+    /// The launch `blueprint` prepared on `grid` over `tensors`, bound as `binding`, its cubes
+    /// leaving their partials in `slots` laid out as `shape`; and the cache, which each kernel
+    /// reads its own way.
+    pub(crate) fn new(
+        tensors: &'a AttentionTensors,
+        binding: AttentionBinding,
+        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
+        grid: Grid,
+        shape: HypercubeMergeShape,
+        slots: &AttentionSplitSlots,
+    ) -> (Self, AttentionCacheBinding) {
+        let problem = tensors.problem();
+        let launch = Self {
+            client: tensors.client(),
+            cube_count: grid.launch.cube_count,
+            cube_dim: grid.launch.cube_dim,
+            width_scalars: blueprint.widths.query,
+            launcher: binding.launcher,
+            query: binding.query,
+            mask: binding.mask,
+            lengths: binding.lengths,
+            slots: slots.to_args(),
+            query_count: problem.seq_q as u32,
+            key_count: problem.seq_kv as u32,
+            scale: tensors.scale(),
+            microkernel: blueprint.microkernel,
+            shape,
+            visibility: problem.visibility,
+            operand_elements: problem.work_item().operand_elements(),
+            kernel_elements: problem.work_item().kernel_elements(),
+        };
+        (launch, binding.cache)
+    }
 }
 
 pub type HypercubeShuffleAttentionRoutineBlueprint =
@@ -229,6 +295,13 @@ impl<M: HypercubeShuffleMerge> Routine for HypercubeShuffleAttentionRoutine<M> {
             vectorization,
             storage,
         );
+        // The plane shuffle lines every operand alike, so its tiles share one width; a packed cache
+        // binds no tile.
+        let widths = &blueprint.widths;
+        let packed = matches!(problem.cache, AttentionCacheLayout::Packed(_));
+        if !packed && [widths.key, widths.value] != [widths.query; 2] {
+            return Result::broken(PLANE_SHUFFLE_ONE_WIDTH);
+        }
         Ok((blueprint, grid))
     }
 }
@@ -245,21 +318,6 @@ impl<M: HypercubeShuffleMerge> HypercubeShuffleAttentionRoutine<M> {
             blueprint.partitioning.cubes_along_keys(),
             M::MERGE.seq_q(&blueprint.microkernel),
         )
-    }
-
-    /// Checks what both kernels bind: the plane shuffle lines every operand alike, so its tiles
-    /// share one width.
-    pub(crate) fn assert_one_width(
-        binding: &AttentionBinding,
-        blueprint: &HypercubeShuffleAttentionRoutineBlueprint,
-    ) {
-        if let AttentionCacheBinding::Tiles { .. } = binding.cache {
-            assert!(
-                blueprint.widths.key == blueprint.widths.query
-                    && blueprint.widths.value == blueprint.widths.query,
-                "the plane shuffle's operands share one width"
-            );
-        }
     }
 }
 

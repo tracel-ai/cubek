@@ -14,7 +14,7 @@ use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleD
 
 use super::harness::{dequantize, f32_tensor, quantize};
 use super::{Needs, Quantized, RoundTrip};
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 
 /// The `e2m1` magnitudes, in code order. Written out rather than derived: a table derived from the
 /// codec under test would agree with it however wrong it is.

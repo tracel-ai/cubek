@@ -12,7 +12,7 @@ use cubek_pool::{
     },
     pool3d_backward,
 };
-use cubek_test_utils::ScopeUnderTest;
+use cubek_test_utils::ScopeChecker;
 use cubek_test_utils::TestInput;
 
 const TOLERANCE: f32 = 1e-5;

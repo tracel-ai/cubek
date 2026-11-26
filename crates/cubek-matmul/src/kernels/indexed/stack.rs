@@ -4,12 +4,36 @@
 use crate::kernels::MATMUL_SCALED_BESIDE_FLOAT;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::client::Client;
+use cubecl::ir::{ElemType, UIntKind};
 use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::metadata::Metadata;
 use cubek_microkernel::matmul::MatmulLayout;
 use cubek_std::matmul_dimensions::{K, N};
 use serde::{Deserialize, Serialize};
+
+/// A stacked rhs that is no rank-two view of whole slabs, at least one of them.
+pub const MATMUL_STACK_NOT_WHOLE_SLABS: Decline = Decline::Unserved {
+    why: "a stack is a rank-two view of whole slabs, at least one of them",
+};
+
+/// Ends of a grouped product that are no one `u32` per group, at least one.
+pub const GROUP_ENDS_UNREAD: Decline = Decline::Unserved {
+    why: "the groups' ends are one u32 row per group, at least one group",
+};
+
+/// Whether `ends` are one `u32` per group, at least one.
+///
+/// # Errors
+///
+/// [`GROUP_ENDS_UNREAD`].
+pub(crate) fn admit_ends(ends: &PlainTensor) -> Result<(), Decline> {
+    let shape = ends.shape();
+    if ends.elem != ElemType::UInt(UIntKind::U32) || shape.rank() != 1 || shape[0] == 0 {
+        return Err(GROUP_ENDS_UNREAD);
+    }
+    Ok(())
+}
 
 /// The dimension of a product along which the slabs of its stacked rhs lie end
 /// to end.
@@ -48,14 +72,18 @@ impl SlabDimension {
     /// One slab's `[k, n]` out of a `[k, n]` view holding `slabs` of them
     /// along this dimension.
     ///
+    /// # Assumptions
+    ///
+    /// The view is whole slabs, at least one.
+    ///
     /// # Panics
     ///
-    /// Unless the view is whole slabs.
+    /// On a view that is not whole slabs, or on no slab.
     pub fn slab_of(self, [k, n]: [usize; 2], slabs: usize) -> [usize; 2] {
         let whole = |extent: usize| {
             assert!(
                 extent.is_multiple_of(slabs),
-                "a stack of {slabs} slabs has whole slabs along its {self:?} dimension, got {extent}"
+                "a stack of {slabs} slabs should be whole slabs along its {self:?} dimension, got {extent}"
             );
             extent / slabs
         };
@@ -67,6 +95,10 @@ impl SlabDimension {
 
     /// One slab's `[k, n]` out of `stack`, float or packed, holding `slabs` of them along this
     /// dimension.
+    ///
+    /// # Assumptions
+    ///
+    /// As [`slab_of`](Self::slab_of).
     ///
     /// # Panics
     ///
@@ -99,6 +131,23 @@ impl SlabDimension {
     }
 }
 
+impl SlabDimension {
+    /// Whether `stack`, float or packed, is whole slabs along this dimension, `slabs` of them.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_STACK_NOT_WHOLE_SLABS`].
+    pub(crate) fn admit(self, stack: &StoredTensor, slabs: usize) -> Result<(), Decline> {
+        if stack.values().shape().rank() != 2 || slabs == 0 {
+            return Err(MATMUL_STACK_NOT_WHOLE_SLABS);
+        }
+        if !stack.extent([K, N], self.dimension()).is_multiple_of(slabs) {
+            return Err(MATMUL_STACK_NOT_WHOLE_SLABS);
+        }
+        Ok(())
+    }
+}
+
 /// The stack as `[groups, k, n]`, one `[k, n]` slab a batch, over the buffer it lies in: a
 /// strided batch rather than a gathered dim. A `cmma` or plane-register fragment reads no
 /// gathered operand, a gathered dim compiles one slab's extent into its coefficients where a
@@ -114,9 +163,13 @@ impl SlabView {
     /// steps within itself as the stack's view does, whichever way its buffer lies, and the next
     /// slab starts one slab's extent further along the dimension the slabs lie along.
     ///
+    /// # Assumptions
+    ///
+    /// As [`SlabDimension::slab_of`].
+    ///
     /// # Panics
     ///
-    /// As [`SlabDimension::slab_of`], on a stack that is not whole slabs.
+    /// As [`SlabDimension::slab_of`].
     pub fn new(stack: &PlainTensor, groups: usize, along: SlabDimension) -> Self {
         let meta = stack.meta();
         let (shape, strides) = (meta.shape(), meta.strides());

@@ -19,7 +19,7 @@ use cubek_microkernel::attention::AttentionVisibility;
 use cubek_microkernel::attention_backward::AttentionBackwardWorkItem;
 use cubek_std::Hardware;
 use cubek_std::microkernel::Microkernel;
-use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeUnderTest, TestInput, Written};
+use cubek_test_utils::{HostData, HostDataType, HostDataVec, ScopeChecker, TestInput, Written};
 use half::f16;
 
 pub(crate) const F16: ElemType = ElemType::Float(FloatKind::F16);
@@ -337,7 +337,7 @@ impl<S: BackwardSettings> Backward<S> {
     }
 }
 
-impl<S: BackwardSettings> ScopeUnderTest for Backward<S> {
+impl<S: BackwardSettings> ScopeChecker for Backward<S> {
     type Case = BackwardCase<S>;
 
     fn launch(&self, client: &Client, case: &Self::Case) -> Result<Vec<Written>, Decline> {
