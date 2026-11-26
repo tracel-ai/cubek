@@ -61,7 +61,7 @@ impl TiledRows {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    /// As [`PackedTensor::bind`](crate::kernels::tensor::PackedTensor::bind).
     pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<Bound, Decline> {
         launcher
             .arg(self.tensor.binding.clone(), self.tensor.elem)
@@ -127,7 +127,7 @@ impl PackedRows {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    /// As [`PackedTensor::bind`](crate::kernels::tensor::PackedTensor::bind).
     pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<TileTensorLaunch, Decline> {
         self.packed.bind(
             launcher,

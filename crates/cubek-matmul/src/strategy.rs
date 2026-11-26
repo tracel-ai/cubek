@@ -82,18 +82,18 @@ impl Strategy {
             return tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
                 .launch_ref(client, lhs, rhs, out, dtypes);
         }
-        let picked = multi_level::Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
-            client,
-            lhs.clone(),
-            rhs.clone(),
-            out.clone(),
+        let (first_lhs, first_rhs, first_out) = (lhs.clone(), rhs.clone(), out.clone());
+        launch_with_fallback(
             dtypes,
-        );
-        match picked {
-            Ok(()) => Ok(()),
-            Err(_) => multi_level::Strategy::SimpleUnit(Default::default())
-                .launch_ref(client, lhs, rhs, out, dtypes),
-        }
+            move |dtypes| {
+                multi_level::Strategy::SimpleCyclicCmma(Default::default())
+                    .launch_ref(client, first_lhs, first_rhs, first_out, dtypes)
+            },
+            move |dtypes| {
+                multi_level::Strategy::SimpleUnit(Default::default())
+                    .launch_ref(client, lhs, rhs, out, dtypes)
+            },
+        )
     }
 
     /// The tiled-only pair. `CpuGemm` takes the fallback slot as the one tiled routine with no
@@ -106,15 +106,40 @@ impl Strategy {
         out: TensorBinding,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
-        let picked =
-            tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
-                .launch_ref(client, lhs.clone(), rhs.clone(), out.clone(), dtypes);
-        match picked {
-            Ok(()) => Ok(()),
-            Err(_) => tiled::Strategy::CpuGemm(
-                crate::kernels::UnitRegistersMatmulRoutineSettings::DEFAULT,
-            )
-            .launch_ref(client, lhs, rhs, out, dtypes),
-        }
+        let (first_lhs, first_rhs, first_out) = (lhs.clone(), rhs.clone(), out.clone());
+        launch_with_fallback(
+            dtypes,
+            move |dtypes| {
+                tiled::Strategy::Cmma(crate::kernels::CubeStagedMatmulRoutineSettings::DEFAULT)
+                    .launch_ref(client, first_lhs, first_rhs, first_out, dtypes)
+            },
+            move |dtypes| {
+                tiled::Strategy::CpuGemm(
+                    crate::kernels::UnitRegistersMatmulRoutineSettings::DEFAULT,
+                )
+                .launch_ref(client, lhs, rhs, out, dtypes)
+            },
+        )
     }
+}
+
+/// `first`, or `fallback` where `first` refuses the problem or the device
+/// ([`MatmulSetupError::Unavailable`], [`MatmulSetupError::InvalidConfig`]), the fallback run on the
+/// `dtypes` the caller passed, whatever `first` made of them. Any other error is `first`'s answer.
+#[allow(clippy::result_large_err)]
+fn launch_with_fallback(
+    dtypes: &mut MatmulElems,
+    first: impl FnOnce(&mut MatmulElems) -> Result<(), MatmulSetupError>,
+    fallback: impl FnOnce(&mut MatmulElems) -> Result<(), MatmulSetupError>,
+) -> Result<(), MatmulSetupError> {
+    let passed = dtypes.clone();
+    let first = first(dtypes);
+    if !matches!(
+        first,
+        Err(MatmulSetupError::Unavailable(_) | MatmulSetupError::InvalidConfig(_))
+    ) {
+        return first;
+    }
+    *dtypes = passed;
+    fallback(dtypes)
 }

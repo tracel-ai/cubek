@@ -4,9 +4,9 @@ use crate::kernels::{
     MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use core::num::NonZeroUsize;
-use cubecl::tile::TileTensorLaunch;
 use cubecl::tile::launch::{Decline, DestinationLaunch, Vectorization};
 use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::unit::{UnitRegistersMicrokernel, UnitRegistersMicrokernelSettings};
 use cubek_microkernel::matmul::{
@@ -251,13 +251,25 @@ impl MatmulRoutine<UnitRegistersMicrokernel> for UnitWholeKMatmulRoutine {
     /// A unit holds every row, compiled in, against each step of the rhs.
     const ROWS_KIND: MatmulRowsKind = MatmulRowsKind::Whole;
 
+    type Extras = ();
+
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        _: &MatmulTensors<Out>,
+        _: &Launcher,
+        _: &UnitWholeKMatmulRoutineBlueprint,
+    ) -> Result<(), Decline> {
+        Ok(())
+    }
+
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        _: (),
         blueprint: UnitWholeKMatmulRoutineBlueprint,
         grid: Grid,
-    ) -> Result<(), Decline> {
+    ) {
         let [sum, _, _, out] = tensors.work_item().kernel_elements();
         // SAFETY: every operand is bound through the launcher, which masks the reads and writes
         // of a tile the problem's edge cuts short, and the kernel indexes no buffer but through
@@ -276,7 +288,6 @@ impl MatmulRoutine<UnitRegistersMicrokernel> for UnitWholeKMatmulRoutine {
                 [sum, out],
             );
         }
-        Ok(())
     }
 }
 

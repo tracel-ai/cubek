@@ -19,32 +19,40 @@ const NO_FRAMEWORK_DEQUANTIZE: Decline = Decline::Unserved {
     why: "the caller states no framework dequantize for this packed input",
 };
 
+/// A packed input stored in tiles that the decode declines, which the framework's dequantize is
+/// not asked about: it reads a buffer by its strides alone, and would answer wrong.
+const TILED_INPUT_UNDECODED: Decline = Decline::Unserved {
+    why: "a packed input stored in tiles is decoded by this crate's decode alone, and it declines \
+          this one",
+};
+
 impl Decoded {
     /// `input`, one of `call`'s, decoded where it is packed: what a candidate that decodes one
     /// input and reads the other as stored decodes.
     ///
     /// # Errors
     ///
-    /// Where the decode declines the input and the caller states no framework dequantize for it,
-    /// or the input is stored in tiles, which the framework's dequantize reads by its strides alone
-    /// and would answer wrong.
+    /// A [`Decline::Broken`] of the decode, as it is. Where the decode declines the input:
+    /// [`TILED_INPUT_UNDECODED`] with the decode's reason for an input stored in tiles, and where
+    /// the caller states no framework dequantize for it, why that declines.
     pub fn input(
         &self,
         call: &MatmulCall,
         input: &MatmulCallInput,
     ) -> Result<MatmulCallInput, Declined> {
-        match &input.tensor {
-            StoredTensor::Plain(_) => Ok(input.clone()),
-            StoredTensor::Packed(packed) => decode(call, packed)
-                .or_else(|why| match packed.words().is_tiled() {
-                    true => Err(why),
-                    false => framework_dequantized(input),
-                })
-                .map_err(|why| Declined {
-                    plan: self.name(),
-                    why: why.to_string(),
-                }),
+        let StoredTensor::Packed(packed) = &input.tensor else {
+            return Ok(input.clone());
+        };
+        match decode(call, packed) {
+            Ok(decoded) => Ok(decoded),
+            Err(why) if why.is_broken() => Err(why.to_string()),
+            Err(why) if packed.words().is_tiled() => Err(format!("{TILED_INPUT_UNDECODED}: {why}")),
+            Err(_) => framework_dequantized(input).map_err(|why| why.to_string()),
         }
+        .map_err(|why| Declined {
+            plan: self.name(),
+            why,
+        })
     }
 }
 

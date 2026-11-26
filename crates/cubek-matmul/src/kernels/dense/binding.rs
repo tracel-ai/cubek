@@ -44,7 +44,7 @@ impl MatmulDequantizeBinding {
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the tile engine refuses what the routine prepared.
+    /// As [`PackedTensor::bind`].
     pub fn new(
         packed: &PackedTensor,
         into: &PlainTensor,

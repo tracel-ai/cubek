@@ -21,11 +21,9 @@ use cubek_std::matmul_dimensions::{K, N};
 use cubek_std::microkernel::{CubeStaging, GlobalStream, KernelEstimate, Microkernel};
 use cubek_std::routine::{CubeResources, Grid, Routine};
 
-/// A decode prepared over a float input.
-const DEQUANTIZE_OF_A_FLOAT_INPUT: Decline = Decline::Broken {
-    condition: "a decode is prepared over a packed input",
-    cause: None,
-};
+/// Why a problem the decode prepared has a packed `[k, n]` input: its placement
+/// ([`PlaneShufflePackedPlacement::new`]) declines a float one.
+const PACKED_INPUT_PLACED: &str = "a problem the decode prepared has a packed [k, n] input";
 
 /// A packed input decoded into a float one, in dense rows of the dimension its words do not run
 /// along: the first launch of a product that then runs the float routine. It places the plane
@@ -87,12 +85,7 @@ impl PlaneDequantizeMatmulRoutine {
             },
         );
         let (blueprint, grid) = PlaneDequantizeMatmulRoutine::prepare(hw, problem, settings)?;
-        let packing = &problem
-            .inputs
-            .rhs
-            .packing()
-            .ok_or(DEQUANTIZE_OF_A_FLOAT_INPUT)?;
-        let lined = packing.operand.lined();
+        let lined = packed.packing().operand.lined();
         // Rows of the dimension the words do not run along, a line of the dimension they do in
         // each.
         let rows = match lined == K {
@@ -168,7 +161,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
         grid: &Grid,
         estimate: &mut KernelEstimate,
     ) {
-        let packing = &problem.inputs.rhs.packing().expect(MatmulView::PREPARED);
+        let packing = &problem.inputs.rhs.packing().expect(PACKED_INPUT_PLACED);
         let alone = Self::alone(problem);
         let item = MatmulView::new(&alone, PlaneShuffleMatmulRoutine::ROWS_KIND)
             .expect(MatmulView::PREPARED)
@@ -210,7 +203,7 @@ impl Routine for PlaneDequantizeMatmulRoutine {
             columns,
             planes,
         } = PlaneShufflePackedPlacement::new(hw, &alone, settings)?;
-        let packing = &problem.inputs.rhs.packing().expect(MatmulView::PREPARED);
+        let packing = &problem.inputs.rhs.packing().expect(PACKED_INPUT_PLACED);
         let partitioning = MatmulView::new(&alone, PlaneShuffleMatmulRoutine::ROWS_KIND)?
             .partitioning(
                 microkernel.tiling().planes(&[(columns, planes)]),

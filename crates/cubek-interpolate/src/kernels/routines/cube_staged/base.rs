@@ -3,8 +3,8 @@ use crate::kernels::filter::SeparableFilterFamily;
 use crate::kernels::geometry::TileGeometry;
 use crate::kernels::space;
 use crate::kernels::{
-    CubeInterpolateRoutineSettings, InterpolateBinding, InterpolateRoutine, InterpolateRoutineProblem,
-    InterpolateTensors,
+    CubeInterpolateRoutineSettings, InterpolateBinding, InterpolateRoutine,
+    InterpolateRoutineProblem, InterpolateTensors,
 };
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{Decline, Vectorization};

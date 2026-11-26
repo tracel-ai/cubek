@@ -6,12 +6,11 @@ use cubecl::tile::{
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
 use cubek_microkernel::matmul::{MatmulDimensionsKind, MatmulRowsKind, MatmulStage};
 use cubek_std::matmul_dimensions::{M, MB, MI, N, NB, NI};
+use cubek_std::routine::Breakable;
 
-/// A tiled launch whose output is masked where its tiles do not overhang it.
-const MASKED_WITHOUT_OVERHANG: Decline = Decline::Broken {
-    condition: "the output's writes are masked only where its tiles overhang it",
-    cause: None,
-};
+/// What should hold of a tiled launch's output.
+const MASKED_ONLY_WHERE_OVERHANGING: &str =
+    "the output's writes are masked only where its tiles overhang it";
 
 /// How a matmul product places its microkernel's work items over a problem: the tile DSL's levels,
 /// which the kernel launches and walks, and the box each cube is handed. Each product builds one
@@ -280,7 +279,7 @@ impl MatmulPartitioning {
             self.rows_kind == MatmulRowsKind::Whole || !out.is_checked() || self.overhangs_output();
         match as_claimed {
             true => Ok(()),
-            false => Err(MASKED_WITHOUT_OVERHANG),
+            false => Breakable::broken(MASKED_ONLY_WHERE_OVERHANGING),
         }
     }
 

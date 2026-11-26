@@ -12,11 +12,11 @@ use crate::kernels::{
     MatmulBlueprint, MatmulIndexTable, MatmulOutput, MatmulRoutineProblem, MatmulTensors,
 };
 use cubecl::tile::{
-    Geometry, TileTensorLaunch,
+    Geometry, Launcher, TileTensorLaunch,
     kind::Write,
     launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
 };
-use cubek_std::routine::{ADMITTED_PLAN_RUNS, Grid, Routine};
+use cubek_std::routine::{Grid, Routine};
 
 /// What a launch that allocated its output hands back.
 const ALLOCATED: &str = "a launch allocating its output hands it back";
@@ -39,19 +39,34 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     /// How the routine's cubes reach the output.
     const WRITE: MatmulCubeWrite = MatmulCubeWrite::Replace;
 
-    /// Launch the kernel `blueprint` compiles, on `grid`, over `binding`, its kernel reaching the
-    /// output through the destination `O`, whatever `tensors`' output is.
+    /// What its kernel reads beside the three operands its tensors bind, bound with them before
+    /// anything launches: `()` for a kernel that reads nothing more.
+    type Extras;
+
+    /// What its kernel reads beside `tensors`' operands, bound under `launcher` as `blueprint`
+    /// states it: what [`dispatch`](Self::dispatch) launches beside them.
     ///
     /// # Errors
     ///
-    /// [`Decline::Broken`] where the launch breaks what `prepare` claimed of it, nothing launched.
+    /// [`Decline::Broken`] where binding finds false what `prepare` claimed of the launch.
+    fn bind_extras<Out: MatmulOutput>(
+        &self,
+        tensors: &MatmulTensors<Out>,
+        launcher: &Launcher,
+        blueprint: &MatmulBlueprint<M, SM>,
+    ) -> Result<Self::Extras, Decline>;
+
+    /// Launch the kernel `blueprint` compiles, on `grid`, over `binding` and `extras`, the latter
+    /// as [`bind_extras`](Self::bind_extras) bound them, its kernel reaching the output through the
+    /// destination `O`, whatever `tensors`' output is.
     fn dispatch<O: DestinationLaunch, Out: MatmulOutput>(
         &self,
         tensors: &MatmulTensors<Out>,
         binding: MatmulBinding<O::Operand, TileTensorLaunch, TileTensorLaunch>,
+        extras: Self::Extras,
         blueprint: MatmulBlueprint<M, SM>,
         grid: Grid,
-    ) -> Result<(), Decline>;
+    );
 
     /// Launch the kernel `blueprint` compiles, on `grid`, replacing `tensors`' output buffer: what
     /// every launch below runs once it has prepared.
@@ -60,7 +75,7 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     ///
     /// Why the tile engine refuses to bind a float input as it is stored under the launch: one
     /// stored in tiles that the launch's last cubes reach past, which the routine, reading the
-    /// problem and not the tensors, could not see.
+    /// problem and not the tensors, could not see. As [`bind_extras`](Self::bind_extras).
     fn dispatch_into_buffer(
         &self,
         tensors: &MatmulTensors,
@@ -70,7 +85,9 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         let binding = tensors
             .bind(&blueprint, &grid)?
             .map_out(|out| (out, Write::Replace));
-        self.dispatch::<Buffered, _>(tensors, binding, blueprint, grid)
+        let extras = self.bind_extras(tensors, &binding.launcher, &blueprint)?;
+        self.dispatch::<Buffered, _>(tensors, binding, extras, blueprint, grid);
+        Ok(())
     }
 
     /// `lhs · rhs` on `client`'s device, prepared for `hw`: the device as it reports itself, or
@@ -215,12 +232,13 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
 ///
 /// A fused element-wise tail is one such sink: its block stores in lines of the width the kernel
 /// settled ([`SinkLaunch::width`]), so the caller plans it around this launch before binding it.
-pub struct MatmulSinkLaunch<R, M, SM = ()> {
+pub struct MatmulSinkLaunch<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM = ()> {
     routine: R,
     tensors: MatmulTensors<Geometry>,
     blueprint: MatmulBlueprint<M, SM>,
     grid: Grid,
     binding: MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>,
+    extras: R::Extras,
 }
 
 impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, SM> {
@@ -229,7 +247,8 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, S
     ///
     /// # Errors
     ///
-    /// Why the tile engine refuses to bind a float input as it is stored under the launch.
+    /// Why the tile engine refuses to bind a float input as it is stored under the launch, and as
+    /// [`MatmulRoutine::bind_extras`].
     pub fn new(
         routine: R,
         tensors: MatmulTensors<Geometry>,
@@ -237,23 +256,25 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> MatmulSinkLaunch<R, M, S
         grid: Grid,
     ) -> Result<Self, Decline> {
         let binding = tensors.bind(&blueprint, &grid)?;
+        let extras = routine.bind_extras(&tensors, &binding.launcher, &blueprint)?;
         Ok(Self {
             routine,
             tensors,
             blueprint,
             grid,
             binding,
+            extras,
         })
     }
 }
 
 impl<R, M, SM> core::fmt::Debug for MatmulSinkLaunch<R, M, SM>
 where
-    R: core::fmt::Debug,
-    M: core::fmt::Debug,
+    R: MatmulRoutine<M, SM> + core::fmt::Debug,
+    M: MatmulMicrokernel + core::fmt::Debug,
     SM: core::fmt::Debug,
 {
-    // The binding is left out: the tile DSL's `Launcher` is not `Debug`.
+    // The binding and the extras are left out: the tile DSL's `Launcher` is not `Debug`.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MatmulSinkLaunch")
             .field("routine", &self.routine)
@@ -275,8 +296,12 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> SinkLaunch for MatmulSin
 
     fn launch<O: DestinationLaunch>(self, sink: impl FnOnce(Unbound) -> O::Operand) {
         let binding = self.binding.map_out(sink);
-        self.routine
-            .dispatch::<O, _>(&self.tensors, binding, self.blueprint, self.grid)
-            .expect(ADMITTED_PLAN_RUNS);
+        self.routine.dispatch::<O, _>(
+            &self.tensors,
+            binding,
+            self.extras,
+            self.blueprint,
+            self.grid,
+        );
     }
 }
