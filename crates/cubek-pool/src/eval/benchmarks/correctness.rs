@@ -18,7 +18,7 @@ impl cubek_test_utils::Correctness for PoolCorrectness {
     ) -> Result<HostData, KernelResultError> {
         let device = cubecl::test_device();
         let client = device.client();
-        strategy_result(client, problem.clone(), seeds[0]).map_err(KernelResultError::NotRun)
+        strategy_result(client, problem.clone(), seeds[0])
     }
 
     fn reference_result(

@@ -19,8 +19,10 @@ pub trait Correctness: Sync {
     ///
     /// # Errors
     ///
-    /// [`KernelResultError::Refused`] where the strategy's routine refuses the problem and says
-    /// why, [`KernelResultError::NotRun`] where the kernel did not run for another reason.
+    /// Every implementation returns [`KernelResultError::Refused`] with the decline its launch
+    /// returns, whether the launch is unsupported or broken, so that a test skips the first and
+    /// fails on the second, and [`KernelResultError::NotRun`] only where the kernel gave no result
+    /// for any other reason.
     fn kernel_result(
         &self,
         strategy: &Self::Strategy,

@@ -21,7 +21,6 @@ impl cubek_test_utils::Correctness for InterpolateCorrectness {
         let device = cubecl::test_device();
         let client = device.client();
         kernel_result(client, problem.clone(), *strategy, seeds[0])
-            .map_err(KernelResultError::NotRun)
     }
 
     fn reference_result(

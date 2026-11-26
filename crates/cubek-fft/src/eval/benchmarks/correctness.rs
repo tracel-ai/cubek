@@ -27,7 +27,6 @@ impl cubek_test_utils::Correctness for FftCorrectness {
             seeds[0],
             seeds[1],
         )
-        .map_err(KernelResultError::NotRun)
     }
 
     fn reference_result(

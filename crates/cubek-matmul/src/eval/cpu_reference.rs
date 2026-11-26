@@ -22,6 +22,11 @@ use crate::{
 ///
 /// Inputs are generated via `TestInput::uniform` so the same `(problem, seeds)`
 /// pair produces the same bits on every run.
+///
+/// # Errors
+///
+/// [`KernelResultError::Refused`] with the decline the launch returns, and
+/// [`KernelResultError::NotRun`] where it returns another error or did not run.
 pub fn strategy_result(
     client: Client,
     problem: MatmulProblem,
@@ -87,22 +92,27 @@ where
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    let outcome = match launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes) {
-        Ok(()) => ExecutionOutcome::of_outputs(&client, &[&out.handle]),
-        #[cfg(feature = "tiled")]
-        Err(MatmulSetupError::Broken(broken)) => return Err(KernelResultError::Refused(broken)),
-        Err(error) => ExecutionOutcome::CompileError(format!("Test did not run: {error}")),
-    };
+    launch(&client, lhs_handle, rhs_handle, out_handle, &mut dtypes)?;
+    ExecutionOutcome::of_outputs(&client, &[&out.handle]).into_kernel_result()?;
+    Ok(HostData::from_tensor_handle(
+        &client,
+        out,
+        problem.global_dtypes.out.into(),
+    ))
+}
 
-    match outcome {
-        ExecutionOutcome::CompileError(e) => {
-            Err(KernelResultError::NotRun(format!("compile error: {e}")))
+/// The decline a launch returns stays a refusal, which a test skips where the launch is
+/// unsupported and fails on where it is broken; any other error is a kernel that did not run.
+///
+/// Only a broken launch keeps its decline in a [`MatmulSetupError`]: an unsupported one becomes
+/// the availability or configuration error it names, a kernel that did not run.
+impl From<MatmulSetupError> for KernelResultError {
+    fn from(error: MatmulSetupError) -> Self {
+        match error {
+            #[cfg(feature = "tiled")]
+            MatmulSetupError::Broken(decline) => Self::Refused(decline),
+            other => Self::NotRun(format!("Test did not run: {other}")),
         }
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-            &client,
-            out,
-            problem.global_dtypes.out.into(),
-        )),
     }
 }
 

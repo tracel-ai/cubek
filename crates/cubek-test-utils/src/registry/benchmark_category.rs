@@ -3,7 +3,9 @@ use std::collections::HashSet;
 use cubecl::benchmark::TimingMethod;
 
 use super::base::{Ceiling, curve_ceiling, peak_per_s, score};
-use crate::{CatalogEntry, Category, HostData, ItemDescriptor, Progress, RunSamples};
+use crate::{
+    CatalogEntry, Category, HostData, ItemDescriptor, KernelResultError, Progress, RunSamples,
+};
 
 /// Public, string-keyed registry surface. Implemented automatically for any
 /// type that implements [`Category`]; categories should implement `Category`
@@ -32,13 +34,18 @@ pub trait BenchmarkCategory: Sync {
 
     /// `None` means the category doesn't expose a kernel result (e.g.
     /// memcpy_async: no semantic-level output).
+    ///
+    /// # Errors
+    ///
+    /// As [`Correctness::kernel_result`](crate::Correctness::kernel_result), and
+    /// [`KernelResultError::NotRun`] where the category lists no such strategy or problem.
     fn kernel_result(
         &self,
         _strategy_id: &str,
         _problem_id: &str,
         _seed_lhs: u64,
         _seed_rhs: u64,
-    ) -> Option<Result<HostData, String>> {
+    ) -> Option<Result<HostData, KernelResultError>> {
         None
     }
 
@@ -132,23 +139,19 @@ impl<C: Category> BenchmarkCategory for C {
         problem_id: &str,
         seed_lhs: u64,
         seed_rhs: u64,
-    ) -> Option<Result<HostData, String>> {
+    ) -> Option<Result<HostData, KernelResultError>> {
         let correctness = Category::correctness(self)?;
         let problems = Category::problems(self);
         let problem = match problems.iter().find(|e| e.id == problem_id) {
             Some(p) => p,
-            None => return Some(Err(format!("unknown problem: {problem_id}"))),
+            None => return Some(Err(format!("unknown problem: {problem_id}").into())),
         };
         let strategies = Category::strategies(self);
         let strategy = match strategies.iter().find(|e| e.id == strategy_id) {
             Some(s) => s,
-            None => return Some(Err(format!("unknown strategy: {strategy_id}"))),
+            None => return Some(Err(format!("unknown strategy: {strategy_id}").into())),
         };
-        Some(
-            correctness
-                .kernel_result(&strategy.value, &problem.value, &[seed_lhs, seed_rhs])
-                .map_err(|error| error.to_string()),
-        )
+        Some(correctness.kernel_result(&strategy.value, &problem.value, &[seed_lhs, seed_rhs]))
     }
 
     fn reference_result(

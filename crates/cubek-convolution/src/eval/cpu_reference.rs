@@ -9,7 +9,7 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::{Shape, Strides, shape},
 };
-use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulSetupError};
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, KernelResultError, Progress,
@@ -30,10 +30,9 @@ const HOST_HAS_NO_TRANSPOSED: &str = "the host states no transposed forward";
 ///
 /// # Errors
 ///
-/// [`KernelResultError::Refused`] with the [`Broken`](cubecl::tile::launch::Decline::Broken) a
-/// launch returns where a routine breaks what it prepared, which a test fails on;
-/// [`KernelResultError::NotRun`] where the strategy refused the convolution or its launch failed,
-/// which a test skips.
+/// [`KernelResultError::Refused`] with the decline the launch returns, and
+/// [`KernelResultError::NotRun`] where its operands cannot be seeded, or the launch returns
+/// another error or did not run.
 pub fn strategy_result(
     client: Client,
     spec: ConvSpec,
@@ -70,23 +69,23 @@ pub fn strategy_result(
         };
         launch_ref::<2>(&strategy, &client, conv_inputs, spec.args, dtypes.clone())
     };
-    let outcome = match launched {
-        Ok(()) => ExecutionOutcome::of_outputs(&client, &[&out_handle.handle]),
-        Err(ConvSetupError::Matmul(MatmulSetupError::Broken(broken))) => {
-            return Err(KernelResultError::Refused(broken));
-        }
-        Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
-    };
+    launched?;
+    ExecutionOutcome::of_outputs(&client, &[&out_handle.handle]).into_kernel_result()?;
+    Ok(HostData::from_tensor_handle(
+        &client,
+        out_handle,
+        HostDataType::F32,
+    ))
+}
 
-    match outcome {
-        ExecutionOutcome::CompileError(e) => {
-            Err(KernelResultError::NotRun(format!("compile error: {e}")))
+/// The decline a launch returns stays a refusal, as the matmul it runs keeps it; any other error
+/// is a kernel that did not run.
+impl From<ConvSetupError> for KernelResultError {
+    fn from(error: ConvSetupError) -> Self {
+        match error {
+            ConvSetupError::Matmul(matmul) => matmul.into(),
+            other => Self::NotRun(format!("{other:?}")),
         }
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-            &client,
-            out_handle,
-            HostDataType::F32,
-        )),
     }
 }
 

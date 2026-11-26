@@ -82,6 +82,16 @@ impl Display for KernelResultError {
     }
 }
 
+impl ExecutionOutcome {
+    /// `Ok` where the kernel ran, else [`KernelResultError::NotRun`] with why it did not.
+    pub fn into_kernel_result(self) -> Result<(), KernelResultError> {
+        match self {
+            Self::Executed => Ok(()),
+            Self::CompileError(why) => Err(KernelResultError::NotRun(why)),
+        }
+    }
+}
+
 impl From<String> for KernelResultError {
     fn from(why: String) -> Self {
         Self::NotRun(why)
@@ -176,14 +186,5 @@ impl ValidationResult {
     /// Convert a `ValidationResult` into a `TestOutcome`.
     pub fn as_test_outcome(self) -> TestOutcome {
         TestOutcome::Validated(self)
-    }
-}
-
-impl<E: Display> From<Result<(), E>> for ExecutionOutcome {
-    fn from(result: Result<(), E>) -> Self {
-        match result {
-            Ok(_) => ExecutionOutcome::Executed,
-            Err(err) => ExecutionOutcome::CompileError(format!("Test did not run: {}", err)),
-        }
     }
 }
