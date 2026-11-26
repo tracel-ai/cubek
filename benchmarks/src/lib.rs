@@ -192,12 +192,16 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
 }
 
 /// Generate the `fn main()` for a per-category bench file. Pass the category
-/// module name (e.g. `gemm`); the macro resolves to `$crate::gemm::Category`.
+/// module name (e.g. `gemm`); the macro resolves to `$crate::gemm::Category`, or to
+/// `$crate::reduce::ReduceCategory` given the type after the module (`reduce, ReduceCategory`).
 #[macro_export]
 macro_rules! run_bench {
     ($category:ident) => {
+        $crate::run_bench!($category, Category);
+    };
+    ($category:ident, $ty:ident) => {
         fn main() {
-            $crate::run_category(&$crate::$category::Category);
+            $crate::run_category(&$crate::$category::$ty);
         }
     };
 }
