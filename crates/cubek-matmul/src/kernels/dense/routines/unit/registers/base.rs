@@ -1,6 +1,6 @@
 use super::kernel::unit_registers_matmul_kernel;
 use crate::kernels::{
-    CUBE_STRIPS, MATMUL_ROW_RUNS_UNREAD, MatmulBinding, MatmulBlueprint, MatmulOutput,
+    CUBE_STRIPS, MATMUL_GROUPED_ROWS_UNREAD, MatmulBinding, MatmulBlueprint, MatmulOutput,
     MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
     cube_order_name,
 };
@@ -274,8 +274,8 @@ impl Routine for UnitRegistersMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_plain()?;
-        if problem.rows_in_runs() {
-            return Err(MATMUL_ROW_RUNS_UNREAD);
+        if problem.grouped_rows() {
+            return Err(MATMUL_GROUPED_ROWS_UNREAD);
         }
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;
         let item = view.work_item();

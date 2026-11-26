@@ -3,10 +3,10 @@
 mod base;
 mod cube;
 mod finish;
+mod grouped_rows;
 mod hypercube;
 mod packed;
 mod plane;
-mod row_runs;
 mod storage;
 mod strategy;
 mod unit;

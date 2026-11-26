@@ -7,10 +7,10 @@
 use super::kernel::cube_staged_matmul_kernel;
 use super::tma::CubeStagedTmaBinding;
 use crate::kernels::{
-    CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
-    MATMUL_PACKED_WALK_PAST_K, MATMUL_ROW_RUNS_SWIZZLED, MatmulBinding, MatmulBlueprint,
-    MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem, MatmulTensors,
-    MatmulView,
+    CubeStagedMatmulRoutine, MATMUL_GROUPED_ROWS_SWIZZLED, MATMUL_INDEX_UNREAD_BY_TMA,
+    MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
+    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
+    MatmulTensors, MatmulView,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
@@ -80,8 +80,8 @@ impl<'a> CubeStagedPlacement<'a> {
         if microkernel.walk().decoded().is_some() {
             view.check_reads(hw)?;
         }
-        if problem.rows_in_runs() && !matches!(cube_order.canonicalize(), CubeOrder::RowMajor) {
-            return Err(MATMUL_ROW_RUNS_SWIZZLED);
+        if problem.grouped_rows() && !matches!(cube_order.canonicalize(), CubeOrder::RowMajor) {
+            return Err(MATMUL_GROUPED_ROWS_SWIZZLED);
         }
         let contracted = microkernel.contracted(&item);
         let partitioning = view.partitioning(

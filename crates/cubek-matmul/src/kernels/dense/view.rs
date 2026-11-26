@@ -1,6 +1,6 @@
 use crate::kernels::MatmulPartitioning;
 use crate::kernels::{
-    MATMUL_ROW_RUNS_BUFFER_ONLY, MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem,
+    MATMUL_GROUPED_ROWS_BUFFER_ONLY, MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Decline;
@@ -73,7 +73,7 @@ impl<'a> MatmulView<'a> {
     /// rhs lined along neither dimension; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
     /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNMERGED`], for an lhs or an output that does not
     /// hold every batch, unless a table is read per batch, which keeps the batches apart.
-    /// [`MATMUL_ROW_RUNS_BUFFER_ONLY`], for rows in runs written anywhere but a buffer.
+    /// [`MATMUL_GROUPED_ROWS_BUFFER_ONLY`], for grouped rows written anywhere but a buffer.
     pub fn new(
         problem: &'a MatmulRoutineProblem,
         rows_kind: MatmulRowsKind,
@@ -91,8 +91,8 @@ impl<'a> MatmulView<'a> {
         {
             return Err(MATMUL_PACKED_BLOCKS_DISAGREE);
         }
-        if problem.rows_in_runs() && problem.destination != MatmulDestination::Buffer {
-            return Err(MATMUL_ROW_RUNS_BUFFER_ONLY);
+        if problem.grouped_rows() && problem.destination != MatmulDestination::Buffer {
+            return Err(MATMUL_GROUPED_ROWS_BUFFER_ONLY);
         }
         if rows_kind == MatmulRowsKind::Whole {
             if problem.layouts.rhs == MatmulLayout::Strided {
@@ -335,34 +335,34 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// `dimensions` without the rows where a table ends runs of them: a run is placed over rows no
+    /// `dimensions` without the rows where a table ends row groups: a row group is placed over rows no
     /// level at or above its key cuts.
     fn uncut(&self, dimensions: &[Dimension]) -> Vec<Dimension> {
         let rows = self.problem.dimensions().m;
-        match self.problem.rows_in_runs() {
+        match self.problem.grouped_rows() {
             true => dimensions.iter().copied().filter(|&d| d != rows).collect(),
             false => dimensions.to_vec(),
         }
     }
 
-    /// The rows the levels `inside` the cubes hold, where a table ends runs of the rows.
+    /// The rows the levels `inside` the cubes hold, where a table ends row groups.
     fn rows_held(&self, inside: &Levels) -> Option<usize> {
         let rows = self.problem.dimensions().m;
-        self.problem.rows_in_runs().then(|| {
+        self.problem.grouped_rows().then(|| {
             inside.clone().cubes(&[rows]).build()[0]
                 .tile(rows)
                 .expect("a level naming the rows tiles them")
         })
     }
 
-    /// `partitioning` marked as rows in runs where `held` says the rows its levels hold.
+    /// `partitioning` marked as grouped rows where `held` says the rows its levels hold.
     fn finished(
         &self,
         partitioning: MatmulPartitioning,
         held: Option<usize>,
     ) -> MatmulPartitioning {
         match held {
-            Some(held) => partitioning.with_rows_in_runs(self.problem.dimensions().m, held),
+            Some(held) => partitioning.with_grouped_rows(self.problem.dimensions().m, held),
             None => partitioning,
         }
     }

@@ -66,8 +66,8 @@ impl MatmulOutput for Geometry {
     }
 }
 
-/// An output buffer served where its table places it, so rows in runs stop at each run's end
-/// ([`MatmulIndex::RunOfMOnSlab`](crate::kernels::MatmulIndex::RunOfMOnSlab)); an output no table
+/// An output buffer served where its table places it, so grouped rows stop at each row group's end
+/// ([`MatmulIndex::GroupedRows`](crate::kernels::MatmulIndex::GroupedRows)); an output no table
 /// places is the buffer as it lies.
 pub struct TableStored;
 

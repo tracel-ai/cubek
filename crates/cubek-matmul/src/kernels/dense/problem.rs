@@ -75,11 +75,11 @@ pub enum MatmulIndex {
     /// before it along the batches is where it starts. A run that ends before it starts sums
     /// nothing.
     RunOfK,
-    /// A run of rows of a flat, unpadded lhs `[rows, k]` against the slab of a stack of `slabs` its
+    /// Row groups of a flat, unpadded lhs `[rows, k]`, each against the slab of a stack of `slabs` its
     /// entry names, written to the same rows of a flat output `[rows, n]`. A second table holds
-    /// where each run ends, the one before it along the batches being where it starts; rows past a
-    /// run read zero and are never written, and no run is longer than the table's `rows_per_run`.
-    RunOfMOnSlab { slabs: usize },
+    /// where each row group ends, the one before it along the batches being where it starts; rows past a
+    /// group's end read zero and are never written, and no row group is longer than the table's `max_rows`.
+    GroupedRows { slabs: usize },
 }
 
 impl MatmulIndex {
@@ -87,7 +87,7 @@ impl MatmulIndex {
     /// which an entry picks one of.
     pub fn dimension(self) -> Option<(Dimension, usize)> {
         match self {
-            Self::Slab { slabs } | Self::RunOfMOnSlab { slabs } => Some((EXPERT, slabs)),
+            Self::Slab { slabs } | Self::GroupedRows { slabs } => Some((EXPERT, slabs)),
             Self::RunOfK => None,
         }
     }
@@ -106,7 +106,7 @@ impl MatmulIndex {
                 rhs: Some(Indexing::Run(K)),
                 out: None,
             },
-            Self::RunOfMOnSlab { .. } => MatmulOperands {
+            Self::GroupedRows { .. } => MatmulOperands {
                 lhs: Some(Indexing::Run(rows)),
                 rhs: Some(Indexing::Coordinate(EXPERT)),
                 out: Some(Indexing::Run(rows)),
@@ -523,13 +523,13 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// This problem of flat rows restated as `runs` batches of `rows_per_run` rows, each a run of
-    /// the lhs and of the output ([`MatmulIndex::RunOfMOnSlab`]).
-    pub fn batched_by_runs(self, rows_per_run: NonZeroUsize, runs: Vec<usize>) -> Self {
-        let held = runs.iter().product();
+    /// This problem of flat rows restated as `row_groups` batches of `max_rows` rows, each a row group of
+    /// the lhs and of the output ([`MatmulIndex::GroupedRows`]).
+    pub fn batched_by_row_groups(self, max_rows: NonZeroUsize, row_groups: Vec<usize>) -> Self {
+        let held = row_groups.iter().product();
         Self {
-            batches: runs,
-            stated_rows: rows_per_run.get(),
+            batches: row_groups,
+            stated_rows: max_rows.get(),
             batches_held: MatmulOperands {
                 lhs: held,
                 rhs: 1,
@@ -548,9 +548,9 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// Whether a table ends runs of the rows ([`MatmulIndex::RunOfMOnSlab`]), which no level cuts.
-    pub fn rows_in_runs(&self) -> bool {
-        matches!(self.index, Some(MatmulIndex::RunOfMOnSlab { .. }))
+    /// Whether a table ends row groups ([`MatmulIndex::GroupedRows`]), which no level cuts.
+    pub fn grouped_rows(&self) -> bool {
+        matches!(self.index, Some(MatmulIndex::GroupedRows { .. }))
     }
 
     /// How the table places each operand, none for one that reads no table.
@@ -613,32 +613,32 @@ pub const MATMUL_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "this routine reads float operands; a packed one runs on the packed routines",
 };
 
-/// What a routine whose planes cut the rows declines: rows in runs, which no level cuts.
-pub const MATMUL_ROW_RUNS_UNREAD: Decline = Decline::Unserved {
-    why: "this routine's planes cut the rows, which a table ending runs of them places whole",
+/// What a routine whose planes cut the rows declines: grouped rows, which no level cuts.
+pub const MATMUL_GROUPED_ROWS_UNREAD: Decline = Decline::Unserved {
+    why: "this routine's planes cut the rows, which a table ending row groups places whole",
 };
 
-/// What a launch declines whatever the device: a cube box that is not as tall as the runs, which
+/// What a launch declines whatever the device: a cube box that is not as tall as a row group, which
 /// no level cuts.
-pub const MATMUL_ROW_RUNS_CUT: Decline = Decline::Unserved {
-    why: "rows in runs are held whole by a box as tall as `rows_per_run`, which no level cuts",
+pub const MATMUL_ROW_GROUP_NOT_A_BOX: Decline = Decline::Unserved {
+    why: "a row group is held whole by a box as tall as `max_rows`, which no level cuts",
 };
 
-/// What a launch declines whatever the device: rows in runs under a swizzled cube order, which
+/// What a launch declines whatever the device: grouped rows under a swizzled cube order, which
 /// has no cut rows to put back.
-pub const MATMUL_ROW_RUNS_SWIZZLED: Decline = Decline::Unserved {
-    why: "rows in runs are not cut among the cubes, so a swizzled cube order has nothing to permute",
+pub const MATMUL_GROUPED_ROWS_SWIZZLED: Decline = Decline::Unserved {
+    why: "grouped rows are not cut among the cubes, so a swizzled cube order has nothing to permute",
 };
 
-/// What a launch declines whatever the device: rows in runs over an lhs stored in tiles, which a
-/// run is not placed over.
-pub const MATMUL_ROW_RUNS_OVER_TILED_LHS: Decline = Decline::Unserved {
-    why: "rows in runs are read in rows, which an lhs stored in tiles is not",
+/// What a launch declines whatever the device: grouped rows over an lhs stored in tiles, which a
+/// row group is not placed over.
+pub const MATMUL_GROUPED_ROWS_OVER_TILED_LHS: Decline = Decline::Unserved {
+    why: "grouped rows are read in rows, which an lhs stored in tiles is not",
 };
 
-/// What a launch declines whatever the device: rows in runs written anywhere but a buffer.
-pub const MATMUL_ROW_RUNS_BUFFER_ONLY: Decline = Decline::Unserved {
-    why: "rows in runs are written into a buffer, which masks their end; a sink or an accumulating destination cannot",
+/// What a launch declines whatever the device: grouped rows written anywhere but a buffer.
+pub const MATMUL_GROUPED_ROWS_BUFFER_ONLY: Decline = Decline::Unserved {
+    why: "grouped rows are written into a buffer, which masks their end; a sink or an accumulating destination cannot",
 };
 
 /// What a routine whose kernel walks no indexed input declines: a product whose inputs read a

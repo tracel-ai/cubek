@@ -1,10 +1,10 @@
-//! Rows in runs of a flat, unpadded activation against a packed stack: each run reads and writes
-//! only its own rows, so the poison the output starts as stays where no run reaches.
+//! Row groups of a flat, unpadded activation against a packed stack: each row group reads and writes
+//! only its own rows, so the poison the output starts as stays where no row group reaches.
 
 use core::num::NonZeroUsize;
 use cubecl::{client::Client, std::tensor::TensorHandle, tile::launch::Decline, zspace::Shape};
 use cubek_matmul::kernels::PlaneShuffleMatmulRoutine;
-use cubek_matmul::kernels::{MatmulIndex, MatmulIndexTable, MatmulRoutine, RowEnds};
+use cubek_matmul::kernels::{MatmulIndex, MatmulIndexTable, MatmulRoutine, RowGroups};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataVec, ScopeChecker, TestOutcome, ValidationResult};
@@ -16,28 +16,30 @@ use crate::tiled::{ByRoutine, RoutineProduct, upload};
 
 const SLABS: usize = 4;
 const N: usize = 96;
-/// The most rows a run holds.
-const ROWS_PER_RUN: usize = 4;
-/// Each run's `(rows, slab)`: an empty first one, one ending mid-tile, an empty middle one, a full
-/// one, one on the slab past the stack and an empty sentinel; seven more rows no run covers.
-const RUNS: [(usize, usize); 6] = [(0, 0), (3, 1), (0, 2), (4, 2), (2, SLABS), (0, SLABS)];
+/// The most rows a row group holds.
+const MAX_GROUP_ROWS: usize = 4;
+/// Each row group's `(rows, slab)`: an empty first one, one ending mid-tile, an empty middle one, a
+/// full one, one on the slab past the stack and an empty sentinel; seven more rows no row group
+/// covers.
+const GROUPS: [(usize, usize); 6] = [(0, 0), (3, 1), (0, 2), (4, 2), (2, SLABS), (0, SLABS)];
 const ROWS: usize = 9 + 7;
 
-/// The runs over a stack of NVFP4 slabs `k` deep.
+/// The row groups over a stack of NVFP4 slabs `k` deep.
 #[derive(Debug, Clone)]
-struct RowRuns {
+struct GroupedRows {
     k: usize,
 }
 
-impl RowRuns {
-    /// Each run's `(start, end, slab)`.
-    fn runs(&self) -> Vec<(usize, usize, u32)> {
-        let ends = RUNS.iter().scan(0, |end, &(rows, _)| {
+impl GroupedRows {
+    /// Each row group's `(start, end, slab)`.
+    fn groups(&self) -> Vec<(usize, usize, u32)> {
+        let ends = GROUPS.iter().scan(0, |end, &(rows, _)| {
             *end += rows;
             Some(*end)
         });
-        let runs = ends.zip(RUNS);
-        runs.map(|(end, (rows, slab))| (end - rows, end, slab as u32))
+        let groups = ends.zip(GROUPS);
+        groups
+            .map(|(end, (rows, slab))| (end - rows, end, slab as u32))
             .collect()
     }
 
@@ -59,7 +61,7 @@ impl RowRuns {
     }
 }
 
-impl RoutineProduct for RowRuns {
+impl RoutineProduct for GroupedRows {
     fn launch<R, M, SM>(
         &self,
         routine: &R,
@@ -73,20 +75,20 @@ impl RoutineProduct for RowRuns {
     {
         let lhs = upload(client, &[ROWS, self.k], &self.activation());
         let rhs = PackedSlabs::new(client, self.stack()).stack();
-        let runs = self.runs();
+        let groups = self.groups();
         let column = |at: fn(&(usize, usize, u32)) -> u32| {
             upload(
                 client,
-                &[runs.len()],
-                &runs.iter().map(at).collect::<Vec<_>>(),
+                &[groups.len()],
+                &groups.iter().map(at).collect::<Vec<_>>(),
             )
         };
         let table = MatmulIndexTable {
-            index: MatmulIndex::RunOfMOnSlab { slabs: SLABS },
-            entries: column(|run| run.2),
-            row_ends: Some(RowEnds {
-                ends: column(|run| run.1 as u32),
-                rows_per_run: NonZeroUsize::new(ROWS_PER_RUN).expect("runs hold rows"),
+            index: MatmulIndex::GroupedRows { slabs: SLABS },
+            entries: column(|group| group.2),
+            row_groups: Some(RowGroups {
+                ends: column(|group| group.1 as u32),
+                max_rows: NonZeroUsize::new(MAX_GROUP_ROWS).expect("row groups hold rows"),
             }),
         };
         let (out, bound) = Self::poisoned(client, Shape::from(vec![ROWS, N]), lhs.elem);
@@ -98,7 +100,7 @@ impl RoutineProduct for RowRuns {
         let lhs: Vec<f32> = self.activation().iter().map(|half| half.to_f32()).collect();
         let stack = self.stack().dequantized();
         let mut out = vec![f32::NAN; ROWS * N];
-        for (start, end, slab) in self.runs() {
+        for (start, end, slab) in self.groups() {
             for (row, j) in (start..end).flat_map(|row| (0..N).map(move |j| (row, j))) {
                 let past_stack = slab as usize >= SLABS;
                 out[row * N + j] = (0..self.k)
@@ -117,12 +119,12 @@ impl RoutineProduct for RowRuns {
     }
 }
 
-/// Every plane shuffle setting that serves the product writes the rows of each run and nothing
+/// Every plane shuffle setting that serves the product writes the rows of each row group and nothing
 /// else; a skip needs every setting refused for what the device lacks.
 #[test]
-fn plane_shuffle_settings_write_only_the_rows_of_each_run() {
+fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
-    let products = [128, 160].map(|k| RowRuns { k });
+    let products = [128, 160].map(|k| GroupedRows { k });
     let settings = PlaneShuffleMatmulRoutine::indexed_packed_settings();
     let client = cubecl::test_device().client();
     let (mut launched, mut refused) = (0, Vec::new());

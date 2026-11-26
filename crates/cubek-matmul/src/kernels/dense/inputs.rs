@@ -68,29 +68,29 @@ impl MatmulInputs {
 /// A table a product's inputs read one entry of per batch, and what its entries say: `u32`
 /// entries, its dims the product's batches.
 ///
-/// Under [`MatmulIndex::RunOfMOnSlab`] the table also carries the ends of the runs of rows. Every
-/// run must be at most `rows_per_run` rows: a longer run leaves its later output rows unwritten.
+/// Under [`MatmulIndex::GroupedRows`] the table also carries the ends of the row groups. Every
+/// row group must be at most `max_rows` rows: a longer one leaves its later output rows unwritten.
 #[derive(Debug, Clone)]
 pub struct MatmulIndexTable {
     pub index: MatmulIndex,
     pub entries: PlainTensor,
-    pub row_ends: Option<RowEnds>,
+    pub row_groups: Option<RowGroups>,
 }
 
-/// Where each batch's run of rows ends, the one before it being where it starts, and the most
-/// rows any run holds.
+/// Where each batch's row group ends, the one before it being where it starts, and the most
+/// rows any row group holds.
 #[derive(Debug, Clone)]
-pub struct RowEnds {
+pub struct RowGroups {
     pub ends: PlainTensor,
-    pub rows_per_run: NonZeroUsize,
+    pub max_rows: NonZeroUsize,
 }
 
 impl MatmulIndexTable {
-    /// The buffer an operand placed by `indexing` reads: the ends for a run of the rows, the
+    /// The buffer an operand placed by `indexing` reads: the ends for a row group, the
     /// entries for any other placement.
     pub fn read_by(&self, indexing: &Indexing) -> &PlainTensor {
-        match (&self.row_ends, indexing) {
-            (Some(row_ends), Indexing::Run(rows)) if [M, MI].contains(rows) => &row_ends.ends,
+        match (&self.row_groups, indexing) {
+            (Some(row_groups), Indexing::Run(rows)) if [M, MI].contains(rows) => &row_groups.ends,
             _ => &self.entries,
         }
     }
