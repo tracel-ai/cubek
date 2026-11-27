@@ -5,7 +5,9 @@ use crate::kernels::tiled::{
     CubeStagedConvSettings, TileConvBlueprint,
 };
 use cubecl::tile::launch::{Decline, Vectorization};
-use cubek_microkernel::matmul::cube::{CubeStagedBox, CubeStagedDepth, CubeStagedMicrokernel};
+use cubek_microkernel::matmul::cube::{
+    CubeStagedBox, CubeStagedDepth, CubeStagedMicrokernel, CubeStagedWalk,
+};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use cubek_std::microkernel::{KernelEstimate, Microkernel};
@@ -120,7 +122,10 @@ impl ConvRoutine<CubeStagedMicrokernel> for CubeStagedConvRoutine {
         binding: ConvBinding,
         blueprint: TileConvBlueprint<CubeStagedMicrokernel>,
     ) {
-        let walk = blueprint.microkernel.walk();
+        let walk = CubeStagedWalk {
+            contracted: problem.roles().dimensions().k,
+            ..blueprint.microkernel.walk()
+        };
         let ConvBinding {
             launcher,
             input,

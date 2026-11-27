@@ -142,6 +142,7 @@ mod tests {
             space: Space::new(&dimensions),
             innermost: dimensions[1].0,
             fill: StageFill::AsStored,
+            contraction: None,
         };
         [operand([(M, 16), (K, 16)]), operand([(K, 16), (N, 16)])]
     }

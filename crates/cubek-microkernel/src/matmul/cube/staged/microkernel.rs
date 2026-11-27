@@ -29,6 +29,8 @@ pub struct CubeStagedWalk {
     pub reads: MatmulOperands<MatmulRead>,
     /// The dimension its planes' instruction lays its rows along, which the sum is opened for.
     pub rows_along: PlaneFragmentRowsAlong,
+    /// The dimension the contraction sums its inputs along, which their stages are laid out by.
+    pub contracted: Dimension,
 }
 
 impl CubeStagedWalk {
@@ -148,8 +150,16 @@ impl CubeStagedWalk {
         let sum = Self::open_sum::<EA>(over, &a, &b, walk);
 
         let depth = walk.ring.stages_in_flight.get();
-        let mut stages =
-            Stages::smem_staging(&run, &a, &b, walk.staged, storage, depth, walk.decoded());
+        let mut stages = Stages::smem_factors(
+            &run,
+            &a,
+            &b,
+            walk.staged,
+            walk.contracted,
+            storage,
+            depth,
+            walk.decoded(),
+        );
 
         // Both sets drive the same ring, so both count its laps alike: `depth` stages a lap, the
         // last lap short wherever the walk ends.
@@ -386,8 +396,16 @@ pub fn cube_staged_sum_microkernel(
     #[comptime] storage: StageStorage,
 ) {
     let in_flight = walk.ring.stages_in_flight.get();
-    let mut stages =
-        Stages::smem_staging(&run, a, b, walk.staged, storage, in_flight, walk.decoded());
+    let mut stages = Stages::smem_factors(
+        &run,
+        a,
+        b,
+        walk.staged,
+        walk.contracted,
+        storage,
+        in_flight,
+        walk.decoded(),
+    );
 
     stages.walk(run, walk.ring.prefetch, |slot, stage| {
         let sum_stage = sum.at(stage);

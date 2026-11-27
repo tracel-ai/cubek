@@ -338,6 +338,7 @@ impl CubeStagedMicrokernel {
             store: self.store,
             reads: self.reads,
             rows_along: self.plane.settings.rows_along,
+            contracted: K,
         }
     }
 
@@ -657,7 +658,14 @@ impl CubeStagedMicrokernel {
             .store
             .box_bytes(stage, item.elements.get(MatmulOperand::Out).size());
         let stages = self.ring.bytes(
-            stage.bytes(hw, self.staged, item.elements, storage, self.plane.orders) + scales,
+            stage.bytes(
+                hw,
+                self.staged,
+                item.elements,
+                storage,
+                self.plane.orders,
+                self.fill.delivery.fills(),
+            ) + scales,
         );
         // The box planes set aside to fill drain into opens once the walk has freed its stages;
         // otherwise it sits beside them.

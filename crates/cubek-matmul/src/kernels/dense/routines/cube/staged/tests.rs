@@ -556,6 +556,7 @@ mod base {
             problem.elements,
             &single.shared_memory,
             single.microkernel.plane.orders,
+            single.microkernel.fill.delivery.fills(),
         );
         assert_eq!(double_grid.shared_memory - single_grid.shared_memory, stage);
         assert_eq!(double.microkernel.ring, StageRing::DOUBLE);
@@ -1308,6 +1309,7 @@ mod base {
                     problem.elements,
                     storage,
                     blueprint.microkernel.plane.orders,
+                    blueprint.microkernel.fill.delivery.fills(),
                 )
             };
             assert_eq!(bytes(&tiled(RowChunks::Padded)), 12288 + (128 + 256) * 16);
@@ -1351,6 +1353,7 @@ mod base {
             problem().elements,
             &blueprint.shared_memory,
             blueprint.microkernel.plane.orders,
+            blueprint.microkernel.fill.delivery.fills(),
         );
         assert_eq!(bytes, 12288);
     }
