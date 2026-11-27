@@ -468,7 +468,7 @@ impl MatmulRoutineProblem {
                     self.elements.get(operand).size(),
                 ),
             });
-            let innermost = self.dimensions().of(orders.innermost(operand));
+            let innermost = MatmulDimensions::MNK.of(orders.innermost(operand));
             let indexed_along_a_line = self
                 .placements()
                 .get_ref(operand)

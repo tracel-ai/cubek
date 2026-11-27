@@ -327,6 +327,10 @@ impl MatmulTensors {
         } = &table
         {
             Self::admit_group_ends(groups, entries)?;
+            // A run is placed only along a direct layout, which a tiled lhs is not.
+            if lhs.is_tiled() {
+                return Err(MATMUL_GROUPED_ROWS_OVER_TILED_LHS);
+            }
         }
         match rhs {
             StoredTensor::Plain(rhs) => {
@@ -438,7 +442,7 @@ impl MatmulTensors<MatmulOutputBuffer> {
     ///
     /// # Errors
     ///
-    /// Why the tile engine refuses to place the output by its table.
+    /// Only where a plan prepare admitted breaks.
     pub fn output_through_table(&self, out: Bound) -> Result<TileTensorLaunch, Decline> {
         self.read_through_table(MatmulOperand::Out, out.arg())
     }
@@ -515,9 +519,6 @@ impl MatmulTensors {
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Decline> {
         // Every check reads shapes alone, so they run before a self-aliasing operand is copied.
-        if table.groups().is_some() && lhs.is_tiled() {
-            return Err(MATMUL_GROUPED_ROWS_OVER_TILED_LHS);
-        }
         Self::admit_stack(&rhs, table.index())?;
         let matrix_shape = Self::matrix_of(&rhs, table.index()).shape();
         let out = Self::indexed_output(&lhs, matrix_shape[0], matrix_shape[1], &table, out)?;
@@ -1696,10 +1697,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 
     /// `operand`, bound, reading its entry of the table where the index has it read one, the
     /// table's dims the batches; as bound otherwise.
-    ///
-    /// # Errors
-    ///
-    /// Why the tile engine refuses to place `operand` by its table.
     fn read_through_table(
         &self,
         operand: MatmulOperand,
@@ -1718,7 +1715,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             1,
             TileSpec::direct(&self.table_batches()),
         );
-        bound.indexed(entries, indexing)
+        bound
+            .indexed(entries, indexing)
+            .or_broken(ADMITTED_PLAN_RUNS)
     }
 
     /// The batch dimensions `operand`, bound from `tensor`, is over, and the rows its blocks hold
