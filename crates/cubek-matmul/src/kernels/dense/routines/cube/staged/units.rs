@@ -159,9 +159,8 @@ impl CubeStagedMatmulRoutine {
     /// at every count of steps of `K` a stage holds ([`PACKED_STAGE_STEPS`](Self::PACKED_STAGE_STEPS)),
     /// the same boxes one stage at a time with the lhs read where it lies, on a device whose units
     /// load the 8-bit values they contract themselves, then the one-step boxes ([`packed_one_step_settings`](Self::packed_one_step_settings)), then, on
-    /// a device without a copy engine, the boxes staged as stored (`STORED`). Planes splitting
-    /// `K` only on a device whose shared memory takes the atomic `f32` add they merge through:
-    /// elsewhere they would only be tried and declined. Its cubes in the grid's order.
+    /// a device without a copy engine, the boxes staged as stored (`STORED`). Its cubes in the
+    /// grid's order.
     ///
     /// The instruction is the tile layer's, `cmma` for a sum written out: on an L4 the `mma`
     /// transport's boxes lead `cmma`'s on Qwen3-4B's down projection by a few percent, and lose a
@@ -197,8 +196,7 @@ impl CubeStagedMatmulRoutine {
             .filter(|_| hw.contracts_fp8_in_registers());
         let mut settings = vec![CubeStagedMicrokernelSettings::PACKED];
         for candidate in boxed.chain(lhs_in_place).chain(one_step).chain(stored) {
-            let merges = candidate.planes_along_k.get() > 1;
-            if (!merges || hw.shared_f32_atomic_add()) && !settings.contains(&candidate) {
+            if !settings.contains(&candidate) {
                 settings.push(candidate);
             }
         }

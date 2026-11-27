@@ -2,11 +2,14 @@ use super::base::CubeStagedDrain;
 use crate::matmul::cube::CubeStagedStore;
 use crate::matmul::plane::{PlaneFragmentRowsAlong, plane_fragment_microkernel};
 use crate::matmul::{MatmulOperands, MatmulRead};
+use core::num::NonZeroUsize;
 use cubecl::tile::launch::{
     OpenedDestination, OpenedDestinationExpand, ServedDestination, ServedDestinationExpand,
 };
 use cubecl::tile::stage::{AsyncStage, AsyncStageExpand, OperandPair, Role, StagedOperands};
-use cubecl::tile::{Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk};
+use cubecl::tile::{
+    Dimension, Instruction, Region, Scratch, Semiring, StageStorage, Stages, Tile, Walk,
+};
 use cubecl::{self as cubecl, cube, prelude::*};
 use cubek_std::microkernel::StageRing;
 
@@ -212,6 +215,34 @@ impl CubeStagedWalk {
         }
     }
 
+    /// `c = a · b` over `run`, its `planes` along `along` each contracting their slice of every
+    /// step: every plane fills the stages, and once the walk has freed them each plane replaces
+    /// its own slot in shared memory, opened in the stages' bytes, with its partial. The cube
+    /// adds the slots as it hands their sum to `dest` at `cube`.
+    #[allow(clippy::too_many_arguments)]
+    fn merge_planes<EA: Numeric, D: ServedDestination>(
+        run: Walk,
+        a: &Tile,
+        b: &Tile,
+        dest: &D,
+        cube: &Region,
+        #[comptime] along: Dimension,
+        #[comptime] planes: NonZeroUsize,
+        #[comptime] walk: CubeStagedWalk,
+        #[comptime] storage: StageStorage,
+    ) {
+        let c = dest.tile().at(cube);
+        let stage = run.region(0);
+        let sum = Self::every_plane_fills::<EA>(run, a, b, &c, walk, storage);
+        let accumulator = c.smem_slots_accumulation::<EA>(planes.get());
+        // A unit lies in one plane of the stage, whose place along the split is its slot among
+        // the writers.
+        for plane in stage {
+            accumulator.drain(&sum.sum, plane.coord(along));
+        }
+        accumulator.source.consumed_by::<D>(dest, cube);
+    }
+
     /// `c = a · b` over `run`, drained into a box in shared memory laid as `c` and handed to
     /// `dest` at `cube`, which a storing destination over a tensor map bulk-stores: the box
     /// declared after the walk where planes are set aside to fill, so it takes the ring's bytes,
@@ -299,7 +330,16 @@ impl CubeStagedWalk {
 /// aside to fill; or, splitting `K`, a slot in shared memory for each plane, which it replaces
 /// with its partial, the cube adding the slots as it hands the sum over once it has synchronized
 /// ([`CubeStagedDrain::Merged`]), opened once the walk has freed the ring, in its bytes.
-/// Planes merging along `K` are never stored by the TMA engine.
+///
+/// # Assumptions
+///
+/// Under [`CubeStagedDrain::Merged`]:
+/// - no plane is set aside to fill (`walk.filling_planes` is 0), and the store is
+///   [`CubeStagedStore::Fragments`];
+/// - every unit lies in exactly one plane of `run`'s stage, and the planes' coordinates along the
+///   split dimension are distinct and in `0..planes`;
+/// - a cube barrier comes between this call's last read of its slots and the next write into
+///   their shared memory, such as the next box's first stage fill.
 #[cube]
 pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
     run: Walk,
@@ -320,16 +360,15 @@ pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
         (CubeStagedDrain::EachPlane, CubeStagedStore::Tma) => {
             CubeStagedWalk::store_by_tma::<EA, D>(run, a, b, dest, cube, walk, storage);
         }
-        (CubeStagedDrain::Merged { along, planes }, _) => {
-            // Opened once the walk has freed its stages, the slots take their bytes.
-            let stage = run.region(0);
-            let sum = CubeStagedWalk::sum_planes::<EA>(run, a, b, &c, walk, storage);
-            let accumulator = c.smem_slots_accumulation::<EA>(planes);
-            for plane in stage {
-                // A plane's place along the split, which is its slot among the writers.
-                accumulator.drain(&sum.sum, plane.coord(along));
-            }
-            accumulator.source.consumed_by::<D>(dest, cube);
+        (CubeStagedDrain::Merged { along, planes }, CubeStagedStore::Fragments) => {
+            CubeStagedWalk::merge_planes::<EA, D>(
+                run, a, b, dest, cube, along, planes, walk, storage,
+            );
+        }
+        (CubeStagedDrain::Merged { .. }, CubeStagedStore::Tma) => {
+            comptime!(panic!(
+                "planes merging along K are never stored by the TMA engine"
+            ));
         }
     }
 }

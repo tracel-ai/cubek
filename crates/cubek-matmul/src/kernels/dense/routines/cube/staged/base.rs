@@ -497,7 +497,8 @@ fn estimate_in_blocks(
             bytes: (rows * columns * size(MatmulOperand::Out)) as u64,
             run_bytes: columns * size(MatmulOperand::Out),
         }],
-        stages: k.div_ceil(stage_depth * blueprint.microkernel.planes_along_k.get()) as u64,
+        // The stage spans every plane along `K`'s blocks already.
+        stages: k.div_ceil(stage_depth) as u64,
         stages_in_flight: blueprint.microkernel.ring.stages_in_flight.get() as u32,
         drain_atomics: 0,
     });
