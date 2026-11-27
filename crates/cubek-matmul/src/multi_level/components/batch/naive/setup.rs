@@ -139,8 +139,8 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.lhs_scheme
-            && scheme.levels().count() == 1
-            && let [_, BlockExtent::Values(block_width)] = scheme.finest().size.extents_in()
+            && let (Some(level), 1) = (scheme.levels().next(), scheme.levels().count())
+            && let [_, BlockExtent::Values(block_width)] = level.size.extents_in()
         {
             let vector_size = vector_sizes.lhs * scheme.num_quants();
             if !(block_width.get() as usize).is_multiple_of(vector_size) {
@@ -151,8 +151,8 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.rhs_scheme
-            && scheme.levels().count() == 1
-            && let [BlockExtent::Values(block_width), _] = scheme.finest().size.extents_in()
+            && let (Some(level), 1) = (scheme.levels().next(), scheme.levels().count())
+            && let [BlockExtent::Values(block_width), _] = level.size.extents_in()
         {
             let vector_size = vector_sizes.rhs * scheme.num_quants();
             if !(block_width.get() as usize).is_multiple_of(vector_size) {

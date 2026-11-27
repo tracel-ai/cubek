@@ -89,16 +89,16 @@ impl QuantizedTileInputBuilder {
     ///
     /// # Assumptions
     ///
-    /// - The scheme's mode is lookup, and `table` holds exactly `2^bits` entries.
+    /// - The scheme's value is an index format, and `table` holds exactly `2^bits` entries.
     ///
     /// # Panics
     ///
     /// Where its Assumption is broken.
     pub fn lookup_arange(self, table: &[f32]) -> QuantizedTileInput {
         assert!(
-            matches!(self.scheme.mode, cubecl::quant::scheme::QuantMode::Lookup),
-            "lookup_arange: the scheme's mode is {:?}, not Lookup",
-            self.scheme.mode
+            self.scheme.value.is_index(),
+            "lookup_arange: the scheme's value is {:?}, not an index format",
+            self.scheme.value
         );
         let span = 1usize << self.scheme.size_bits_value();
         assert_eq!(
@@ -163,7 +163,15 @@ fn integer_valued(value: QuantValue) -> bool {
         | QuantValue::Q4F
         | QuantValue::Q4S
         | QuantValue::Q2F
-        | QuantValue::Q2S => true,
-        QuantValue::E5M2 | QuantValue::E4M3 | QuantValue::E2M1 => false,
+        | QuantValue::Q2S
+        | QuantValue::Index8
+        | QuantValue::Index4
+        | QuantValue::Index2 => true,
+        QuantValue::E5M2
+        | QuantValue::E4M3
+        | QuantValue::E2M1
+        | QuantValue::F32
+        | QuantValue::F16
+        | QuantValue::BF16 => false,
     }
 }

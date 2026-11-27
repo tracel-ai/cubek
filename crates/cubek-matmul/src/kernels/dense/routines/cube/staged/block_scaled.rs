@@ -40,7 +40,7 @@ use crate::kernels::{
 };
 use core::num::NonZeroUsize;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{BaseRegion, BlockScaledOperands, Space};
 use cubek_microkernel::matmul::cube::{CubeStagedMicrokernelSettings, MatmulPlaneLayout};
 use cubek_microkernel::matmul::plane::PlaneFragmentMicrokernelSettings;
@@ -175,13 +175,13 @@ impl CubeStagedMatmulRoutine {
         };
         let block = u8::try_from(form.block).ok()?;
         let scheme = |value: QuantValue, dims: &[u8], store: QuantStore| {
-            let scheme = QuantScheme::default()
-                .with_value(value)
-                .per_block(dims, scales)
-                .with_store(store);
+            let scheme = QuantScheme::new(value, store);
+            let blocks = BlockScale::per_block(dims, scales);
             match scales {
-                ScaleDtype::UE4M3 => scheme.per_tensor(ScaleDtype::F32),
-                _ => scheme,
+                ScaleDtype::UE4M3 => {
+                    scheme.with_levels([blocks, BlockScale::per_tensor(ScaleDtype::F32)])
+                }
+                _ => scheme.with_levels([blocks]),
             }
         };
         let packing = |input: MatmulOperand, scheme: QuantScheme| {

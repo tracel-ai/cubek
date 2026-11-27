@@ -15,7 +15,7 @@ use cubecl::{
 };
 use cubecl_common::e4m3;
 use cubek_quant::scheme::{
-    BlockExtent, BlockSize, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+    BlockExtent, BlockScale, BlockSize, QuantScheme, QuantStore, QuantValue, ScaleDtype,
 };
 
 use super::harness::{dequantize, f32_tensor, quant_outputs, quantize, scale_shape};
@@ -31,20 +31,20 @@ const OUTER: f32 = 1.0 / (127.0 * 448.0);
 /// whether the block scales are narrow enough to need an global scale at all.
 fn two_level(store: QuantStore, block_dtype: ScaleDtype) -> QuantScheme {
     QuantScheme::default()
-        .per_block([BLOCK as u8], block_dtype)
-        .per_tensor(ScaleDtype::F32)
+        .with_levels([
+            BlockScale::per_block([BLOCK as u8], block_dtype),
+            BlockScale::per_tensor(ScaleDtype::F32),
+        ])
         .with_value(QuantValue::Q8S)
         .with_store(store)
-        .with_mode(QuantMode::Symmetric)
 }
 
 /// One level of the same shape, for the tests that hand it a binding it does not take.
 fn one_level(store: QuantStore, block_dtype: ScaleDtype) -> QuantScheme {
     QuantScheme::default()
-        .per_block([BLOCK as u8], block_dtype)
+        .with_levels([BlockScale::per_block([BLOCK as u8], block_dtype)])
         .with_value(QuantValue::Q8S)
         .with_store(store)
-        .with_mode(QuantMode::Symmetric)
 }
 
 /// The scheme for the tests about bindings, where nothing narrows and any mismatch is the
@@ -296,8 +296,10 @@ fn each_row_reads_its_own_coarser_scale() {
     let (rows, cols) = (4, 2 * BLOCK);
     let shape = shape![rows, cols];
     let row = BlockSize::with_rest(&[BlockExtent::WholeAxis], BlockExtent::VALUE);
-    let scheme = one_level(QuantStore::PackedU32(0), ScaleDtype::F32)
-        .coarser_per_block(row, ScaleDtype::F32);
+    let scheme = QuantScheme::new(QuantValue::Q8S, QuantStore::PackedU32(0)).with_levels([
+        BlockScale::per_block([BLOCK as u8], ScaleDtype::F32),
+        BlockScale::per_block(row, ScaleDtype::F32),
+    ]);
 
     let coarser = [0.5f32, 3.0, 0.25, 7.0];
     let finest: Vec<f32> = (0..rows * 2).map(|block| 1.0 + block as f32).collect();

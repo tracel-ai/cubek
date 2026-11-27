@@ -8,7 +8,7 @@ use super::{
 use MatmulKernel as K;
 use MatmulKernelHeuristic as H;
 use MatmulOpStrategy::*;
-use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::launch::Decline;
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::plan::Plan;
@@ -17,7 +17,7 @@ use cubek_std::{Hardware, devices};
 fn q4() -> QuantScheme {
     QuantScheme::default()
         .with_value(QuantValue::Q4S)
-        .per_block([32], ScaleDtype::F32)
+        .with_levels([BlockScale::per_block([32], ScaleDtype::F32)])
         .with_store(QuantStore::PackedU32(0))
 }
 
@@ -25,8 +25,10 @@ fn q4() -> QuantScheme {
 fn two_level() -> QuantScheme {
     QuantScheme::default()
         .with_value(QuantValue::Q4S)
-        .per_block([32], ScaleDtype::F16)
-        .per_tensor(ScaleDtype::F32)
+        .with_levels([
+            BlockScale::per_block([32], ScaleDtype::F16),
+            BlockScale::per_tensor(ScaleDtype::F32),
+        ])
         .with_store(QuantStore::PackedU32(0))
 }
 
@@ -40,7 +42,7 @@ fn per_tensor() -> QuantScheme {
 fn e2m1_blocks() -> QuantScheme {
     QuantScheme::default()
         .with_value(QuantValue::E2M1)
-        .per_block([32], ScaleDtype::F16)
+        .with_levels([BlockScale::per_block([32], ScaleDtype::F16)])
         .with_store(QuantStore::PackedU32(0))
 }
 
@@ -49,8 +51,10 @@ fn e2m1_blocks() -> QuantScheme {
 fn nvfp4_along_k() -> QuantScheme {
     QuantScheme::default()
         .with_value(QuantValue::E2M1)
-        .per_block([16, 1], ScaleDtype::UE4M3)
-        .per_tensor(ScaleDtype::F32)
+        .with_levels([
+            BlockScale::per_block([16, 1], ScaleDtype::UE4M3),
+            BlockScale::per_tensor(ScaleDtype::F32),
+        ])
         .with_store(QuantStore::PackedU32(1))
 }
 
@@ -64,7 +68,7 @@ fn block_scaled() -> Hardware {
 fn ue8m0_blocks() -> QuantScheme {
     QuantScheme::default()
         .with_value(QuantValue::Q4S)
-        .per_block([32], ScaleDtype::UE8M0)
+        .with_levels([BlockScale::per_block([32], ScaleDtype::UE8M0)])
         .with_store(QuantStore::PackedU32(0))
 }
 
@@ -345,7 +349,7 @@ fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads() {
         };
         QuantScheme::default()
             .with_value(value)
-            .per_block(dims, scale)
+            .with_levels([BlockScale::per_block(dims, scale)])
             .with_store(store)
     };
     let pair = |value, block, scale| {
@@ -460,16 +464,14 @@ fn an_unsupported_scheme_never_reaches_a_quantized_kernel_at_all() {
 }
 
 /// A lookup scheme's codes are indices into a table no packed input binds: read as stored they
-/// would be the integers they are written as, so the framework decodes them first, whatever
-/// value type names their width.
+/// would be the integers they are written as, so the framework decodes them first.
 #[test]
 fn a_lookup_scheme_never_reaches_a_quantized_kernel() {
     let hw = devices::m2_pro();
-    for value in [QuantValue::Q4S, QuantValue::Q8S, QuantValue::E2M1] {
+    for value in [QuantValue::Index4, QuantValue::Index8] {
         let lookup = QuantScheme::default()
-            .with_mode(QuantMode::Lookup)
             .with_value(value)
-            .per_block([32], ScaleDtype::F16)
+            .with_levels([BlockScale::per_block([32], ScaleDtype::F16)])
             .with_store(QuantStore::PackedU32(0));
         assert!(
             !matmul_supported(&hw, &lookup, MatmulOperand::Rhs),
@@ -511,7 +513,7 @@ fn the_fp8_values_reach_the_plane_routine_on_every_device() {
     for value in [QuantValue::E4M3, QuantValue::E5M2] {
         let mxfp8 = QuantScheme::default()
             .with_value(value)
-            .per_block([32], ScaleDtype::UE8M0)
+            .with_levels([BlockScale::per_block([32], ScaleDtype::UE8M0)])
             .with_store(QuantStore::PackedU32(0));
         assert!(
             matmul_supported(&hw, &mxfp8, MatmulOperand::Rhs),

@@ -66,16 +66,17 @@ impl Operand {
     /// `dimensions` names the tensor's dims in the order the scheme's block shape
     /// counts them.
     ///
-    /// `None` where the finest block spans both dimensions or a whole one, where a read would
-    /// straddle two scales, or under a coarser level whose scales vary along `dimension`: none is a
+    /// The innermost level is the block scales laid beside the words. `None` where the scheme
+    /// states no level, where that block spans both dimensions or a whole one, where a read would
+    /// straddle two scales, or under an outer level whose scales vary along `dimension`: none is a
     /// form this kernel streams.
     pub fn of_scheme(
         scheme: &QuantScheme,
         dimension: Dimension,
         dimensions: [Dimension; 2],
     ) -> Option<Self> {
-        let finest = scheme.finest();
-        let extents = finest.size.extents_in::<2>();
+        let blocks = scheme.levels().next()?;
+        let extents = blocks.size.extents_in::<2>();
         let position = dimensions.iter().position(|&a| a == dimension)?;
         let (BlockExtent::VALUE, BlockExtent::Values(scale), true) = (
             extents[1 - position],
@@ -86,19 +87,19 @@ impl Operand {
         };
         let scale = scale.get() as usize;
         let read = scheme.num_quants();
-        let scales_per_word = Field::of_scale(finest.dtype).per_word();
+        let scales_per_word = Field::of_scale(blocks.dtype).per_word();
         scale
             .is_multiple_of(read)
             .then(|| Operand::packed(dimension, read, dimension, scale, scales_per_word))
     }
 
-    /// Whether the scales of `scheme`'s coarser level, where it has one, are each over the whole of
-    /// dimension `position`, and over one position or all of the other.
+    /// Whether the scales of every level of `scheme` outside the innermost are each over the whole
+    /// of dimension `position`, and over one position or all of the other.
     fn outer_constant_along(scheme: &QuantScheme, position: usize) -> bool {
         scheme
             .levels()
-            .nth(1)
-            .is_none_or(|outer| Self::constant_along(&outer, position).is_some())
+            .skip(1)
+            .all(|outer| Self::constant_along(&outer, position).is_some())
     }
 
     /// Where the scales of `level`, over a matrix, are each constant along the whole of its
@@ -872,10 +873,19 @@ impl Packing {
         self.operand.reads_scales_alone() && self.scales_read_alone()
     }
 
+    /// The innermost level of its scheme: the block scales laid beside its words, which its
+    /// operand was read off ([`Operand::of_scheme`]).
+    fn block_scales(&self) -> BlockScale {
+        self.scheme
+            .levels()
+            .next()
+            .expect("a packing's scheme should state its block scales")
+    }
+
     /// Whether each of its block scales is whole bytes, which a unit loads alone: every scale type
     /// a scheme states, `ue4m3` and `ue8m0` a byte, `f16` two, `f32` four.
     fn scales_read_alone(&self) -> bool {
-        ElemType::from_scale_dtype(self.scheme.finest().dtype)
+        ElemType::from_scale_dtype(self.block_scales().dtype)
             .size_bits()
             .is_multiple_of(u8::BITS as usize)
     }
@@ -893,7 +903,7 @@ impl Packing {
     /// Bytes a matrix of `values` values holds: its words and its block scales. The per-tensor
     /// scale is one word and left out.
     pub fn bytes(&self, values: usize) -> usize {
-        let scales_per_word = Field::of_scale(self.scheme.finest().dtype).per_word();
+        let scales_per_word = Field::of_scale(self.block_scales().dtype).per_word();
         let scales = self.operand.scaled_along().map_or(0, |dimension| {
             let covered = self.operand.scale(dimension).unwrap_or(1);
             (values / covered) * 4 / scales_per_word
@@ -939,6 +949,7 @@ mod tests {
     use crate::layout::stored::{Operand, Packing};
     use crate::layout::tile_order::{self, TileOrder, TileWords};
     use crate::matmul_dimensions::{K, KB, KI, N, NI};
+    use cubecl::quant::scheme::BlockScale;
     use cubecl::tile::layout::Run;
 
     /// Words one 128-bit load holds.
@@ -971,7 +982,7 @@ mod tests {
     ) -> cubecl::quant::scheme::QuantScheme {
         cubecl::quant::scheme::QuantScheme::default()
             .with_value(value)
-            .per_block([block, 1], scale)
+            .with_levels([BlockScale::per_block([block, 1], scale)])
             .with_store(cubecl::quant::scheme::QuantStore::PackedU32(1))
     }
 
@@ -1228,21 +1239,32 @@ mod tests {
     #[test]
     fn a_scale_a_row_is_constant_along_the_contraction() {
         let scheme = cubecl::quant::scheme::QuantScheme::fp8_per_row();
-        assert_eq!(Operand::constant_along(&scheme.finest(), 1), Some(Some(0)));
+        assert_eq!(
+            Operand::constant_along(&scheme.levels[0].unwrap(), 1),
+            Some(Some(0))
+        );
     }
 
     #[test]
     fn one_scale_for_the_matrix_varies_along_nothing() {
-        let scheme = cubecl::quant::scheme::QuantScheme::default()
-            .per_tensor(cubecl::quant::scheme::ScaleDtype::F32);
-        assert_eq!(Operand::constant_along(&scheme.finest(), 1), Some(None));
+        let scheme =
+            cubecl::quant::scheme::QuantScheme::default().with_levels([BlockScale::per_tensor(
+                cubecl::quant::scheme::ScaleDtype::F32,
+            )]);
+        assert_eq!(
+            Operand::constant_along(&scheme.levels[0].unwrap(), 1),
+            Some(None)
+        );
     }
 
     #[test]
     fn blocks_along_the_contraction_are_not_constant_along_it() {
-        let scheme = cubecl::quant::scheme::QuantScheme::default()
-            .per_block([32], cubecl::quant::scheme::ScaleDtype::UE8M0);
-        assert_eq!(Operand::constant_along(&scheme.finest(), 1), None);
+        let scheme =
+            cubecl::quant::scheme::QuantScheme::default().with_levels([BlockScale::per_block(
+                [32],
+                cubecl::quant::scheme::ScaleDtype::UE8M0,
+            )]);
+        assert_eq!(Operand::constant_along(&scheme.levels[0].unwrap(), 1), None);
     }
 
     /// Values read in an 8-bit float hold no product with an outer scale, so it goes into the sum.

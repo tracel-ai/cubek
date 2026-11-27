@@ -1,4 +1,4 @@
-use cubecl::{client::Client, ir::ElemType, std::tensor::TensorHandle, zspace::Shape};
+use cubecl::{client::Client, std::tensor::TensorHandle, zspace::Shape};
 use cubecl_common::quant::scheme::{BlockSize, QuantScheme};
 
 use crate::{
@@ -34,7 +34,7 @@ pub(crate) fn apply_quantization(client: &Client, tensor: &mut TestTensor, schem
         output_storage_type,
     );
 
-    let scale_dtype = ElemType::from_scale_dtype(scheme.finest().dtype);
+    let scale_dtype = crate::quant_layout::scales_dtype(&scheme);
     let out_scale_bytes = cast_f32_to_dtype(&scales_data, scale_dtype);
     let out_scale_handle = TensorHandle::new_contiguous(
         scales_shape,
@@ -89,7 +89,7 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
         .into_iter()
         .collect();
 
-    let scales = if scheme.finest().size == BlockSize::TENSOR {
+    let scales = if crate::quant_layout::innermost_level(scheme).size == BlockSize::TENSOR {
         vec![1.0 / max_abs_q]
     } else {
         let rank = shape.len();

@@ -8,7 +8,7 @@ use core::marker::PhantomData;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, IntKind, UIntKind};
 use cubecl::prelude::{TensorBinding, TensorMapArg, TensorMapSwizzle};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue};
+use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue};
 use cubecl::tile::launch::{Arg, Decline, Delivery, Labelled, TmaCoordinates, TmaLanding, TmaTerm};
 use cubecl::tile::{
     Dimension, Launcher, Projection, TileTensorLaunch,
@@ -707,7 +707,7 @@ impl PackedTensor {
                     &scales_bound,
                 );
                 self.shifted_words(words).and_then(|words| {
-                    let field = Field::of_scale(self.scheme.finest().dtype);
+                    let field = self.block_scale_field();
                     let block_scales = self.shifted(block_scales.packed(field).build()?.arg());
                     Ok(Self::under_scales(words, block_scales, outer_scales, outer))
                 })
@@ -811,7 +811,7 @@ impl PackedTensor {
                 Ok(Self::under_scales(words, block_scales, outer_scales, outer))
             }
             BlockScales::Fields => {
-                let field = Field::of_scale(self.scheme.finest().dtype);
+                let field = self.block_scale_field();
                 let block_scales = self
                     .scale_fields(
                         launcher,
@@ -1195,7 +1195,7 @@ impl PackedTensor {
         blocks_dimension: Dimension,
         scales_dimensions: &'l [Dimension],
     ) -> Arg<'l, Labelled> {
-        let scale = ElemType::from_scale_dtype(self.scheme.finest().dtype);
+        let scale = ElemType::from_scale_dtype(self.block_scales().dtype);
         match self.scales_in_tiles(1) {
             None => launcher
                 .arg(self.per_slab(self.block_scale_bytes(rows, blocks)), scale)
@@ -1250,7 +1250,7 @@ impl PackedTensor {
     /// scales: a buffer holding them in wider elements steps its rows in those.
     fn block_scale_bytes(&self, rows: usize, blocks: usize) -> TensorBinding {
         // Counted in scales: a row's run of stored elements, each so many scales.
-        let scale = ElemType::from_scale_dtype(self.scheme.finest().dtype).size();
+        let scale = ElemType::from_scale_dtype(self.block_scales().dtype).size();
         let per_element = self.block_scales.elem.size();
         let step = self
             .block_scales
@@ -1300,9 +1300,18 @@ impl PackedTensor {
             .bound_as(Metadata::new([rows, words], [pitch / 4, 1]))
     }
 
+    /// The innermost level of its scheme: the block scales laid beside its words, which its
+    /// operand was read off.
+    fn block_scales(&self) -> BlockScale {
+        self.scheme
+            .levels()
+            .next()
+            .expect("a packed tensor's scheme should state its block scales")
+    }
+
     /// The field a word of block scales holds, the scheme's block-scale type.
     fn block_scale_field(&self) -> Field {
-        Field::of_scale(self.scheme.finest().dtype)
+        Field::of_scale(self.block_scales().dtype)
     }
 
     /// The dimension the matrices it holds past its first are bound along: the slabs' [`EXPERT`],

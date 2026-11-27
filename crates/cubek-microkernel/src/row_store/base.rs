@@ -85,11 +85,14 @@ impl RowStore {
     ///
     /// [`PACKED_STORE_UNSERVED`].
     pub fn packed(scheme: &QuantScheme, width: usize) -> Result<Self, Decline> {
-        let finest = scheme.finest();
-        let block = match (finest.size.extents[0], scheme.packing_dim()) {
+        let mut levels = scheme.levels();
+        let (Some(blocks), None) = (levels.next(), levels.next()) else {
+            return Err(PACKED_STORE_UNSERVED);
+        };
+        let block = match (blocks.size.extents[0], scheme.packing_dim()) {
             (BlockExtent::VALUE, _) => return Err(PACKED_STORE_UNSERVED),
             (BlockExtent::Values(block), Some(0))
-                if finest.size == BlockSize::new([block.get()]) && scheme.levels().count() == 1 =>
+                if blocks.size == BlockSize::new([block.get()]) =>
             {
                 block.get() as usize
             }
@@ -97,7 +100,7 @@ impl RowStore {
         };
         let store = Self::Packed {
             block,
-            scales_per_word: Field::of_scale(finest.dtype).per_word(),
+            scales_per_word: Field::of_scale(blocks.dtype).per_word(),
         };
         match store.holds_cube_run(width) {
             true => Ok(store),
@@ -288,7 +291,7 @@ pub enum CubeStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl::quant::scheme::{QuantStore, QuantValue, ScaleDtype};
+    use cubecl::quant::scheme::{BlockScale, QuantStore, QuantValue, ScaleDtype};
     use cubecl::tile::Levels;
 
     /// A plain row its tiles overhang is masked at its width, which a width dividing it never
@@ -352,11 +355,14 @@ mod tests {
         );
         // Three blocks of 8-bit scales are part of a word.
         assert_eq!(RowStore::packed(&mxfp8, 96), Err(PACKED_STORE_UNSERVED));
-        let nvfp4 = scheme(QuantValue::E2M1, 16, ScaleDtype::UE4M3).per_tensor(ScaleDtype::F32);
+        let nvfp4 = QuantScheme::new(QuantValue::E2M1, QuantStore::PackedU32(0)).with_levels([
+            BlockScale::per_block([16], ScaleDtype::UE4M3),
+            BlockScale::per_tensor(ScaleDtype::F32),
+        ]);
         assert_eq!(RowStore::packed(&nvfp4, 2560), Err(PACKED_STORE_UNSERVED));
         let across = QuantScheme::default()
             .with_value(QuantValue::E4M3)
-            .per_block([32, 32], ScaleDtype::UE8M0)
+            .with_levels([BlockScale::per_block([32, 32], ScaleDtype::UE8M0)])
             .with_store(QuantStore::PackedU32(0));
         assert_eq!(RowStore::packed(&across, 2560), Err(PACKED_STORE_UNSERVED));
     }
@@ -384,7 +390,7 @@ mod tests {
     fn scheme(value: QuantValue, block: u8, scale: ScaleDtype) -> QuantScheme {
         QuantScheme::default()
             .with_value(value)
-            .per_block([block], scale)
+            .with_levels([BlockScale::per_block([block], scale)])
             .with_store(QuantStore::PackedU32(0))
     }
 }

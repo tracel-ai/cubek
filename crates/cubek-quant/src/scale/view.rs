@@ -6,7 +6,7 @@ use cubecl::std::tensor::View;
 use crate::layout::ScalesView;
 use crate::scale::{CoarserScale, Scale};
 
-/// The finest level's scale grid, plus the coarser level's when the scheme has one.
+/// The inner level's scale grid, plus the coarser level's when the scheme has one.
 ///
 /// A level's grid holds one scale for the tensor or one per block; either way `read` answers for
 /// a position and is the last place that knows how many levels the scheme spreads its scales

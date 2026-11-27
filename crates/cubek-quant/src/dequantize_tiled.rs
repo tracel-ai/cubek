@@ -1,4 +1,5 @@
 use crate::quantized_arg;
+use crate::scale::inner_level;
 use cubecl::tile::{
     Launcher, Partitioning, Projection, Space, TileSpec, TileTensor, TileTensorLaunch,
     kind::Field,
@@ -83,10 +84,10 @@ pub fn launch_ref(
     if scheme.store != QuantStore::Native {
         return Err(DEQUANTIZE_TILED_STORE_NOT_NATIVE);
     }
-    if scheme.levels().count() != 1 || scheme.finest().size != BlockSize::TENSOR {
+    if scheme.levels().count() != 1 || inner_level(scheme).size != BlockSize::TENSOR {
         return Err(DEQUANTIZE_TILED_SCALE_NOT_PER_TENSOR);
     }
-    if scheme.finest().dtype != ScaleDtype::F32 {
+    if inner_level(scheme).dtype != ScaleDtype::F32 {
         return Err(DEQUANTIZE_TILED_SCALE_NOT_F32);
     }
     if input.shape.len() != 2 || output.shape.len() != 2 {
@@ -176,13 +177,13 @@ pub fn dequantize(input: &TileTensor<'_>, output: &mut TileTensor<'_>, space: Pa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl::quant::scheme::QuantValue;
+    use cubecl::quant::scheme::{BlockScale, QuantValue};
     use cubecl::std::tensor::TensorHandle;
 
     /// The scheme the tiled dequantize reads: `q8s` values stored natively under one `f32` scale.
     fn native_per_tensor() -> QuantScheme {
         QuantScheme::default()
-            .per_tensor(ScaleDtype::F32)
+            .with_levels([BlockScale::per_tensor(ScaleDtype::F32)])
             .with_store(QuantStore::Native)
             .with_value(QuantValue::Q8S)
     }
@@ -222,7 +223,7 @@ mod tests {
 
     #[test]
     fn block_scales_decline() {
-        let scheme = native_per_tensor().per_block([8], ScaleDtype::F32);
+        let scheme = native_per_tensor().with_levels([BlockScale::per_block([8], ScaleDtype::F32)]);
 
         let declined = declined(&[8, 8], &[8, 8], &[1], scheme);
 
@@ -231,7 +232,7 @@ mod tests {
 
     #[test]
     fn half_scales_decline() {
-        let scheme = native_per_tensor().per_tensor(ScaleDtype::F16);
+        let scheme = native_per_tensor().with_levels([BlockScale::per_tensor(ScaleDtype::F16)]);
 
         let declined = declined(&[8, 8], &[8, 8], &[1], scheme);
 

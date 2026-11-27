@@ -5,7 +5,7 @@ use cubecl::{
     std::tensor::TensorHandle,
     {zspace::shape},
 };
-use cubek_quant::{scheme::QuantMode, scheme::QuantScheme, scheme::QuantStore, scheme::QuantValue};
+use cubek_quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue};
 
 #[test]
 fn test_quantization_symmetric_tensor() {
@@ -20,7 +20,6 @@ fn test_quantization_symmetric_block() {
 }
 
 fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
-    let mode = QuantMode::Symmetric;
     let client = cubecl::test_device().client();
     let shape = shape![m, n];
 
@@ -53,11 +52,9 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let output_f = TensorHandle::zeros(&client, shape, f32::elem_type_native());
 
     let scheme = QuantScheme::default()
-        .per_tensor(ScaleDtype::F32)
-        .with_mode(mode)
+        .with_levels([BlockScale::per_tensor(ScaleDtype::F32)])
         .with_value(value)
-        .with_store(QuantStore::PackedU32(0))
-        .with_mode(QuantMode::Symmetric);
+        .with_store(QuantStore::PackedU32(0));
 
     // The shape is from the POV of packed u32s.
     let shape_out = shape![m, n / scheme.num_quants()];
@@ -135,7 +132,6 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
 }
 
 fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, block_size: usize) {
-    let mode = QuantMode::Symmetric;
     let client = cubecl::test_device().client();
     let shape = shape![m, n];
 
@@ -193,11 +189,9 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     let output_f = TensorHandle::zeros(&client, shape, f32::elem_type_native());
 
     let scheme = QuantScheme::default()
-        .per_block([block_size as u8], ScaleDtype::F32)
-        .with_mode(mode)
+        .with_levels([BlockScale::per_block([block_size as u8], ScaleDtype::F32)])
         .with_value(value)
-        .with_store(QuantStore::PackedU32(0))
-        .with_mode(QuantMode::Symmetric);
+        .with_store(QuantStore::PackedU32(0));
 
     // The shape is from the POV of packed u32s.
     let shape_out = shape![m, n / scheme.num_quants()];

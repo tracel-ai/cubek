@@ -6,7 +6,7 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::prelude::Scalar;
 use cubecl::prelude::TensorBinding;
 use cubecl::quant::scheme::{
-    BlockExtent, BlockSize, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+    BlockExtent, BlockScale, BlockSize, QuantScheme, QuantStore, QuantValue, ScaleDtype,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::Dimension;
@@ -54,7 +54,7 @@ impl PackedFormat {
         let blocks_of_32 = |value| {
             QuantScheme::default()
                 .with_value(value)
-                .per_block([32], ScaleDtype::F32)
+                .with_levels([BlockScale::per_block([32], ScaleDtype::F32)])
                 .with_store(QuantStore::PackedU32(0))
         };
         match self {
@@ -63,12 +63,12 @@ impl PackedFormat {
             Self::Nvfp4 => nvfp4_scheme(),
             Self::Mxfp4 => QuantScheme::default()
                 .with_value(QuantValue::E2M1)
-                .per_block([32], ScaleDtype::UE8M0)
+                .with_levels([BlockScale::per_block([32], ScaleDtype::UE8M0)])
                 .with_store(QuantStore::PackedU32(0)),
             Self::Mxfp4RowFactored => QuantScheme::mxfp4_row_factored(),
             Self::Mxfp8 => QuantScheme::default()
                 .with_value(QuantValue::E4M3)
-                .per_block([32], ScaleDtype::UE8M0)
+                .with_levels([BlockScale::per_block([32], ScaleDtype::UE8M0)])
                 .with_store(QuantStore::PackedU32(0)),
         }
     }
@@ -237,7 +237,7 @@ impl PackedSlabs {
             Some(storage) => PlainTensor::of_handle(relayout(
                 scales.bound_as(Metadata::new([n, blocks], [blocks, 1])),
                 &tile_order::scales_dimensions(N),
-                Field::of_scale(scheme.finest().dtype),
+                Field::of_scale(block_scales(&scheme).dtype),
                 storage,
             )),
         };
@@ -326,7 +326,7 @@ impl PackedSlabsSpec {
             .map(|i| {
                 let (block_at, within) = (i / block, i % block);
                 let h = hashed(block_at, self.seed);
-                let mantissa = match scheme.finest().dtype {
+                let mantissa = match block_scales(scheme).dtype {
                     ScaleDtype::UE8M0 => MANTISSAS[0],
                     _ => MANTISSAS[h % 4],
                 };
@@ -372,9 +372,17 @@ fn mostly_differ(a: &[f32], b: &[f32]) -> bool {
     a.iter().zip(b).filter(|(a, b)| a != b).count() * 4 > a.len()
 }
 
+/// `scheme`'s innermost level: the block scales laid beside its words.
+pub(crate) fn block_scales(scheme: &QuantScheme) -> BlockScale {
+    scheme
+        .levels()
+        .next()
+        .expect("a packed test scheme should state its block scales")
+}
+
 /// The values one of `scheme`'s block scales covers along a row.
 pub(crate) fn block_of(scheme: &QuantScheme) -> usize {
-    match scheme.finest().size.extents[0] {
+    match block_scales(scheme).size.extents[0] {
         BlockExtent::Values(values) => values.get() as usize,
         BlockExtent::WholeAxis => panic!("a block-scaled scheme"),
     }
@@ -406,7 +414,10 @@ fn across(operand: MatmulOperand) -> Dimension {
 fn block_level(scheme: &QuantScheme) -> QuantScheme {
     QuantScheme::default()
         .with_value(scheme.value)
-        .per_block([block_of(scheme) as u8], ScaleDtype::F32)
+        .with_levels([BlockScale::per_block(
+            [block_of(scheme) as u8],
+            ScaleDtype::F32,
+        )])
         .with_store(scheme.store)
 }
 
@@ -417,7 +428,7 @@ fn stored_scales(
     scales: TensorHandle,
     (rows, blocks): (usize, usize),
 ) -> TensorHandle {
-    let stored = scheme.finest().dtype;
+    let stored = block_scales(scheme).dtype;
     if stored == ScaleDtype::F32 {
         return scales;
     }

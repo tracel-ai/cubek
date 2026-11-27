@@ -130,7 +130,7 @@ impl ScaledTensor {
     /// more levels than one, or whose scales vary otherwise.
     fn scaled_along(scheme: &QuantScheme, dimensions: [Dimension; 2]) -> Option<Option<Dimension>> {
         let contracted = dimensions.iter().position(|&dimension| dimension == K)?;
-        let along = Operand::constant_along(&scheme.finest(), contracted)?;
+        let along = Operand::constant_along(&scheme.levels().next()?, contracted)?;
         (scheme.levels().count() == 1).then(|| along.map(|position| dimensions[position]))
     }
 
@@ -167,7 +167,7 @@ impl ScaledTensor {
 #[cfg(test)]
 mod tests {
     use super::ScaledTensor;
-    use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+    use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
     use cubek_std::matmul_dimensions::{K, M};
 
     #[test]
@@ -185,7 +185,7 @@ mod tests {
         let blocks = QuantScheme::default()
             .with_value(QuantValue::E4M3)
             .with_store(QuantStore::PackedU32(0))
-            .per_block([32], ScaleDtype::UE8M0);
+            .with_levels([BlockScale::per_block([32], ScaleDtype::UE8M0)]);
         assert!(!ScaledTensor::reads(&blocks, [M, K]));
     }
 

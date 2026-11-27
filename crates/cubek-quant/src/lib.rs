@@ -31,7 +31,7 @@ pub(crate) mod utils {
 
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
         // Validate block size compatibility
-        if let BlockExtent::Values(block_size) = scheme.finest().size.extents[0] {
+        if let BlockExtent::Values(block_size) = crate::scale::inner_level(scheme).size.extents[0] {
             let block_size = block_size.get() as usize;
             assert!(
                 block_size.is_multiple_of(div),

@@ -21,7 +21,7 @@ use super::packed::nvfp4_scheme;
 use super::problem::{MatmulProblem, OperandKind};
 use super::selector::select;
 use super::{FLOAT_FEW_ROWS, QUANTIZED_FEW_ROWS, stub_measured};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperands;
 use cubek_std::plan::Plan;
 use cubek_std::{Hardware, devices};
@@ -137,8 +137,10 @@ fn packed_rhs(rows: usize, scheme: QuantScheme) -> MatmulProblem {
 fn both_nvfp4(rows: usize) -> MatmulProblem {
     let along_k = QuantScheme::default()
         .with_value(QuantValue::E2M1)
-        .per_block([16, 1], ScaleDtype::UE4M3)
-        .per_tensor(ScaleDtype::F32)
+        .with_levels([
+            BlockScale::per_block([16, 1], ScaleDtype::UE4M3),
+            BlockScale::per_tensor(ScaleDtype::F32),
+        ])
         .with_store(QuantStore::PackedU32(1));
     product(
         rows,
@@ -166,7 +168,7 @@ fn product(rows: usize, lhs: OperandKind, rhs: OperandKind) -> MatmulProblem {
 fn q4() -> QuantScheme {
     QuantScheme::default()
         .with_value(QuantValue::Q4S)
-        .per_block([32], ScaleDtype::F32)
+        .with_levels([BlockScale::per_block([32], ScaleDtype::F32)])
         .with_store(QuantStore::PackedU32(0))
 }
 

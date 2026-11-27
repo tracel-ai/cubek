@@ -79,19 +79,19 @@ struct QuantOperand {
 
 enum Operand {
     Float(TensorHandle),
-    Quant(QuantOperand),
+    Quant(Box<QuantOperand>),
 }
 
 impl Clone for Operand {
     fn clone(&self) -> Self {
         match self {
             Self::Float(t) => Self::Float(t.clone()),
-            Self::Quant(q) => Self::Quant(QuantOperand {
+            Self::Quant(q) => Self::Quant(Box::new(QuantOperand {
                 data: q.data.clone(),
                 scale: q.scale.clone(),
                 shape: q.shape.clone(),
                 scheme: q.scheme,
-            }),
+            })),
         }
     }
 }
@@ -128,7 +128,14 @@ pub(super) fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> 
 
     shape
         .iter()
-        .zip(scheme.finest().size.values(shape))
+        .zip(
+            scheme
+                .levels()
+                .next()
+                .expect("a quantized operand's scheme should state a scale level")
+                .size
+                .values(shape),
+        )
         .map(|(dim, block)| dim / block)
         .collect()
 }
@@ -234,13 +241,13 @@ impl Benchmark for QuantMatmulBench {
             Mode::Quant { scheme, side } => {
                 let lhs = match side {
                     QuantSide::LhsOnly | QuantSide::Both => {
-                        Operand::Quant(quantize_operand(client, lhs_float, &scheme))
+                        Operand::Quant(Box::new(quantize_operand(client, lhs_float, &scheme)))
                     }
                     QuantSide::RhsOnly => Operand::Float(lhs_float),
                 };
                 let rhs = match side {
                     QuantSide::RhsOnly | QuantSide::Both => {
-                        Operand::Quant(quantize_operand(client, rhs_float, &scheme))
+                        Operand::Quant(Box::new(quantize_operand(client, rhs_float, &scheme)))
                     }
                     QuantSide::LhsOnly => Operand::Float(rhs_float),
                 };

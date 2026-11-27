@@ -20,7 +20,7 @@ mod tests {
     use cubecl::features::{MmaConfig, Tma};
     use cubecl::ir::ElemType;
     use cubecl::ir::{FloatKind, OpaqueType, UIntKind};
-    use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+    use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
     use cubecl::tile::{BaseRegion, Dimension, Space, VectorRegion};
     use cubek_std::Hardware;
     use cubek_std::devices;
@@ -85,7 +85,7 @@ mod tests {
         };
         let scheme = QuantScheme::default()
             .with_value(value)
-            .per_block(block, ScaleDtype::F16)
+            .with_levels([BlockScale::per_block(block, ScaleDtype::F16)])
             .with_store(store);
         Operand::of_scheme(&scheme, dimension, [K, N]).expect("one dimension a block")
     }

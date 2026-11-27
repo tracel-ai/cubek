@@ -603,7 +603,7 @@ impl MatmulRoutine<PlaneShuffleMicrokernel> for PlaneShuffleMatmulRoutine {
 mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+    use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
     use cubecl::tile::layout::Run;
     use cubek_microkernel::matmul::plane::PlaneShuffleKSplit;
     use cubek_microkernel::matmul::{MatmulLayout, MatmulOperands};
@@ -831,7 +831,7 @@ mod tests {
         };
         let scheme = QuantScheme::default()
             .with_value(value)
-            .per_block(block, ScaleDtype::F16)
+            .with_levels([BlockScale::per_block(block, ScaleDtype::F16)])
             .with_store(store);
         let packing = Packing {
             operand: Operand::of_scheme(&scheme, along, [K, N]).expect("a packed rhs"),

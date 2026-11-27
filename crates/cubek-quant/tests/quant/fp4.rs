@@ -10,7 +10,7 @@
 //! what these tests exist to catch: it raises no error and costs accuracy on every weight.
 
 use cubecl::{prelude::*, zspace::shape};
-use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubek_quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 use super::harness::{dequantize, f32_tensor, quantize};
 use super::{Needs, Quantized, RoundTrip};
@@ -24,17 +24,13 @@ const MAGNITUDES: [f32; 8] = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0];
 const BLOCK: usize = 16;
 
 fn scheme(two_level: bool) -> QuantScheme {
-    let scheme = QuantScheme::default()
-        .with_value(QuantValue::E2M1)
-        .with_store(QuantStore::PackedU32(0))
-        .with_mode(QuantMode::Symmetric)
-        .per_block([BLOCK as u8], ScaleDtype::F32);
-
+    let scheme = QuantScheme::new(QuantValue::E2M1, QuantStore::PackedU32(0));
+    let blocks = BlockScale::per_block([BLOCK as u8], ScaleDtype::F32);
     match two_level {
         // NVFP4's own shape, and the reason the format is interesting: `ue4m3` block scales are
         // only affordable under a per-tensor factor.
-        true => scheme.per_tensor(ScaleDtype::F32),
-        false => scheme,
+        true => scheme.with_levels([blocks, BlockScale::per_tensor(ScaleDtype::F32)]),
+        false => scheme.with_levels([blocks]),
     }
 }
 
@@ -174,8 +170,7 @@ mod mx {
         QuantScheme::default()
             .with_value(QuantValue::E2M1)
             .with_store(QuantStore::PackedU32(0))
-            .with_mode(QuantMode::Symmetric)
-            .per_block([MX_BLOCK as u8], ScaleDtype::UE8M0)
+            .with_levels([BlockScale::per_block([MX_BLOCK as u8], ScaleDtype::UE8M0)])
     }
 
     impl RoundTrip {

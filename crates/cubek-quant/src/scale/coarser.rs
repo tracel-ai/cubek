@@ -1,4 +1,4 @@
-//! The coarser level of a two-level scheme, which every finest scale under it is normalized by.
+//! The coarser level of a two-level scheme, which every inner scale under it is normalized by.
 
 use cubecl::prelude::*;
 
@@ -7,17 +7,35 @@ use crate::layout::{
     scales_view,
 };
 use crate::scale::Scale;
-use crate::scheme::QuantScheme;
+use crate::scheme::{BlockScale, QuantScheme};
 
-/// The finest level's scale grid and, for a two-level scheme, the coarser level's.
-/// Bindings arrive finest first, the order `check_scale_bindings` counts.
+/// The innermost level of `scheme`, whose grid lies beside the values; the coarser level, where
+/// the scheme has one, is the level after it.
+///
+/// # Panics
+///
+/// Where the scheme states no level, or more than two: these kernels read one grid beside the
+/// values and at most one coarser grid over it.
+pub(crate) fn inner_level(scheme: &QuantScheme) -> BlockScale {
+    assert!(
+        scheme.levels().count() <= 2,
+        "quantize and dequantize read at most two scale levels, got {scheme:?}"
+    );
+    scheme
+        .levels()
+        .next()
+        .expect("a quantized tensor's scheme should state a scale level")
+}
+
+/// The innermost level's scale grid and, for a two-level scheme, the coarser level's.
+/// Bindings arrive innermost first, the order `check_scale_bindings` counts.
 pub(crate) fn split_levels(scales: &[TensorBinding]) -> (TensorBinding, Option<TensorBinding>) {
     (scales[0].clone(), scales.get(1).cloned())
 }
 
 /// The coarser scale of one value's block, absent for the schemes that have none.
 ///
-/// Bound as f32 whatever the finest level stores: cubecl's `check_scale_bindings` refuses anything
+/// Bound as f32 whatever the inner level stores: cubecl's `check_scale_bindings` refuses anything
 /// narrower.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
@@ -95,11 +113,11 @@ impl CoarserScale {
         }
     }
 
-    /// The factor a value under `finest` is scaled by. Below this pairing nothing knows how many
+    /// The factor a value under `inner` is scaled by. Below this pairing nothing knows how many
     /// levels the scheme spreads its scales across.
-    pub fn at<FS: CubePrimitive>(&self, finest: FS) -> Scale<FS> {
+    pub fn at<FS: CubePrimitive>(&self, inner: FS) -> Scale<FS> {
         Scale::<FS> {
-            inner: finest,
+            inner,
             coarser: self.value,
         }
     }

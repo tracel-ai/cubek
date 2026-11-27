@@ -1,5 +1,6 @@
 #![allow(missing_docs)] // pub cube modules
 
+use crate::scale::inner_level;
 use cubecl::{calculate_cube_count_elemwise, ir::ElemType};
 use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
@@ -7,7 +8,7 @@ use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 use crate::{
     layout::{ScalesView, scales_view},
     scale::{CoarserScale, Scales, split_levels},
-    scheme::{QuantMode, QuantScheme, QuantStore, QuantValue},
+    scheme::{QuantScheme, QuantStore, QuantValue},
     utils::packed_storage_elem,
 };
 use cubecl::std::quant::{check_scale_bindings, unpack_cast_u32};
@@ -164,7 +165,7 @@ pub fn launch_ref(
 ) -> Result<(), LaunchError> {
     check_scale_bindings(scheme, scales.len());
 
-    let scale_dtype: ElemType = ElemType::from_scale_dtype(scheme.finest().dtype);
+    let scale_dtype: ElemType = ElemType::from_scale_dtype(inner_level(scheme).dtype);
     let (scale, coarser) = split_levels(scales);
 
     match scheme {
@@ -253,9 +254,8 @@ fn dequantize_packed(
     match scheme {
         QuantScheme {
             store: QuantStore::PackedU32(_),
-            mode: QuantMode::Symmetric,
             ..
-        } => unsafe {
+        } if !scheme.value.is_index() => unsafe {
             dequantize_symmetric_packed_kernel::launch_unchecked(
                 client,
                 cube_count,
@@ -264,7 +264,7 @@ fn dequantize_packed(
                 vector_size_out,
                 vector_size_in,
                 linear_view(input.clone()),
-                scales_view(input.clone(), scale, 1, &scheme, scheme.finest().size),
+                scales_view(input.clone(), scale, 1, &scheme, inner_level(&scheme).size),
                 CoarserScale::view(input, coarser, &scheme).into(),
                 linear_view(output),
                 scheme,
@@ -305,10 +305,9 @@ fn dequantize_native(
 
     match scheme {
         QuantScheme {
-            mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
-        } => {
+        } if !scheme.value.is_index() => {
             let address_type = input
                 .required_address_type(input_dtype.size())
                 .max(scale.required_address_type(scale_dtype.size()))
@@ -322,7 +321,7 @@ fn dequantize_native(
                     address_type,
                     vector_size,
                     linear_view(input.clone()),
-                    scales_view(input.clone(), scale, 1, &scheme, scheme.finest().size),
+                    scales_view(input.clone(), scale, 1, &scheme, inner_level(&scheme).size),
                     CoarserScale::view(input, coarser, &scheme).into(),
                     linear_view(output),
                     [output_dtype, scale_dtype, input_dtype],

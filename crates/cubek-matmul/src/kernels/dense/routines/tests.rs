@@ -3,7 +3,7 @@
 
 use crate::kernels::MatmulRoutineProblem;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::tile::{BaseRegion, Dimension, Space, VectorRegion};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperands};
 use cubek_std::layout::stored::{Operand, Packing};
@@ -21,7 +21,7 @@ fn scheme(value: QuantValue, dimension: Dimension, block: u8, scale: ScaleDtype)
     };
     QuantScheme::default()
         .with_value(value)
-        .per_block(block, scale)
+        .with_levels([BlockScale::per_block(block, scale)])
         .with_store(store)
 }
 

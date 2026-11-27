@@ -2,7 +2,7 @@
 //! stream its scheme ([`matmul_supported`]).
 
 use crate::kernels::tensor::ScaledTensor;
-use cubecl::quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
 use cubek_std::NVFP4_BLOCK;
@@ -16,10 +16,9 @@ use cubek_std::layout::stored::Operand;
 /// direction and covering whole `u32`s (see
 /// [`Operand::of_scheme`](cubek_std::layout::stored::Operand::of_scheme)), at any block-scale
 /// dtype, and under a second level constant along the packed direction or not; or fp8 under one
-/// level of scales constant along the reduction ([`ScaledTensor::reads`]). The values must be numbers
-/// ([`QuantMode::Symmetric`]): an index into a table ([`QuantMode::Lookup`]) carries its table
-/// beside it, which no packed input here binds, so its codes would be read as the integers they
-/// are stored as.
+/// level of scales constant along the reduction ([`ScaledTensor::reads`]). The values must be numbers:
+/// an index into a table ([`QuantValue::is_index`]) carries its table beside it, which no packed
+/// input here binds, so its codes would be read as the integers they are stored as.
 ///
 /// It takes the device because streaming a packed field means *decoding* it,
 /// and whether a decode runs is the device's answer, not the scheme's: asking
@@ -49,7 +48,7 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOpera
             | QuantValue::E4M3
             | QuantValue::E5M2
     );
-    let numbers = scheme.mode == QuantMode::Symmetric;
+    let numbers = !scheme.value.is_index();
     // A rule runs ahead of the launch, so the strides that decide the dimension everywhere else are
     // not here and the scheme's own claim answers.
     let dimensions = input.dimensions();
@@ -68,7 +67,9 @@ pub const NVFP4_SCALE_WORD_SPAN: usize = NVFP4_BLOCK * 4;
 pub fn nvfp4_scheme() -> QuantScheme {
     QuantScheme::default()
         .with_value(QuantValue::E2M1)
-        .per_block([NVFP4_BLOCK as u8], ScaleDtype::UE4M3)
-        .per_tensor(ScaleDtype::F32)
+        .with_levels([
+            BlockScale::per_block([NVFP4_BLOCK as u8], ScaleDtype::UE4M3),
+            BlockScale::per_tensor(ScaleDtype::F32),
+        ])
         .with_store(QuantStore::PackedU32(0))
 }

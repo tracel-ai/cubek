@@ -14,7 +14,7 @@
 
 use cubecl::{prelude::*, zspace::shape};
 use cubek_quant::scheme::{
-    BlockExtent, BlockSize, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+    BlockExtent, BlockScale, BlockSize, QuantScheme, QuantStore, QuantValue, ScaleDtype,
 };
 
 use super::harness::{dequantize, f32_tensor, quantize};
@@ -28,8 +28,7 @@ fn scheme(value: QuantValue, store: QuantStore) -> QuantScheme {
     QuantScheme::default()
         .with_value(value)
         .with_store(store)
-        .with_mode(QuantMode::Symmetric)
-        .per_block([BLOCK as u8], ScaleDtype::F32)
+        .with_levels([BlockScale::per_block([BLOCK as u8], ScaleDtype::F32)])
 }
 
 /// Round trip `data` at an exact scale of one, so the reconstruction is the codec's answer and
@@ -91,10 +90,10 @@ fn under_blocks(
         .map(|at| ((at % 7) as f32 - 3.0) * scale(block_of(at)))
         .collect();
     RoundTrip {
-        scheme: QuantScheme::fp8_per_row().per_block(
+        scheme: QuantScheme::fp8_per_row().with_levels([BlockScale::per_block(
             BlockSize::with_rest(&extents, BlockExtent::VALUE),
             ScaleDtype::F32,
-        ),
+        )]),
         shape: shape![ROWS, COLUMNS],
         expected: input.clone(),
         input,

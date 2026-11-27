@@ -6,7 +6,7 @@
 
 use cubecl::prelude::*;
 
-/// The scale the finest level holds for this value's block, times the coarser level's under a
+/// The scale the inner level holds for this value's block, times the coarser level's under a
 /// two-level scheme.
 ///
 /// A two-level scheme forms the product in f32 and narrows only the result. The inner scale is a

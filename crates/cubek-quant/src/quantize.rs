@@ -14,6 +14,7 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
+use crate::scale::inner_level;
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
     scale::{CoarserScale, Scale, split_levels},
@@ -21,7 +22,7 @@ use crate::{
 };
 use crate::{
     layout::{ScalesView, scales_layout},
-    scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype},
+    scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 
 /// Scale a value into its quantization range, ready for the store to encode.
@@ -57,8 +58,16 @@ fn rounds_to_integers(quant: QuantValue) -> bool {
         | QuantValue::Q4F
         | QuantValue::Q4S
         | QuantValue::Q2F
-        | QuantValue::Q2S => true,
-        QuantValue::E5M2 | QuantValue::E4M3 | QuantValue::E2M1 => false,
+        | QuantValue::Q2S
+        | QuantValue::Index8
+        | QuantValue::Index4
+        | QuantValue::Index2 => true,
+        QuantValue::E5M2
+        | QuantValue::E4M3
+        | QuantValue::E2M1
+        | QuantValue::F32
+        | QuantValue::F16
+        | QuantValue::BF16 => false,
     }
 }
 
@@ -115,6 +124,16 @@ fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: Qu
         | QuantValue::Q4S
         | QuantValue::Q2F
         | QuantValue::Q2S => integer_fields::<F, N>(value),
+        QuantValue::F32 | QuantValue::F16 | QuantValue::BF16 => {
+            comptime!(unreachable!(
+                "a float format is stored native, never packed in words"
+            ))
+        }
+        QuantValue::Index8 | QuantValue::Index4 | QuantValue::Index2 => {
+            comptime!(unreachable!(
+                "an index is a table entry, which no quantize kernel picks"
+            ))
+        }
     };
 
     // Shift and combine into QS (using i32 for sign extension)
@@ -205,7 +224,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
         out_scale,
         &coarser,
         scales_layout,
-        scheme.finest().dtype,
+        comptime!(inner_level(&scheme).dtype),
     );
 
     output.write(
@@ -249,7 +268,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
         out_scale,
         &coarser,
         scales_layout,
-        scheme.finest().dtype,
+        comptime!(inner_level(&scheme).dtype),
     );
 
     if input.vector_size().comptime() == num_quants {
@@ -297,7 +316,7 @@ pub fn launch_ref(
     check_scale_bindings(scheme, scales.len());
     check_scale_bindings(scheme, out_scales.len());
 
-    let scale_dtype = ElemType::from_scale_dtype(scheme.finest().dtype);
+    let scale_dtype = ElemType::from_scale_dtype(inner_level(scheme).dtype);
     let (scale, coarser) = split_levels(scales);
     let (out_scale, out_coarser) = split_levels(out_scales);
 
@@ -383,10 +402,9 @@ fn quantize_native(
 
     match scheme {
         QuantScheme {
-            mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
-        } => {
+        } if !scheme.value.is_index() => {
             // We could use vector_size = block_size if it's in the supported vector sizes.. but let's keep it simple
             check_block_size_compat(scheme, vector_size as usize);
 
@@ -395,8 +413,8 @@ fn quantize_native(
                 .max(scale.required_address_type(scale_dtype.size()))
                 .max(output.required_address_type(output_dtype.size()));
 
-            let finest = scheme.finest().size;
-            let scales_layout = scales_layout(&output, &scale, 1, scheme, finest);
+            let blocks = inner_level(scheme).size;
+            let scales_layout = scales_layout(&output, &scale, 1, scheme, blocks);
             let coarser_layout = CoarserScale::layout(&output, out_coarser.as_ref(), scheme);
 
             unsafe {
@@ -408,12 +426,12 @@ fn quantize_native(
                     vector_size,
                     linear_view(input),
                     // scale is computed based on input float dtype, but stored based on qparams precision
-                    scales_view(output.clone(), scale, 1, scheme, finest),
+                    scales_view(output.clone(), scale, 1, scheme, blocks),
                     CoarserScale::view(output.clone(), coarser, scheme).into(),
                     InputScalar::new(range_min, input_dtype),
                     InputScalar::new(range_max, input_dtype),
                     linear_view(output.clone()),
-                    scales_view(output.clone(), out_scale, 1, scheme, finest),
+                    scales_view(output.clone(), out_scale, 1, scheme, blocks),
                     CoarserScale::view(output, out_coarser, scheme).into(),
                     scales_layout,
                     coarser_layout.into(),
@@ -446,10 +464,9 @@ fn quantize_packed(
     // Determine if we can use vectorized packing
     let mut can_vectorize = match scheme {
         QuantScheme {
-            mode: QuantMode::Symmetric,
             store: QuantStore::PackedU32(dim),
             ..
-        } => {
+        } if !scheme.value.is_index() => {
             // Check if packing dim is contiguous
             let ndims = input.shape.len();
             input.strides[ndims - 1 - *dim] == 1
@@ -482,8 +499,8 @@ fn quantize_packed(
 
     check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
 
-    let finest = scheme.finest().size;
-    let scales_layout = scales_layout(&output, &scale, 1, scheme, finest);
+    let blocks = inner_level(scheme).size;
+    let scales_layout = scales_layout(&output, &scale, 1, scheme, blocks);
     let coarser_layout = CoarserScale::layout(&output, out_coarser.as_ref(), scheme);
 
     unsafe {
@@ -495,12 +512,12 @@ fn quantize_packed(
             vector_size,
             linear_view(input),
             // scale is computed based on input float dtype, but stored based on qparams precision
-            scales_view(output.clone(), scale, 1, scheme, finest),
+            scales_view(output.clone(), scale, 1, scheme, blocks),
             CoarserScale::view(output.clone(), coarser, scheme).into(),
             InputScalar::new(range_min, input_dtype),
             InputScalar::new(range_max, input_dtype),
             linear_view(output.clone()),
-            scales_view(output.clone(), out_scale, 1, scheme, finest),
+            scales_view(output.clone(), out_scale, 1, scheme, blocks),
             CoarserScale::view(output, out_coarser, scheme).into(),
             scales_layout,
             coarser_layout.into(),

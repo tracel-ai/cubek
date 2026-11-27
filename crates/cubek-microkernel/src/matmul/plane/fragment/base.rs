@@ -1461,7 +1461,7 @@ fn rows_first<T>(rows_along: PlaneFragmentRowsAlong, lhs: T, rhs: T) -> (T, T) {
 mod tests {
     use super::*;
     use crate::matmul::{MatmulDestination, MatmulReading};
-    use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
+    use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, ScaleDtype};
     use cubek_std::layout::stored::Packing;
     use cubek_std::layout::tile_order;
 
@@ -1527,7 +1527,7 @@ mod tests {
     fn the_fragments_decode_e2m1_codes_alone() {
         let mxfp8 = QuantScheme::default()
             .with_value(QuantValue::E4M3)
-            .per_block([32, 1], ScaleDtype::UE8M0)
+            .with_levels([BlockScale::per_block([32, 1], ScaleDtype::UE8M0)])
             .with_store(QuantStore::PackedU32(1));
         let (item, space) = against(mxfp8, 32);
         assert!(!PlaneFragmentMicrokernel::serves(&item, &space));

@@ -428,13 +428,13 @@ mod tests {
     /// that moves one re-tunes every machine, and is made on purpose or not at all.
     #[test]
     fn a_projections_keys_are_pinned() {
-        use cubecl::quant::scheme::{QuantStore, QuantValue, ScaleDtype};
+        use cubecl::quant::scheme::{BlockScale, QuantStore, QuantValue, ScaleDtype};
         let (m, k, n) = (4, 256, 64);
         let lhs = Metadata::new([m, k], vec![k, 1]);
         let col = Metadata::new([k, n], vec![1, k]);
         let q4 = QuantScheme::default()
             .with_value(QuantValue::Q4S)
-            .per_block(vec![32, 1], ScaleDtype::F16)
+            .with_levels([BlockScale::per_block(vec![32, 1], ScaleDtype::F16)])
             .with_store(QuantStore::PackedU32(1));
         let packed = Metadata::new([k, n], vec![1, k / 8]);
         let key = |rhs: &Metadata, kind| {
@@ -449,7 +449,7 @@ mod tests {
         );
         assert_eq!(
             key(&packed, OperandKind::Quantized(q4)),
-            "MatmulTuneKey { elem: Float(F16), k: 256, n: 64, m: 4, batches: 1, lhs: OperandKey { kind: Float, layout: K, batching: Shared }, rhs: OperandKey { kind: Quantized(QuantScheme { value: Q4S, store: PackedU32(1), mode: Symmetric, finest: BlockScale { size: BlockSize { extents: [Values(1), Values(32), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: F16 }, coarser: None }), layout: K, batching: Shared } }"
+            "MatmulTuneKey { elem: Float(F16), k: 256, n: 64, m: 4, batches: 1, lhs: OperandKey { kind: Float, layout: K, batching: Shared }, rhs: OperandKey { kind: Quantized(QuantScheme { value: Q4S, store: PackedU32(1), levels: [Some(BlockScale { size: BlockSize { extents: [Values(1), Values(32), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: F16 }), None, None, None] }), layout: K, batching: Shared } }"
         );
     }
 

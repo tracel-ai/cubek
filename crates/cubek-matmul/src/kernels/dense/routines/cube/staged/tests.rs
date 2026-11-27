@@ -658,14 +658,14 @@ mod base {
     /// (`a_packed_register_ring_is_kept_on_every_scheme_its_read_decodes`).
     #[test]
     fn a_packed_input_read_a_scale_alone_keeps_no_register_prefetch() {
-        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
         use cubecl::tile::stage::Prefetch;
         use cubek_std::layout::stored::{Operand, Packing};
 
         let hw = offering(devices::strix_halo());
         let scheme = QuantScheme::default()
             .with_value(QuantValue::Q4S)
-            .per_block([32, 1], ScaleDtype::F16)
+            .with_levels([BlockScale::per_block([32, 1], ScaleDtype::F16)])
             .with_store(QuantStore::PackedU32(1));
         let packings = MatmulOperands {
             lhs: None,
@@ -1645,13 +1645,13 @@ mod base {
     /// rows outgrows; two fit, 64 of `K` as four of NVFP4's 16-wide blocks hold.
     #[test]
     fn a_decoded_stage_holds_the_steps_its_settings_count() {
-        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
         use cubek_microkernel::matmul::cube::CubeStagedDepth;
 
         let hw = offering(devices::rtx_pro_6000());
         let scheme = QuantScheme::default()
             .with_value(QuantValue::E2M1)
-            .per_block([32, 1], ScaleDtype::UE8M0)
+            .with_levels([BlockScale::per_block([32, 1], ScaleDtype::UE8M0)])
             .with_store(QuantStore::PackedU32(1));
         let weight = Packing {
             operand: Operand::of_scheme(&scheme, K, [K, N]).expect("MXFP4 is one block along k"),
@@ -1759,7 +1759,7 @@ mod base {
     /// blocks of `K` than the problem has, and at a `K` every stage closes.
     #[test]
     fn a_packed_input_prepares_no_walk_past_k() {
-        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
         use cubek_std::layout::stored::{Operand, Packing};
         use cubek_std::matmul_dimensions::{KB, KI};
 
@@ -1778,7 +1778,7 @@ mod base {
         );
         let scheme = QuantScheme::default()
             .with_value(QuantValue::Q4S)
-            .per_block([32, 1], ScaleDtype::F16)
+            .with_levels([BlockScale::per_block([32, 1], ScaleDtype::F16)])
             .with_store(QuantStore::PackedU32(1));
         let packings = MatmulOperands {
             rhs: Some(Packing {

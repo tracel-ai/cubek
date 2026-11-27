@@ -19,7 +19,7 @@ use crate::kernels::{
 use crate::tiled::storage::{StoredValues, stored_tile, tile_order_on};
 use cubecl::features::MmaConfig;
 use cubecl::ir::{ElemType, FloatKind, UIntKind};
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands, MatmulStoredTile};
 use cubek_std::layout::stored::{Operand, Packing};
 use cubek_std::matmul_dimensions::{K, M, N};
@@ -82,13 +82,11 @@ impl Format {
             MatmulOperand::Lhs => (vec![1, block], QuantStore::PackedU32(0)),
             _ => (vec![block, 1], QuantStore::PackedU32(1)),
         };
-        let scheme = QuantScheme::default()
-            .with_value(value)
-            .per_block(block, scale)
-            .with_store(store);
+        let scheme = QuantScheme::new(value, store);
+        let blocks = BlockScale::per_block(block, scale);
         Some(match global {
-            true => scheme.per_tensor(ScaleDtype::F32),
-            false => scheme,
+            true => scheme.with_levels([blocks, BlockScale::per_tensor(ScaleDtype::F32)]),
+            false => scheme.with_levels([blocks]),
         })
     }
 }

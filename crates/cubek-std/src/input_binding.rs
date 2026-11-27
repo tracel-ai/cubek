@@ -76,7 +76,7 @@ impl InputBinding {
                 data.strides.swap(dim0, dim1);
 
                 // Swap dims for scale and block size if block scaled quant is used
-                if scheme.finest().size != BlockSize::TENSOR {
+                if scheme.levels().any(|level| level.size != BlockSize::TENSOR) {
                     scale.shape.swap(dim0, dim1);
                     scale.strides.swap(dim0, dim1);
                     scheme.swap_block_dims(rank, dim0, dim1);

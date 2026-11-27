@@ -6,11 +6,23 @@
 //! a kernel refuse different things.
 
 use cubecl::ir::{ElemType, UIntKind};
-use cubecl_common::quant::scheme::{QuantScheme, QuantStore};
+use cubecl_common::quant::scheme::{BlockScale, QuantScheme, QuantStore};
 
-/// Per-axis block extents, the number of elements each scale covers along each axis.
+/// The scheme's innermost level, whose scales lie beside the values.
+///
+/// # Panics
+///
+/// Where the scheme states no level: a test tensor quantized under it has no scale to lay out.
+pub fn innermost_level(scheme: &QuantScheme) -> BlockScale {
+    scheme
+        .levels()
+        .next()
+        .expect("a quantized test tensor's scheme should state a scale level")
+}
+
+/// Per-axis block extents, the number of elements each innermost scale covers along each axis.
 pub fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    scheme.finest().size.values(shape)
+    innermost_level(scheme).size.values(shape)
 }
 
 /// The block scale grid: each axis divided by its block extent, so one entry per block. A
@@ -69,5 +81,5 @@ pub fn values_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
 
 /// The element type the innermost level's scales are stored at.
 pub fn scales_dtype(scheme: &QuantScheme) -> ElemType {
-    ElemType::from_scale_dtype(scheme.finest().dtype)
+    ElemType::from_scale_dtype(innermost_level(scheme).dtype)
 }

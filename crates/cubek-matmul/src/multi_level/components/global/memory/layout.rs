@@ -273,7 +273,11 @@ impl GlobalLayoutLaunch {
                 );
             }
 
-            match scheme.finest().size {
+            let level = scheme
+                .levels()
+                .next()
+                .expect("a quantized operand's scheme should state a scale level");
+            match level.size {
                 BlockSize::TENSOR => GlobalScaleLayoutArgs::PerTensor { shape },
                 block_size => {
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.

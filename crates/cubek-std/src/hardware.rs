@@ -12,7 +12,7 @@ use cubecl::{
     client::Client,
     features::{AtomicUsage, MmaConfig, Plane, ScaledMmaConfig},
     ir::{DeviceProperties, ElemType, FloatKind, TargetProperties, Type, VectorRegisters},
-    quant::scheme::{QuantMode, QuantScheme, QuantValue},
+    quant::scheme::{QuantScheme, QuantValue},
     tile::BlockScaledOperands,
 };
 
@@ -521,11 +521,14 @@ impl BlockScaledMma {
             false => self.form.rhs,
         };
         let register_codes = Self::REGISTER_BYTES * BlockScaledOperands::values_per_element(kind);
-        let scales = ElemType::from_scale_dtype(scheme.finest().dtype);
+        let block_scales = scheme
+            .levels()
+            .next()
+            .map(|level| ElemType::from_scale_dtype(level.dtype));
         value_element(scheme.value).is_some_and(|values| self.holds(lhs, values, block))
-            && scheme.mode == QuantMode::Symmetric
+            && !scheme.value.is_index()
             && scheme.num_quants() == register_codes
-            && scales == ElemType::Float(self.form.scales)
+            && block_scales == Some(ElemType::Float(self.form.scales))
     }
 }
 
@@ -593,7 +596,13 @@ pub fn value_element(value: QuantValue) -> Option<ElemType> {
         | QuantValue::Q4F
         | QuantValue::Q4S
         | QuantValue::Q2F
-        | QuantValue::Q2S => None,
+        | QuantValue::Q2S
+        | QuantValue::F32
+        | QuantValue::F16
+        | QuantValue::BF16
+        | QuantValue::Index8
+        | QuantValue::Index4
+        | QuantValue::Index2 => None,
     }
 }
 
@@ -875,15 +884,18 @@ mod tests {
     /// of `k` 32, and a pair of them the mixed one, where the device offers it.
     #[test]
     fn each_format_reaches_the_instruction_of_its_form() {
-        use cubecl::quant::scheme::{QuantStore, ScaleDtype};
+        use cubecl::quant::scheme::{BlockScale, QuantStore, ScaleDtype};
         let hw = devices::offering_block_scaled(devices::h100());
         let scheme = |value, block: u8, scale| {
             QuantScheme::default()
                 .with_value(value)
-                .per_block([block], scale)
+                .with_levels([BlockScale::per_block([block], scale)])
                 .with_store(QuantStore::PackedU32(0))
         };
-        let nvfp4 = scheme(QuantValue::E2M1, 16, ScaleDtype::UE4M3).per_tensor(ScaleDtype::F32);
+        let nvfp4 = QuantScheme::new(QuantValue::E2M1, QuantStore::PackedU32(0)).with_levels([
+            BlockScale::per_block([16], ScaleDtype::UE4M3),
+            BlockScale::per_tensor(ScaleDtype::F32),
+        ]);
         let mxfp4 = scheme(QuantValue::E2M1, 32, ScaleDtype::UE8M0);
         let mxfp8 = scheme(QuantValue::E4M3, 32, ScaleDtype::UE8M0);
         let q4 = scheme(QuantValue::Q4S, 32, ScaleDtype::UE8M0);

@@ -33,7 +33,7 @@ use crate::layout::{Fragments, assemble, fragments, fragments_of};
 use crate::matmul_dimensions::{K, KB, KI, blocked};
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::{
-    BlockExtent, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+    BlockExtent, BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype,
 };
 use cubecl::tile::Dimension;
 use cubecl::tile::layout::{Stagger, StorageLevels, StoragePartitioning};
@@ -222,22 +222,21 @@ impl TileOrder {
         let QuantStore::PackedU32(1) = scheme.store else {
             return None;
         };
-        let finest = scheme.finest();
-        let [BlockExtent::Values(block), BlockExtent::VALUE] = finest.size.extents_in() else {
+        let blocks = scheme.levels().next()?;
+        let [BlockExtent::Values(block), BlockExtent::VALUE] = blocks.size.extents_in() else {
             return None;
         };
-        // Tile order moves the finest grid alone: a coarser level constant down `k`, one scale
+        // Tile order moves the innermost grid alone: an outer level constant down `k`, one scale
         // for the matrix or one a column, spans whole tiles and keeps its grid as it is.
-        let coarser_kept = scheme
+        let outer_kept = scheme
             .levels()
-            .nth(1)
-            .is_none_or(|coarser| Operand::constant_along(&coarser, 0).is_some());
-        if !coarser_kept {
+            .skip(1)
+            .all(|outer| Operand::constant_along(&outer, 0).is_some());
+        if !outer_kept {
             return None;
         }
-        let byte_scales = ElemType::from_scale_dtype(finest.dtype).size_bits() == 8;
-        let symmetric = scheme.mode == QuantMode::Symmetric;
-        if !(symmetric && byte_scales) {
+        let byte_scales = ElemType::from_scale_dtype(blocks.dtype).size_bits() == 8;
+        if scheme.value.is_index() || !byte_scales {
             return None;
         }
         Self::in_whole_words(block.get() as usize, scheme.num_quants())
@@ -546,11 +545,10 @@ fn block_split(block: usize, k: &[(usize, usize)]) -> Option<usize> {
 /// every sixteen of `k` and an `f32` per-tensor scale. A preset: tile order stores any scheme
 /// [`TileOrder::stores`] accepts.
 pub fn nvfp4_scheme() -> QuantScheme {
-    QuantScheme::default()
-        .with_value(QuantValue::E2M1)
-        .per_block([NVFP4_BLOCK as u8, 1], ScaleDtype::UE4M3)
-        .with_store(QuantStore::PackedU32(1))
-        .per_tensor(ScaleDtype::F32)
+    QuantScheme::new(QuantValue::E2M1, QuantStore::PackedU32(1)).with_levels([
+        BlockScale::per_block([NVFP4_BLOCK as u8, 1], ScaleDtype::UE4M3),
+        BlockScale::per_tensor(ScaleDtype::F32),
+    ])
 }
 
 /// A tile's pieces above the word, finest first, each `(dimension, count)` of the piece below it.
@@ -778,7 +776,7 @@ mod tests {
     fn down_k(value: QuantValue, block: u8, scale: ScaleDtype) -> QuantScheme {
         QuantScheme::default()
             .with_value(value)
-            .per_block([block, 1], scale)
+            .with_levels([BlockScale::per_block([block, 1], scale)])
             .with_store(QuantStore::PackedU32(1))
     }
 
@@ -1317,7 +1315,6 @@ mod tests {
     /// none of a scheme packed along the rows, scaled across them, or indexing a table.
     #[test]
     fn each_scheme_down_k_has_its_tile_order() {
-        use cubecl::quant::scheme::QuantMode;
         let form = |scheme: &QuantScheme| {
             TileOrder::laid(scheme, TileWords::RowByRow, (128, 8))
                 .map(|order| (order.block(), order.values_per_word()))
@@ -1335,9 +1332,9 @@ mod tests {
             down_k(QuantValue::E2M1, 16, ScaleDtype::UE4M3).with_store(QuantStore::PackedU32(0));
         let across = QuantScheme::default()
             .with_value(QuantValue::E2M1)
-            .per_block([1, 16], ScaleDtype::UE4M3)
+            .with_levels([BlockScale::per_block([1, 16], ScaleDtype::UE4M3)])
             .with_store(QuantStore::PackedU32(1));
-        let lookup = down_k(QuantValue::Q4S, 32, ScaleDtype::F16).with_mode(QuantMode::Lookup);
+        let lookup = down_k(QuantValue::Index4, 32, ScaleDtype::F16);
         for refused in [along_rows, across, lookup] {
             assert!(!TileOrder::stores(&refused), "{refused:?}");
             assert_eq!(form(&refused), None, "{refused:?}");
@@ -1348,14 +1345,16 @@ mod tests {
     /// one that varies along `k` spans no whole tile.
     #[test]
     fn a_coarser_level_down_k_keeps_the_tile_order() {
-        use cubecl::quant::scheme::BlockSize;
+        use cubecl::quant::scheme::{BlockScale, BlockSize};
         let column = BlockSize::with_rest(
             &[BlockExtent::WholeAxis, BlockExtent::VALUE],
             BlockExtent::VALUE,
         );
         let mxfp4 = down_k(QuantValue::E2M1, 32, ScaleDtype::UE8M0);
-        let per_column = mxfp4.coarser_per_block(column, ScaleDtype::F32);
-        let along_k = mxfp4.coarser_per_block([64, 1], ScaleDtype::F32);
+        let blocks = BlockScale::per_block([32, 1], ScaleDtype::UE8M0);
+        let per_column =
+            mxfp4.with_levels([blocks, BlockScale::per_block(column, ScaleDtype::F32)]);
+        let along_k = mxfp4.with_levels([blocks, BlockScale::per_block([64, 1], ScaleDtype::F32)]);
         assert!(TileOrder::stores(&per_column));
         assert!(!TileOrder::stores(&along_k));
     }

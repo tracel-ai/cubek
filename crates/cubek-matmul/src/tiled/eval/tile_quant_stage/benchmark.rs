@@ -8,7 +8,7 @@ use cubecl::{
     client::Client,
     future,
     prelude::*,
-    quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
+    quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_std::matmul_dimensions::{K, M, N, NB, NI};
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
@@ -62,7 +62,7 @@ fn staged_matmul_quant_rhs(
 /// (no blocking along `k`, `bn` along `n`), packed into `u32` words.
 pub(super) fn quant_scheme(bn: usize) -> QuantScheme {
     QuantScheme::default()
-        .per_block([1, bn as u8], ScaleDtype::F32)
+        .with_levels([BlockScale::per_block([1, bn as u8], ScaleDtype::F32)])
         .with_store(QuantStore::PackedU32(0))
         .with_value(QuantValue::Q8S)
 }
@@ -150,7 +150,12 @@ impl TileQuantStageBench {
 
     /// The scale block along `N`, which the scheme states.
     fn bn(&self) -> usize {
-        let [_, bn] = self.scheme.finest().size.extents_in();
+        let level = self
+            .scheme
+            .levels()
+            .next()
+            .expect("the stage's scheme should state a scale level");
+        let [_, bn] = level.size.extents_in();
         bn.values_of_axis(self.n)
     }
 

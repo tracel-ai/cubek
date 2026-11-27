@@ -271,10 +271,10 @@ mod tests {
     #[test]
     fn a_shuffle_prepares_nothing_it_cannot_run() {
         use crate::kernels::select::problem::OperandKind;
-        use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+        use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
         let scheme = QuantScheme::default()
             .with_value(QuantValue::Q4S)
-            .per_block([32, 1], ScaleDtype::F16)
+            .with_levels([BlockScale::per_block([32, 1], ScaleDtype::F16)])
             .with_store(QuantStore::PackedU32(1));
         let packed = MatmulTuneKey::new(
             F16,

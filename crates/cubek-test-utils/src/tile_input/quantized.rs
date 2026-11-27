@@ -10,7 +10,7 @@ pub struct QuantizedTileInput {
     tile: TileInput,
     scales: TensorHandle,
     scheme: QuantScheme,
-    /// A lookup scheme's table, present exactly under `QuantMode::Lookup`
+    /// An index format's table, present exactly when the scheme's value is one
     /// ([`lookup_arange`](QuantizedTileInputBuilder::lookup_arange) mints it).
     table: Option<TensorHandle>,
 }
@@ -21,15 +21,9 @@ impl QuantizedTileInput {
         self.scales.clone().binding()
     }
 
-    /// The field each stored value occupies: the scheme's value, or under a lookup scheme an
-    /// index as wide, which names a table entry rather than a number.
+    /// The field each stored value occupies.
     pub fn field(&self) -> Field {
-        match self.scheme.mode {
-            cubecl::quant::scheme::QuantMode::Lookup => Field::Index {
-                bits: self.scheme.size_bits_value(),
-            },
-            _ => Field::Quant(self.scheme.value),
-        }
+        Field::from(self.scheme.value)
     }
 
     /// The packed values as an operand, bound `width` words wide: `u32` words of
