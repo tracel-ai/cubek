@@ -103,10 +103,10 @@ impl RoutineProduct for GroupedRows {
         let table = MatmulIndexTable::GroupedRows {
             slabs: SLABS,
             entries: column(|group| group.2),
-            groups: RowGroups {
+            groups: Box::new(RowGroups {
                 ends: column(|group| group.1 as u32),
                 max_rows: NonZeroUsize::new(self.max_rows).expect("row groups hold rows"),
-            },
+            }),
         };
         let (out, bound) = Self::poisoned(client, Shape::from(vec![rows, N]), lhs.elem);
         routine.launch_indexed_into(hw, client, lhs, rhs, table, bound, settings)?;

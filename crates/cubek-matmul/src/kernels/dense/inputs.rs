@@ -78,7 +78,7 @@ pub enum MatmulIndexTable {
     GroupedRows {
         slabs: usize,
         entries: PlainTensor,
-        groups: RowGroups,
+        groups: Box<RowGroups>,
     },
 }
 
@@ -112,7 +112,7 @@ impl MatmulIndexTable {
     /// The row groups, under [`MatmulIndex::GroupedRows`].
     pub fn groups(&self) -> Option<&RowGroups> {
         match self {
-            Self::GroupedRows { groups, .. } => Some(groups),
+            Self::GroupedRows { groups, .. } => Some(groups.as_ref()),
             Self::Slab { .. } | Self::RunOfK { .. } => None,
         }
     }
