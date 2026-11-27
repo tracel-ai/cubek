@@ -1,7 +1,7 @@
 use crate::Hardware;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::Delivery;
-use cubecl::tile::{Dimension, FactorStage, Space, StageStorage, stage::Prefetch};
+use cubecl::tile::{Dimension, FactorStage, Space, StageSource, StageStorage, stage::Prefetch};
 
 /// One operand's box of a stage, as the ring that holds it reads it: what a stage of it costs in
 /// shared memory, and in registers where the next one waits there.
@@ -120,8 +120,16 @@ impl StagedOperand {
                     space: rows.clone(),
                     contracted: Some(contraction.contracted),
                     elem_bits: bits,
-                    width,
+                    vector_size: width,
                     delivery: contraction.delivery,
+                    // A fill that copies the operand as stored copies its values as they lie.
+                    source: StageSource {
+                        served: true,
+                        plain: true,
+                        own_width: true,
+                        memory: true,
+                        direct: true,
+                    },
                 },
                 &hw.target.mma,
             ),
