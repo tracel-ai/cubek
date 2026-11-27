@@ -1,6 +1,7 @@
+use crate::kernels::{MATMUL_BOX_OTHER_THAN_ROW_GROUP, MATMUL_GROUPED_ROWS_SWIZZLED};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::{
-    Dimension, Partitioning, Space, TileSpec,
+    Dimension, Levels, Partitioning, Space, TileSpec,
     space::{ComputeScope, Coverage, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
@@ -34,6 +35,8 @@ pub struct MatmulPartitioning {
     batch_dimensions: Vec<Dimension>,
     rows_kind: MatmulRowsKind,
     dimensions_kind: MatmulDimensionsKind,
+    /// Where a table ends row groups, whose end masks a write.
+    grouped: Option<Dimension>,
 }
 
 impl MatmulPartitioning {
@@ -52,6 +55,15 @@ impl MatmulPartitioning {
             batch_dimensions,
             rows_kind,
             dimensions_kind,
+            grouped: None,
+        }
+    }
+
+    /// This placement, its rows along `rows` grouped by a table, which no level cuts.
+    pub fn with_grouped_rows(self, rows: Dimension) -> Self {
+        Self {
+            grouped: Some(rows),
+            ..self
         }
     }
 
@@ -107,15 +119,10 @@ impl MatmulPartitioning {
     /// kernel a distinct extent of those dimensions.
     pub fn kernel_compiling(&self, compiled: &[Dimension]) -> Partitioning {
         let dynamic: Vec<Dimension> = match self.dimensions_kind {
-            MatmulDimensionsKind::Plain => self
-                .batch_dimensions
-                .iter()
-                .chain(self.rows_kind.dynamic_dimensions())
-                .copied()
-                .filter(|dimension| !compiled.contains(dimension))
-                .collect(),
+            MatmulDimensionsKind::Plain => self.dynamic_plain(compiled),
             MatmulDimensionsKind::BlockSplit => {
                 let rows_free = self.rows_kind.dynamic_dimensions().contains(&M)
+                    && self.grouped.is_none()
                     && self.partitioning.space().extent(MB) == 1
                     && !compiled.contains(&MI);
                 rows_free.then_some(MI).into_iter().collect()
@@ -247,13 +254,38 @@ impl MatmulPartitioning {
         self.partitioning.space()
     }
 
-    /// Whether the tiles overhang the output: a tile the output's edge cuts short, which a write
-    /// that cannot be masked would reach past.
+    /// Whether the tiles overhang the output: a tile the output's edge cuts short, or a row group a
+    /// table ends inside it, which a write that cannot be masked would reach past.
     pub fn overhangs_output(&self) -> bool {
-        self.dimensions_kind
-            .output_dimensions()
-            .into_iter()
-            .any(|dimension| self.overhangs(dimension))
+        self.grouped.is_some()
+            || self
+                .dimensions_kind
+                .output_dimensions()
+                .into_iter()
+                .any(|dimension| self.overhangs(dimension))
+    }
+
+    /// Checks that, where a table groups the rows, one cube's box holds a row group: the levels
+    /// `inside` the cubes hold every row of the box, since the stage is sized from the box while
+    /// the planes walk what they hold, and the cubes take the boxes in rows.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_GROUPED_ROWS_SWIZZLED`] and [`MATMUL_BOX_OTHER_THAN_ROW_GROUP`].
+    pub fn check_groups_boxed(&self, inside: &Levels) -> Result<(), Decline> {
+        let Some(rows) = self.grouped else {
+            return Ok(());
+        };
+        if !matches!(self.cube_order().canonicalize(), CubeOrder::RowMajor) {
+            return Err(MATMUL_GROUPED_ROWS_SWIZZLED);
+        }
+        let held = inside.clone().cubes(&[rows]).build()[0]
+            .tile(rows)
+            .expect("a level naming the rows tiles them");
+        match held == self.space().extent(rows) {
+            true => Ok(()),
+            false => Err(MATMUL_BOX_OTHER_THAN_ROW_GROUP),
+        }
     }
 
     /// Checks that the engine masks `out`'s writes exactly where the tiles overhang it, which is
@@ -295,6 +327,17 @@ impl MatmulPartitioning {
 }
 
 impl MatmulPartitioning {
+    /// The dimensions a plain space frees, but those `compiled` compiles in and the grouped rows,
+    /// which stay compiled in.
+    fn dynamic_plain(&self, compiled: &[Dimension]) -> Vec<Dimension> {
+        self.batch_dimensions
+            .iter()
+            .chain(self.rows_kind.dynamic_dimensions())
+            .copied()
+            .filter(|dimension| !compiled.contains(dimension) && Some(*dimension) != self.grouped)
+            .collect()
+    }
+
     /// The space a kernel states before any extent is freed: the problem's, its rows the ones a
     /// cube's box holds where it takes every row whole.
     fn compiled_space(&self) -> Space {

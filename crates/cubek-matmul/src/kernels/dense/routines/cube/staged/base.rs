@@ -214,12 +214,14 @@ impl<'a> CubeStagedPlacement<'a> {
             microkernel.block_scales(),
             microkernel.fill.delivery == CubeStagedDelivery::Tma,
         )?;
+        let inside = microkernel.launch_tiling();
         let partitioning = view.partitioning(
-            microkernel.launch_tiling(),
+            inside.clone(),
             &[item.dimensions.m, item.dimensions.n],
             cube_order,
             MatmulView::ONE_CUBE_A_BOX,
         );
+        partitioning.check_groups_boxed(&inside)?;
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
         let past_k = || {

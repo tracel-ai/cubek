@@ -3,6 +3,7 @@
 mod base;
 mod cube;
 mod finish;
+mod grouped_rows;
 mod hypercube;
 mod packed;
 mod plane;

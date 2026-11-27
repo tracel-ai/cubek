@@ -174,7 +174,10 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
 
     /// `lhs · rhs` on `client`'s device, every batch reading its entry of `table`, written into
     /// `out`, `[batches.., rows, n]`, which the caller allocated as its product lies, prepared for
-    /// `hw` at `settings` ([`MatmulTensors::indexed`]).
+    /// `hw` at `settings` ([`MatmulTensors::indexed`]). Under
+    /// [`SlabRows::Grouped`](crate::kernels::SlabRows::Grouped) the lhs and `out` are the flat
+    /// `[rows, k]` and `[rows, n]`, and every row group must be at most the table's `max_rows`
+    /// rows, or its later output rows are left unwritten.
     ///
     /// # Errors
     ///

@@ -1,5 +1,7 @@
 use crate::kernels::MatmulPartitioning;
-use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
+use crate::kernels::{
+    MATMUL_GROUPED_ROWS_BUFFER_ONLY, MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem,
+};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Decline;
 use cubecl::tile::{
@@ -7,7 +9,7 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDimensions, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulBlocks, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulRowsKind, MatmulWorkItem,
 };
 use cubek_std::Hardware;
@@ -71,6 +73,7 @@ impl<'a> MatmulView<'a> {
     /// rhs lined along neither dimension; [`MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH`], for one held per
     /// batch; [`MATMUL_WHOLE_ROWS_BATCHES_UNMERGED`], for an lhs or an output that does not
     /// hold every batch, unless a table is read per batch, which keeps the batches apart.
+    /// [`MATMUL_GROUPED_ROWS_BUFFER_ONLY`], for grouped rows written anywhere but a buffer.
     pub fn new(
         problem: &'a MatmulRoutineProblem,
         rows_kind: MatmulRowsKind,
@@ -87,6 +90,9 @@ impl<'a> MatmulView<'a> {
             && lhs != rhs
         {
             return Err(MATMUL_PACKED_BLOCKS_DISAGREE);
+        }
+        if problem.grouped_rows().is_some() && problem.destination != MatmulDestination::Buffer {
+            return Err(MATMUL_GROUPED_ROWS_BUFFER_ONLY);
         }
         if rows_kind == MatmulRowsKind::Whole {
             if problem.layouts.rhs == MatmulLayout::Strided {
@@ -129,6 +135,8 @@ impl<'a> MatmulView<'a> {
         order: CubeOrder,
         cubes_along_k: NonZeroUsize,
     ) -> MatmulPartitioning {
+        let uncut = self.uncut(dimensions);
+        let dimensions = &uncut[..];
         let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let walked = self.walked();
         let cubes = match cubes_along_k.get() {
@@ -167,12 +175,12 @@ impl<'a> MatmulView<'a> {
                 )
             }
         };
-        MatmulPartitioning::new(
+        self.with_grouped_rows(MatmulPartitioning::new(
             partitioning,
             cube,
             distributed_batch_dimensions,
             self.rows_kind,
-        )
+        ))
     }
 
     /// The problem partitioned with `inside` a cube's box, `cubes` cubes cutting `dimensions` and
@@ -225,6 +233,8 @@ impl<'a> MatmulView<'a> {
         dimensions: &[Dimension],
         order: PlaneOrder,
     ) -> MatmulPartitioning {
+        let uncut = self.uncut(dimensions);
+        let dimensions = &uncut[..];
         let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let levels = inside
             .launch_planes(
@@ -232,12 +242,12 @@ impl<'a> MatmulView<'a> {
                 order.clone(),
             )
             .build();
-        MatmulPartitioning::of_launch_planes(
+        self.with_grouped_rows(MatmulPartitioning::of_launch_planes(
             Partitioning::new(self.space(), levels),
             &order,
             distributed_batch_dimensions,
             self.rows_kind,
-        )
+        ))
     }
 
     /// The problem partitioned with `inside` a cube's box, the cubes cutting `dimensions`, every
@@ -306,6 +316,24 @@ impl<'a> MatmulView<'a> {
         )
     }
 
+    /// `dimensions` without the rows a table groups, which no level cuts.
+    fn uncut(&self, dimensions: &[Dimension]) -> Vec<Dimension> {
+        let grouped = self.problem.grouped_rows();
+        dimensions
+            .iter()
+            .copied()
+            .filter(|&dimension| Some(dimension) != grouped)
+            .collect()
+    }
+
+    /// `partitioning` marked as placing grouped rows, where a table groups them.
+    fn with_grouped_rows(&self, partitioning: MatmulPartitioning) -> MatmulPartitioning {
+        match self.problem.grouped_rows() {
+            Some(rows) => partitioning.with_grouped_rows(rows),
+            None => partitioning,
+        }
+    }
+
     /// Whether the [vector region](cubecl::tile::VectorRegion) of the product on `hw` divides it,
     /// each read of a packed input inside one scale tile, and two packed inputs whole words of
     /// each other in each read along `K`, the runs the two are contracted in. Float inputs have no
@@ -339,10 +367,7 @@ impl<'a> MatmulView<'a> {
             elements: self.problem.elements,
             sum: self.problem.sum(),
             layouts: self.problem.layouts,
-            dimensions: match blocks {
-                None => MatmulDimensions::MNK,
-                Some(_) => MatmulDimensions::INSIDE_BLOCKS,
-            },
+            dimensions: self.problem.dimensions(),
             blocks,
             rows: self.read().work_item_rows,
             destination: self.problem.destination,
@@ -445,8 +470,8 @@ impl RowsReading {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::MatmulIndex;
     use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
+    use crate::kernels::{MatmulIndex, SlabRows};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::matmul::{MatmulOperands, MatmulRows};
     use cubek_std::matmul_dimensions::{EXPERT, batch_dimension};
@@ -573,7 +598,10 @@ mod tests {
                 rhs: 1,
                 out: 15,
             },
-            index: Some(MatmulIndex::Slab { slabs: 4 }),
+            index: Some(MatmulIndex::Slab {
+                slabs: 4,
+                rows: SlabRows::PerBatch,
+            }),
             ..problem
         }
     }
