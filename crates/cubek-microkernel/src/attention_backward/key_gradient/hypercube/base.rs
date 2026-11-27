@@ -219,6 +219,7 @@ impl Microkernel for HypercubeKeyGradientMicrokernel {
                 Some(Self {
                     cube,
                     query_gradient: PlaneKeyGradientMicrokernel::beside(
+                        hw,
                         plane.score,
                         &query_item,
                         (query_rows, part_columns, key_steps),

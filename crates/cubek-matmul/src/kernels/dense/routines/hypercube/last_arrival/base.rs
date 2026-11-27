@@ -362,7 +362,10 @@ impl MatmulRoutine<HypercubeStagedMicrokernel, StageStorage> for HypercubeLastAr
 mod tests {
     use super::*;
     use cubecl::features::MmaConfig;
-    use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::ir::{
+        CoordinatePart, ElemType, ElementIndex, ElementPositions, FloatKind, FragmentPositions,
+        OperandFact,
+    };
     use cubecl::tile::space::ComputeScope;
     use cubek_microkernel::matmul::MatmulLayout;
     use cubek_microkernel::matmul::cube::CubeStagedMicrokernelSettings;
@@ -532,5 +535,57 @@ mod tests {
             (run.extent(M), run.extent(N), run.extent(K)),
             (128, 256, 103 * 16)
         );
+    }
+
+    /// `hw` with its target's lanes holding an accumulator's cells where `positions` places them,
+    /// stating them or hiding them as `stated` says.
+    fn holding(
+        mut hw: Hardware,
+        positions: ElementPositions,
+        stated: FragmentPositions,
+    ) -> Hardware {
+        let mut target = (*hw.target).clone();
+        target.mma.element_positions = OperandFact::new(move |_, _, _| Some(positions.clone()));
+        target.mma.fragment_positions = stated;
+        hw.target = std::sync::Arc::new(target);
+        hw
+    }
+
+    /// The slots the cubes merge in, and the output, are as wide as the lines the tile writes the
+    /// `f32` sum in: where the target hides its fragments' cells, which bounce; where a lane holds
+    /// eight cells of a row, as on RDNA4; and where each lane holds a column, as on RDNA3, whose
+    /// lines the tile regroups across lanes. Lanes that hold no line, alone or together, write
+    /// one cell a line.
+    #[test]
+    fn the_output_is_as_wide_as_the_lines_its_lanes_write() {
+        use FragmentPositions::{AsElementPositions, Hidden};
+        let lane = CoordinatePart::of(ElementIndex::Lane);
+        let nth = CoordinatePart::of(ElementIndex::Nth);
+        let rdna3 = ElementPositions {
+            row: vec![nth.spaced_by(2), lane.in_runs_of(16)],
+            col: vec![lane.counted_over(16)],
+        };
+        let rdna4 = ElementPositions {
+            row: vec![lane.counted_over(16)],
+            col: vec![nth, lane.in_runs_of(16).spaced_by(8)],
+        };
+        let scattered = ElementPositions {
+            row: vec![lane.counted_over(16)],
+            col: vec![nth.spaced_by(2), lane.in_runs_of(16)],
+        };
+        let problem = MatmulRoutineProblem::dense(256, 4096, 4096, F16);
+        let settings = HypercubeLastArrivalMatmulRoutineSettings::DEFAULT;
+        for (name, positions, stated, width) in [
+            ("hidden", rdna3.clone(), Hidden, 4),
+            ("rdna4", rdna4, AsElementPositions, 4),
+            ("rdna3", rdna3, AsElementPositions, 4),
+            ("scattered", scattered, AsElementPositions, 1),
+        ] {
+            let hw = holding(offering(devices::strix_halo()), positions, stated);
+            let (blueprint, _) =
+                HypercubeLastArrivalMatmulRoutine::prepare(&hw, &problem, &settings)
+                    .expect("the routine runs here");
+            assert_eq!(blueprint.widths.out, width, "{name}");
+        }
     }
 }

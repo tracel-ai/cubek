@@ -6,6 +6,7 @@ use crate::attention_backward::{
 use crate::matmul::MatmulDim;
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use core::num::NonZeroUsize;
+use cubecl::cmma::MatrixLayout;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
@@ -295,12 +296,12 @@ impl Microkernel for PlaneQueryGradientMicrokernel {
             operand: Operand::QueryGradient,
             elements: self.query_gradient.leaf_extent(MatmulDim::N),
         });
-        // A sum nothing bounces drains one cell at a time, wherever its unit holds it.
-        if self.query_gradient.cost.bounced_cell.is_none() {
-            vectorization.require(VectorRequirement::Elementwise {
-                operand: Operand::QueryGradient,
-            });
-        }
+        // Its sum drains in the lines the tile writes it in, along the gradient's rows.
+        vectorization.require(
+            self.query_gradient
+                .cost
+                .line_requirement(Operand::QueryGradient, MatrixLayout::RowMajor),
+        );
         vectorization.require(VectorRequirement::Together {
             operand: Operand::Out,
             with: Operand::OutGradient,

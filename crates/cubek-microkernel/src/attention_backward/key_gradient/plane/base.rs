@@ -6,6 +6,7 @@ use crate::attention_backward::{
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulWorkItem};
 use core::num::NonZeroUsize;
+use cubecl::cmma::MatrixLayout;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Partitioning, Scratch};
 use cubek_std::Hardware;
@@ -232,6 +233,7 @@ impl PlaneKeyGradientMicrokernel {
     /// gradient states its own this way: its planes split a stage's part in a grid of whole
     /// fragments, which a plane's tile alone does not say.
     pub(crate) fn beside(
+        hw: &Hardware,
         score: PlaneFragmentMicrokernel,
         product: &MatmulWorkItem,
         (along_m, along_n, depth): (NonZeroUsize, NonZeroUsize, NonZeroUsize),
@@ -239,7 +241,7 @@ impl PlaneKeyGradientMicrokernel {
         PlaneFragmentMicrokernel {
             instruction: score.instruction,
             step: None,
-            cost: score.instruction.cost(),
+            cost: score.instruction.cost(&hw.target),
             orders: score.instruction.orders(product.layouts),
             settings: PlaneFragmentMicrokernelSettings {
                 along_m,
@@ -365,10 +367,12 @@ impl Microkernel for PlaneKeyGradientMicrokernel {
                 operand,
                 elements: product.leaf_extent(MatmulDim::N),
             });
-            // A sum nothing bounces drains one cell at a time, wherever its unit holds it.
-            if product.cost.bounced_cell.is_none() {
-                vectorization.require(VectorRequirement::Elementwise { operand });
-            }
+            // Its sum drains in the lines the tile writes it in, along the gradient's rows.
+            vectorization.require(
+                product
+                    .cost
+                    .line_requirement(operand, MatrixLayout::RowMajor),
+            );
         }
         for operand in [Operand::Logsumexp, Operand::Delta] {
             vectorization.require(VectorRequirement::Elementwise { operand });

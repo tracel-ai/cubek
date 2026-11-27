@@ -228,7 +228,7 @@ impl PlaneFragmentMicrokernel {
                 Some(Self {
                     instruction,
                     step: None,
-                    cost: instruction.cost(),
+                    cost: instruction.cost(&hw.target),
                     orders: instruction.orders(item.layouts),
                     settings: PlaneFragmentMicrokernelSettings {
                         along_n: NonZeroUsize::new(along_n)?,
@@ -334,7 +334,7 @@ impl PlaneFragmentMicrokernel {
         if settings.holder == ComputeScope::MMA_PLANE_GROUP {
             return Self::wgmma(hw, item, settings)
                 .map(|instruction| {
-                    Self::stating(instruction, PlaneUnit::Instruction, item, *settings)
+                    Self::stating(hw, instruction, PlaneUnit::Instruction, item, *settings)
                 })
                 .into_iter()
                 .collect();
@@ -364,6 +364,7 @@ impl PlaneFragmentMicrokernel {
             .filter(|instruction| !deep || instruction.contracts_deeper_fragments())
             .filter_map(|instruction| {
                 Self::stating(
+                    hw,
                     instruction,
                     PlaneUnit::Matrix { unit, calls },
                     item,
@@ -383,12 +384,20 @@ impl PlaneFragmentMicrokernel {
     /// A plane stating `instruction` against the float `item`, its settings counting `unit`: it
     /// hands the tile no Step, and spends what the instruction does.
     fn stating(
+        hw: &Hardware,
         instruction: PlaneFragmentInstruction,
         unit: PlaneUnit,
         item: &MatmulWorkItem,
         settings: PlaneFragmentMicrokernelSettings,
     ) -> Self {
-        Self::over(instruction, None, instruction.cost(), unit, item, settings)
+        Self::over(
+            instruction,
+            None,
+            instruction.cost(&hw.target),
+            unit,
+            item,
+            settings,
+        )
     }
 
     /// A plane over `instruction` against the float `item`, handing the tile `step`, which spends
@@ -633,7 +642,10 @@ impl PlaneFragmentMicrokernel {
             step.sum,
             step.shape,
         )?;
-        let kept = StepCost { bounced_cell: None };
+        let kept = StepCost {
+            bounced_cell: None,
+            widest_line: [1, 1],
+        };
         Self::holding(item, settings, step, pick, kept)
     }
 
@@ -653,7 +665,10 @@ impl PlaneFragmentMicrokernel {
             step.sum,
             step.shape,
         )?;
-        let kept = StepCost { bounced_cell: None };
+        let kept = StepCost {
+            bounced_cell: None,
+            widest_line: [1, 1],
+        };
         Self::holding(item, settings, step, pick, kept)
     }
 
@@ -847,7 +862,7 @@ impl PlaneFragmentMicrokernel {
                 Some(Self {
                     instruction,
                     step: None,
-                    cost: instruction.cost(),
+                    cost: instruction.cost(&hw.target),
                     orders: instruction.orders(item.layouts),
                     settings,
                     dimensions: item.dimensions,
@@ -1543,7 +1558,7 @@ mod tests {
         PlaneFragmentMicrokernel {
             instruction,
             step: None,
-            cost: instruction.cost(),
+            cost: instruction.cost(&cubecl::ir::TargetProperties::default()),
             orders: MatmulOperands::all(BindingOrder::Stated),
             settings: settings.rows_along(rows),
             dimensions: MatmulDimensions::MNK,
