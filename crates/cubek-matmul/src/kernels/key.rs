@@ -449,7 +449,7 @@ mod tests {
         );
         assert_eq!(
             key(&packed, OperandKind::Quantized(q4)),
-            "MatmulTuneKey { elem: Float(F16), k: 256, n: 64, m: 4, batches: 1, lhs: OperandKey { kind: Float, layout: K, batching: Shared }, rhs: OperandKey { kind: Quantized(QuantScheme { value: Q4S, store: PackedU32(1), mode: Symmetric, blocks: [Some(BlockScale { size: BlockSize { extents: [Values(1), Values(32), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: F16 }), None] }), layout: K, batching: Shared } }"
+            "MatmulTuneKey { elem: Float(F16), k: 256, n: 64, m: 4, batches: 1, lhs: OperandKey { kind: Float, layout: K, batching: Shared }, rhs: OperandKey { kind: Quantized(QuantScheme { value: Q4S, store: PackedU32(1), mode: Symmetric, finest: BlockScale { size: BlockSize { extents: [Values(1), Values(32), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: F16 }, coarser: None }), layout: K, batching: Shared } }"
         );
     }
 
