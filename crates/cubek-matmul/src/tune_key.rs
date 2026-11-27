@@ -1,9 +1,9 @@
 use cubecl::{
-    AutotuneKey,
+    AutotuneKeyable,
     client::Client,
     ir::ElemType,
     quant::scheme::QuantScheme,
-    tune::anchor,
+    tune::Anchor,
     zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
 use cubek_std::{MatmulProblemSize, MatrixLayout, launch::tma::stride_align_bits};
@@ -13,7 +13,7 @@ use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 
 use crate::definition::MatmulKind;
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
 /// Autotune key representative of matmul versions
 pub struct MatmulAutotuneKey {
     pub definition: MatmulProblemDefinition,
@@ -24,7 +24,7 @@ pub struct MatmulAutotuneKey {
 /// repeat number, so it's the largest align that can have performance impacts.
 const MAX_STRIDE_FACTOR: u32 = 10;
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
 pub struct MatmulProblemDefinition {
     #[autotune(anchor)]
     pub m: usize,
@@ -216,9 +216,9 @@ impl MatmulAutotuneKey {
         // bucket shares the kernel choice benchmarked on one representative,
         // and the launch still derives the legal line size from the real
         // tensors.
-        let m_anchored = anchor(m, None, None, None);
-        let n_anchored = anchor(n, None, None, None);
-        let k_anchored = anchor(k, None, None, None);
+        let m_anchored = Anchor::default().round(m);
+        let n_anchored = Anchor::default().round(n);
+        let k_anchored = Anchor::default().round(k);
 
         let lhs_pow2_factor = match matrix_layout_lhs {
             MatrixBatchLayout::Contiguous => pow2_factor(k_anchored),

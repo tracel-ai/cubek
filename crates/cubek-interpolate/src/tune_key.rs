@@ -1,8 +1,8 @@
 use crate::definition::InterpolateMode;
-use cubecl::{AutotuneKey, ir::ElemType, tune::anchor};
+use cubecl::{AutotuneKeyable, ir::ElemType, tune::Anchor};
 use serde::{Deserialize, Serialize};
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
 /// Autotune key representative of interpolation kernel shapes.
 pub struct InterpolateAutotuneKey {
     elem_input: ElemType,
@@ -46,7 +46,12 @@ impl InterpolateAutotuneKey {
         output_height: usize,
         output_width: usize,
     ) -> Self {
-        let channels_anchored = anchor(channels, Some(4096), None, Some(2));
+        let channels_anchored = Anchor {
+            max: Some(4096),
+            min: None,
+            base: Some(2),
+        }
+        .round(channels);
 
         Self::new(
             elem_input,

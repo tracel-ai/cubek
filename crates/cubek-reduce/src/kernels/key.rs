@@ -3,7 +3,7 @@
 use crate::kernels::{
     ReduceElements, ReduceIndices, ReducePartials, ReduceRoutineProblem, ReduceTensors,
 };
-use cubecl::AutotuneKey;
+use cubecl::AutotuneKeyable;
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::ElemAlignment;
 use cubecl::tile::{Dimension, Geometry};
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// its base by the level, so a bucket would be a power of three or five, which no line of a key
 /// divides: the problem a key stands for would be read a value a line, and the candidates ranked
 /// at lanes its calls do not run.
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
 pub struct ReduceKey {
     elements: ReduceElements,
     indices: Option<ElemType>,
