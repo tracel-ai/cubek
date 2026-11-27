@@ -133,7 +133,9 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
 
     /// A star off the default: one and two cubes a worker, a second stage in flight, and the
     /// staged cube's box two instruction steps of `K` a stage, both boxes its microkernel lists
-    /// ([`HypercubeStagedMicrokernel::settings`]). Nothing where one
+    /// ([`HypercubeStagedMicrokernel::settings`]); then the default's box with its next stage
+    /// held in registers, beside a second stage on two and four cubes a worker and beside a
+    /// single one on two. Nothing where one
     /// cube's stores do not reach another within a launch, or where the device does not say how
     /// many workers it has, where every one of them declines.
     fn settings(hw: &Hardware) -> Vec<Self::Settings> {
@@ -153,7 +155,21 @@ impl Routine for HypercubeLastArrivalMatmulRoutine {
             microkernel,
             ..lead
         });
-        [lead].into_iter().chain(counts).chain(boxes).collect()
+        let prefetched = [
+            (StageRing::DOUBLE_THROUGH_REGISTERS, 2),
+            (StageRing::DOUBLE_THROUGH_REGISTERS, 4),
+            (StageRing::SINGLE_THROUGH_REGISTERS, 2),
+        ]
+        .map(|(ring, cubes)| Self::Settings {
+            microkernel: lead.microkernel.ringed(ring),
+            cubes_per_worker: NonZeroUsize::new(cubes).unwrap(),
+        });
+        [lead]
+            .into_iter()
+            .chain(counts)
+            .chain(boxes)
+            .chain(prefetched)
+            .collect()
     }
 
     /// Nothing of its own: it only distributes the cubes, and their microkernel makes every
