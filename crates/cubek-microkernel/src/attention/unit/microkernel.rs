@@ -17,6 +17,10 @@ use cubecl::{self as cubecl, cube, prelude::*};
 /// The scale each side shares whole is factored out of it ([`Tile::factor`]) and applied once: the
 /// keys' to every score the softmax reads, the values' to the output as it drains. The probabilities are contracted with the values from the score's
 /// registers, which read the values as they lie.
+///
+/// Where the scores take sinks, `sinks` is the bias they are taken in under
+/// ([`VisibleKeys::sink_bias`](crate::attention::VisibleKeys::sink_bias)), windowed to `rows`: the
+/// unit holds every key of its rows, so it opens their softmax at their sinks before its walk.
 #[cube]
 pub fn unit_attention_microkernel<EA: Float>(
     rows: &Region,
@@ -26,6 +30,7 @@ pub fn unit_attention_microkernel<EA: Float>(
     key: &Tile,
     value: &Tile,
     bias: &Tile,
+    sinks: &ComptimeOption<Tile>,
     steps: usize,
     scale: EA,
     #[comptime] microkernel: UnitAttentionMicrokernel,
@@ -36,6 +41,22 @@ pub fn unit_attention_microkernel<EA: Float>(
     sum.zero();
 
     let mut softmax = OnlineSoftmax::<EA>::along(bias, S);
+
+    #[comptime]
+    match sinks {
+        ComptimeOption::Some(sinks) => {
+            let first = rows.walk().region(0);
+            unit_attention_sinks::<EA>(
+                &mut softmax,
+                &query.at(&first),
+                &key.at(&first),
+                &bias.at(&first),
+                &sinks.at(&first),
+                microkernel,
+            );
+        }
+        ComptimeOption::None => {}
+    }
 
     for step in rows.walk().range(0, steps) {
         unit_attention_step::<EA>(
@@ -59,6 +80,25 @@ pub fn unit_attention_microkernel<EA: Float>(
         ComptimeOption::Some(logsumexp) => softmax.store_logsumexp(bias, &mut logsumexp.clone()),
         ComptimeOption::None => {}
     }
+}
+
+/// A unit's rows' sinks taken into their softmax before any key: a zero score over the walk's
+/// first step, opened as the step's is, taken in under `sinks`, which is each row's sink at the
+/// first key and masked elsewhere, so each row's max becomes its sink and its sum one. Its
+/// probabilities weigh no value. `query`, `key`, `bias` and `sinks` are windowed to the step.
+#[cube]
+fn unit_attention_sinks<EA: Float>(
+    softmax: &mut OnlineSoftmax<EA>,
+    query: &Tile,
+    key: &Tile,
+    bias: &Tile,
+    sinks: &Tile,
+    #[comptime] microkernel: UnitAttentionMicrokernel,
+) {
+    let score_matmul = microkernel.score.software_matmul();
+    let mut score = bias.register_accumulator::<EA>(query, key, score_matmul, Semiring::SumProd);
+    score.zero();
+    let _opened = softmax.step(&score, sinks, EA::from_int(1));
 }
 
 /// One step of keys taken into a unit's rows: the step's score opened over it and contracted, the

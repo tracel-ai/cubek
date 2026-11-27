@@ -173,6 +173,8 @@ impl AttentionRoutine<CubeAttentionMicrokernel, StageStorage> for CubeShuffleAtt
                 binding.out,
                 binding.logsumexp.into(),
                 binding.mask.into(),
+                binding.sinks.into(),
+                binding.relative.into(),
                 binding.lengths,
                 binding.query_ends.into(),
                 binding.query_count,

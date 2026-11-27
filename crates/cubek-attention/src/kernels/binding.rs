@@ -23,6 +23,11 @@ pub struct AttentionBinding {
     /// Which keys each query does not see, over `[B, KV, G, Q, S]`, where the tensors carry a
     /// mask.
     pub mask: Option<TileTensorLaunch>,
+    /// Each row's sink logit, over `[B, KV, G, Q]`, where the tensors carry sinks.
+    pub sinks: Option<TileTensorLaunch>,
+    /// The relative bias over `[B, KV, G, Q, S]`, its `S` axis the distance back from each query,
+    /// where the tensors carry one.
+    pub relative: Option<TileTensorLaunch>,
     /// The attended length of each sequence.
     pub lengths: TensorArg,
     /// Where every sequence's queries lie end to end, their cumulative counts, one a sequence.

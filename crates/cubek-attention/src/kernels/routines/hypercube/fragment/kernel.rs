@@ -10,7 +10,7 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 /// ([`cube_staged_attention_partial_microkernel()`]), for the split-keys merge. The output is
 /// read for the shape of what its planes sum into.
 ///
-/// - `query`, `key`, `value`, `mask`, `len`, `queries`, `keys`, `scale`: as
+/// - `query`, `key`, `value`, `mask`, `sinks`, `relative`, `len`, `queries`, `keys`, `scale`: as
 ///   `unit_attention_kernel`'s.
 /// - `out`: the output, read only for the shape of what the planes sum into.
 /// - `slot_out`, `slot_max`, `slot_sum`: as `hypercube_attention_arrival_kernel`'s.
@@ -29,6 +29,8 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     mask: ComptimeOption<&TileTensor<'static>>,
+    sinks: ComptimeOption<&TileTensor<'static>>,
+    relative: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     keys: u32,
@@ -41,6 +43,8 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
     #[define(EA, ES, EV)] _elements: [ElemType; 3],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+    let sinks = sinks.map(|sinks| sinks.tile(&partitioning));
+    let relative = relative.map(|relative| relative.tile(&partitioning));
 
     // The cube level's walk, this cube's run of the steps of keys: once for the staging ring,
     // once for where the slots lie.
@@ -54,7 +58,8 @@ pub fn hypercube_fragment_attention_kernel<EA: Float, ES: Float, EV: Float>(
         keys,
         &mask,
         visibility,
-    );
+    )
+    .with_terms(&sinks, &relative, &first_step);
 
     let q = query.tile(&partitioning);
     let k = key

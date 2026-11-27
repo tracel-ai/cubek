@@ -101,6 +101,14 @@ pub struct AttentionKey {
     /// Whether a mask tensor narrows the keys each query sees: its read is a cost per score
     /// the unmasked launch does not pay.
     masked: bool,
+    /// Whether each row's softmax also weighs a sink: the walker holding a row's first key takes a
+    /// step more, and a winner measured without it does not serve it.
+    #[serde(default)]
+    sinks: bool,
+    /// Whether a relative bias is summed into the scores: its read is a cost per score, and no step
+    /// takes the zero bias the launch without it gives the steps every query sees whole.
+    #[serde(default)]
+    relative_bias: bool,
     /// Whether every sequence's queries lie end to end, each read through its run: the routines
     /// that merge split keys outside the tiles decline them, so a winner measured on one does not
     /// serve the other.
@@ -239,5 +247,35 @@ mod tests {
     fn a_bucket_is_the_power_of_two_at_or_above() {
         let buckets = [1, 300, 512, 513, 2048, 2049].map(AttentionKey::positions_bucket);
         assert_eq!(buckets, [1, 512, 512, 1024, 2048, 4096]);
+    }
+
+    /// A call whose rows weigh sinks, or whose scores take a relative bias, is keyed apart from one
+    /// that takes neither: a winner measured without a term does not serve it.
+    #[test]
+    fn a_key_tells_score_terms_apart() {
+        use crate::kernels::QueryPlacement;
+        use cubecl::ir::FloatKind;
+        let key = |sinks, relative_bias| {
+            AttentionKey::new(
+                AttentionKeyElements::one(ElemType::Float(FloatKind::F16)),
+                24,
+                8,
+                128,
+                1,
+                4096,
+                1,
+                AttentionVisibility::new(false, None, QueryPlacement::Last),
+                ScoreScale::standard(128),
+                None,
+                false,
+                sinks,
+                relative_bias,
+                false,
+            )
+        };
+        let keys = [key(false, false), key(true, false), key(false, true)];
+        assert_ne!(keys[0], keys[1]);
+        assert_ne!(keys[0], keys[2]);
+        assert_ne!(keys[1], keys[2]);
     }
 }

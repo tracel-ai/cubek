@@ -48,6 +48,8 @@ pub(crate) fn qwen(queries: usize, keys: usize) -> AttentionRoutineProblem {
         None,
         false,
         false,
+        false,
+        false,
     );
     AttentionRoutineProblem::try_from(&key).expect("an even group")
 }

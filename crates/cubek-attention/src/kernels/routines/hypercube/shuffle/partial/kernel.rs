@@ -11,7 +11,7 @@ use cubek_microkernel::split_keys_merge::hypercube::HypercubeMergeShape;
 /// operand is read in its own element and widened into the sum, `EA`: the query in `EQ`, the keys
 /// in `EK`, the values in `EV`. The output, which the merge writes, is not read here.
 ///
-/// - `query`, `key`, `value`, `mask`, `len`, `queries`, `keys`, `scale`: as
+/// - `query`, `key`, `value`, `mask`, `sinks`, `relative`, `len`, `queries`, `keys`, `scale`: as
 ///   `unit_attention_kernel`'s.
 /// - `slot_out`, `slot_max`, `slot_sum`: as `hypercube_attention_arrival_kernel`'s.
 #[cube(launch_unchecked)]
@@ -34,6 +34,8 @@ pub fn hypercube_attention_partial_kernel<
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     mask: ComptimeOption<&TileTensor<'static>>,
+    sinks: ComptimeOption<&TileTensor<'static>>,
+    relative: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     keys: u32,
@@ -45,6 +47,8 @@ pub fn hypercube_attention_partial_kernel<
     #[define(EA, EQ, EK, EV, EO)] _elements: [ElemType; 5],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+    let sinks = sinks.map(|sinks| sinks.tile(&partitioning));
+    let relative = relative.map(|relative| relative.tile(&partitioning));
     let key = TileStepReads::<EK>::new(&key.tile(&partitioning));
     let value = TileStepReads::<EV>::new(&value.tile(&partitioning));
 
@@ -61,7 +65,8 @@ pub fn hypercube_attention_partial_kernel<
         keys,
         &mask,
         visibility,
-    );
+    )
+    .with_terms(&sinks, &relative, &first_step);
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),
@@ -96,8 +101,9 @@ pub fn hypercube_attention_partial_kernel<
 /// [`hypercube_attention_partial_kernel`] over a packed cache, its planes decoding the keys and
 /// values as they read them ([`PackedStepReads`]).
 ///
-/// - `query`, `key`, `value`, `slot_out`, `slot_max`, `slot_sum`, `mask`, `len`, `queries`, `keys`,
-///   `scale`: as [`hypercube_attention_partial_kernel`]'s, the keys and values packed.
+/// - `query`, `key`, `value`, `slot_out`, `slot_max`, `slot_sum`, `mask`, `sinks`, `relative`,
+///   `len`, `queries`, `keys`, `scale`: as [`hypercube_attention_partial_kernel`]'s, the keys and
+///   values packed.
 /// - `key_fixup`: the keys' QJL fix-up, where the cache carries one.
 #[cube(launch_unchecked)]
 pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
@@ -109,6 +115,8 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     slot_max: &mut Tensor<EA>,
     slot_sum: &mut Tensor<EA>,
     mask: ComptimeOption<&TileTensor<'static>>,
+    sinks: ComptimeOption<&TileTensor<'static>>,
+    relative: ComptimeOption<&TileTensor<'static>>,
     len: &Tensor<u32>,
     queries: u32,
     keys: u32,
@@ -120,6 +128,8 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
     #[define(EA, E)] _elements: [ElemType; 2],
 ) {
     let mask = mask.map(|mask| mask.tile(&partitioning));
+    let sinks = sinks.map(|sinks| sinks.tile(&partitioning));
+    let relative = relative.map(|relative| relative.tile(&partitioning));
     let key = PackedStepReads {
         tile: key.tile(&partitioning),
         fixup: key_fixup.map(|fixup| fixup.tile(&partitioning)),
@@ -142,7 +152,8 @@ pub fn hypercube_attention_partial_packed_kernel<EA: Float, E: Float, N: Size>(
         keys,
         &mask,
         visibility,
-    );
+    )
+    .with_terms(&sinks, &relative, &first_step);
     let steps = visible.steps(
         &first_step,
         microkernel.cube.seq_q(),

@@ -298,10 +298,19 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                     );
                 }
 
-                scores[c] = team_share
+                let mut score = team_share
                     .reduce::<Vector<EA, W1>>(Vector::cast_from(partial), Monoid::Sum)
                     .extract(0usize)
                     * score_scale;
+                if comptime!(visible.relative.is_some()) {
+                    score += visible.relative_bias::<EA>(
+                        head,
+                        query,
+                        (first_key + c * teams + team) as u32,
+                    );
+                }
+
+                scores[c] = score;
             }
 
             let before = self.max[r];
@@ -341,6 +350,25 @@ impl<EA: Float, N: Size> PlaneShuffleAttention<EA, N> {
                 }
 
                 self.sum[r * per_value + p] = line;
+            }
+        }
+    }
+
+    /// `plane`'s rows' sinks taken in before any key, where the scores take sinks: the first team
+    /// of the plane holding the first key opens each row at its sink and a sum of one, as a key of
+    /// zero value would, and every other team, which `close` merges into it, at nothing. `plane` is
+    /// its region of the walk's first step.
+    pub fn take_in_sinks(&mut self, plane: &Region, visible: &VisibleKeys) {
+        let microkernel = comptime!(self.microkernel);
+        let units_per_key = microkernel.settings.units_per_key.get();
+        let team = UNIT_POS_PLANE as usize / units_per_key;
+
+        if team == 0 && plane.origin(S) == 0 {
+            let head = plane.origin(G) as u32;
+            #[unroll]
+            for r in 0..microkernel.seq_q() {
+                self.max[r] = visible.sink::<EA>(head, (plane.origin(Q) + r) as u32);
+                self.total[r] = EA::from_int(1);
             }
         }
     }

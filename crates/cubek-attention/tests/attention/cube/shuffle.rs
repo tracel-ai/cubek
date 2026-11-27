@@ -5,8 +5,23 @@ use cubek_test_utils::ScopeChecker;
 
 use crate::attention::{
     DECODES, DECODES_WIDE_FP8, DECODES_WIDE_PER_TENSOR, Forward, PROMPTS, PROMPTS_WIDE_FP8,
-    PROMPTS_WIDE_PER_TENSOR,
+    PROMPTS_WIDE_PER_TENSOR, SCORED_DECODES, SCORED_PAGED, SCORED_PROMPTS,
 };
+
+/// The cube shuffle routine's lead under both score terms, and each alone, on every prompt and
+/// decode case and over a paged cache: its planes add the relative bias to each score they hold
+/// and open each row at its sink.
+#[test]
+fn the_cube_shuffle_routine_takes_sinks_and_a_relative_bias() {
+    let forward = Forward::new(CubeShuffleAttentionRoutine);
+    let cases = [
+        SCORED_PROMPTS.as_slice(),
+        SCORED_DECODES.as_slice(),
+        SCORED_PAGED.as_slice(),
+    ]
+    .concat();
+    forward.check(forward.at_its_lead(&cases));
+}
 
 /// The cube shuffle routine's lead on every prompt and decode case.
 #[test]

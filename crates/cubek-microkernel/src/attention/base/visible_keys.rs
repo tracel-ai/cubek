@@ -14,6 +14,14 @@ use cubecl::{self as cubecl, cube, ir::Scope, prelude::*};
 /// queries + window > q + queries_end`; under [`Recent`](AttentionVisibility::Recent) the last
 /// `window` of them, where `s + window ≥ attended`; and, where there is a mask, none whose cell is
 /// not zero.
+///
+/// Beside what it hides, a score may take terms ([`with_terms`](VisibleKeys::with_terms)): a
+/// relative bias summed into every score a query sees, `R[head, query, δ]` at the distance `δ` from
+/// the query's position back to the key, zero past `R`'s extent; and each row's sink, a logit its
+/// softmax also weighs at a zero value, which the walker holding the row's first key takes in
+/// before its walk ([`sink_bias`](VisibleKeys::sink_bias)). A query sits at
+/// `q + queries_end − queries` under a causal visibility, and at the last attended key otherwise:
+/// a single position, or a group's heads read along the queries at one.
 #[derive(CubeType, Clone)]
 pub struct VisibleKeys {
     /// Keys attended, a prefix of the buffers': none past it is read.
@@ -24,6 +32,11 @@ pub struct VisibleKeys {
     pub queries_end: u32,
     /// The mask cut to the owner's sequence and key head: a key whose cell is not zero is hidden.
     pub mask: ComptimeOption<MemoryValues>,
+    /// Each row's sink logit over `[B, KV, G, Q]`, cut to the owner's sequence and key head.
+    pub sinks: ComptimeOption<MemoryValues>,
+    /// The relative bias over `[B, KV, G, Q, S]`, its `S` axis the distance back from the query,
+    /// cut to the owner's sequence and key head.
+    pub relative: ComptimeOption<MemoryValues>,
     #[cube(comptime)]
     pub visibility: AttentionVisibility,
 }
@@ -88,7 +101,33 @@ impl VisibleKeys {
             seq_q: queries,
             queries_end,
             mask: mask.clone().map(|mask| mask.at(owner).values()),
+            sinks: ComptimeOption::new_None(),
+            relative: ComptimeOption::new_None(),
             visibility,
+        }
+    }
+
+    /// The same keys, their scores taking `sinks`, each row's logit over `[B, KV, G, Q]`, and
+    /// `relative`, the bias over `[B, KV, G, Q, S]` along the distance back from each query, where
+    /// there are ones, each cut to `owner`'s sequence and key head.
+    #[allow(
+        clippy::clone_on_copy,
+        reason = "the cube macro expands no dereference of a comptime option, only its clone"
+    )]
+    pub fn with_terms(
+        &self,
+        sinks: &ComptimeOption<Tile>,
+        relative: &ComptimeOption<Tile>,
+        owner: &Region,
+    ) -> VisibleKeys {
+        VisibleKeys {
+            attended: self.attended,
+            seq_q: self.seq_q,
+            queries_end: self.queries_end,
+            mask: self.mask.clone(),
+            sinks: sinks.clone().map(|sinks| sinks.at(owner).values()),
+            relative: relative.clone().map(|relative| relative.at(owner).values()),
+            visibility: comptime!(self.visibility),
         }
     }
 
@@ -125,6 +164,8 @@ impl VisibleKeys {
             seq_q: queries,
             queries_end,
             mask: ComptimeOption::new_None(),
+            sinks: ComptimeOption::new_None(),
+            relative: ComptimeOption::new_None(),
             visibility,
         }
     }
@@ -146,6 +187,54 @@ impl VisibleKeys {
         )
     }
 
+    /// The bias a walker takes its rows' sinks in under, over `partitioning`'s heads, queries and
+    /// keys, where the scores take sinks ([`SinkLogits`]): a step of a zero score under it opens
+    /// each row's softmax at its sink, a sum of one, as a key of zero value would.
+    pub fn sink_bias<E: Numeric>(&self, partitioning: &Partitioning) -> ComptimeOption<Tile> {
+        let space = comptime!(partitioning.space().subspace(&[G, Q, S]));
+        self.sinks.clone().map(|sinks| {
+            Procedural::new::<E, SinkLogits>(space.clone(), SinkLogits { sinks })
+                .tile_in::<E>(partitioning)
+        })
+    }
+
+    /// Row `query` of head `head`'s sink, the minimum value where the scores take none.
+    pub fn sink<E: Numeric>(&self, head: u32, query: u32) -> E {
+        let mut sink = E::min_value();
+        #[comptime]
+        match &self.sinks {
+            ComptimeOption::None => {}
+            ComptimeOption::Some(sinks) => {
+                let mut cell = Sequence::<u32>::new();
+                cell.push(head);
+                cell.push(query);
+                sink = sinks.read::<E>(comptime!(vec![G, Q]), &cell);
+            }
+        }
+
+        sink
+    }
+
+    /// The relative bias of query `query` of head `head` at key `key`: `R` at the distance from
+    /// the query's position back to the key, zero where the scores take none. A distance past
+    /// `R`'s extent, or a key past the query, whose distance wraps, reads past its buffer: zero.
+    pub fn relative_bias<E: Numeric>(&self, head: u32, query: u32, key: u32) -> E {
+        let mut bias = E::from_int(0);
+        #[comptime]
+        match &self.relative {
+            ComptimeOption::None => {}
+            ComptimeOption::Some(relative) => {
+                let mut cell = Sequence::<u32>::new();
+                cell.push(head);
+                cell.push(query);
+                cell.push(self.query_position(query) - key);
+                bias = relative.read::<E>(comptime!(vec![G, Q, S]), &cell);
+            }
+        }
+
+        bias
+    }
+
     /// The biases a walk over `region`'s keys sums its steps' scores with, over `partitioning`'s
     /// heads, queries and keys ([`StepBias`]): none on a step whose every key every query of
     /// `region` sees, the visibility's on any other.
@@ -154,19 +243,23 @@ impl VisibleKeys {
             masked: self.bias::<E>(partitioning),
             unmasked: Procedural::zero::<E>(comptime!(partitioning.space().subspace(&[G, Q, S])))
                 .tile_in::<E>(partitioning),
+            sinks: self.sink_bias::<E>(partitioning),
             seen_by_all: self.seen_by_all(region),
         }
     }
 
     /// Keys from the first that every query of `region` sees: the attended keys, under a causal
     /// visibility those before the first query's own position too. None under a window or a mask,
-    /// which hide keys a count from the first does not say.
+    /// which hide keys a count from the first does not say, and none under a relative bias, which
+    /// no zero bias states.
     pub fn seen_by_all(&self, region: &Region) -> usize {
         // Query `q` sees key `s` where `s + queries ≤ q + queries_end`: the region's first query
         // sees below its reach.
         let reach = region.origin(Q) + 1 + self.queries_end as usize;
         let mut seen = self.seen_below(reach);
-        if comptime!(self.visibility.window().is_some() || self.mask.is_some()) {
+        if comptime!(
+            self.visibility.window().is_some() || self.mask.is_some() || self.relative.is_some()
+        ) {
             seen = 0;
         }
         seen
@@ -220,6 +313,17 @@ impl VisibleKeys {
     /// `sequence`, a sequence's entry of a tensor holding `entries`, read as the last past them.
     fn capped_entry(sequence: usize, entries: usize) -> usize {
         sequence.min(entries - 1)
+    }
+
+    /// The key position query `query` sits at: `query + queries_end − queries` under a causal
+    /// visibility, the last attended key otherwise.
+    fn query_position(&self, query: u32) -> u32 {
+        let mut position = self.attended - 1;
+        if comptime!(self.visibility.is_causal()) {
+            position = query + self.queries_end - self.seq_q;
+        }
+
+        position
     }
 
     /// How far `value` lies past `start`: none where it does not.
@@ -298,6 +402,8 @@ impl VisibleKeys {
                 seq_q: self.seq_q,
                 queries_end: self.queries_end,
                 mask: self.mask.clone(),
+                sinks: self.sinks.clone(),
+                relative: self.relative.clone(),
                 visibility: comptime!(self.visibility),
             },
         )
@@ -308,22 +414,55 @@ impl VisibleKeys {
 #[cube]
 impl<E: Numeric> Recipe<E> for VisibleKeys {
     fn evaluate(&self, coordinates: &RecipeCoords) -> E {
-        let seen = self.sees(
+        let (head, query, key) = (
             coordinates.along(G),
             coordinates.along(Q),
             coordinates.along(S),
         );
+        let seen = self.sees(head, query, key);
 
-        select(seen, E::from_int(0), E::min_value())
+        select(
+            seen,
+            self.relative_bias::<E>(head, query, key),
+            E::min_value(),
+        )
     }
 }
 
 impl Reads for VisibleKeysExpand {
     fn reads(&self, _scope: &Scope, dimension: Dimension) -> bool {
         let masked = self.mask.is_some();
+        let relative = self.relative.is_some();
         dimension == S
-            || ((self.visibility.is_causal() || masked) && dimension == Q)
-            || (masked && dimension == G)
+            || ((self.visibility.is_causal() || masked || relative) && dimension == Q)
+            || ((masked || relative) && dimension == G)
+    }
+}
+
+/// The bias a step of a zero score takes each row's sink in under: the row's sink at the first
+/// key, the minimum value at every other, so the step leaves the row's softmax at its sink and a
+/// sum of one, and a walker whose step holds no first key takes nothing in.
+#[derive(CubeType, Clone)]
+pub struct SinkLogits {
+    /// Each row's sink over `[B, KV, G, Q]`, cut to the owner's sequence and key head.
+    pub sinks: MemoryValues,
+}
+
+#[cube]
+impl<E: Numeric> Recipe<E> for SinkLogits {
+    fn evaluate(&self, coordinates: &RecipeCoords) -> E {
+        let mut cell = Sequence::<u32>::new();
+        cell.push(coordinates.along(G));
+        cell.push(coordinates.along(Q));
+        let sink = self.sinks.read::<E>(comptime!(vec![G, Q]), &cell);
+
+        select(coordinates.along(S) == 0, sink, E::min_value())
+    }
+}
+
+impl Reads for SinkLogitsExpand {
+    fn reads(&self, _scope: &Scope, dimension: Dimension) -> bool {
+        dimension == S || dimension == G || dimension == Q
     }
 }
 
@@ -337,6 +476,9 @@ impl Reads for VisibleKeysExpand {
 pub struct StepBias {
     pub masked: Tile,
     pub unmasked: Tile,
+    /// The bias a walker takes its rows' sinks in under, where the scores take sinks
+    /// ([`VisibleKeys::sink_bias`]).
+    pub sinks: ComptimeOption<Tile>,
     pub seen_by_all: usize,
 }
 
@@ -347,6 +489,7 @@ impl StepBias {
         StepBias {
             masked: self.masked.at(region),
             unmasked: self.unmasked.at(region),
+            sinks: self.sinks.clone().map(|sinks| sinks.at(region)),
             seen_by_all: self.seen_by_all,
         }
     }

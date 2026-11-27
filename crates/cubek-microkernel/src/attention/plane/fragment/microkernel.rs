@@ -122,6 +122,16 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         );
     }
 
+    /// `plane`'s rows' sinks taken into their softmax before any key ([`StageScore::take_in_sinks`]):
+    /// `plane` is its region of the walk's first step, and `sinks` the bias they are taken in under
+    /// ([`VisibleKeys::sink_bias`](crate::attention::VisibleKeys::sink_bias)). A plane whose region
+    /// holds no first key takes nothing in.
+    pub fn take_in_sinks(&mut self, plane: &Region, sinks: &Tile) {
+        self.score
+            .at(plane)
+            .take_in_sinks::<EA>(&mut self.softmax, &sinks.at(plane));
+    }
+
     /// The output's accumulator every stage's product adds into, at `EA`, opened at zero on `out`
     /// against what each stage contracts with the value, `score`'s probabilities, its rows scaled
     /// by each stage's correction ([`Tile::rescaled_accumulator`]): where the tile holds it in the
@@ -341,6 +351,28 @@ impl StageScore {
             StageScore::Fragments(logits) => OnlineSoftmax::<EA>::along(logits, S),
         };
         softmax.with_headroom(microkernel.softmax_headroom())
+    }
+
+    /// One plane's rows' sinks taken into `softmax` before any key: this score, windowed to the
+    /// plane, zeroed where it is kept and taken in under `sinks`, each row's sink at the first key
+    /// and masked elsewhere, so each row's max becomes its sink and its sum one. Its probabilities
+    /// weigh no value. A window meets the plane once its zeros land and once the softmax has read
+    /// it, before the next step's score lands over it.
+    pub fn take_in_sinks<EA: Float>(&self, softmax: &mut OnlineSoftmax<EA>, sinks: &Tile) {
+        match self {
+            StageScore::Window(scores, _) => {
+                let mut zeros = scores.clone();
+                zeros.zero();
+                sync_plane();
+                let _opened = softmax.step(scores, sinks, EA::from_int(1));
+                sync_plane();
+            }
+            StageScore::Fragments(logits) => {
+                let mut zeros = logits.clone();
+                zeros.reset();
+                let _opened = softmax.step(&zeros, sinks, EA::from_int(1));
+            }
+        }
     }
 
     /// One stage of one plane's rows: the scores of its keys, taken into the rows' softmax, and

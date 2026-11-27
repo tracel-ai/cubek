@@ -73,6 +73,25 @@ pub const ATTENTION_MASK_UNREAD: Decline = Decline::Unserved {
     why: "a mask is [b, h, q, s], one cell a score, over queries [b, h, q, d]",
 };
 
+/// What an attention declines of sinks: another shape than the rows', `[b, h, q]`, an element
+/// that is no float, or queries that lie end to end.
+pub const ATTENTION_SINKS_UNREAD: Decline = Decline::Unserved {
+    why: "sinks are floats [b, h, q], one a row, over queries [b, h, q, d]",
+};
+
+/// What an attention declines of a relative bias: another shape than `[b, h, q, extent]`, an empty
+/// extent, an element that is no float, or queries that lie end to end.
+pub const ATTENTION_RELATIVE_BIAS_UNREAD: Decline = Decline::Unserved {
+    why: "a relative bias is floats [b, h, q, extent], its extent not empty, over queries \
+          [b, h, q, d]",
+};
+
+/// What an attention declines of a relative bias over queries of several positions under a
+/// visibility that places none, which no distance is measured from.
+pub const ATTENTION_RELATIVE_BIAS_UNPLACED: Decline = Decline::Unserved {
+    why: "a relative bias measures from queries a causal visibility places, or a single one",
+};
+
 /// What an attention declines of a logsumexp: one over a packed cache, or of queries that lie end
 /// to end.
 pub const ATTENTION_LOGSUMEXP_UNWRITTEN: Decline = Decline::Unserved {
@@ -115,6 +134,12 @@ pub struct AttentionTensors {
     /// buffer as the query is ([`with_mask`](Self::with_mask)); `None` where it sees every key
     /// its visibility admits.
     mask: Option<PlainTensor>,
+    /// Each query's sink logit, `[b, kv, g, q]` over the caller's `[b, h, q]` buffer as the
+    /// logsumexp is ([`with_sinks`](Self::with_sinks)).
+    sinks: Option<PlainTensor>,
+    /// Each query's relative bias by distance, `[b, kv, g, q, extent]` over the caller's buffer as
+    /// the query is ([`with_relative_bias`](Self::with_relative_bias)).
+    relative: Option<PlainTensor>,
 }
 
 impl core::fmt::Debug for AttentionTensors {
@@ -132,6 +157,8 @@ impl core::fmt::Debug for AttentionTensors {
             .field("arrivals", &self.arrivals)
             .field("logsumexp", &self.logsumexp)
             .field("mask", &self.mask)
+            .field("sinks", &self.sinks)
+            .field("relative", &self.relative)
             .finish()
     }
 }
@@ -351,17 +378,58 @@ impl AttentionTensors {
             [batch, heads, queries].into(),
             AttentionRoutineProblem::SUM,
         );
-        // Viewed along the query dimension as the output is: a last dim one wide, then left out.
-        let strides = &rows.binding.strides;
-        let widened = rows.viewed(Metadata::new(
-            [batch, heads, queries, 1],
-            [strides[0], strides[1], strides[2], 1],
-        ));
-        let group = heads / self.kv.num_kv_heads();
-        let view = self.dimension.view(&widened, group, [0, 1, 2, 3]);
-        let (shape, strides) = (&view.binding.shape, &view.binding.strides);
-        let view = view.viewed(Metadata::new(shape[..4].to_vec(), strides[..4].to_vec()));
+        let view = self.rows_view(&rows);
         self.logsumexp = Some((handle, view));
+        Ok(self)
+    }
+
+    /// The same attention, each query's softmax also weighing `sinks[b, h, q]` at a value of zero:
+    /// `out = Σ_j e^{s_j} v_j / (e^{sink} + Σ_j e^{s_j})` over the keys it sees, so a query that
+    /// sees none writes zeros, and its logsumexp, where asked, is `ln(e^{sink} + Σ_j e^{s_j})`. Its
+    /// element is any float, read by stride, so sinks broadcast over the batch or the queries are
+    /// never copied.
+    ///
+    /// # Errors
+    ///
+    /// [`ATTENTION_SINKS_UNREAD`].
+    pub fn with_sinks(mut self, sinks: PlainTensor) -> Result<Self, Decline> {
+        if self.query_runs.is_some() || !matches!(sinks.elem, ElemType::Float(_)) {
+            return Err(ATTENTION_SINKS_UNREAD);
+        }
+        let [batch, queries, heads, _] = self.out.shape().dims::<4>();
+        if sinks.shape().as_slice() != [batch, heads, queries] {
+            return Err(ATTENTION_SINKS_UNREAD);
+        }
+        self.sinks = Some(self.rows_view(&sinks));
+        Ok(self)
+    }
+
+    /// The same attention, every score query `q` of head `h` of sequence `b` takes of a key it sees
+    /// summed with `bias[b, h, q, δ]`, `δ` the distance from the query's position back to the
+    /// key's, where `δ` is below the bias's extent, its last dim; a key past the query or as far as
+    /// the extent takes nothing. A query sits among the keys as the visibility places it causally,
+    /// or at the last attended key where it is a single position. Its element is any float, read by
+    /// stride, so a bias broadcast over the batch or the queries is never copied: what a caller
+    /// that holds the bias factored, each query's states over a table of distances, projects the
+    /// states onto before the launch.
+    ///
+    /// # Errors
+    ///
+    /// [`ATTENTION_RELATIVE_BIAS_UNREAD`] and [`ATTENTION_RELATIVE_BIAS_UNPLACED`].
+    pub fn with_relative_bias(mut self, bias: PlainTensor) -> Result<Self, Decline> {
+        if self.query_runs.is_some() || !matches!(bias.elem, ElemType::Float(_)) {
+            return Err(ATTENTION_RELATIVE_BIAS_UNREAD);
+        }
+        let [batch, queries, heads, _] = self.out.shape().dims::<4>();
+        let shape = bias.shape();
+        if shape.rank() != 4 || shape.as_slice()[..3] != [batch, heads, queries] || shape[3] == 0 {
+            return Err(ATTENTION_RELATIVE_BIAS_UNREAD);
+        }
+        if queries != 1 && !self.scoring.visibility.is_causal() {
+            return Err(ATTENTION_RELATIVE_BIAS_UNPLACED);
+        }
+        let group = heads / self.kv.num_kv_heads();
+        self.relative = Some(self.dimension.view(&bias, group, [0, 1, 2, 3]));
         Ok(self)
     }
 
@@ -634,6 +702,29 @@ impl AttentionTensors {
                     .map(Bound::arg)
             })
             .transpose()?;
+        // A value a row, a broadcast dim at stride zero.
+        let sinks = self
+            .sinks
+            .as_ref()
+            .map(|sinks| {
+                arg(sinks, &[B, KV, G, Q], 1, sinks.elem)
+                    .build()
+                    .or_broken(ADMITTED_PLAN_RUNS)
+                    .map(Bound::arg)
+            })
+            .transpose()?;
+        // A cell a read at the distance back from its query, which its `S` axis indexes: a read
+        // past its extent reads zero.
+        let relative = self
+            .relative
+            .as_ref()
+            .map(|relative| {
+                arg(relative, &[B, KV, G, Q, S], 1, relative.elem)
+                    .build()
+                    .or_broken(ADMITTED_PLAN_RUNS)
+                    .map(Bound::arg)
+            })
+            .transpose()?;
         // The query last: one read at another element is converted into a buffer of its own, the
         // one launch a binding makes.
         let query_read = read.get(AttentionOperand::Query);
@@ -662,6 +753,8 @@ impl AttentionTensors {
             out,
             logsumexp,
             mask,
+            sinks,
+            relative,
             lengths: self.lengths.binding.clone().into_tensor_arg(),
             query_ends: self
                 .query_runs
@@ -716,6 +809,21 @@ impl AttentionTensors {
 }
 
 impl AttentionTensors {
+    /// `rows`, one value a query `[b, h, q]`, viewed along the query dimension as the output is,
+    /// `[b, kv, g, q]`: a last dim one wide, then left out.
+    fn rows_view(&self, rows: &PlainTensor) -> PlainTensor {
+        let [batch, heads, queries] = rows.shape().dims::<3>();
+        let strides = &rows.binding.strides;
+        let widened = rows.viewed(Metadata::new(
+            [batch, heads, queries, 1],
+            [strides[0], strides[1], strides[2], 1],
+        ));
+        let group = heads / self.kv.num_kv_heads();
+        let view = self.dimension.view(&widened, group, [0, 1, 2, 3]);
+        let (shape, strides) = (&view.binding.shape, &view.binding.strides);
+        view.viewed(Metadata::new(shape[..4].to_vec(), strides[..4].to_vec()))
+    }
+
     /// The elements of float operands, where the routines take them and `client`'s device runs
     /// them: the query in an element the device computes in, and the keys and the values each in
     /// one of those or in `e4m3` ([`VERIFIED_CACHE`](Self::VERIFIED_CACHE)), whatever the other
@@ -840,6 +948,8 @@ impl AttentionTensors {
             arrivals: None,
             logsumexp: None,
             mask: None,
+            sinks: None,
+            relative: None,
         }
     }
 
@@ -1240,6 +1350,69 @@ mod tests {
         assert_eq!(declined, Some(ATTENTION_MASK_UNREAD));
     }
 
+    #[test]
+    fn sinks_of_another_shape_than_the_rows_decline() {
+        let tensors = attend(&QUERY, &VALUE, one_length()).expect("an attention");
+        let sinks = zeros(&[1, 4, 2], f32::elem_type_native());
+
+        let declined = tensors.with_sinks(sinks).err();
+
+        assert_eq!(declined, Some(ATTENTION_SINKS_UNREAD));
+    }
+
+    #[test]
+    fn integer_sinks_decline() {
+        let tensors = attend(&QUERY, &VALUE, one_length()).expect("an attention");
+        let sinks = zeros(&[1, 4, 3], u32::elem_type_native());
+
+        let declined = tensors.with_sinks(sinks).err();
+
+        assert_eq!(declined, Some(ATTENTION_SINKS_UNREAD));
+    }
+
+    #[test]
+    fn a_relative_bias_of_an_empty_extent_declines() {
+        let tensors = attend(&QUERY, &VALUE, one_length()).expect("an attention");
+        let bias = zeros(&[1, 4, 3, 0], f32::elem_type_native());
+
+        let declined = tensors.with_relative_bias(bias).err();
+
+        assert_eq!(declined, Some(ATTENTION_RELATIVE_BIAS_UNREAD));
+    }
+
+    #[test]
+    fn an_integer_relative_bias_declines() {
+        let tensors = attend(&QUERY, &VALUE, one_length()).expect("an attention");
+        let bias = zeros(&[1, 4, 3, 5], u32::elem_type_native());
+
+        let declined = tensors.with_relative_bias(bias).err();
+
+        assert_eq!(declined, Some(ATTENTION_RELATIVE_BIAS_UNREAD));
+    }
+
+    /// Queries of several positions under a visibility that places none are measured from no
+    /// position.
+    #[test]
+    fn a_relative_bias_over_unplaced_queries_declines() {
+        let tensors = attend(&QUERY, &VALUE, one_length()).expect("an attention");
+        let bias = zeros(&[1, 4, 3, 5], f32::elem_type_native());
+
+        let declined = tensors.with_relative_bias(bias).err();
+
+        assert_eq!(declined, Some(ATTENTION_RELATIVE_BIAS_UNPLACED));
+    }
+
+    /// A single query sits at the last attended key, whatever the visibility.
+    #[test]
+    fn a_single_unplaced_query_takes_a_relative_bias() {
+        let tensors = attend(&[1, 4, 1, 8], &VALUE, one_length()).expect("an attention");
+        let bias = zeros(&[1, 4, 1, 5], f32::elem_type_native());
+
+        let taken = tensors.with_relative_bias(bias);
+
+        assert!(taken.is_ok());
+    }
+
     /// Two sequences' two queries end to end, over their float keys and values.
     fn attend_packed_queries(ends: PlainTensor) -> Result<AttentionTensors, Decline> {
         let client: Client = cubecl::test_device().client();
@@ -1275,6 +1448,29 @@ mod tests {
         let declined = tensors.with_mask(one_length()).err();
 
         assert_eq!(declined, Some(ATTENTION_MASK_UNREAD));
+    }
+
+    #[test]
+    fn packed_queries_take_no_sinks() {
+        let ends = zeros(&[2], u32::elem_type_native());
+        let tensors = attend_packed_queries(ends).expect("an attention");
+
+        let declined = tensors
+            .with_sinks(zeros(&[2, 4, 2], f32::elem_type_native()))
+            .err();
+
+        assert_eq!(declined, Some(ATTENTION_SINKS_UNREAD));
+    }
+
+    #[test]
+    fn packed_queries_take_no_relative_bias() {
+        let ends = zeros(&[2], u32::elem_type_native());
+        let tensors = attend_packed_queries(ends).expect("an attention");
+        let bias = zeros(&[2, 4, 2, 5], f32::elem_type_native());
+
+        let declined = tensors.with_relative_bias(bias).err();
+
+        assert_eq!(declined, Some(ATTENTION_RELATIVE_BIAS_UNREAD));
     }
 
     #[test]

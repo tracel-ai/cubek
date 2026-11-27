@@ -213,6 +213,8 @@ mod tests {
                 None,
                 false,
                 false,
+                false,
+                false,
             );
             AttentionRoutineProblem::try_from(&key).expect("an even group")
         })

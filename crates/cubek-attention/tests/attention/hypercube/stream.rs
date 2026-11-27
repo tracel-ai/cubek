@@ -4,7 +4,17 @@
 use cubek_attention::kernels::HypercubeStreamFragmentAttentionRoutine;
 use cubek_test_utils::ScopeChecker;
 
-use crate::attention::{Forward, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR};
+use crate::attention::{
+    Forward, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR, SCORED_PROMPTS,
+};
+
+/// The routine's lead under both score terms, and each alone, on every prompt case: the run
+/// holding a box's first key opens its rows at their sinks, so the last to arrive counts each once.
+#[test]
+fn the_hypercube_stream_routine_takes_sinks_and_a_relative_bias() {
+    let forward = Forward::new(HypercubeStreamFragmentAttentionRoutine);
+    forward.check(forward.at_its_lead(&SCORED_PROMPTS));
+}
 
 /// The routine's lead on every prompt case.
 #[test]

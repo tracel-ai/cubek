@@ -4,7 +4,17 @@
 use cubek_attention::kernels::HypercubeFragmentPartialAttentionRoutine;
 use cubek_test_utils::ScopeChecker;
 
-use crate::attention::{Forward, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR};
+use crate::attention::{
+    Forward, PROMPT_WIDE, PROMPTS, PROMPTS_WIDE_FP8, PROMPTS_WIDE_PER_TENSOR, SCORED_PROMPTS,
+};
+
+/// The routine's lead, merged, under both score terms, and each alone, on every prompt case: the
+/// cube whose run holds a row's first key opens it at its sink, so the merge counts it once.
+#[test]
+fn the_hypercube_fragment_routine_takes_sinks_and_a_relative_bias() {
+    let forward = Forward::split_keys(HypercubeFragmentPartialAttentionRoutine);
+    forward.check(forward.at_its_lead(&SCORED_PROMPTS));
+}
 
 /// The routine's lead, merged, on every prompt case.
 #[test]

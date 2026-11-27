@@ -206,6 +206,7 @@ fn unit_attention_kernel<EA: Float>(
             &k.at(&unit),
             &v.at(&unit),
             &bias.at(&unit),
+            &ComptimeOption::new_None(),
             steps,
             EA::cast_from(scale),
             microkernel,
