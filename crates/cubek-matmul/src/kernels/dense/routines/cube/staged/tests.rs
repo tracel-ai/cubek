@@ -9,6 +9,7 @@ mod base {
     use core::num::NonZeroUsize;
     use cubecl::features::{MmaConfig, WgmmaConfig, WgmmaElems};
     use cubecl::ir::{ElemType, FloatKind};
+    use cubecl::tile::StageOrder;
     use cubecl::tile::launch::{Decline, Delivery};
     use cubecl::tile::layout::ElemAlignment;
     use cubecl::tile::space::{ComputeScope, CubeOrder};
@@ -642,7 +643,7 @@ mod base {
                     let held = fetched(stage.extent(M) * stage.extent(K), blueprint.widths.lhs)
                         + fetched(stage.extent(K) * stage.extent(N), blueprint.widths.rhs);
                     assert!(
-                        Prefetch::fits(held),
+                        Prefetch::fits_registers(held),
                         "{settings} on {hw:?}, {problem:?}: {held} registers a unit"
                     );
                 }
@@ -949,7 +950,7 @@ mod base {
             assert!(
                 matches!(
                     &blueprint.shared_memory,
-                    StageStorage::Tiled { block, chunks: held }
+                    StageStorage::Tiled { block, chunks: held, .. }
                         if *held == chunks && block.contains(&(K, depth))
                 ),
                 "{:?}",
@@ -1299,6 +1300,7 @@ mod base {
             let tiled = |chunks| StageStorage::Tiled {
                 block: block.clone(),
                 chunks,
+                order: StageOrder::AsSource,
             };
             let bytes = |storage: &StageStorage| {
                 blueprint.partitioning.stage().bytes(

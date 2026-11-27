@@ -25,7 +25,7 @@ impl CubeStore {
         let stage = match form.clone() {
             CubeStage::Direct => out.clone(),
             CubeStage::Encoded { cube_box } => {
-                Tile::smem::<E>(cube_box, N::value(), StageStorage::Strided, 0usize)
+                Tile::smem::<E>(cube_box, N::value(), StageStorage::STRIDED, 0usize)
             }
         };
         CubeStore { out, stage, form }

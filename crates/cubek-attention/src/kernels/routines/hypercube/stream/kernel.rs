@@ -72,8 +72,8 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
 
     for i in 0..portion.touched() {
         let cube = portion.region(i);
-        let (from, steps) = portion.steps(i);
-        let (first, holders) = portion.holders(i);
+        let (from, steps) = portion.nth_steps(i);
+        let (first, holders) = portion.nth_holders(i);
 
         let visible = VisibleKeys::new(
             len,
@@ -113,7 +113,7 @@ pub fn hypercube_stream_fragment_attention_kernel<EA: Float, E: Float, ES: Float
             slot_max,
             slot_sum,
             arrivals,
-            portion.index(i),
+            portion.nth_index(i),
             portion.run() - first,
             holders,
             microkernel.cube,

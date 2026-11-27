@@ -222,7 +222,7 @@ impl CubeAttentionPlane {
     ) -> StageStorage {
         match self {
             Self::Fragment(plane) => plane.stage_storage(layout, delivery, stage),
-            Self::Shuffle(_) => StageStorage::Strided,
+            Self::Shuffle(_) => StageStorage::STRIDED,
         }
     }
 
@@ -239,7 +239,7 @@ impl CubeAttentionPlane {
     ) -> StageStorage {
         match self {
             Self::Fragment(plane) => plane.query_storage(layout, delivery, stage),
-            Self::Shuffle(_) => StageStorage::Strided,
+            Self::Shuffle(_) => StageStorage::STRIDED,
         }
     }
 
