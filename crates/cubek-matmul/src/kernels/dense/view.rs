@@ -7,8 +7,8 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
-    MatmulRowsKind, MatmulWorkItem,
+    MatmulBlocks, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows, MatmulRowsKind,
+    MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;

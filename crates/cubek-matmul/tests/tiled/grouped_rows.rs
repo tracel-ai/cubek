@@ -33,7 +33,14 @@ impl GroupedRows {
     /// one, a full one, one on the slab past the stack and an empty sentinel.
     fn sizes(&self) -> [(usize, usize); 6] {
         let max = self.max_rows;
-        [(0, 0), (max - 1, 1), (0, 2), (max, 2), (2, SLABS), (0, SLABS)]
+        [
+            (0, 0),
+            (max - 1, 1),
+            (0, 2),
+            (max, 2),
+            (2, SLABS),
+            (0, SLABS),
+        ]
     }
 
     /// Each row group's `(start, end, slab)`.

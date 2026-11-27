@@ -56,7 +56,10 @@ impl GroupedRows {
         inside: &Levels,
         partitioning: &MatmulPartitioning,
     ) -> Result<(), Decline> {
-        if !matches!(partitioning.cube_order().canonicalize(), CubeOrder::RowMajor) {
+        if !matches!(
+            partitioning.cube_order().canonicalize(),
+            CubeOrder::RowMajor
+        ) {
             return Err(MATMUL_GROUPED_ROWS_SWIZZLED);
         }
         let held = inside.clone().cubes(&[self.rows]).build()[0]

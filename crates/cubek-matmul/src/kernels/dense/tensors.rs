@@ -544,7 +544,8 @@ impl MatmulTensors {
         table: MatmulIndexTable,
         out: PlainTensor,
     ) -> Result<Self, Decline> {
-        let (MatmulIndex::Slab { slabs } | MatmulIndex::GroupedRows { slabs }) = table.index() else {
+        let (MatmulIndex::Slab { slabs } | MatmulIndex::GroupedRows { slabs }) = table.index()
+        else {
             return Err(PACKED_STACK_UNREAD);
         };
         if rhs.slabs() != Some(slabs) {
@@ -2110,7 +2111,12 @@ mod tests {
 
     #[test]
     fn runs_of_k_over_a_stack_decline() {
-        let declined = declined_indexed(&[2, 1, 8], &[4, 8, 16], |ends| MatmulIndexTable::RunOfK { ends }, U32);
+        let declined = declined_indexed(
+            &[2, 1, 8],
+            &[4, 8, 16],
+            |ends| MatmulIndexTable::RunOfK { ends },
+            U32,
+        );
 
         assert_eq!(declined, Some(MATMUL_STACK_NOT_THE_TABLES));
     }
