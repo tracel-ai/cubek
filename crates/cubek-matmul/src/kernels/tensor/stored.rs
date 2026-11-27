@@ -30,6 +30,10 @@ pub enum StoredTensor {
 /// How a kernel reads a [`StoredTensor`]: the one question every reader of one asks, answered by
 /// its scheme and where its values lie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a read is asked of an operand and answered by value, never held"
+)]
 pub enum StoredRead {
     /// Its values as they are, under no scale.
     Float,

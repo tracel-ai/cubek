@@ -804,6 +804,10 @@ impl PackedTensor {
     /// # Panics
     ///
     /// As [`bind`](Self::bind).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a descriptor's stage is its rows, its depth and its swizzle, beside the reads"
+    )]
     pub fn bind_by_tma(
         &self,
         launcher: &Launcher,
@@ -1264,6 +1268,10 @@ impl PackedTensor {
     /// every row a read of the words spans: in the tiles tile order stores them in, where it does,
     /// since read as rows only a tile's first strip of rows would find its own; gathered over
     /// `scale_rows` and the blocks otherwise.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the planned reads beside the grid the scales are gathered over"
+    )]
     fn scale_fields<'l>(
         &self,
         operand: &Operand,
