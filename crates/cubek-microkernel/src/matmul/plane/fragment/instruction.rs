@@ -115,7 +115,8 @@ impl PlaneFragmentInstruction {
 
     /// What the instruction spends where its sum is drained: a cmma fragment hides which unit
     /// holds a cell, so its sum bounces through shared memory one call's cell at a time; the
-    /// others' units write their own cells. The cost of a plane that states its instruction; a
+    /// others' units write their own cells, one value a line. The cost of a plane that states its
+    /// instruction; a
     /// plane that states its Step asks the tile
     /// ([`ProductStep::cost`](cubecl::tile::ProductStep::cost)).
     pub fn cost(self) -> StepCost {
@@ -123,7 +124,10 @@ impl PlaneFragmentInstruction {
             Self::Cmma { shape } => Some([shape.m as usize, shape.n as usize]),
             Self::Mma { .. } | Self::Wgmma { .. } => None,
         };
-        StepCost { bounced_cell }
+        StepCost {
+            bounced_cell,
+            widest_line: [1, 1],
+        }
     }
 
     /// Which of the device's arithmetic rates the instruction runs at.

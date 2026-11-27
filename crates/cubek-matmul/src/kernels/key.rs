@@ -14,7 +14,7 @@ use crate::kernels::MatmulRoutineProblem;
 use crate::kernels::select::problem::{MatmulProblem, OperandKind};
 use cubecl::ir::ElemType;
 use cubecl::tile::Dimension;
-use cubecl::{self as cubecl, AutotuneKeyable};
+use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::matmul::{
     MatmulDimensions, MatmulLayout, MatmulOperand, MatmulOperands, MatmulStoredTile,
 };
@@ -68,7 +68,7 @@ pub struct OperandKey {
 /// candidates and proves its duplicates from the launch each prepares for the key's `m`, so
 /// the bucket's representative has to be a shape the derivation tiles the way
 /// it tiles the shapes inside the bucket — a power of two, at every level.
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct MatmulTuneKey {
     /// The element the product is written in, the lhs's or the one a packed lhs
     /// stands for: it decides the vector widths, whether a staged routine can reach a tensor-core
