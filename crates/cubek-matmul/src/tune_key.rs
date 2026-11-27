@@ -1,5 +1,5 @@
 use cubecl::{
-    AutotuneKeyable,
+    AutotuneKey,
     client::Client,
     ir::ElemType,
     quant::scheme::QuantScheme,
@@ -13,7 +13,7 @@ use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 
 use crate::definition::MatmulKind;
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 /// Autotune key representative of matmul versions
 pub struct MatmulAutotuneKey {
     pub definition: MatmulProblemDefinition,
@@ -24,7 +24,7 @@ pub struct MatmulAutotuneKey {
 /// repeat number, so it's the largest align that can have performance impacts.
 const MAX_STRIDE_FACTOR: u32 = 10;
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct MatmulProblemDefinition {
     #[autotune(anchor)]
     pub m: usize,

@@ -19,7 +19,7 @@ use crate::kernels::{
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::Decline;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::{self as cubecl, AutotuneKeyable};
+use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::attention::AttentionOperands;
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +68,7 @@ impl AttentionKeyElements {
 /// and a chunk deep into a long one are keyed apart, and a cache's buffers may be any size.
 ///
 /// [`AttentionTuneInputs::new`]: crate::kernels::AttentionTuneInputs::new
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct AttentionKey {
     /// The element each operand is read in: a cache's keys and values may each be stored in
     /// another than the query's, which a routine reads differently, so a winner measured over one
