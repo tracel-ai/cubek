@@ -41,7 +41,7 @@ pub fn hypercube_last_arrival_matmul_kernel<
 
     for i in 0..portion.touched() {
         let tile = portion.region(i);
-        let (from, steps) = portion.steps(i);
+        let (from, steps) = portion.nth_steps(i);
 
         let merge = slots.last_arrival::<VO>(&partitioning, &portion, i, arrivals);
         hypercube_staged_last_arrival_microkernel::<EA, O::Served<E>>(

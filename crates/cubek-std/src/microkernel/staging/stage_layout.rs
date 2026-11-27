@@ -1,4 +1,4 @@
-use cubecl::tile::{Dimension, Space, StageStorage, stage::RowChunks};
+use cubecl::tile::{Dimension, Space, StageOrder, StageStorage, stage::RowChunks};
 
 /// How a stage's rows lie over the shared memory banks.
 ///
@@ -30,7 +30,7 @@ impl StageLayout {
     /// of its dimensions, which are the stage's dimensions in the order the stage lays them.
     pub fn storage(self, stage: &Space, tile: Vec<(Dimension, usize)>) -> StageStorage {
         let (block, chunks) = match self {
-            Self::Strided => return StageStorage::Strided,
+            Self::Strided => return StageStorage::STRIDED,
             Self::PaddedRows => {
                 let whole = tile
                     .into_iter()
@@ -42,7 +42,11 @@ impl StageLayout {
             Self::PaddedBlocks => (tile, RowChunks::Padded),
             Self::SwizzledBlocks => (tile, RowChunks::Swizzled),
         };
-        StageStorage::Tiled { block, chunks }
+        StageStorage::Tiled {
+            block,
+            chunks,
+            order: StageOrder::AsSource,
+        }
     }
 }
 

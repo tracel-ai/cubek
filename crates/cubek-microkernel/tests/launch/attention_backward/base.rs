@@ -131,7 +131,7 @@ impl OneSequence {
         let ring = StageRing::SINGLE.resolve(hw, &stage, plane_width as usize);
         let stage_bytes = stage
             .iter()
-            .map(|operand| operand.bytes(hw, &StageStorage::Strided))
+            .map(|operand| operand.bytes(hw, &StageStorage::STRIDED))
             .sum();
         if ring.bytes(stage_bytes) + window_bytes + ring.bodies() * body_bytes
             > hw.shared_memory_budget()

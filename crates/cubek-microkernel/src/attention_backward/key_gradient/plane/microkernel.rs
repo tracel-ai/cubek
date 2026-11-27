@@ -57,9 +57,9 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
     );
 
     // The keys and the values span no query: staged once, before the walk.
-    let mut staged_key = key.stage_for(&shape, StageStorage::Strided, None);
+    let mut staged_key = key.stage_for(&shape, StageStorage::STRIDED, None);
     staged_key.copy_from(key);
-    let mut staged_value = value.stage_for(&shape, StageStorage::Strided, None);
+    let mut staged_value = value.stage_for(&shape, StageStorage::STRIDED, None);
     staged_value.copy_from(value);
 
     sync_plane();
@@ -79,7 +79,7 @@ pub fn plane_fragment_key_gradient_microkernel<EA: Float, ES: Float>(
             &queries,
             &query.at(&head),
             &out_gradient.at(&head),
-            StageStorage::Strided,
+            StageStorage::STRIDED,
             ring.stages_in_flight.get(),
             None,
         );

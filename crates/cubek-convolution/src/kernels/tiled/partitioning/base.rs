@@ -4,7 +4,7 @@ use cubecl::ir::ElemType;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::space::PlaneOrder;
 use cubecl::tile::stage::RowChunks;
-use cubecl::tile::{Dimension, Partitioning, Space, StageStorage};
+use cubecl::tile::{Dimension, Partitioning, Space, StageOrder, StageStorage};
 use cubek_microkernel::matmul::unit::UnitRegistersMicrokernel;
 use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -47,7 +47,8 @@ impl ConvPartitioning {
         debug_assert_eq!(
             StageStorage::Tiled {
                 block: partitioning.leaf().extents(),
-                chunks: RowChunks::InOrder
+                chunks: RowChunks::InOrder,
+                order: StageOrder::AsSource,
             },
             storage,
             "the stage is sized with the storage the launch holds"
@@ -104,7 +105,7 @@ impl ConvPartitioning {
                 columns,
                 depth,
             },
-            storage: StageStorage::Strided,
+            storage: StageStorage::STRIDED,
             contracted,
         }
     }

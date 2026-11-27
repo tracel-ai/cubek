@@ -43,9 +43,9 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
     let walk = queries.walk().range(0, steps);
 
     // The query and the output's gradient span no key: staged once, before the walk.
-    let mut staged_query = query.stage_for(&walk, StageStorage::Strided, None);
+    let mut staged_query = query.stage_for(&walk, StageStorage::STRIDED, None);
     staged_query.copy_from(query);
-    let mut staged_out_gradient = out_gradient.stage_for(&walk, StageStorage::Strided, None);
+    let mut staged_out_gradient = out_gradient.stage_for(&walk, StageStorage::STRIDED, None);
     staged_out_gradient.copy_from(out_gradient);
 
     let windows =
@@ -66,7 +66,7 @@ pub fn plane_fragment_query_gradient_microkernel<EA: Float, ES: Float>(
         &walk,
         key,
         value,
-        StageStorage::Strided,
+        StageStorage::STRIDED,
         ring.stages_in_flight.get(),
         None,
     );
