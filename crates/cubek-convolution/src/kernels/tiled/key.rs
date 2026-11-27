@@ -2,7 +2,7 @@ use crate::components::ConvolutionOperation;
 use crate::kernels::tiled::{B, ConvBias, ConvProblem, ConvTensors, SpatialDim};
 use cubecl::ir::ElemType;
 use cubecl::tile::layout::ElemAlignment;
-use cubecl::{self as cubecl, AutotuneKeyable};
+use cubecl::{self as cubecl, AutotuneKey};
 use cubek_microkernel::matmul::{MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// want different settings, except the batch: a caller varies it freely, so it is anchored to the
 /// power of two above it. The widths are how wide each operand's alignment, and its view's start,
 /// lets it be read, the output's excepted: the cube staged routine writes it one element at a time.
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct CubeStagedConvTuneKey {
     pub operation: ConvolutionOperation,
     pub lhs: ElemType,

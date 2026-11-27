@@ -633,7 +633,10 @@ impl PlaneFragmentMicrokernel {
             step.sum,
             step.shape,
         )?;
-        let kept = StepCost { bounced_cell: None };
+        let kept = StepCost {
+            bounced_cell: None,
+            widest_line: [1, 1],
+        };
         Self::holding(item, settings, step, pick, kept)
     }
 
@@ -653,7 +656,10 @@ impl PlaneFragmentMicrokernel {
             step.sum,
             step.shape,
         )?;
-        let kept = StepCost { bounced_cell: None };
+        let kept = StepCost {
+            bounced_cell: None,
+            widest_line: [1, 1],
+        };
         Self::holding(item, settings, step, pick, kept)
     }
 

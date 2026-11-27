@@ -3,7 +3,7 @@
 
 use crate::kernels::RmsNormRoutineProblem;
 use cubecl::ir::ElemType;
-use cubecl::{self as cubecl, AutotuneKeyable};
+use cubecl::{self as cubecl, AutotuneKey};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// The row width is **exact**: it is a `d_model` or a `head_dim`, fixed by the model config, and
 /// every owner sizes its registers by it. The row count is anchored — it is the dimension a caller
 /// varies freely (batch × sequence) and the one that decides whether the grid is full.
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct RmsNormKey {
     elem: ElemType,
     /// The normalized row's width.
