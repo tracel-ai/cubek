@@ -1,7 +1,5 @@
 use crate::kernels::MatmulPartitioning;
-use crate::kernels::{
-    MATMUL_GROUPED_ROWS_BUFFER_ONLY, MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem,
-};
+use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Decline;
 use cubecl::tile::{
@@ -9,7 +7,7 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulBlocks, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
     MatmulRowsKind, MatmulWorkItem,
 };
 use cubek_std::Hardware;
@@ -91,8 +89,8 @@ impl<'a> MatmulView<'a> {
         {
             return Err(MATMUL_PACKED_BLOCKS_DISAGREE);
         }
-        if problem.grouped_rows() && problem.destination != MatmulDestination::Buffer {
-            return Err(MATMUL_GROUPED_ROWS_BUFFER_ONLY);
+        if let Some(grouped_rows) = problem.grouped_rows() {
+            grouped_rows.check_destination(problem.destination)?;
         }
         if rows_kind == MatmulRowsKind::Whole {
             if problem.layouts.rhs == MatmulLayout::Strided {
@@ -135,7 +133,6 @@ impl<'a> MatmulView<'a> {
         order: CubeOrder,
         cubes_along_k: NonZeroUsize,
     ) -> MatmulPartitioning {
-        let held = self.rows_held(&inside);
         let uncut = self.uncut(dimensions);
         let dimensions = &uncut[..];
         let distributed_batch_dimensions = self.distributed_batch_dimensions();
@@ -176,15 +173,12 @@ impl<'a> MatmulView<'a> {
                 )
             }
         };
-        self.finished(
-            MatmulPartitioning::new(
-                partitioning,
-                cube,
-                distributed_batch_dimensions,
-                self.rows_kind,
-            ),
-            held,
-        )
+        self.finished(MatmulPartitioning::new(
+            partitioning,
+            cube,
+            distributed_batch_dimensions,
+            self.rows_kind,
+        ))
     }
 
     /// The problem partitioned with `inside` a cube's box, `cubes` cubes cutting `dimensions` and
@@ -207,21 +201,14 @@ impl<'a> MatmulView<'a> {
             distributed_batch_dimensions.is_empty(),
             "persistent_partitioning: a run of boxes walks one dimension, not batches beside it"
         );
-        let held = self.rows_held(&inside);
-        let levels = inside
-            .cubes(&self.uncut(dimensions))
-            .shared_by(cubes.get())
-            .build();
+        let levels = inside.cubes(dimensions).shared_by(cubes.get()).build();
         let partitioning = Partitioning::new(self.space(), levels);
         let cube = self.one_slab(partitioning.box_of(ComputeScope::Cube));
-        self.finished(
-            MatmulPartitioning::new(
-                partitioning,
-                cube,
-                distributed_batch_dimensions,
-                self.rows_kind,
-            ),
-            held,
+        MatmulPartitioning::new(
+            partitioning,
+            cube,
+            distributed_batch_dimensions,
+            self.rows_kind,
         )
     }
 
@@ -244,7 +231,6 @@ impl<'a> MatmulView<'a> {
         dimensions: &[Dimension],
         order: PlaneOrder,
     ) -> MatmulPartitioning {
-        let held = self.rows_held(&inside);
         let uncut = self.uncut(dimensions);
         let dimensions = &uncut[..];
         let distributed_batch_dimensions = self.distributed_batch_dimensions();
@@ -254,15 +240,12 @@ impl<'a> MatmulView<'a> {
                 order.clone(),
             )
             .build();
-        self.finished(
-            MatmulPartitioning::of_launch_planes(
-                Partitioning::new(self.space(), levels),
-                &order,
-                distributed_batch_dimensions,
-                self.rows_kind,
-            ),
-            held,
-        )
+        self.finished(MatmulPartitioning::of_launch_planes(
+            Partitioning::new(self.space(), levels),
+            &order,
+            distributed_batch_dimensions,
+            self.rows_kind,
+        ))
     }
 
     /// The problem partitioned with `inside` a cube's box, the cubes cutting `dimensions`, every
@@ -276,20 +259,16 @@ impl<'a> MatmulView<'a> {
         dimensions: &[Dimension],
         cubes: NonZeroUsize,
     ) -> MatmulPartitioning {
-        let held = self.rows_held(&inside);
         let distributed_batch_dimensions = self.distributed_batch_dimensions();
         let levels = inside
-            .cubes(&self.uncut(dimensions))
+            .cubes(dimensions)
             .shared_by(cubes.get())
             .batches(&distributed_batch_dimensions)
             .build();
-        self.finished(
-            MatmulPartitioning::of_cubes(
-                Partitioning::new(self.space(), levels),
-                distributed_batch_dimensions,
-                self.rows_kind,
-            ),
-            held,
+        MatmulPartitioning::of_cubes(
+            Partitioning::new(self.space(), levels),
+            distributed_batch_dimensions,
+            self.rows_kind,
         )
     }
 
@@ -335,34 +314,18 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// `dimensions` without the rows where a table ends row groups: a row group is placed over rows no
-    /// level at or above its key cuts.
+    /// `dimensions` without the rows a table ends row groups of, which no level cuts.
     fn uncut(&self, dimensions: &[Dimension]) -> Vec<Dimension> {
-        let rows = self.problem.dimensions().m;
         match self.problem.grouped_rows() {
-            true => dimensions.iter().copied().filter(|&d| d != rows).collect(),
-            false => dimensions.to_vec(),
+            Some(grouped_rows) => grouped_rows.uncut(dimensions),
+            None => dimensions.to_vec(),
         }
     }
 
-    /// The rows the levels `inside` the cubes hold, where a table ends row groups.
-    fn rows_held(&self, inside: &Levels) -> Option<usize> {
-        let rows = self.problem.dimensions().m;
-        self.problem.grouped_rows().then(|| {
-            inside.clone().cubes(&[rows]).build()[0]
-                .tile(rows)
-                .expect("a level naming the rows tiles them")
-        })
-    }
-
-    /// `partitioning` marked as grouped rows where `held` says the rows its levels hold.
-    fn finished(
-        &self,
-        partitioning: MatmulPartitioning,
-        held: Option<usize>,
-    ) -> MatmulPartitioning {
-        match held {
-            Some(held) => partitioning.with_grouped_rows(self.problem.dimensions().m, held),
+    /// `partitioning` marked as placing grouped rows, where a table ends row groups.
+    fn finished(&self, partitioning: MatmulPartitioning) -> MatmulPartitioning {
+        match self.problem.grouped_rows() {
+            Some(grouped_rows) => partitioning.with_grouped_rows(grouped_rows),
             None => partitioning,
         }
     }

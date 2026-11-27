@@ -274,7 +274,7 @@ impl Routine for UnitRegistersMatmulRoutine {
         settings: &Self::Settings,
     ) -> Result<(Self::Blueprint, Grid), Decline> {
         problem.check_plain()?;
-        if problem.grouped_rows() {
+        if problem.grouped_rows().is_some() {
             return Err(MATMUL_GROUPED_ROWS_UNREAD);
         }
         let view = MatmulView::new(problem, UnitRegistersMatmulRoutine::ROWS_KIND)?;

@@ -7,10 +7,9 @@
 use super::kernel::cube_staged_matmul_kernel;
 use super::tma::CubeStagedTmaBinding;
 use crate::kernels::{
-    CubeStagedMatmulRoutine, MATMUL_GROUPED_ROWS_SWIZZLED, MATMUL_INDEX_UNREAD_BY_TMA,
-    MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA, MATMUL_PACKED_WALK_PAST_K, MatmulBinding,
-    MatmulBlueprint, MatmulOutput, MatmulPartitioning, MatmulRoutine, MatmulRoutineProblem,
-    MatmulTensors, MatmulView,
+    CubeStagedMatmulRoutine, MATMUL_INDEX_UNREAD_BY_TMA, MATMUL_ONE_ELEMENT_ROWS_UNMOVED_BY_TMA,
+    MATMUL_PACKED_WALK_PAST_K, MatmulBinding, MatmulBlueprint, MatmulOutput, MatmulPartitioning,
+    MatmulRoutine, MatmulRoutineProblem, MatmulTensors, MatmulView,
 };
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{
@@ -80,18 +79,15 @@ impl<'a> CubeStagedPlacement<'a> {
         if microkernel.walk().decoded().is_some() {
             view.check_reads(hw)?;
         }
-        if problem.grouped_rows() && !matches!(cube_order.canonicalize(), CubeOrder::RowMajor) {
-            return Err(MATMUL_GROUPED_ROWS_SWIZZLED);
-        }
         let contracted = microkernel.contracted(&item);
-        let partitioning = view.partitioning(
-            microkernel.tiling(),
-            &[item.dimensions.m, item.dimensions.n],
-            cube_order,
-            MatmulView::ONE_CUBE_A_BOX,
-        );
-        partitioning.check_box_spans_run()?;
-        let cube_space = partitioning.cube_space();
+        let cube_space = view
+            .partitioning(
+                microkernel.tiling(),
+                &[item.dimensions.m, item.dimensions.n],
+                cube_order,
+                MatmulView::ONE_CUBE_A_BOX,
+            )
+            .cube_space();
         if store == CubeStagedStore::Tma {
             check_tma_store(hw, problem, &contracted, &cube_space, &microkernel)?;
         }
@@ -218,12 +214,16 @@ impl<'a> CubeStagedPlacement<'a> {
             microkernel.block_scales(),
             microkernel.fill.delivery == CubeStagedDelivery::Tma,
         )?;
+        let inside = microkernel.launch_tiling();
         let partitioning = view.partitioning(
-            microkernel.launch_tiling(),
+            inside.clone(),
             &[item.dimensions.m, item.dimensions.n],
             cube_order,
             MatmulView::ONE_CUBE_A_BOX,
         );
+        if let Some(grouped_rows) = problem.grouped_rows() {
+            grouped_rows.check_placed(&inside, &partitioning)?;
+        }
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
         let past_k = || {

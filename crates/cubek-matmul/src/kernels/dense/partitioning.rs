@@ -1,4 +1,4 @@
-use crate::kernels::MATMUL_ROW_GROUP_NOT_A_BOX;
+use crate::kernels::GroupedRows;
 use cubecl::tile::launch::Decline;
 use cubecl::tile::{
     Dimension, Partitioning, Space, TileSpec,
@@ -36,15 +36,7 @@ pub struct MatmulPartitioning {
     rows_kind: MatmulRowsKind,
     dimensions_kind: MatmulDimensionsKind,
     /// Where a table ends row groups, whose end masks a write.
-    grouped_rows: Option<GroupedRowsHeld>,
-}
-
-/// The rows of a table's row groups: the dimension they lie along, and the rows the levels inside the
-/// cubes hold along it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct GroupedRowsHeld {
-    dimension: Dimension,
-    held: usize,
+    grouped_rows: Option<GroupedRows>,
 }
 
 impl MatmulPartitioning {
@@ -67,11 +59,10 @@ impl MatmulPartitioning {
         }
     }
 
-    /// This placement of rows a table ends row groups of along `dimension`, the levels inside the cubes
-    /// holding `held` of them.
-    pub fn with_grouped_rows(self, dimension: Dimension, held: usize) -> Self {
+    /// This placement of rows a table ends row groups of.
+    pub fn with_grouped_rows(self, grouped_rows: GroupedRows) -> Self {
         Self {
-            grouped_rows: Some(GroupedRowsHeld { dimension, held }),
+            grouped_rows: Some(grouped_rows),
             ..self
         }
     }
@@ -274,22 +265,6 @@ impl MatmulPartitioning {
                 .any(|dimension| self.overhangs(dimension))
     }
 
-    /// Checks that where a table ends row groups, the levels inside the cubes hold exactly
-    /// the rows of the cube's box, which no level cuts: the stage is sized from the box while the
-    /// planes walk what those levels hold.
-    ///
-    /// # Errors
-    ///
-    /// [`MATMUL_ROW_GROUP_NOT_A_BOX`], for levels holding other rows than the box.
-    pub fn check_box_spans_run(&self) -> Result<(), Decline> {
-        match self.grouped_rows {
-            Some(rows) if rows.held != self.space().extent(rows.dimension) => {
-                Err(MATMUL_ROW_GROUP_NOT_A_BOX)
-            }
-            _ => Ok(()),
-        }
-    }
-
     /// Checks that the engine masks `out`'s writes exactly where the tiles overhang it, which is
     /// what a tiling routine decides from: a masked write is one a fragment's store intrinsic
     /// cannot make, so the plane routine bounces its fragments where the tiles overhang. A launch
@@ -338,7 +313,7 @@ impl MatmulPartitioning {
             .copied()
             .filter(|dimension| {
                 !compiled.contains(dimension)
-                    && Some(*dimension) != self.grouped_rows.map(|rows| rows.dimension)
+                    && Some(*dimension) != self.grouped_rows.map(GroupedRows::rows)
             })
             .collect()
     }
