@@ -11,6 +11,7 @@ use crate::matmul::{
     MatmulOperands, MatmulRead, MatmulStage, MatmulStagingCount, MatmulWorkItem,
 };
 use core::num::NonZeroUsize;
+use cubecl::cmma::MatrixLayout;
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
@@ -920,9 +921,10 @@ impl Microkernel for CubeStagedMicrokernel {
     }
     /// Its ring reads both operands out of their tiles a stage at a time, in stretches of the
     /// stage's extent along each one's contiguous dimension, one element wide where the TMA engine
-    /// fills it. Each plane drains its tile a fragment at a time, or a cell at a time from a manual
-    /// fragment, into the output, or merged along `K` into its slot in shared memory, which the
-    /// cube copies out at the output's width. Its planes' reads are the plane microkernel's.
+    /// fills it. Each plane drains its tile, into the output or merged along `K` into its slot in
+    /// shared memory, which the cube copies out at the output's width, in the lines the tile writes
+    /// it in ([`StepCost::line_requirement`](cubecl::tile::StepCost::line_requirement)). Its
+    /// planes' reads are the plane microkernel's.
     fn vectorize(
         &self,
         cube_space: &MatmulCubeSpace,
@@ -932,21 +934,19 @@ impl Microkernel for CubeStagedMicrokernel {
             .require_runs(self.staged, self.plane.orders, vectorization);
         self.fill.vectorize(vectorization);
         self.store.vectorize(vectorization);
-        // A plane drains its tile, into the output or into its slot, in lines as wide as a leaf
-        // along the output's contiguous side where its sum bounces through shared memory, and
-        // one element at a time where its units write their cells out of their registers. The
-        // latter can widen once the tile reports the lines its register drain writes.
+        let innermost = self.plane.orders.innermost(MatmulOperand::Out);
         vectorization.require(VectorRequirement::Access {
             operand: MatmulOperand::Out,
-            elements: cube_space
-                .leaf
-                .extent(MatmulDimensions::MNK.of(self.plane.orders.innermost(MatmulOperand::Out))),
+            elements: cube_space.leaf.extent(MatmulDimensions::MNK.of(innermost)),
         });
-        if self.plane.cost.bounced_cell.is_none() {
-            vectorization.require(VectorRequirement::Elementwise {
-                operand: MatmulOperand::Out,
-            });
-        }
+        // A plane drains its tile, into the output or into its slot, in lines as wide as the tile
+        // writes it: a leaf's run where its sum bounces through shared memory, the lines its
+        // units hold where they write their cells out of their registers.
+        let lines = match innermost {
+            MatmulDim::N => MatrixLayout::RowMajor,
+            MatmulDim::M | MatmulDim::K => MatrixLayout::ColMajor,
+        };
+        vectorization.require(self.plane.cost.line_requirement(MatmulOperand::Out, lines));
         self.plane.vectorize(&(), vectorization);
     }
 

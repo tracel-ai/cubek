@@ -1,7 +1,7 @@
 use crate::matmul::plane::PlaneFragmentRowsAlong;
 use crate::matmul::{MatmulDim, MatmulDimensions, MatmulLayout, MatmulOperands};
 use cubecl::features::{MmaConfig, WgmmaConfig};
-use cubecl::ir::ElemType;
+use cubecl::ir::{ElemType, TargetProperties};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::ops::matmul::MmaIo;
 use cubecl::tile::space::ComputeScope;
@@ -113,20 +113,28 @@ impl PlaneFragmentInstruction {
         }
     }
 
-    /// What the instruction spends where its sum is drained: a cmma fragment hides which unit
-    /// holds a cell, so its sum bounces through shared memory one call's cell at a time; the
-    /// others' units write their own cells, one value a line. The cost of a plane that states its
-    /// instruction; a
-    /// plane that states its Step asks the tile
+    /// What the instruction spends where its sum is drained on `target`: a cmma fragment whose
+    /// compiler hides which unit holds a cell bounces its sum through shared memory one call's
+    /// cell at a time ([`Instruction::hides_cell_positions`]); the others' units write their own
+    /// cells, in lines no wider than the tile writes out of their registers
+    /// ([`Instruction::widest_line`]). The cost of a plane that states its instruction; a plane
+    /// that states its Step asks the tile
     /// ([`ProductStep::cost`](cubecl::tile::ProductStep::cost)).
-    pub fn cost(self) -> StepCost {
-        let bounced_cell = match self {
-            Self::Cmma { shape } => Some([shape.m as usize, shape.n as usize]),
-            Self::Mma { .. } | Self::Wgmma { .. } => None,
+    pub fn cost(self, target: &TargetProperties) -> StepCost {
+        let instruction = self.tile_instruction();
+        let (bounced_cell, widest_line) = match self {
+            Self::Cmma { shape } => {
+                let cell = [shape.m as usize, shape.n as usize];
+                (
+                    instruction.hides_cell_positions(target).then_some(cell),
+                    instruction.widest_line(target, cell, shape.cd_type),
+                )
+            }
+            Self::Mma { .. } | Self::Wgmma { .. } => (None, [1, 1]),
         };
         StepCost {
             bounced_cell,
-            widest_line: [1, 1],
+            widest_line,
         }
     }
 

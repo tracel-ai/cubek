@@ -7,6 +7,7 @@ use crate::attention::{
 };
 use crate::matmul::plane::{PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings};
 use crate::matmul::{MatmulDim, MatmulMicrokernel, MatmulOperand, MatmulWorkItem};
+use cubecl::cmma::MatrixLayout;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::{Dimension, FragmentSource, Level, Levels, Space, StageStorage};
@@ -320,12 +321,12 @@ impl Microkernel for PlaneFragmentAttentionMicrokernel {
             elements: self.out_edge(),
         });
 
-        // A sum nothing bounces drains one cell at a time, wherever its unit holds it.
-        if self.value.cost.bounced_cell.is_none() {
-            vectorization.require(VectorRequirement::Elementwise {
-                operand: AttentionOperand::Out,
-            });
-        }
+        // The value's sum drains in the lines the tile writes it in, along the output's rows.
+        vectorization.require(
+            self.value
+                .cost
+                .line_requirement(AttentionOperand::Out, MatrixLayout::RowMajor),
+        );
     }
 
     /// Each multiplication's shared microkernel sets the work of its fragments; the plane's units
