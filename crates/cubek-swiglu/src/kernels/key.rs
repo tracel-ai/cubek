@@ -3,7 +3,7 @@
 
 use crate::kernels::SwigluRoutineProblem;
 use cubecl::ir::ElemType;
-use cubecl::{self as cubecl, AutotuneKey};
+use cubecl::{self as cubecl, AutotuneKeyable};
 use cubek_matmul::kernels::tensor::PlainTensor;
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// The width of a half is **exact**: it is a `d_ff`, fixed by the model config, and the kernel
 /// compiles it. The row count is anchored, being the dimension a caller varies.
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKeyable)]
 pub struct SwigluKey {
     elem: ElemType,
     /// The width of a half, which the output takes.

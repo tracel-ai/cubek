@@ -183,8 +183,8 @@ fn coordinates_fit<const N: usize>(
     }
     let mut rows = input.shape()[0] as u128;
     (0..N).all(|axis| {
-        let extent = cubecl::tune::anchor(input.shape()[axis + 1], None, None, None) as u128;
-        let output = cubecl::tune::anchor(out_grad.shape()[axis + 1], None, None, None) as u128;
+        let extent = cubecl::tune::Anchor::default().round(input.shape()[axis + 1]) as u128;
+        let output = cubecl::tune::Anchor::default().round(out_grad.shape()[axis + 1]) as u128;
         let kernel = weight_grad.shape[axis + 1] as u128;
         let stride = args.stride[axis] as u128;
         let dilation = args.dilation[axis] as u128;
