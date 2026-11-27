@@ -30,8 +30,10 @@ pub enum Strategy {
     /// kind to pick, and its forced tilings span regimes autotune chooses from.
     Unit(UnitStrategy),
     /// The forward, the weight backward or the data backward of a convolution over any number
-    /// of spatial dims with no groups and no bias, as one tile contraction over a gathered
-    /// input, through the routine named.
+    /// of spatial dims, with the channels in groups where the weight's input channels state them
+    /// (not one input and one output channel a group), as one tile contraction over a gathered
+    /// input, through the routine named. A forward bias is a vector of the output channels, in
+    /// the output's element.
     Tile(ConvRoutineKind),
 }
 

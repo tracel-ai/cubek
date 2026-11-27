@@ -452,8 +452,9 @@ fn launch_through<D: DestinationLaunch, Out: MatmulOutput>(
 
 /// A cube staged routine's estimate over a block-split space: each cube reads its box's rows of the
 /// lhs and its columns of the rhs over the whole of `K`, a packed input its words and a float one
-/// its values, a stage's depth of `K` at a time, and writes its box of the output once. Then its
-/// planes, for the work, on the item they contract: the packed inputs decoded where its stages
+/// its values, a stage's depth of `K` at a time, and writes its box of the output once; its
+/// stages hold each input as its fill writes them, a packed one decoded where it decodes it
+/// ([`CubeStagedMicrokernel::count_shared`]). Then its planes, for the work, on the item they contract: the packed inputs decoded where its stages
 /// decode them, read as stored where it stages them as they lie.
 fn estimate_in_blocks(
     problem: &MatmulRoutineProblem,
@@ -487,6 +488,8 @@ fn estimate_in_blocks(
         },
     };
     estimate.staging = Some(CubeStaging {
+        shared_reads: 0,
+        shared_writes: 0,
         operations: 2.0 * (rows * columns * k) as f64,
         reads: vec![
             input(MatmulOperand::Lhs, rows),
@@ -500,6 +503,12 @@ fn estimate_in_blocks(
         stages_in_flight: blueprint.microkernel.ring.stages_in_flight.get() as u32,
         drain_atomics: 0,
     });
+    let boxes = MatmulOperands {
+        lhs: (rows * k) as u64,
+        rhs: (columns * k) as u64,
+        out: (rows * columns) as u64,
+    };
+    blueprint.microkernel.count_shared(&item, boxes, estimate);
     blueprint
         .microkernel
         .plane

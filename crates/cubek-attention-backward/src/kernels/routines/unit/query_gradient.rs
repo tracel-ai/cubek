@@ -2,16 +2,19 @@
 
 use super::kernel::unit_query_gradient_kernel;
 use super::unit_cube;
-use crate::kernels::{AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk};
+use crate::kernels::{
+    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkCount,
+};
 use core::num::NonZeroUsize;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Decline;
+use cubecl::tile::space::ComputeScope;
 use cubek_microkernel::attention::{B, G, KV, Q};
 use cubek_microkernel::attention_backward::query_gradient::unit::{
     UnitQueryGradientMicrokernel, UnitQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
+use cubek_std::microkernel::{KernelEstimate, Microkernel};
 use cubek_std::routine::Grid;
 
 /// Every unit owns queries of one head, taken in turn and on into the next head, and writes their
@@ -60,6 +63,23 @@ impl UnitQueryGradientRoutine {
             grid,
             (),
         ))
+    }
+
+    /// Its units' walk owned by the queries ([`WalkCount::query_walk`]), a step of its
+    /// microkernel's keys at a time, each unit reading every key and value where it lies; its
+    /// microkernel holds the work.
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &UnitQueryGradientBlueprint,
+    ) -> KernelEstimate {
+        let count = WalkCount::query_walk(
+            problem,
+            &walk.partitioning,
+            ComputeScope::Unit,
+            walk.microkernel.seq_kv(),
+        );
+        walk.estimate(problem, &count)
     }
 
     /// The units of `walk` writing `tensors`' queries' gradient and their dot products.

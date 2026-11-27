@@ -55,6 +55,7 @@ impl cubek_test_utils::Category for Category {
 
         let cost = ConvCost {
             batch: n,
+            groups: 1,
             channels_in: c_in,
             channels_out: c_out,
             spatial: [(h_in, k_h), (w_in, k_w)]

@@ -10,7 +10,8 @@ use cubecl::prelude::LaunchArg;
 use cubecl::tile::Geometry;
 use cubecl::tile::launch::{Decline, TileOperand, Unbound};
 use cubek_std::Hardware;
-use cubek_std::routine::{Grid, Routine};
+use cubek_std::microkernel::KernelEstimate;
+use cubek_std::routine::{EstimatedProblem, Grid, Routine};
 
 /// Launches one routine at one of its settings, on the device it was listed for: what a
 /// [`ReduceCandidate`](crate::kernels::ReduceCandidate) holds.
@@ -65,6 +66,20 @@ where
     /// routine declines it on this device.
     pub(crate) fn prepared(&self, key: &ReduceKey) -> Option<(ReduceBlueprint<M>, Grid)> {
         R::prepare(&self.hw, &ReduceRoutineProblem::from(key), &self.settings).ok()
+    }
+
+    /// The estimate of the launch this setting prepares for the problem `key` describes, its
+    /// demand the problem's, or `None` where the routine declines it on this device.
+    pub(crate) fn estimate(&self, key: &ReduceKey) -> Option<KernelEstimate>
+    where
+        R: Routine<Problem = ReduceRoutineProblem>,
+    {
+        let problem = ReduceRoutineProblem::from(key);
+        let (blueprint, grid) = R::prepare(&self.hw, &problem, &self.settings).ok()?;
+        let mut estimate = KernelEstimate::from(&grid);
+        R::estimate(&problem, &blueprint, &grid, &mut estimate);
+        estimate.demand = Some(problem.demand());
+        Some(estimate)
     }
 
     /// `tensors`, whose input the caller binds, reduced at this setting

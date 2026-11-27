@@ -109,12 +109,18 @@ impl HypercubeKeyGradientMicrokernel {
             &item.summed_query_gradient(item.element),
             self.cube.plane.settings.scratch,
         );
-        // Held, the planes add their own rows and meet on nothing.
-        let met = match (self.plane_count(), self.cube.plane.holder()) {
-            (1, _) | (_, ScoreHolder::Fragments) => 0,
-            _ => self.seq_q() * item.head_dim * item.sum.size(),
+        let met = match self.meets_in_shared() {
+            true => self.seq_q() * item.head_dim * item.sum.size(),
+            false => 0,
         };
         self.plane_count() * bounced + met
+    }
+
+    /// Whether its planes meet in shared memory to sum a stage's share of the query's gradient:
+    /// where they split the keys and read the score through windows. Held, the planes add their
+    /// own rows and meet on nothing.
+    pub fn meets_in_shared(&self) -> bool {
+        self.plane_count() > 1 && self.cube.plane.holder() == ScoreHolder::Window
     }
 }
 

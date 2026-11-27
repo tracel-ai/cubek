@@ -19,6 +19,7 @@ use crate::{
     ConvolutionInputs, Strategy,
     components::ConvolutionOperation,
     eval::benchmarks::problem::{Conv2dElement, Conv2dProblem},
+    kernels::tiled::ConvBias,
     launch_ref,
 };
 
@@ -73,8 +74,8 @@ struct Conv2dBench<MP> {
     _phantom: PhantomData<MP>,
 }
 
-fn make_uniform_4d(client: &Client, shape: [usize; 4], dtype: ElemType, seed: u64) -> TensorHandle {
-    TestInput::builder(client.clone(), Shape::new(shape))
+fn make_uniform(client: &Client, shape: &[usize], dtype: ElemType, seed: u64) -> TensorHandle {
+    TestInput::builder(client.clone(), Shape::from(shape.to_vec()))
         .dtype(dtype)
         .uniform(seed, 0.0, 1.0)
         .generate_without_host_data()
@@ -83,21 +84,24 @@ fn make_uniform_4d(client: &Client, shape: [usize; 4], dtype: ElemType, seed: u6
 const NO_TRANSPOSED_FORWARD: &str = "the benchmark has no transposed forward";
 
 impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
-    type Input = (TensorHandle, TensorHandle);
+    type Input = (TensorHandle, TensorHandle, Option<TensorHandle>);
     type Output = ();
 
     /// The operation's lhs and rhs, NHWC but the `[co, kh, kw, ci]` weight: the layout
     /// `launch_ref` reads.
     fn prepare(&self) -> Self::Input {
         let client = self.device.client();
-        let [lhs, rhs, _] = self.problem.shapes();
+        let [lhs, rhs, out] = self.problem.shapes();
+        let bias = (self.problem.bias == ConvBias::PerChannel)
+            .then(|| make_uniform(&client, &out[3..], AccG::<MP>::elem_type_native(), 2));
         (
-            make_uniform_4d(&client, lhs, LhsG::<MP>::elem_type_native(), 0),
-            make_uniform_4d(&client, rhs, RhsG::<MP>::elem_type_native(), 1),
+            make_uniform(&client, &lhs, LhsG::<MP>::elem_type_native(), 0),
+            make_uniform(&client, &rhs, RhsG::<MP>::elem_type_native(), 1),
+            bias,
         )
     }
 
-    fn execute(&self, (lhs, rhs): Self::Input) -> Result<(), String> {
+    fn execute(&self, (lhs, rhs, bias): Self::Input) -> Result<(), String> {
         let client = self.device.client();
         let [_, _, out] = self.problem.shapes();
         let elems = MatmulElems::new_deprecated::<MP>();
@@ -112,7 +116,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
             Operation::Forward => ConvolutionInputs::Forward {
                 input: lhs,
                 weight: rhs,
-                bias: None,
+                bias: bias.map(|bias| InputBinding::Normal(bias.binding(), elems.acc_global)),
                 out: out.binding(),
             },
             Operation::BackwardData => ConvolutionInputs::BackwardData {

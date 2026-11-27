@@ -85,6 +85,7 @@ fn build_spec_and_dtypes<MP: MatmulPrecision>(problem: &Conv2dProblem) -> (ConvS
         out_channels: c_out,
         args: problem.args,
         kernel_size: [k_h, k_w],
+        bias: problem.bias,
     };
     (spec, dtypes)
 }

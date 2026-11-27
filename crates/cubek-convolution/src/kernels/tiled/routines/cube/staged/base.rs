@@ -39,7 +39,8 @@ impl Routine for CubeStagedConvRoutine {
         partitioning.vectorize(vectorization);
     }
 
-    /// The cube's staging, which its partitioning places, and its planes' work.
+    /// The cube's staging, which its partitioning places, staged through shared memory as its
+    /// microkernel reads it, and its planes' work.
     fn estimate(
         problem: &ConvProblem,
         blueprint: &Self::Blueprint,
@@ -51,10 +52,14 @@ impl Routine for CubeStagedConvRoutine {
                 .partitioning
                 .staging(&problem.elements, blueprint.microkernel.ring),
         );
+        let item = problem.work_item();
+        blueprint
+            .microkernel
+            .count_shared(&item, blueprint.partitioning.boxes(), estimate);
         blueprint
             .microkernel
             .plane
-            .estimate(&problem.work_item(), &(), grid.planes(), estimate);
+            .estimate(&item, &(), grid.planes(), estimate);
     }
 
     /// The cube microkernel over the instruction `settings` ask for, a cube a box of the output,
@@ -121,6 +126,7 @@ impl ConvRoutine<CubeStagedMicrokernel> for CubeStagedConvRoutine {
             input,
             rhs,
             out,
+            bias,
         } = binding;
         // SAFETY: every operand is a tile bound through the launcher, which masks the accesses a
         // box reaches past its tensor; the kernel indexes no buffer but through those tiles.
@@ -132,9 +138,11 @@ impl ConvRoutine<CubeStagedMicrokernel> for CubeStagedConvRoutine {
                 input,
                 rhs,
                 out,
+                bias.into(),
                 launcher.partitioning_arg(),
                 walk,
                 blueprint.partitioning.storage(),
+                problem.roles().bias_dimensions(),
                 problem.kernel_elements(),
             );
         }

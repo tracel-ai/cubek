@@ -14,8 +14,7 @@ use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::{Microkernel, StageRing};
-use cubek_std::routine::Grid;
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 
 /// The backward pass that walks the tiles once, owned by the keys: [`PlaneDeltaRoutine`], then
 /// [`HypercubeKeyGradientQuerySumRoutine`] with the heads of a group together, or
@@ -173,7 +172,24 @@ impl AttentionBackwardLaunch for HypercubeAttentionBackward {
         Ok(())
     }
 
-    fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {
-        blueprint.keys.grid()
+    fn estimates(
+        problem: &AttentionBackwardProblem,
+        blueprint: &Self::Blueprint,
+    ) -> Vec<KernelEstimate> {
+        let delta = PlaneDeltaRoutine.estimate(problem, &blueprint.delta);
+        let cast_queries = CastQueryGradientRoutine.estimate(problem, &blueprint.cast_queries);
+        match &blueprint.keys {
+            KeyHeadsBlueprint::Together(walk) => vec![
+                delta,
+                HypercubeKeyGradientQuerySumRoutine.estimate(problem, walk),
+                cast_queries,
+            ],
+            KeyHeadsBlueprint::Apart { sums: walk, cast } => vec![
+                delta,
+                HypercubeGradientSumRoutine.estimate(problem, walk),
+                CastKeyGradientRoutine.estimate(problem, cast),
+                cast_queries,
+            ],
+        }
     }
 }

@@ -104,10 +104,12 @@ pub(super) fn peak_per_s(key: ThroughputKey) -> f64 {
         };
 
         match key.mode {
-            ThroughputMode::ComputeDirect { .. } | ThroughputMode::ComputeCmma { .. } => {
-                value.ops_per_s()
-            }
-            ThroughputMode::Memory(_) => value.bytes_per_s(&key),
+            ThroughputMode::ComputeDirect { .. }
+            | ThroughputMode::ComputeCmma { .. }
+            | ThroughputMode::CubeRoundTrips { .. } => value.ops_per_s(),
+            ThroughputMode::Memory(_)
+            | ThroughputMode::CacheRead { .. }
+            | ThroughputMode::SharedRead => value.bytes_per_s(&key),
             ThroughputMode::Launch => 1.0 / value.duration_per_op().as_secs_f64(),
         }
     })

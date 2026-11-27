@@ -5,6 +5,7 @@
 
 mod binding;
 mod candidate;
+mod estimate;
 mod gradients;
 mod key;
 mod problem;
@@ -16,6 +17,7 @@ mod walk;
 
 pub(crate) use binding::*;
 pub use candidate::*;
+pub(crate) use estimate::*;
 pub use gradients::*;
 pub use key::*;
 pub use problem::*;

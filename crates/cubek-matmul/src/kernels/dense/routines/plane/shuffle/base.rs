@@ -248,6 +248,8 @@ impl PlaneShuffleMatmulRoutine {
             BindingOrder::Stated => columns / grid.planes().count as u64,
         };
         estimate.staging = Some(CubeStaging {
+            shared_reads: 0,
+            shared_writes: 0,
             operations: 2.0 * (rows * columns * k) as f64,
             reads: vec![
                 stream(MatmulOperand::Lhs, groups * rows * k, k),
@@ -288,6 +290,8 @@ impl PlaneShuffleMatmulRoutine {
         let size = |operand: MatmulOperand| item.elements.get(operand).size() as u64;
         let rhs = packing.bytes(k as usize * columns as usize) as u64;
         estimate.staging = Some(CubeStaging {
+            shared_reads: 0,
+            shared_writes: 0,
             operations: 2.0 * (rows * columns * k) as f64,
             reads: vec![
                 GlobalStream {

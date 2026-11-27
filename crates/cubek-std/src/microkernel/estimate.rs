@@ -52,6 +52,13 @@ pub struct CubeStaging {
     pub stages_in_flight: u32,
     /// Atomic adds into shared memory one cube issues as it drains.
     pub drain_atomics: u64,
+    /// Bytes one cube reads from shared memory over its walk: every plane's reads of what the
+    /// cube staged, each byte counted once for every plane that reads it, however many of the
+    /// plane's units it reaches at once.
+    pub shared_reads: u64,
+    /// Bytes one cube writes into shared memory over its walk: what it stages there, and what
+    /// its units exchange through it.
+    pub shared_writes: u64,
 }
 
 /// Bytes one cube moves through one operand, and the stretch of them a plane touches contiguously.

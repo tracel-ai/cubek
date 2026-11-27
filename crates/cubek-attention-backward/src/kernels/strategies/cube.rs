@@ -18,8 +18,7 @@ use cubek_microkernel::attention_backward::query_gradient::cube::{
     CubeQueryGradientMicrokernel, CubeQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::{Microkernel, StageRing};
-use cubek_std::routine::Grid;
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 
 /// The backward pass on the cube staged routines: [`CubeStagedQueryGradientRoutine`], then
 /// [`CubeStagedKeyGradientRoutine`] with the heads of a group together, or
@@ -196,7 +195,21 @@ impl AttentionBackwardLaunch for CubeStagedAttentionBackward {
         Ok(())
     }
 
-    fn widest_grid(blueprint: &Self::Blueprint) -> &Grid {
-        blueprint.keys.grid()
+    fn estimates(
+        problem: &AttentionBackwardProblem,
+        blueprint: &Self::Blueprint,
+    ) -> Vec<KernelEstimate> {
+        let queries = CubeStagedQueryGradientRoutine.estimate(problem, &blueprint.queries);
+        match &blueprint.keys {
+            KeyHeadsBlueprint::Together(walk) => vec![
+                queries,
+                CubeStagedKeyGradientRoutine.estimate(problem, walk),
+            ],
+            KeyHeadsBlueprint::Apart { sums: walk, cast } => vec![
+                queries,
+                CubeStagedKeyGradientSumRoutine.estimate(problem, walk),
+                CastKeyGradientRoutine.estimate(problem, cast),
+            ],
+        }
     }
 }
