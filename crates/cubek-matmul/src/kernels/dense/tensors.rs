@@ -19,7 +19,7 @@ use cubecl::tile::{
     launch::Bound, launch::TmaBox, launch::Unbound,
 };
 use cubecl::zspace::metadata::Metadata;
-use cubecl::zspace::{Shape, Strides};
+use cubecl::zspace::{Shape, Strides, Tiling};
 use cubecl_environment::sync::{Arc, SyncOnceCell};
 use cubek_microkernel::matmul::MatmulStage;
 use cubek_microkernel::matmul::{
@@ -595,22 +595,26 @@ impl MatmulTensors {
         }
     }
 
-    /// Whether `rhs` is the stack `index` reads: `[slabs, k, n]`, or one `[k, n]` every batch
-    /// reads a run of.
+    /// Whether `rhs` is the stack `index` reads: `[slabs, k, n]`, its slabs one piece of its
+    /// buffer, or one `[k, n]` every batch reads a run of.
     ///
     /// # Errors
     ///
     /// [`MATMUL_STACK_NOT_THE_TABLES`].
     fn admit_stack(rhs: &PlainTensor, index: MatmulIndex) -> Result<(), Decline> {
         match (index, rhs.shape().as_slice()) {
-            (MatmulIndex::Slab { slabs, .. }, [stacked, _, _]) if *stacked == slabs => Ok(()),
+            (MatmulIndex::Slab { slabs, .. }, [stacked, _, _])
+                if *stacked == slabs && rhs.meta().tiling.physical_dims(3)[0].len() == 1 =>
+            {
+                Ok(())
+            }
             (MatmulIndex::RunOfK, [_, _]) => Ok(()),
             _ => Err(MATMUL_STACK_NOT_THE_TABLES),
         }
     }
 
     /// The one `[k, n]` matrix of `rhs` a batch contracts against: a stacked rhs's first slab,
-    /// at the slab's strides, or the rhs itself.
+    /// at the slab's strides and in the tiles it is stored in, or the rhs itself.
     ///
     /// # Assumptions
     ///
@@ -622,10 +626,43 @@ impl MatmulTensors {
         }
     }
 
-    /// A stacked rhs's first `[k, n]` slab, at the slab's strides.
+    /// A stacked rhs's first `[k, n]` slab, at the slab's strides and in the tiles it is stored in.
     fn first_slab(rhs: &PlainTensor) -> PlainTensor {
-        let (shape, strides) = (&rhs.binding.shape, &rhs.binding.strides);
-        rhs.viewed(Metadata::new(shape[1..].to_vec(), strides[1..].to_vec()))
+        rhs.viewed(Self::without_slabs(&rhs.meta()))
+    }
+
+    /// `stack`, `[slabs, k, n]`, without the dim its slabs lie along: its pieces of `k` and `n`
+    /// kept, a stack in tiles still in them.
+    ///
+    /// # Panics
+    ///
+    /// On a stack whose slabs are stored as more than one piece.
+    fn without_slabs(stack: &Metadata) -> Metadata {
+        let pieces = stack.tiling.physical_dims(3);
+        let [slab] = pieces[0][..] else {
+            panic!(
+                "a stack's slabs are one piece of its buffer, got {:?}",
+                pieces[0]
+            );
+        };
+        let kept = |dims: &[usize]| -> Vec<usize> {
+            dims.iter()
+                .enumerate()
+                .filter(|&(dim, _)| dim != slab)
+                .map(|(_, &extent)| extent)
+                .collect()
+        };
+        let matrix: Vec<Vec<usize>> = pieces[1..]
+            .iter()
+            .map(|dim| {
+                dim.iter()
+                    .map(|&piece| piece - usize::from(piece > slab))
+                    .collect()
+            })
+            .collect();
+        Metadata::new(kept(&stack.shape), kept(&stack.strides))
+            .with_tiling(Tiling::from_physical_dims(&matrix).expect("a slab's pieces of k and n"))
+            .expect("the tiling lists the slab's dims")
     }
 
     /// `operand` as a product beside a packed input reads it, along `dimensions` and `k` deep: a
@@ -1196,7 +1233,10 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 ..problem.layouts
             },
             buffer_alignments: MatmulOperands {
-                rhs: rhs_layout.buffer_alignment(shape, strides),
+                rhs: match rhs.is_tiled() {
+                    true => rhs.elem_alignment(),
+                    false => rhs_layout.buffer_alignment(shape, strides),
+                },
                 ..problem.buffer_alignments
             },
             index: Some(table.index()),
@@ -2039,6 +2079,45 @@ mod tests {
             .buffer_alignment(&shape, &strides);
             assert_eq!(bound, derived, "slabs at {strides:?}");
         }
+    }
+
+    /// A stack's first slab is the slab as its stack lies, in rows or in tiles: a stack in `8 × 8`
+    /// tiles, four slabs of `[128, 96]` side by side along `n`, each a run of twelve tile
+    /// columns, keeps its tiles, where dropping its first stored dim would read a tile row as
+    /// the contraction.
+    #[test]
+    fn the_first_slab_of_a_stack_keeps_its_tiles() {
+        let tiling = |dims: &[&[usize]]| Tiling::from_physical_dims(dims).expect("listed dims");
+        let in_tiles = Metadata::new(vec![4, 16, 12, 8, 8], vec![768, 3072, 64, 8, 1])
+            .with_tiling(tiling(&[&[0], &[1, 3], &[2, 4]]))
+            .expect("a stack in tiles");
+        let slab = MatmulTensors::without_slabs(&in_tiles);
+
+        assert_eq!(slab.logical_shape().expect("a matrix").to_vec(), [128, 96]);
+        assert_eq!(slab.strides[..], [3072, 64, 8, 1]);
+
+        let in_rows = Metadata::new(vec![4, 128, 96], vec![96, 384, 1]);
+        let slab = MatmulTensors::without_slabs(&in_rows);
+
+        assert_eq!(slab.shape.to_vec(), [128, 96]);
+        assert_eq!(slab.strides[..], [384, 1]);
+    }
+
+    /// A matrix in tiles broadcast to more dims gains leading dims of one ahead of its tiles: a
+    /// `[128, 96]` matrix in `8 × 8` tiles, stored as four dims, is `[1, 1, 128, 96]` at rank four,
+    /// not left as it is for already holding four.
+    #[test]
+    fn a_matrix_in_tiles_broadcasts_by_its_logical_dims() {
+        let tiling = Tiling::from_physical_dims(&[&[0usize, 2][..], &[1, 3]]).expect("listed dims");
+        let in_tiles = zeros(&[128 * 96], F32).viewed(
+            Metadata::new(vec![16, 12, 8, 8], vec![768, 64, 8, 1])
+                .with_tiling(tiling)
+                .expect("a matrix in tiles"),
+        );
+        let broadcast = in_tiles.broadcast_to(4);
+
+        assert_eq!(broadcast.shape().to_vec(), [1, 1, 128, 96]);
+        assert!(broadcast.is_tiled());
     }
 
     /// A row rhs with a pitch along `K` has one alignment whichever order binds it: its buffer

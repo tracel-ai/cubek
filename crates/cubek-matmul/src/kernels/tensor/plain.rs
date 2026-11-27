@@ -157,13 +157,14 @@ impl PlainTensor {
         Self::new(self.bound_as(meta), self.elem)
     }
 
-    /// This view at `rank` dims, the ones it lacks leading ones of one, which broadcast: the same
-    /// buffer. A view already as long is unchanged.
+    /// This view at `rank` logical dims, the ones it lacks leading ones of one, which broadcast:
+    /// the same buffer, in the tiles it is stored in. A view already as long is unchanged.
     pub fn broadcast_to(&self, rank: usize) -> Self {
-        let (shape, strides) = (&self.binding.shape, &self.binding.strides);
-        let missing = rank.saturating_sub(shape.len());
-        let lead = |dims: &[usize]| [&vec![1; missing][..], dims].concat();
-        self.viewed(Metadata::new(lead(shape), lead(strides)))
+        let meta = self.meta();
+        match meta.is_tiled() {
+            false => self.viewed(Self::led(&meta, rank)),
+            true => self.viewed(Self::led_in_tiles(&meta, rank)),
+        }
     }
 
     /// This view's last two dims swapped, over the same buffer.
@@ -562,6 +563,38 @@ impl From<&PlainTensor> for Placement {
 pub const ELEMENT_NOT_ON_DEVICE: Decline = Decline::Unserved {
     why: "the device's runtime does not compute in this element and store it in a buffer",
 };
+
+impl PlainTensor {
+    /// `meta`, a view in rows, at `rank` dims, leading ones of one added.
+    fn led(meta: &Metadata, rank: usize) -> Metadata {
+        let missing = rank.saturating_sub(meta.shape.len());
+        let lead = |dims: &[usize]| [&vec![1; missing][..], dims].concat();
+        Metadata::new(lead(&meta.shape), lead(&meta.strides))
+    }
+
+    /// `meta`, a view in tiles, at `rank` logical dims, leading ones of one added ahead of its
+    /// pieces.
+    fn led_in_tiles(meta: &Metadata, rank: usize) -> Metadata {
+        let logical = meta
+            .logical_rank()
+            .expect("a binding's tiling describes its own rank");
+        let missing = rank.saturating_sub(logical);
+        let lead = |dims: &[usize]| [&vec![1; missing][..], dims].concat();
+        let pieces = meta.tiling.physical_dims(logical);
+        let dims: Vec<Vec<usize>> = (0..missing)
+            .map(|dim| vec![dim])
+            .chain(
+                pieces
+                    .iter()
+                    .map(|dim| dim.iter().map(|&piece| piece + missing).collect()),
+            )
+            .collect();
+        let tiling = Tiling::from_physical_dims(&dims).expect("leading dims ahead of its pieces");
+        Metadata::new(lead(&meta.shape), lead(&meta.strides))
+            .with_tiling(tiling)
+            .expect("the tiling lists every dim")
+    }
+}
 
 #[cfg(test)]
 mod tests {
