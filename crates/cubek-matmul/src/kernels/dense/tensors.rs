@@ -5,7 +5,7 @@ use crate::kernels::tensor::{
 use crate::kernels::{
     MATMUL_GROUPED_ROWS_OVER_TILED_LHS, MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding,
     MatmulBlueprint, MatmulIndex, MatmulIndexTable, MatmulInputs, MatmulOutput, MatmulOutputBuffer,
-    MatmulRoutineProblem, MatmulView, RowGroups,
+    MatmulRoutineProblem, MatmulView,
 };
 use core::marker::PhantomData;
 use cubecl::client::Client;
@@ -322,16 +322,7 @@ impl MatmulTensors {
         if table.entries().elem != ElemType::UInt(UIntKind::U32) {
             return Err(MATMUL_TABLE_NOT_U32);
         }
-        if let MatmulIndexTable::GroupedRows {
-            entries, groups, ..
-        } = &table
-        {
-            Self::admit_group_ends(groups, entries)?;
-            // A run is placed only along a direct layout, which a tiled lhs is not.
-            if lhs.is_tiled() {
-                return Err(MATMUL_GROUPED_ROWS_OVER_TILED_LHS);
-            }
-        }
+        Self::admit_grouped_rows(&lhs, &table)?;
         match rhs {
             StoredTensor::Plain(rhs) => {
                 Self::indexed_float(client, lhs, rhs, table, out, rows_kind)
@@ -495,12 +486,24 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 }
 
 impl MatmulTensors {
-    /// Whether `groups` ends each row group in one `u32`, as `entries` is one slab.
+    /// Whether `table`, where it ends row groups, ends each in one `u32`, as its entries are one
+    /// slab, over an lhs in rows.
     ///
     /// # Errors
     ///
-    /// [`MATMUL_TABLE_NOT_U32`] and [`MATMUL_GROUP_ENDS_NOT_ONE_PER_GROUP`].
-    fn admit_group_ends(groups: &RowGroups, entries: &PlainTensor) -> Result<(), Decline> {
+    /// [`MATMUL_GROUPED_ROWS_OVER_TILED_LHS`], [`MATMUL_TABLE_NOT_U32`] and
+    /// [`MATMUL_GROUP_ENDS_NOT_ONE_PER_GROUP`].
+    fn admit_grouped_rows(lhs: &PlainTensor, table: &MatmulIndexTable) -> Result<(), Decline> {
+        let MatmulIndexTable::GroupedRows {
+            entries, groups, ..
+        } = table
+        else {
+            return Ok(());
+        };
+        // A run is placed only along a direct layout, which a tiled lhs is not.
+        if lhs.is_tiled() {
+            return Err(MATMUL_GROUPED_ROWS_OVER_TILED_LHS);
+        }
         let ends = &groups.ends;
         match (ends.elem, ends.shape() == entries.shape()) {
             (ElemType::UInt(UIntKind::U32), true) if entries.shape().rank() == 1 => Ok(()),
