@@ -7,6 +7,7 @@ use cubek_matmul::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MATMUL_BOX_OTHER_THAN_ROW_GROUP,
     MatmulIndexTable, MatmulRoutine, PlaneShuffleMatmulRoutine, RowGroups,
 };
+use cubek_microkernel::matmul::cube::CubeStagedMicrokernel;
 use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
@@ -140,8 +141,8 @@ impl RoutineProduct for GroupedRowsProduct {
 }
 
 /// Every plane shuffle setting that serves the product writes the rows of each row group and nothing
-/// else. The others refuse only for what the device lacks, a capped launch, which takes no batches,
-/// or no microkernel fitting the shape.
+/// else. The others refuse only for what the device lacks, no microkernel among its planes
+/// included, or for a capped launch, which takes no batches.
 #[test]
 fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
@@ -155,13 +156,12 @@ fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
             Err(why) => refused.push(why),
         }
     }
-    settle(launched, &refused, |why| {
-        *why == PlaneShuffleMatmulRoutine::PERSISTENT_BATCHED
-            || *why
-                == (Decline::Unserved {
-                    why: PlaneShuffleMicrokernel::DECLINE,
-                })
-    });
+    settle(
+        launched,
+        &refused,
+        |why| *why == microkernel_declines::<PlaneShuffleMicrokernel>(),
+        |why| *why == PlaneShuffleMatmulRoutine::PERSISTENT_BATCHED,
+    );
 }
 
 /// A cube holds a row group in one box, so only the products whose `max_rows` is as tall as the
@@ -179,9 +179,12 @@ fn cube_staged_writes_only_the_rows_of_each_row_group_a_box_holds() {
             Err(why) => refused.push(why),
         }
     }
-    settle(launched, &refused, |why| {
-        *why == MATMUL_BOX_OTHER_THAN_ROW_GROUP
-    });
+    settle(
+        launched,
+        &refused,
+        |why| *why == microkernel_declines::<CubeStagedMicrokernel>(),
+        |why| *why == MATMUL_BOX_OTHER_THAN_ROW_GROUP,
+    );
 }
 
 /// One for a case that launched, its outcome enforced.
@@ -190,28 +193,40 @@ fn enforced(outcome: TestOutcome) -> usize {
     1
 }
 
-/// Checks every refusal is for what the device lacks or one `expected` names, and skips where no
-/// case launched, provided the device refused them all.
-fn settle(launched: usize, refused: &[Decline], expected: fn(&Decline) -> bool) {
+/// Checks every refusal is for what the device lacks, which `lacking` adds to, or one `expected`
+/// names, and skips where no case launched, provided the device refused them all.
+fn settle(
+    launched: usize,
+    refused: &[Decline],
+    lacking: fn(&Decline) -> bool,
+    expected: fn(&Decline) -> bool,
+) {
     assert!(
         refused
             .iter()
-            .all(|why| refused_by_device(why) || expected(why)),
+            .all(|why| refused_by_device(why) || lacking(why) || expected(why)),
         "refused: {refused:?}"
     );
     if launched == 0 {
-        skip_refused_by_device(refused);
+        skip_refused_by_device(refused, lacking);
     }
 }
 
 /// A skip, provided every refusal is for what the device lacks.
-fn skip_refused_by_device(refused: &[Decline]) {
+fn skip_refused_by_device(refused: &[Decline], lacking: fn(&Decline) -> bool) {
     assert!(
-        refused.iter().all(refused_by_device),
+        refused
+            .iter()
+            .all(|why| refused_by_device(why) || lacking(why)),
         "refused: {refused:?}"
     );
     let skipped = ValidationResult::Skipped("the device refuses every setting".into());
     TestOutcome::Validated(skipped).enforce();
+}
+
+/// What a routine declines where the device runs none of its microkernel's planes.
+fn microkernel_declines<M: Microkernel>() -> Decline {
+    Decline::Unserved { why: M::DECLINE }
 }
 
 /// Whether `why` names something the device lacks rather than something the product breaks.
