@@ -35,8 +35,8 @@ use cubek_std::matmul_dimensions::{K, KB, KI, M, N};
 use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable, Grid};
 
 /// What a launch writing into its caller's output declines: an output of another shape than the
-/// product's, of an element the routines do not write, stored in tiles, or, beside a packed input,
-/// other than row-major.
+/// product's, of an element the routines do not write, stored in tiles, or, read for every row
+/// whole, whose leading dims do not merge into rows.
 pub const MATMUL_OUTPUT_UNREAD: Decline = Decline::Unserved {
     why: "the output handed in is not the product's shape, in an element the routines write, laid in rows",
 };
@@ -766,7 +766,8 @@ impl MatmulTensors {
     /// # Errors
     ///
     /// As [`packed`](Self::packed), and [`MATMUL_OUTPUT_UNREAD`] for an output of another shape,
-    /// of an element the routines do not write, or other than row-major.
+    /// of an element the routines do not write, stored in tiles, or whose leading dims do not
+    /// merge into rows. Pitched rows are served: the launch writes each row at its stride.
     fn packed_into(
         client: &Client,
         lhs: StoredTensor,
@@ -774,9 +775,10 @@ impl MatmulTensors {
         out: PlainTensor,
     ) -> Result<Self, Decline> {
         let (lhs, rhs, shape) = Self::beside_packed_inputs(client, lhs, rhs)?;
+        let out = Operands::with_lone_axes_restrided(&out);
         if out.shape().as_slice() != shape.as_slice()
             || !MatmulInputs::VERIFIED.contains(&out.elem)
-            || !out.is_contiguous()
+            || !Operands::merges_into_rows(&out)
         {
             return Err(MATMUL_OUTPUT_UNREAD);
         }
@@ -2140,9 +2142,8 @@ mod tests {
         assert_eq!(declined, Some(MATMUL_CONTRACTIONS_DISAGREE));
     }
 
-    /// A packed `[k, n]` rhs of `k = 64` and `n = 16`, in rows of NVFP4 words along `k`, read as a
-    /// stack of two slabs along `n`.
-    fn packed_stack_of_two() -> PackedTensor {
+    /// A packed `[k, n]` rhs of `k = 64` and `n = 16`, in rows of NVFP4 words along `k`.
+    fn packed_rhs() -> PackedTensor {
         let scheme = crate::kernels::select::packed::nvfp4_scheme();
         let (n, k) = (16, 64);
         let words = zeros(&[n, k / scheme.num_quants()], U32);
@@ -2157,8 +2158,29 @@ mod tests {
             operand,
             [(N, n), (K, k)],
         )
-        .stacked(2, N)
-        .expect("two slabs split no read or block")
+    }
+
+    /// [`packed_rhs`] read as a stack of two slabs along `n`.
+    fn packed_stack_of_two() -> PackedTensor {
+        packed_rhs()
+            .stacked(2, N)
+            .expect("two slabs split no read or block")
+    }
+
+    #[test]
+    fn a_pitched_output_beside_a_packed_rhs_is_served() {
+        let out = zeros(&[4, 32], F32).viewed(Metadata::new(vec![4, 16], vec![32, 1]));
+
+        let declined = MatmulTensors::writing_into(
+            &client(),
+            StoredTensor::Plain(zeros(&[4, 64], F32)),
+            StoredTensor::Packed(packed_rhs()),
+            out,
+            MatmulRowsKind::Whole,
+        )
+        .err();
+
+        assert_eq!(declined, None);
     }
 
     #[test]
