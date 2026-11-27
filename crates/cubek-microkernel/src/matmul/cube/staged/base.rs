@@ -16,7 +16,7 @@ use cubecl::tile::launch::{Decline, Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::space::ComputeScope;
 use cubecl::tile::space::Coverage;
 use cubecl::tile::stage::StagedOperands;
-use cubecl::tile::{BaseRegion, FragmentSource, Levels, Scratch, Space, StageStorage};
+use cubecl::tile::{BaseRegion, Dimension, FragmentSource, Levels, Scratch, Space, StageStorage};
 use cubek_std::Hardware;
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{BlockScales, OuterScale, Packing};
@@ -30,7 +30,7 @@ use cubek_std::microkernel::{CubePlanes, KernelEstimate, Microkernel, StageLayou
 /// Its planes lie over the box along `m` and `n`, each owning a tile of it: independent work,
 /// sharing nothing but the stage the cube fills for all of them. They may also lie along `K`,
 /// each contracting its own slice of every step of the same tile, their partials merged in
-/// shared memory, atomically: the cube's planes splitting `K` ([`CubeStagedDrain`]).
+/// shared memory: the cube's planes splitting `K` ([`CubeStagedDrain`]).
 ///
 /// Its settings, with the plane's settings replaced by the plane microkernel the hardware
 /// settled. The scratch and the ring are the settings' requests until it is resolved against the
@@ -84,9 +84,10 @@ pub enum CubeStagedDrain {
     /// One plane along `K`: each plane drains its own tile, through a scratch window where its
     /// fragment cannot land its cells on its own.
     EachPlane,
-    /// Several along `K`: every plane adds its partial of the tile into one accumulator in shared
-    /// memory, atomically, and the cube copies it out once it has synchronized.
-    Merged,
+    /// `planes` along the dimension `along` the walk contracts: every plane replaces a slot of
+    /// its own in shared memory with its partial of the tile, and the cube adds the slots cell by
+    /// cell as it copies the sum out, once it has synchronized: no atomics.
+    Merged { along: Dimension, planes: usize },
 }
 
 impl CubeStagedMicrokernel {
@@ -307,7 +308,19 @@ impl CubeStagedMicrokernel {
     pub(crate) fn drain(&self) -> CubeStagedDrain {
         match self.planes_along_k.get() {
             1 => CubeStagedDrain::EachPlane,
-            _ => CubeStagedDrain::Merged,
+            planes => CubeStagedDrain::Merged {
+                along: self.walked(),
+                planes,
+            },
+        }
+    }
+
+    /// The dimension its walk contracts a stage at a time, which planes along `K` split: `KB` for
+    /// a stage of scale blocks, its planes' own otherwise.
+    fn walked(&self) -> Dimension {
+        match self.depth {
+            CubeStagedDepth::Steps => self.plane.walked(),
+            CubeStagedDepth::ScaleBlocks(_) => KB,
         }
     }
 
@@ -531,7 +544,7 @@ impl CubeStagedMicrokernel {
             }
         };
         let instruction = self.plane.instruction;
-        let merges = self.drain() == CubeStagedDrain::Merged;
+        let merges = matches!(self.drain(), CubeStagedDrain::Merged { .. });
         // A box the TMA engine stores is drained whole into shared memory first, and the
         // descriptor clips it at the output's edge: no fragment's window is cut short there.
         let cut_short = placed.masks_output && self.bounces_masked_output();
@@ -627,10 +640,11 @@ impl CubeStagedMicrokernel {
     ) -> CubeStagedSharedMemory {
         let accumulator = match self.drain() {
             CubeStagedDrain::EachPlane => 0,
-            CubeStagedDrain::Merged => {
-                stage
-                    .operand_space(MatmulOperand::Out, self.plane.orders)
-                    .cells()
+            CubeStagedDrain::Merged { planes, .. } => {
+                planes
+                    * stage
+                        .operand_space(MatmulOperand::Out, self.plane.orders)
+                        .cells()
                     * item.sum.size()
             }
         };
@@ -735,7 +749,7 @@ impl Microkernel for CubeStagedMicrokernel {
     type Operand = MatmulOperand;
     type CubeSpace = MatmulCubeSpace;
 
-    const DECLINE: &'static str = "this device runs no plane of these settings: planes along K merge through an atomic f32 add in shared memory, and against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps";
+    const DECLINE: &'static str = "this device runs no plane of these settings: against a packed input a plane runs a matrix instruction the device offers for the float input's element, at a plane width it commits to, whose step of K is whole scale blocks, each a whole number of the instruction's steps";
 
     /// A star around the default, one dimension a setting names at a time: the fragment grid, the
     /// plane layout. Then the named boxes a star moving one dimension never reaches — the deep
@@ -755,7 +769,9 @@ impl Microkernel for CubeStagedMicrokernel {
     /// Then the planes splitting `K`
     /// ([`SPLIT_ALONG_K`](CubeStagedMicrokernelSettings::SPLIT_ALONG_K)), then two and eight of
     /// them, the whole partition resident in the scratch, a second stage in flight, filled in its
-    /// slot and through registers, the latter on two planes too.
+    /// slot and through registers, the latter on two planes too; the next stage held in registers
+    /// beside a single one, on four planes and on two along `n` of two along `K` each; and a box
+    /// one fragment high, the rows a decode step holds, alone and through registers.
     ///
     /// Every one fills its stages by the cube's units; the routines of the other engines race
     /// their own lists.
@@ -818,6 +834,14 @@ impl Microkernel for CubeStagedMicrokernel {
             planes_along_k: count(planes_along_k),
             ..split_lead
         };
+        let on_two_along_n = |planes_along_k| Self::Settings {
+            planes: layout(1, 2),
+            ..split(planes_along_k)
+        };
+        let short = Self::Settings {
+            plane: Plane::grid(1, 4, 1),
+            ..split_lead
+        };
         let splits = [
             split(2),
             split(8),
@@ -828,6 +852,10 @@ impl Microkernel for CubeStagedMicrokernel {
             split_lead.ringed(double),
             split_lead.ringed(prefetching),
             split(2).ringed(prefetching),
+            split_lead.ringed(prefetching_one_stage),
+            on_two_along_n(2).ringed(prefetching_one_stage),
+            short,
+            short.ringed(prefetching_one_stage),
         ];
 
         [lead]
@@ -868,16 +896,11 @@ impl Microkernel for CubeStagedMicrokernel {
     /// packed inputs, those over their block-split space
     /// (`candidates_in_blocks`). Each one whose sum the tile layer opens in the instruction its
     /// planes run, its planes as that sum opens ([`summed`](CubeStagedMicrokernel::summed)).
-    /// None, where the
-    /// planes split `K`, on a device whose shared memory takes no atomic `f32` add, which is where
-    /// they merge.
     fn candidates(
         hw: &Hardware,
         item: &MatmulWorkItem,
         settings: &Self::Settings,
     ) -> impl Iterator<Item = Self> {
-        let merges = settings.planes_along_k.get() > 1;
-        let atomic = hw.shared_f32_atomic_add();
         let candidates: Vec<Self> = match item.blocks {
             None => Self::as_stored_candidates(hw, item, settings),
             Some(_) => Self::candidates_in_blocks(hw, item, settings),
@@ -886,14 +909,12 @@ impl Microkernel for CubeStagedMicrokernel {
             .into_iter()
             .filter_map(|candidate| candidate.summed(hw, item))
             .filter(|candidate| candidate.reads_unstaged_where_it_lies(item))
-            .filter(move |_| !merges || atomic)
     }
     /// Its ring reads both operands out of their tiles a stage at a time, in stretches of the
     /// stage's extent along each one's contiguous dimension, one element wide where the TMA engine
     /// fills it. Each plane drains its tile a fragment at a time, or a cell at a time from a manual
-    /// fragment, into the output; merged along
-    /// `K` in shared memory, it drains one element at a time, since an atomic takes one. Its
-    /// planes' reads are the plane microkernel's.
+    /// fragment, into the output, or merged along `K` into its slot in shared memory, which the
+    /// cube copies out at the output's width. Its planes' reads are the plane microkernel's.
     fn vectorize(
         &self,
         cube_space: &MatmulCubeSpace,
@@ -903,25 +924,20 @@ impl Microkernel for CubeStagedMicrokernel {
             .require_runs(self.staged, self.plane.orders, vectorization);
         self.fill.vectorize(vectorization);
         self.store.vectorize(vectorization);
-        match self.drain() {
-            CubeStagedDrain::EachPlane => {
-                vectorization.require(VectorRequirement::Access {
-                    operand: MatmulOperand::Out,
-                    elements: cube_space.leaf.extent(
-                        MatmulDimensions::MNK.of(self.plane.orders.innermost(MatmulOperand::Out)),
-                    ),
-                });
-                if self.plane.cost.bounced_cell.is_none() {
-                    vectorization.require(VectorRequirement::Elementwise {
-                        operand: MatmulOperand::Out,
-                    });
-                }
-            }
-            CubeStagedDrain::Merged => {
-                vectorization.require(VectorRequirement::Elementwise {
-                    operand: MatmulOperand::Out,
-                });
-            }
+        // A plane drains its tile, into the output or into its slot, in lines as wide as a leaf
+        // along the output's contiguous side where its sum bounces through shared memory, and
+        // one element at a time where its units write their cells out of their registers. The
+        // latter can widen once the tile reports the lines its register drain writes.
+        vectorization.require(VectorRequirement::Access {
+            operand: MatmulOperand::Out,
+            elements: cube_space
+                .leaf
+                .extent(MatmulDimensions::MNK.of(self.plane.orders.innermost(MatmulOperand::Out))),
+        });
+        if self.plane.cost.bounced_cell.is_none() {
+            vectorization.require(VectorRequirement::Elementwise {
+                operand: MatmulOperand::Out,
+            });
         }
         self.plane.vectorize(&(), vectorization);
     }
@@ -943,10 +959,7 @@ impl Microkernel for CubeStagedMicrokernel {
         let stage = &self.stage(cube_space);
         let (out_run, drain_atomics) = match self.drain() {
             CubeStagedDrain::EachPlane => (self.plane.tile_extent(N), 0),
-            CubeStagedDrain::Merged => (
-                extents.extent(N),
-                (self.planes_along_k.get() * extents.extent(M) * extents.extent(N)) as u64,
-            ),
+            CubeStagedDrain::Merged { .. } => (extents.extent(N), 0),
         };
         let mut staging = MatmulStagingCount {
             drain_atomics,
@@ -1033,11 +1046,10 @@ impl MatmulMicrokernel for CubeStagedMicrokernel {
     /// groups of them instead: the layout counts groups.
     fn tiling(&self) -> Levels {
         let MatmulDimensions { m, n, .. } = self.plane.dimensions;
-        let (tiling, walked) = match self.depth {
-            CubeStagedDepth::Steps => (self.plane.tiling(), self.plane.walked()),
-            CubeStagedDepth::ScaleBlocks(blocks) => {
-                (self.plane.tiling_over((KB, blocks.get())), KB)
-            }
+        let walked = self.walked();
+        let tiling = match self.depth {
+            CubeStagedDepth::Steps => self.plane.tiling(),
+            CubeStagedDepth::ScaleBlocks(blocks) => self.plane.tiling_over((KB, blocks.get())),
         };
         let mut planes = vec![
             (m, self.planes.along_m.get()),
