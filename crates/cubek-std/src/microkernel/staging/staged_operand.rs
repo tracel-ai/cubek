@@ -1,6 +1,7 @@
 use crate::Hardware;
 use cubecl::ir::{ElemType, FloatKind};
-use cubecl::tile::{Dimension, Space, StageStorage, stage::Prefetch};
+use cubecl::tile::launch::Delivery;
+use cubecl::tile::{Dimension, FactorStage, Space, StageStorage, stage::Prefetch};
 
 /// One operand's box of a stage, as the ring that holds it reads it: what a stage of it costs in
 /// shared memory, and in registers where the next one waits there.
@@ -14,6 +15,19 @@ pub struct StagedOperand {
     pub innermost: Dimension,
     /// What its fill does to it on the way into the stage.
     pub fill: StageFill,
+    /// The contraction it is a factor of, where a matrix instruction's fragments read its stage:
+    /// what the tile lays such a stage out by.
+    pub contraction: Option<StagedContraction>,
+}
+
+/// The contraction a staged operand is a factor of: what the tile lays its stage out by where a
+/// matrix instruction's fragments read it ([`StageStorage::ordered_for_fragments`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StagedContraction {
+    /// The dimension the contraction sums the operand along.
+    pub contracted: Dimension,
+    /// Who moves the operand's lines into its stage.
+    pub delivery: Delivery,
 }
 
 /// What a fill does to an operand on its way into the stage.
@@ -46,6 +60,19 @@ impl StagedOperand {
                 true => StageFill::Converted,
                 false => StageFill::AsStored,
             },
+            contraction: None,
+        }
+    }
+
+    /// This operand as a factor of a contraction summing it along `contracted`, its lines moved
+    /// into its stage by `delivery`.
+    pub fn contracted_along(self, contracted: Dimension, delivery: Delivery) -> Self {
+        Self {
+            contraction: Some(StagedContraction {
+                contracted,
+                delivery,
+            }),
+            ..self
         }
     }
 
@@ -77,14 +104,32 @@ impl StagedOperand {
 
     /// Bytes one stage holds of it on `hw`, laid out as `storage`, at its most over every width it
     /// could bind at: the powers of two up to the widest line `hw` reads that its rows hold whole
-    /// lines of, each line whole bytes. Asked before the operands' widths are settled.
+    /// lines of, each line whole bytes. Asked before the operands' widths are settled. A factor
+    /// of a contraction copied as it lies is sized as the tile lays it out for the fragments of
+    /// `hw`'s target ([`StageStorage::bytes_read_by_fragments`]).
     pub fn bytes(&self, hw: &Hardware, storage: &StageStorage) -> usize {
         let rows = self.rows();
         let row = self.space.extent(self.innermost);
         let bits = self.element.size_bits();
+        let read_by_fragments = self
+            .contraction
+            .filter(|_| self.fill == StageFill::AsStored);
+        let laid = |width: usize| match read_by_fragments {
+            Some(contraction) => storage.bytes_read_by_fragments(
+                &FactorStage {
+                    space: rows.clone(),
+                    contracted: Some(contraction.contracted),
+                    elem_bits: bits,
+                    width,
+                    delivery: contraction.delivery,
+                },
+                &hw.target.mma,
+            ),
+            None => storage.bytes(&rows, width, bits),
+        };
         self.widths(hw)
             .filter(|&width| row.is_multiple_of(width) && (width * bits).is_multiple_of(8))
-            .map(|width| storage.bytes(&rows, width, bits))
+            .map(laid)
             .max()
             .expect("a row holds whole bytes")
     }

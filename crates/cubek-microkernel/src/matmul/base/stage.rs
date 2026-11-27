@@ -1,6 +1,6 @@
 use crate::matmul::{MatmulDim, MatmulDimensions, MatmulOperand, MatmulOperands, MatmulRead};
 use cubecl::ir::ElemType;
-use cubecl::tile::launch::{VectorRequirement, Vectorization};
+use cubecl::tile::launch::{Delivery, VectorRequirement, Vectorization};
 use cubecl::tile::stage::StagedOperands;
 use cubecl::tile::{Dimension, Space, StageStorage};
 use cubek_std::Hardware;
@@ -118,8 +118,9 @@ impl MatmulStage {
     }
 
     /// Bytes one stage holds of the operands `staged` names on `hw`, each stored in its own element of
-    /// `elements`, laid out as `storage` and bound in the order `orders` says: every block it
-    /// holds, each laid out alike over the dimensions inside one.
+    /// `elements`, laid out as `storage`, bound in the order `orders` says and moved in by
+    /// `delivery`: every block it holds, each laid out alike over the dimensions inside one, as
+    /// the tile lays each factor out for the fragments that read it.
     pub fn bytes(
         &self,
         hw: &Hardware,
@@ -127,6 +128,7 @@ impl MatmulStage {
         elements: MatmulOperands<ElemType>,
         storage: &StageStorage,
         orders: MatmulOperands<BindingOrder>,
+        delivery: Delivery,
     ) -> usize {
         let block: usize = self
             .operands(
@@ -136,8 +138,12 @@ impl MatmulStage {
                 MatmulOperands::all(MatmulRead::AsBound),
                 MatmulOperands::all(None),
             )
-            .iter()
-            .map(|operand| operand.bytes(hw, storage))
+            .into_iter()
+            .map(|operand| {
+                operand
+                    .contracted_along(self.dimensions.k, delivery)
+                    .bytes(hw, storage)
+            })
             .sum();
         block * self.blocks()
     }

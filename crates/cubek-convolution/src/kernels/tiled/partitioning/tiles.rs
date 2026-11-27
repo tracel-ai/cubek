@@ -1,6 +1,7 @@
 use super::{ConvBlock, ConvStep};
 use crate::kernels::tiled::{ConvProblem, ConvRoles, CubeStagedConvSettings};
 use cubecl::ir::ElemType;
+use cubecl::tile::launch::Delivery;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::stage::StagedOperands;
 use cubecl::tile::{Dimension, Level, Levels, Partitioning, StageOrder, StageStorage};
@@ -126,7 +127,14 @@ impl ConvTiles {
     ) -> usize {
         self.block(steps * self.instruction.depth)
             .stage(self.roles.dimensions())
-            .bytes(hw, StagedOperands::Both, elements, storage, self.orders)
+            .bytes(
+                hw,
+                StagedOperands::Both,
+                elements,
+                storage,
+                self.orders,
+                Delivery::SyncPerUnit,
+            )
     }
 
     /// The dimension a stage walks and the steps along it, and the contraction cells that holds:
