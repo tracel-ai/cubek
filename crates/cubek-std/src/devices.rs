@@ -321,7 +321,7 @@ fn on(device: DeviceProperties, target: TargetProperties) -> Hardware {
 fn cuda_target() -> TargetProperties {
     let mut target = TargetProperties::default();
     target.mma.register_layout_a = target.mma.register_layout_acc;
-    target.mma.register_duplication_a = target.mma.register_duplication_acc;
+    target.mma.register_copy_count_a = target.mma.register_copy_count_acc;
     target
 }
 

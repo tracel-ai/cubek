@@ -42,7 +42,7 @@ fn staged_matmul_quant_rhs(
         let scales = scales.at(&cube);
         let c = c.at(&cube);
         let steps = cube.walk();
-        let mut stages = Stages::smem(&steps, &a, &b, StageStorage::Strided, 1usize, None);
+        let mut stages = Stages::smem(&steps, &a, &b, StageStorage::STRIDED, 1usize, None);
         stages.pipelined(steps, |slot, step| {
             let c_step = c.at(step);
             let scales_step = scales.at(step);

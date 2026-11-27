@@ -1,8 +1,8 @@
 use crate::attention::plane::ScoreHolder;
 use crate::attention::{B, D, DV, G, KV, Q, S};
 use crate::matmul::plane::PlaneFragmentMicrokernel;
-use cubecl::tile::StageStorage;
 use cubecl::tile::stage::RowChunks;
+use cubecl::tile::{StageOrder, StageStorage};
 
 /// The storage a backward walk holds its stages in, its planes contracting through `score`'s
 /// instruction and keeping the score as `holder` says.
@@ -25,8 +25,9 @@ pub fn stage_storage(holder: ScoreHolder, score: PlaneFragmentMicrokernel) -> St
             StageStorage::Tiled {
                 block,
                 chunks: RowChunks::Swizzled,
+                order: StageOrder::AsSource,
             }
         }
-        ScoreHolder::Window => StageStorage::Strided,
+        ScoreHolder::Window => StageStorage::STRIDED,
     }
 }

@@ -656,7 +656,9 @@ fn decoded_width(step: usize, storage: &StageStorage, decoded: ElemType) -> usiz
             chunks: RowChunks::Swizzled,
             ..
         } => step.min(RowChunks::CHUNK_BYTES / decoded.size()),
-        StageStorage::Tiled { .. } | StageStorage::Strided | StageStorage::Lines { .. } => step,
+        StageStorage::Tiled { .. } | StageStorage::Strided { .. } | StageStorage::Lines { .. } => {
+            step
+        }
     }
 }
 
