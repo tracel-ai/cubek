@@ -9,7 +9,7 @@ use cubecl::{
     client::Client,
     ir::{ElemType, FloatKind},
     std::tensor::TensorHandle,
-    {zspace::Shape, zspace::shape},
+    zspace::{Shape, shape},
 };
 use cubek_quant::scheme::QuantScheme;
 use cubek_test_utils::{TestInput, quant_layout};
@@ -53,7 +53,7 @@ pub(crate) fn quant_outputs(
 
 /// Quantize `input`, calibrated to the inner scales in `scale`, into fresh handles.
 ///
-/// The third handle is the quantized tensor's own global scale, which a two-level scheme carries
+/// The third handle is the quantized tensor's own coarser grid, which a two-level scheme carries
 /// and the kernel fills. Dequantize reads it back from there, so tests that hand this one along
 /// exercise the same path a quantized tensor takes rather than reusing the input handle.
 ///
@@ -67,8 +67,15 @@ pub(crate) fn quantize(
     shape: &Shape,
 ) -> (TensorHandle, TensorHandle, Option<TensorHandle>) {
     let (values, scales) = quant_outputs(client, scheme, shape);
+    // The coarser grid where the scheme has one; a test handing a binding the scheme does not
+    // take gets one cell, for the launch to refuse.
+    let dims: Vec<usize> = shape.iter().copied().collect();
+    let coarser_grid = scheme
+        .scale_grids(&dims)
+        .nth(1)
+        .map_or(shape![1], Shape::from);
     let out_global =
-        global.map(|_| TensorHandle::zeros(client, shape![1], ElemType::Float(FloatKind::F32)));
+        global.map(|_| TensorHandle::zeros(client, coarser_grid, ElemType::Float(FloatKind::F32)));
 
     let mut in_bindings = vec![scale.clone().binding()];
     let mut out_bindings = vec![scales.clone().binding()];

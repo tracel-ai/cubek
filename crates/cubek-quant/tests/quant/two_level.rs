@@ -14,7 +14,9 @@ use cubecl::{
     {zspace::Shape, zspace::shape},
 };
 use cubecl_common::e4m3;
-use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubek_quant::scheme::{
+    BlockExtent, BlockSize, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype,
+};
 
 use super::harness::{dequantize, f32_tensor, quant_outputs, quantize, scale_shape};
 use super::{Needs, Quantized, RoundTrip};
@@ -282,6 +284,50 @@ fn ue4m3_block_scales_with_an_f32_global_scale_round_trip() {
         assert!(
             (actual - expected).abs() <= tolerance,
             "index {i}: got {actual}, expected {expected}"
+        );
+    }
+}
+
+/// A coarser level of one scale a row, over two blocks a row: each row's values come back under
+/// their own row's coarser scale, not the first row's.
+#[test]
+fn each_row_reads_its_own_coarser_scale() {
+    let client = cubecl::test_device().client();
+    let (rows, cols) = (4, 2 * BLOCK);
+    let shape = shape![rows, cols];
+    let row = BlockSize::with_rest(&[BlockExtent::WholeAxis], BlockExtent::VALUE);
+    let scheme = one_level(QuantStore::PackedU32(0), ScaleDtype::F32)
+        .coarser_per_block(row, ScaleDtype::F32);
+
+    let coarser = [0.5f32, 3.0, 0.25, 7.0];
+    let finest: Vec<f32> = (0..rows * 2).map(|block| 1.0 + block as f32).collect();
+    let data: Vec<f32> = (0..rows * cols)
+        .map(|i| {
+            let (row, col) = (i / cols, i % cols);
+            ((col % 9) as f32 - 4.0) * coarser[row] * finest[row * 2 + col / BLOCK]
+        })
+        .collect();
+    let input = f32_tensor(&client, &data, shape.clone());
+    let finest = f32_tensor(&client, &finest, scale_shape(&scheme, &shape));
+    let coarser = f32_tensor(&client, &coarser, shape![rows, 1]);
+
+    let (values, stored, out_coarser) =
+        quantize(&client, &scheme, &input, &finest, Some(&coarser), &shape);
+    let out = dequantize(
+        &client,
+        &scheme,
+        &values,
+        &stored,
+        out_coarser.as_ref(),
+        &shape,
+        f32::elem_type_native(),
+    );
+
+    let bytes = client.read_one_unchecked_tensor(out.into_copy_descriptor());
+    for (i, (got, want)) in f32::from_bytes(&bytes).iter().zip(&data).enumerate() {
+        assert!(
+            (got - want).abs() <= want.abs() * 1e-6,
+            "{i}: {got} != {want}"
         );
     }
 }

@@ -6,7 +6,7 @@
 
 use cubecl::prelude::*;
 
-/// The scale a level holds for this value's region, times the tensor's global scale under a
+/// The scale the finest level holds for this value's block, times the coarser level's under a
 /// two-level scheme.
 ///
 /// A two-level scheme forms the product in f32 and narrows only the result. The inner scale is a
@@ -21,7 +21,7 @@ use cubecl::prelude::*;
 #[expand(derive(Clone))]
 pub struct Scale<FS: CubePrimitive> {
     pub(super) inner: FS,
-    pub(super) global: ComptimeOption<f32>,
+    pub(super) coarser: ComptimeOption<f32>,
 }
 
 #[cube]
@@ -29,9 +29,9 @@ impl<FS: CubePrimitive> Scale<FS> {
     /// Reconstruct quantized values: `x = s * x_q`.
     pub fn dequantize_symmetric<F: Float, N: Size>(&self, values: Vector<F, N>) -> Vector<F, N> {
         #[comptime]
-        match self.global {
-            ComptimeOption::Some(global) => Vector::cast_from(
-                Vector::<f32, N>::cast_from(values) * Vector::new(self.effective(global)),
+        match self.coarser {
+            ComptimeOption::Some(coarser) => Vector::cast_from(
+                Vector::<f32, N>::cast_from(values) * Vector::new(self.effective(coarser)),
             ),
             ComptimeOption::None => values * Vector::cast_from(self.inner),
         }
@@ -41,15 +41,15 @@ impl<FS: CubePrimitive> Scale<FS> {
     /// quotient is within the quantization range, so narrowing it back to `F` is safe.
     pub fn quantize_symmetric<F: Float, N: Size>(&self, values: Vector<F, N>) -> Vector<F, N> {
         #[comptime]
-        match self.global {
-            ComptimeOption::Some(global) => Vector::cast_from(
-                Vector::<f32, N>::cast_from(values) / Vector::new(self.effective(global)),
+        match self.coarser {
+            ComptimeOption::Some(coarser) => Vector::cast_from(
+                Vector::<f32, N>::cast_from(values) / Vector::new(self.effective(coarser)),
             ),
             ComptimeOption::None => values / Vector::cast_from(self.inner),
         }
     }
 
-    fn effective(&self, global: f32) -> f32 {
-        global * f32::cast_from(self.inner)
+    fn effective(&self, coarser: f32) -> f32 {
+        coarser * f32::cast_from(self.inner)
     }
 }
