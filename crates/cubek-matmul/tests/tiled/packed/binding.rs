@@ -41,7 +41,8 @@ fn a_packed_tensor_binds_its_parts_not_the_buffer_they_share() {
         part(words * word, scale_words, [rows, scale_words / rows], u32),
         Some(part((words + scale_words) * word, 1, [1, 1], u32)),
         scheme,
-        Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k"),
+        K,
+        None,
         [(N, rows), (K, k)],
     );
 

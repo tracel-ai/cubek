@@ -127,6 +127,7 @@ impl PackedRows {
     pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<TileTensorLaunch, Decline> {
         self.packed.bind(
             launcher,
+            self.packed.operand(),
             self.packed.scheme().num_quants().max(width),
             BlockScales::Fields,
             OuterScale::Kept,
@@ -141,7 +142,6 @@ mod tests {
     use crate::kernels::select::packed::nvfp4_scheme;
     use cubecl::ir::UIntKind;
     use cubecl::std::tensor::TensorHandle;
-    use cubek_std::layout::stored::Operand;
     use cubek_test_utils::client;
 
     /// A packed NVFP4 matrix over `dimensions`, sixteen rows of sixty-four values along `K`.
@@ -151,14 +151,14 @@ mod tests {
         let zeros = |shape: [usize; 2]| {
             PlainTensor::of_handle(TensorHandle::zeros(&client(), shape.to_vec(), u32))
         };
-        let operand = Operand::of_scheme(&scheme, K, dimensions).expect("one block along k");
         PackedTensor::new(
             zeros([16, 64 / scheme.num_quants()]),
             // A scale byte a block of sixteen values, four a word.
             zeros([16, 1]),
             Some(zeros([1, 1])),
             scheme,
-            operand,
+            K,
+            None,
             [(dimensions[0], 16), (K, 64)],
         )
     }

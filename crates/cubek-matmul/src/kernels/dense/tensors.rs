@@ -1169,17 +1169,18 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// Its inputs read as `planned`, the space a microkernel planned on: every packed input at the
     /// reads it takes ([`MatmulMicrokernel::planned_space`]), whichever engine binds it; as stored
     /// where `planned` is `None`.
-    fn planned_inputs(&self, planned: Option<MatmulBlocks>) -> [StoredTensor; 2] {
+    fn planned_reads(&self, planned: Option<MatmulBlocks>) -> [StoredRead; 2] {
         [
             (&self.lhs, MatmulOperand::Lhs),
             (&self.rhs, MatmulOperand::Rhs),
         ]
         .map(|(operand, input)| {
-            match (operand, planned.and_then(|space| space.packings.get(input))) {
-                (StoredTensor::Packed(tensor), Some(packing)) => {
-                    StoredTensor::Packed(tensor.read_as(packing.operand))
-                }
-                _ => operand.clone(),
+            match (
+                operand.read(),
+                planned.and_then(|space| space.packings.get(input)),
+            ) {
+                (StoredRead::Blocks(_), Some(packing)) => StoredRead::Blocks(packing.operand),
+                (read, _) => read,
             }
         })
     }
@@ -1212,10 +1213,12 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 .or_broken(ADMITTED_PLAN_RUNS)
                 .map(Bound::arg)
         };
-        let bind = |operand: &StoredTensor, dimensions: [Dimension; 2], width: usize| match operand
-        {
-            StoredTensor::Plain(tensor) => values(tensor, dimensions, width),
-            StoredTensor::Scaled(tensor) => tensor.under_scales(
+        let bind = |operand: &StoredTensor,
+                    read: StoredRead,
+                    dimensions: [Dimension; 2],
+                    width: usize| match (operand, read) {
+            (StoredTensor::Plain(tensor), _) => values(tensor, dimensions, width),
+            (StoredTensor::Scaled(tensor), _) => tensor.under_scales(
                 &launcher,
                 &blocks,
                 values(&tensor.values, dimensions, width)?,
@@ -1224,8 +1227,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             // (`tma_packed_operands`), scales and all, so the launcher states their scales as a
             // reader of fields takes them, which reads them where they lie, in tiles or in
             // rows.
-            StoredTensor::Packed(tensor) => tensor.bind(
+            (StoredTensor::Packed(tensor), StoredRead::Blocks(planned)) => tensor.bind(
                 &launcher,
+                planned,
                 width,
                 match blueprint.microkernel.fills_by_tma() {
                     true => BlockScales::Fields,
@@ -1234,10 +1238,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 outer_scale,
                 blueprint.microkernel.words_delivery(),
             ),
+            (StoredTensor::Packed(_), _) => unreachable!("a packed tensor is read as blocks"),
         };
-        let [lhs, rhs] = self.planned_inputs(blueprint.microkernel.planned_space());
-        let lhs = bind(&lhs, [M, K], blueprint.widths.lhs)?;
-        let rhs = bind(&rhs, [K, N], blueprint.widths.rhs)?;
+        let [lhs_read, rhs_read] = self.planned_reads(blueprint.microkernel.planned_space());
+        let lhs = bind(&self.lhs, lhs_read, [M, K], blueprint.widths.lhs)?;
+        let rhs = bind(&self.rhs, rhs_read, [K, N], blueprint.widths.rhs)?;
         let lhs = self.read_through_table(MatmulOperand::Lhs, lhs)?;
         let rhs = self.read_through_table(MatmulOperand::Rhs, rhs)?;
         Ok(MatmulBinding {
@@ -1367,12 +1372,14 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         planned: Option<MatmulBlocks>,
     ) -> Result<(TileTensorLaunch, TileTensorLaunch), Decline> {
         // Every packed input landed at the reads its microkernel planned on.
-        let [planned_lhs, planned_rhs] = self.planned_inputs(planned);
-        let StoredTensor::Packed(rhs) = &planned_rhs else {
+        let [lhs_read, rhs_read] = self.planned_reads(planned);
+        let (StoredTensor::Packed(rhs), StoredRead::Blocks(rhs_planned)) = (&self.rhs, rhs_read)
+        else {
             return Breakable::broken(TMA_FILLS_A_PACKED_RHS);
         };
-        // A packed input `operand` across `across`, its words landing a word a cell.
-        let packed = |tensor: &PackedTensor, operand: MatmulOperand, across, width| {
+        // A packed input `operand` across `across`, read as `planned`, its words landing a word a
+        // cell.
+        let packed = |tensor: &PackedTensor, planned, operand: MatmulOperand, across, width| {
             let values_dimensions = tile_order::values_dimensions(across);
             let landed = stage.landed_space(operand, orders, &values_dimensions);
             let values_per_word = tensor.scheme().num_quants();
@@ -1385,6 +1392,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 .or_broken(TMA_FILLS_A_STAGE_A_BOX_LANDS)?;
             tensor.bind_by_tma(
                 launcher,
+                planned,
                 width,
                 landed.extent(values_dimensions[0]),
                 landed.extent(KB) * landed.extent(KI),
@@ -1392,18 +1400,21 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 scales,
             )
         };
-        let lhs = match &planned_lhs {
-            StoredTensor::Plain(lhs) => {
+        let lhs = match (&self.lhs, lhs_read) {
+            (StoredTensor::Plain(lhs), _) => {
                 self.tma_float_lhs(lhs, stage, storage, orders, widths.lhs)?
             }
-            StoredTensor::Scaled(lhs) => lhs.under_scales(
+            (StoredTensor::Scaled(lhs), _) => lhs.under_scales(
                 launcher,
                 &self.blocks(),
                 self.tma_float_lhs(&lhs.values, stage, storage, orders, widths.lhs)?,
             )?,
-            StoredTensor::Packed(lhs) => packed(lhs, MatmulOperand::Lhs, M, widths.lhs)?,
+            (StoredTensor::Packed(lhs), StoredRead::Blocks(planned)) => {
+                packed(lhs, planned, MatmulOperand::Lhs, M, widths.lhs)?
+            }
+            (StoredTensor::Packed(_), _) => unreachable!("a packed tensor is read as blocks"),
         };
-        let rhs = packed(rhs, MatmulOperand::Rhs, N, widths.rhs)?;
+        let rhs = packed(rhs, rhs_planned, MatmulOperand::Rhs, N, widths.rhs)?;
         Ok((lhs, rhs))
     }
 
@@ -1880,7 +1891,6 @@ mod tests {
     use cubecl::ir::FloatKind;
     use cubecl::quant::scheme::{QuantScheme, QuantStore};
     use cubecl::tile::layout::ElemAlignment;
-    use cubek_std::layout::stored::Operand;
     use cubek_test_utils::client;
 
     /// A stack's alignment over the order its buffer steps, as a problem derives it from the
@@ -2010,13 +2020,13 @@ mod tests {
         let words = zeros(&[n, k / scheme.num_quants()], U32);
         // A scale byte a block of sixteen values, four a word.
         let block_scales = zeros(&[n, k / 16 / 4], U32);
-        let operand = Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k");
         PackedTensor::new(
             words,
             block_scales,
             Some(zeros(&[1, 1], U32)),
             scheme,
-            operand,
+            K,
+            None,
             [(N, n), (K, k)],
         )
     }
@@ -2087,13 +2097,13 @@ mod tests {
         let words = zeros(&[n, k / scheme.num_quants()], U32);
         // A scale byte a block of sixteen values, four a word.
         let block_scales = zeros(&[n, k / 16 / 4], U32);
-        let operand = Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k");
         PackedTensor::new(
             words,
             block_scales,
             Some(zeros(&[1, 1], U32)),
             scheme,
-            operand,
+            K,
+            None,
             [(N, n), (K, k)],
         )
         .stacked(2, N)

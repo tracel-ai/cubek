@@ -141,7 +141,8 @@ impl PackedSlabs {
             PlainTensor::of_handle(scales),
             outer_scales,
             scheme,
-            Operand::of_scheme(&scheme, K, [across, K]).expect("one block along k"),
+            K,
+            None,
             [(across, rows), (K, spec.k)],
         );
         let slabs = Self {
@@ -245,14 +246,15 @@ impl PackedSlabs {
             .viewed(tile_order::matrix_values(&values.metadata));
         let sized = [(K, k), (N, n)];
         let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 blocks k");
-        let operand = PackedTensor::read_in_tiles(&hw, sized, operand, &words.meta())
+        let tiles = PackedTensor::read_in_tiles(&hw, sized, operand, &words.meta())
             .expect("a matrix laid in tile order reads in its tiles");
         PackedTensor::new(
             words,
             scales,
             self.tensor.scales().nth(1).cloned(),
             scheme,
-            operand,
+            K,
+            Some(tiles),
             sized,
         )
     }

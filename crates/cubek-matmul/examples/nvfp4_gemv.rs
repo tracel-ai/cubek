@@ -194,7 +194,8 @@ impl Device {
             )),
             global,
             scheme,
-            Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k"),
+            K,
+            None,
             [(N, n), (K, k)],
         );
         let x: Vec<u8> = host.x.iter().flat_map(|v| v.to_le_bytes()).collect();
@@ -298,14 +299,15 @@ fn in_tile_order(
     let matrix = tile_order::matrix_values(&values.metadata);
     let sized = [(K, k), (N, n)];
     let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("one block along k");
-    let operand =
+    let tiles =
         PackedTensor::read_in_tiles(hw, sized, operand, &matrix).expect("read in its tiles");
     PackedTensor::new(
         PlainTensor::new(bound(values.handle, matrix), WORD),
         scales,
         global,
         scheme,
-        operand,
+        K,
+        Some(tiles),
         sized,
     )
 }

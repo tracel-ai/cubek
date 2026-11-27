@@ -70,6 +70,7 @@ impl MatmulDequantizeBinding {
             .or_broken(ADMITTED_PLAN_RUNS)?;
         let packed = packed.bind(
             &launcher,
+            operand,
             width,
             BlockScales::Fields,
             OuterScale::Kept,
