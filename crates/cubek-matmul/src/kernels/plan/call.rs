@@ -1,4 +1,4 @@
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::tensor::{PlainTensor, StoredRead, StoredTensor};
 use crate::kernels::{MatmulTuneKey, Product, create_key};
 use cubecl::CubeTuneId;
 use cubecl::client::Client;
@@ -54,9 +54,12 @@ impl MatmulCall {
         if self.destination.is_some() {
             return self;
         }
-        let elem = match (&self.lhs.tensor, &self.rhs.tensor) {
-            (StoredTensor::Plain(lhs), StoredTensor::Plain(_)) => lhs.elem,
-            _ => self.out,
+        let float = [&self.lhs.tensor, &self.rhs.tensor]
+            .iter()
+            .all(|input| input.read() == StoredRead::Float);
+        let elem = match float {
+            true => self.lhs.tensor.values().elem,
+            false => self.out,
         };
         let (handle, _) = PlainTensor::empty(&self.client, self.product_shape().into(), elem);
         self.destination = Some(handle);

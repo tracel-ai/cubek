@@ -2,7 +2,7 @@
 //! caller that measures the routines lists and launches it.
 
 use crate::kernels::plan::{Decoded, MatmulCall};
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::tensor::{PlainTensor, StoredRead};
 use crate::kernels::{
     CubeShuffleMatmulRoutineSettings, CubeStagedAsyncCopyMatmulRoutineSettings,
     CubeStagedMatmulRoutineSettings, CubeStagedTmaFillerMatmulRoutineSettings,
@@ -166,7 +166,7 @@ impl<R: Routine + Copy> MatmulPackedCandidate<R> {
     where
         R: MatmulRoutine<M, SM>,
     {
-        if matches!(call.lhs.tensor, StoredTensor::Plain(_)) {
+        if call.lhs.tensor.read() == StoredRead::Float {
             return Err("the lhs is float: the candidate reading it as stored serves it".into());
         }
         let lhs = Decoded

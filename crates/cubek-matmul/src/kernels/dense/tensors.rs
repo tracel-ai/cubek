@@ -1,6 +1,6 @@
 use super::counters::ZeroedCounters;
 use crate::kernels::tensor::{
-    PACKED_STACK_UNREAD, PackedTensor, PlainTensor, ScaledTensor, StoredTensor,
+    PACKED_STACK_UNREAD, PackedTensor, PlainTensor, ScaledTensor, StoredRead, StoredTensor,
 };
 use crate::kernels::{
     MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulIndex,
@@ -653,11 +653,9 @@ impl MatmulTensors {
 
     /// The rows of `lhs`, `k` deep, its leading dims merged into them.
     fn rows_of(lhs: &StoredTensor, k: usize) -> usize {
-        match lhs {
-            StoredTensor::Plain(_) | StoredTensor::Scaled(_) => {
-                lhs.values().shape().num_elements() / k.max(1)
-            }
-            StoredTensor::Packed(lhs) => lhs.extent(M),
+        match lhs.read().sums_values() {
+            true => lhs.values().shape().num_elements() / k.max(1),
+            false => lhs.extent([M, K], M),
         }
     }
 
@@ -665,10 +663,10 @@ impl MatmulTensors {
     /// neither input names one, the element their words unpack into
     /// ([`PACKED`](MatmulRoutineProblem::PACKED)).
     pub(super) fn packed_output(lhs: &StoredTensor, rhs: &StoredTensor) -> ElemType {
-        match (lhs, rhs) {
-            (StoredTensor::Plain(input), _) | (_, StoredTensor::Plain(input)) => input.elem,
-            _ => MatmulRoutineProblem::PACKED,
-        }
+        [lhs, rhs]
+            .into_iter()
+            .find(|input| input.read() == StoredRead::Float)
+            .map_or(MatmulRoutineProblem::PACKED, |input| input.values().elem)
     }
 
     /// `lhs` against the float `rhs`, holding the rows as `rows_kind` says, the output allocated
@@ -759,9 +757,9 @@ impl MatmulTensors {
         rhs: StoredTensor,
     ) -> Result<(StoredTensor, StoredTensor, Vec<usize>), Decline> {
         let (lhs, rhs, k) = Self::stored_inputs(client, lhs, rhs)?;
-        let mut shape = match &lhs {
-            StoredTensor::Plain(_) | StoredTensor::Scaled(_) => lhs.values().logical_shape(),
-            StoredTensor::Packed(lhs) => vec![lhs.extent(M), k],
+        let mut shape = match lhs.read().sums_values() {
+            true => lhs.values().logical_shape(),
+            false => vec![lhs.extent([M, K], M), k],
         };
         *shape.last_mut().expect("the lhs has a rank") = rhs.extent([K, N], N);
         Ok((lhs, rhs, shape))
@@ -780,12 +778,10 @@ impl MatmulTensors {
         rhs: StoredTensor,
     ) -> Result<(StoredTensor, StoredTensor, usize), Decline> {
         let k = rhs.extent([K, N], K);
-        let block = match (&rhs, &lhs) {
-            (StoredTensor::Packed(packed), _) | (_, StoredTensor::Packed(packed)) => {
-                packed.operand().grouping(K, k)
-            }
-            _ => return Err(MATMUL_SCALED_BESIDE_FLOAT),
+        let Some(packing) = rhs.packing().or_else(|| lhs.packing()) else {
+            return Err(MATMUL_SCALED_BESIDE_FLOAT);
         };
+        let block = packing.operand.grouping(K, k);
         Ok((
             Self::stored_beside_packed(client, lhs, [M, K], k, block)?,
             Self::stored_beside_packed(client, rhs, [K, N], k, block)?,
@@ -986,11 +982,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     fn decoded_element(&self) -> ElemType {
         [&self.lhs, &self.rhs]
             .into_iter()
-            .find_map(|input| match input {
-                StoredTensor::Plain(tensor) => Some(tensor.elem),
-                StoredTensor::Scaled(tensor) => Some(tensor.values.elem),
-                StoredTensor::Packed(_) => None,
-            })
+            .find(|input| input.read().sums_values())
+            .map(|input| input.values().elem)
             .unwrap_or_else(|| self.problem().elements.out)
     }
 
@@ -1003,24 +996,16 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             },
             (lhs, rhs) => {
                 let k = rhs.extent([K, N], K);
-                let packing = |operand: &StoredTensor| match operand {
-                    StoredTensor::Plain(_) | StoredTensor::Scaled(_) => None,
-                    StoredTensor::Packed(operand) => Some(operand.packing()),
-                };
                 let packings = MatmulOperands {
-                    lhs: packing(lhs),
-                    rhs: packing(rhs),
+                    lhs: lhs.packing(),
+                    rhs: rhs.packing(),
                     out: None,
-                };
-                let stored_tile = |operand: &StoredTensor| match operand {
-                    StoredTensor::Plain(_) | StoredTensor::Scaled(_) => None,
-                    StoredTensor::Packed(operand) => operand.stored_tile(),
                 };
                 // A float input is read at its own element, whatever the output is written in: an
                 // f16 activation into an f32 output is still an f16 activation.
-                let element = |operand: &StoredTensor| match operand {
-                    StoredTensor::Plain(_) | StoredTensor::Scaled(_) => operand.values().elem,
-                    StoredTensor::Packed(_) => MatmulRoutineProblem::PACKED,
+                let element = |operand: &StoredTensor| match operand.read().sums_values() {
+                    true => operand.values().elem,
+                    false => MatmulRoutineProblem::PACKED,
                 };
                 let out = self.out.element(lhs, rhs);
                 let packed = MatmulRoutineProblem::packed(
@@ -1030,20 +1015,22 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     out,
                     packings,
                 );
-                let input = |operand: &StoredTensor, stated: StoredInput| match operand {
-                    StoredTensor::Plain(_) | StoredTensor::Scaled(_) => {
-                        StoredInput::plain(operand.values().elem)
-                    }
-                    StoredTensor::Packed(_) => stated,
+                let input = |operand: &StoredTensor, stated: StoredInput| match operand
+                    .read()
+                    .sums_values()
+                {
+                    true => StoredInput::plain(operand.values().elem),
+                    false => stated,
                 };
                 // A float input stored in tiles is read in the pieces it is stored in.
-                let alignment =
-                    |operand: &StoredTensor, dense: ElemAlignment| match packing(operand).is_none()
-                        && operand.values().is_tiled()
-                    {
-                        true => operand.values().elem_alignment(),
-                        false => dense,
-                    };
+                let alignment = |operand: &StoredTensor, dense: ElemAlignment| match operand
+                    .packing()
+                    .is_none()
+                    && operand.values().is_tiled()
+                {
+                    true => operand.values().elem_alignment(),
+                    false => dense,
+                };
                 let alignments = MatmulOperands {
                     lhs: alignment(lhs, packed.elem_alignments.lhs),
                     rhs: alignment(rhs, packed.elem_alignments.rhs),
@@ -1054,8 +1041,8 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                     elem_alignments: alignments,
                     buffer_alignments: alignments,
                     stored_tiles: MatmulOperands {
-                        lhs: stored_tile(lhs),
-                        rhs: stored_tile(rhs),
+                        lhs: lhs.stored_tile(),
+                        rhs: rhs.stored_tile(),
                         out: None,
                     },
                     elements: MatmulOperands {

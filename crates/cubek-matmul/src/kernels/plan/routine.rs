@@ -1,7 +1,7 @@
 use super::MatmulCall;
 use crate::kernels::MatmulRoutine;
 use crate::kernels::MatmulTensors;
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::tensor::{PlainTensor, StoredRead};
 use core::marker::PhantomData;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
@@ -46,10 +46,7 @@ impl<R: MatmulRoutine<M, SM>, M: MatmulMicrokernel, SM> RoutinePlan<R, M, SM> {
     fn launch_allocating(&self, call: &MatmulCall) -> Result<TensorHandle, Decline> {
         let (hw, client) = (&call.hw, &call.client);
         let (lhs, rhs) = (call.lhs.tensor.clone(), call.rhs.tensor.clone());
-        let float = matches!(
-            (&lhs, &rhs),
-            (StoredTensor::Plain(_), StoredTensor::Plain(_))
-        );
+        let float = lhs.read() == StoredRead::Float && rhs.read() == StoredRead::Float;
         match (&self.settings, float) {
             (None, true) => self.routine.launch_first_served_on(hw, client, lhs, rhs),
             (None, false) => self

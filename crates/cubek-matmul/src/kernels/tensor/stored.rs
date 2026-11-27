@@ -8,6 +8,8 @@ use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::SmallVec;
 use cubecl::zspace::metadata::Metadata;
+use cubek_microkernel::matmul::MatmulStoredTile;
+use cubek_std::layout::stored::{Operand, Packing};
 
 /// A tensor as it is stored, which is how a kernel reads it: its values where they lie, or packed
 /// under its scales. Each binds as one tile, so a kernel reads whichever it is handed.
@@ -25,7 +27,54 @@ pub enum StoredTensor {
     Packed(PackedTensor),
 }
 
+/// How a kernel reads a [`StoredTensor`]: the one question every reader of one asks, answered by
+/// its scheme and where its values lie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredRead {
+    /// Its values as they are, under no scale.
+    Float,
+    /// 8-bit floats read as they are, under one level of scales constant along the contraction:
+    /// one scale for each position of this dimension, or one for the whole matrix. A product sums
+    /// the values as stored, and the scales come out of the sum.
+    ScalesAlong(Option<Dimension>),
+    /// Packed words under their scales, read as this operand states.
+    Blocks(Operand),
+}
+
+impl StoredRead {
+    /// Whether a product sums the values as they are stored: floats, and 8-bit floats whose scales
+    /// come out of the sum. Not packed words, which a product decodes first.
+    pub fn sums_values(&self) -> bool {
+        !matches!(self, Self::Blocks(_))
+    }
+}
+
 impl StoredTensor {
+    /// How a kernel reads it.
+    pub fn read(&self) -> StoredRead {
+        match self {
+            Self::Plain(_) => StoredRead::Float,
+            Self::Scaled(tensor) => StoredRead::ScalesAlong(tensor.scaled_along),
+            Self::Packed(tensor) => StoredRead::Blocks(tensor.operand()),
+        }
+    }
+
+    /// How its words are packed, where they are: `None` for values read as they are.
+    pub fn packing(&self) -> Option<Packing> {
+        match self {
+            Self::Plain(_) | Self::Scaled(_) => None,
+            Self::Packed(tensor) => Some(tensor.packing()),
+        }
+    }
+
+    /// The tile its packed words are stored in, where they lie in tiles.
+    pub fn stored_tile(&self) -> Option<MatmulStoredTile> {
+        match self {
+            Self::Plain(_) | Self::Scaled(_) => None,
+            Self::Packed(tensor) => tensor.stored_tile(),
+        }
+    }
+
     /// A quantized matrix over `dimensions`, in the order its shape states them, as a framework
     /// stores one: `values`, its buffer bound under its logical shape and strides, stored as
     /// `scheme` says, under its `scales` and, where `scheme` has a second level, its
