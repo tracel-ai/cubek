@@ -114,12 +114,6 @@ pub const MATMUL_GROUP_ENDS_NOT_ONE_PER_GROUP: Decline = Decline::Unserved {
     why: "grouped rows read one `u32` end per row group, in a table shaped as the entries",
 };
 
-/// A table whose row ends and index disagree: grouped rows without their ends, or ends under
-/// another index.
-pub const MATMUL_ENDS_UNMATCHED: Decline = Decline::Unserved {
-    why: "a table carries the ends of its row groups exactly where its index reads grouped rows",
-};
-
 /// Inputs of a product that are no two matrices sharing their contraction.
 pub const MATMUL_CONTRACTIONS_DISAGREE: Decline = Decline::Unserved {
     why: "a product's inputs are matrices sharing their contraction",
@@ -315,8 +309,8 @@ impl MatmulTensors {
     /// run of `K`, which no packed product reads. [`MATMUL_OUTPUT_UNREAD`] for an output of
     /// another shape or element, or stored in tiles. [`MATMUL_TABLE_NOT_U32`],
     /// [`MATMUL_STACK_NOT_THE_TABLES`], [`MATMUL_CONTRACTIONS_DISAGREE`],
-    /// [`MATMUL_ENDS_UNMATCHED`], [`MATMUL_GROUP_ENDS_NOT_ONE_PER_GROUP`] and, for grouped rows over an lhs
-    /// stored in tiles, [`MATMUL_GROUPED_ROWS_OVER_TILED_LHS`].
+    /// [`MATMUL_GROUP_ENDS_NOT_ONE_PER_GROUP`] and, for grouped rows over an lhs stored in tiles,
+    /// [`MATMUL_GROUPED_ROWS_OVER_TILED_LHS`].
     pub fn indexed(
         client: &Client,
         lhs: PlainTensor,
@@ -325,10 +319,15 @@ impl MatmulTensors {
         out: PlainTensor,
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Decline> {
-        if table.entries.elem != ElemType::UInt(UIntKind::U32) {
+        if table.entries().elem != ElemType::UInt(UIntKind::U32) {
             return Err(MATMUL_TABLE_NOT_U32);
         }
-        Self::admit_row_groups(&table)?;
+        if let MatmulIndexTable::GroupedRows {
+            entries, groups, ..
+        } = &table
+        {
+            Self::admit_group_ends(groups, entries)?;
+        }
         match rhs {
             StoredTensor::Plain(rhs) => {
                 Self::indexed_float(client, lhs, rhs, table, out, rows_kind)
@@ -492,25 +491,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
 }
 
 impl MatmulTensors {
-    /// Whether `table` carries the ends of its row groups exactly where its index reads grouped
-    /// rows, each end one `u32` per row group, as the entries are one slab.
+    /// Whether `groups` ends each row group in one `u32`, as `entries` is one slab.
     ///
     /// # Errors
     ///
-    /// [`MATMUL_ENDS_UNMATCHED`], [`MATMUL_TABLE_NOT_U32`] and [`MATMUL_GROUP_ENDS_NOT_ONE_PER_GROUP`].
-    fn admit_row_groups(table: &MatmulIndexTable) -> Result<(), Decline> {
-        match (table.index, &table.row_groups) {
-            (MatmulIndex::GroupedRows { .. }, Some(row_groups)) => {
-                Self::admit_group_ends(row_groups, &table.entries)
-            }
-            (MatmulIndex::GroupedRows { .. }, None) | (_, Some(_)) => Err(MATMUL_ENDS_UNMATCHED),
-            (_, None) => Ok(()),
-        }
-    }
-
-    /// [`admit_row_groups`](Self::admit_row_groups) of `row_groups`, beside `entries`.
-    fn admit_group_ends(row_groups: &RowGroups, entries: &PlainTensor) -> Result<(), Decline> {
-        let ends = &row_groups.ends;
+    /// [`MATMUL_TABLE_NOT_U32`] and [`MATMUL_GROUP_ENDS_NOT_ONE_PER_GROUP`].
+    fn admit_group_ends(groups: &RowGroups, entries: &PlainTensor) -> Result<(), Decline> {
+        let ends = &groups.ends;
         match (ends.elem, ends.shape() == entries.shape()) {
             (ElemType::UInt(UIntKind::U32), true) if entries.shape().rank() == 1 => Ok(()),
             (ElemType::UInt(UIntKind::U32), _) => Err(MATMUL_GROUP_ENDS_NOT_ONE_PER_GROUP),
@@ -528,11 +515,11 @@ impl MatmulTensors {
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Decline> {
         // Every check reads shapes alone, so they run before a self-aliasing operand is copied.
-        if table.row_groups.is_some() && lhs.is_tiled() {
+        if table.groups().is_some() && lhs.is_tiled() {
             return Err(MATMUL_GROUPED_ROWS_OVER_TILED_LHS);
         }
-        Self::admit_stack(&rhs, table.index)?;
-        let matrix_shape = Self::matrix_of(&rhs, table.index).shape();
+        Self::admit_stack(&rhs, table.index())?;
+        let matrix_shape = Self::matrix_of(&rhs, table.index()).shape();
         let out = Self::indexed_output(&lhs, matrix_shape[0], matrix_shape[1], &table, out)?;
         let (lhs, rhs) = MatmulInputs::new(client, lhs, rhs)?
             .addressable(client)
@@ -556,7 +543,7 @@ impl MatmulTensors {
         table: MatmulIndexTable,
         out: PlainTensor,
     ) -> Result<Self, Decline> {
-        let (MatmulIndex::Slab { slabs } | MatmulIndex::GroupedRows { slabs }) = table.index else {
+        let (MatmulIndex::Slab { slabs } | MatmulIndex::GroupedRows { slabs }) = table.index() else {
             return Err(PACKED_STACK_UNREAD);
         };
         if rhs.slabs() != Some(slabs) {
@@ -595,9 +582,9 @@ impl MatmulTensors {
         if rank < 2 || shape[rank - 1] != k {
             return Err(MATMUL_CONTRACTIONS_DISAGREE);
         }
-        let out_shape = match table.row_groups {
+        let out_shape = match table.groups() {
             Some(_) => Self::flat_output_shape(shape.as_slice(), n)?,
-            None => [table.entries.shape().as_slice(), &[shape[rank - 2], n]].concat(),
+            None => [table.entries().shape().as_slice(), &[shape[rank - 2], n]].concat(),
         };
         if out.shape().as_slice() != out_shape.as_slice() || out.elem != lhs.elem || out.is_tiled()
         {
@@ -1168,10 +1155,10 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ) -> MatmulRoutineProblem {
         let shape = lhs.values().shape();
         let rank = shape.rank();
-        let batches = table.entries.shape().to_vec();
+        let batches = table.entries().shape().to_vec();
         let count = |dims: &[usize]| dims.iter().product();
-        let problem = match &table.row_groups {
-            Some(row_groups) => problem.batched_by_row_groups(row_groups.max_rows, batches),
+        let problem = match table.groups() {
+            Some(groups) => problem.batched_by_row_groups(groups.max_rows, batches),
             None => MatmulRoutineProblem {
                 stated_rows: shape[rank - 2],
                 batches_held: MatmulOperands {
@@ -1184,7 +1171,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             },
         };
         MatmulRoutineProblem {
-            index: Some(table.index),
+            index: Some(table.index()),
             ..problem
         }
     }
@@ -1198,11 +1185,11 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         rhs: &PlainTensor,
         table: &MatmulIndexTable,
     ) -> MatmulRoutineProblem {
-        let rank = match table.row_groups {
+        let rank = match table.groups() {
             Some(_) => 2,
-            None => table.entries.shape().rank() + 2,
+            None => table.entries().shape().rank() + 2,
         };
-        let matrix = MatmulTensors::matrix_of(rhs, table.index);
+        let matrix = MatmulTensors::matrix_of(rhs, table.index());
         let problem = self
             .out
             .problem(&lhs.broadcast_to(rank), &matrix.broadcast_to(rank));
@@ -1211,9 +1198,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             MatmulLayout::Strided => Self::stacked_layout(&matrix),
             layout => layout,
         };
-        let problem = match &table.row_groups {
-            Some(row_groups) => {
-                problem.batched_by_row_groups(row_groups.max_rows, table.entries.shape().to_vec())
+        let problem = match table.groups() {
+            Some(groups) => {
+                problem.batched_by_row_groups(groups.max_rows, table.entries().shape().to_vec())
             }
             None => problem,
         };
@@ -1230,7 +1217,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 rhs: rhs_layout.buffer_alignment(shape, strides),
                 ..problem.buffer_alignments
             },
-            index: Some(table.index),
+            index: Some(table.index()),
             ..problem
         }
     }
@@ -1383,7 +1370,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// or a table's dims, which are the batches.
     fn batch_dimensions(&self) -> Vec<Dimension> {
         let dims = match &self.table {
-            Some(table) => table.entries.shape().rank(),
+            Some(table) => table.entries().shape().rank(),
             None => self.lhs.values().shape().rank() - 2,
         };
         MatmulRoutineProblem::batch_dimensions_of(dims)
@@ -1392,7 +1379,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// The batches a table's dims are, which a packed product keeps apart; none without a table.
     fn table_batches(&self) -> Vec<Dimension> {
         self.table.as_ref().map_or_else(Vec::new, |table| {
-            MatmulRoutineProblem::batch_dimensions_of(table.entries.shape().rank())
+            MatmulRoutineProblem::batch_dimensions_of(table.entries().shape().rank())
         })
     }
 
@@ -1664,7 +1651,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         let stack_dimensions = self
             .table
             .as_ref()
-            .and_then(|table| table.index.dimension())
+            .and_then(|table| table.index().dimension())
             .map(|(stacked, _)| [stacked, K, N]);
         let rhs_source = match &stack_dimensions {
             Some(dimensions) => {
@@ -1747,7 +1734,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         let flat = self
             .table
             .as_ref()
-            .is_some_and(|table| table.row_groups.is_some())
+            .is_some_and(|table| table.groups().is_some())
             && operand != MatmulOperand::Rhs;
         match flat {
             true => (Vec::new(), Some(tensor.shape()[0])),
@@ -2018,7 +2005,6 @@ struct TmaLanding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::MatmulIndex;
     use cubecl::ir::FloatKind;
     use cubecl::tile::layout::ElemAlignment;
     use cubek_std::layout::stored::Operand;
@@ -2084,19 +2070,15 @@ mod tests {
         PlainTensor::of_handle(TensorHandle::zeros(&client(), shape.to_vec(), element))
     }
 
-    /// What two batches of `lhs` against `rhs` decline, each batch reading its entry of `entries`
-    /// under `index`, into an output of two batches of one row of sixteen.
+    /// What two batches of `lhs` against `rhs` decline, each batch reading its entry of a table of
+    /// `entries` that `table` makes, into an output of two batches of one row of sixteen.
     fn declined_indexed(
         lhs: &[usize],
         rhs: &[usize],
-        index: MatmulIndex,
+        table: fn(PlainTensor) -> MatmulIndexTable,
         entries: ElemType,
     ) -> Option<Decline> {
-        let table = MatmulIndexTable {
-            index,
-            entries: zeros(&[2], entries),
-            row_groups: None,
-        };
+        let table = table(zeros(&[2], entries));
         MatmulTensors::indexed(
             &client(),
             zeros(lhs, F32),
@@ -2108,39 +2090,42 @@ mod tests {
         .err()
     }
 
-    const FOUR_SLABS: MatmulIndex = MatmulIndex::Slab { slabs: 4 };
+    /// A table naming slabs of a stack of four.
+    fn four_slabs(entries: PlainTensor) -> MatmulIndexTable {
+        MatmulIndexTable::Slab { slabs: 4, entries }
+    }
 
     #[test]
     fn a_float_table_declines() {
-        let declined = declined_indexed(&[2, 1, 8], &[4, 8, 16], FOUR_SLABS, F32);
+        let declined = declined_indexed(&[2, 1, 8], &[4, 8, 16], four_slabs, F32);
 
         assert_eq!(declined, Some(MATMUL_TABLE_NOT_U32));
     }
 
     #[test]
     fn a_stack_of_other_slabs_than_its_table_declines() {
-        let declined = declined_indexed(&[2, 1, 8], &[3, 8, 16], FOUR_SLABS, U32);
+        let declined = declined_indexed(&[2, 1, 8], &[3, 8, 16], four_slabs, U32);
 
         assert_eq!(declined, Some(MATMUL_STACK_NOT_THE_TABLES));
     }
 
     #[test]
     fn runs_of_k_over_a_stack_decline() {
-        let declined = declined_indexed(&[2, 1, 8], &[4, 8, 16], MatmulIndex::RunOfK, U32);
+        let declined = declined_indexed(&[2, 1, 8], &[4, 8, 16], |ends| MatmulIndexTable::RunOfK { ends }, U32);
 
         assert_eq!(declined, Some(MATMUL_STACK_NOT_THE_TABLES));
     }
 
     #[test]
     fn an_indexed_lhs_of_another_contraction_declines() {
-        let declined = declined_indexed(&[2, 1, 6], &[4, 8, 16], FOUR_SLABS, U32);
+        let declined = declined_indexed(&[2, 1, 6], &[4, 8, 16], four_slabs, U32);
 
         assert_eq!(declined, Some(MATMUL_CONTRACTIONS_DISAGREE));
     }
 
     #[test]
     fn an_indexed_lhs_of_no_rows_declines() {
-        let declined = declined_indexed(&[8], &[4, 8, 16], FOUR_SLABS, U32);
+        let declined = declined_indexed(&[8], &[4, 8, 16], four_slabs, U32);
 
         assert_eq!(declined, Some(MATMUL_CONTRACTIONS_DISAGREE));
     }
@@ -2168,11 +2153,7 @@ mod tests {
 
     #[test]
     fn a_packed_stack_of_other_slabs_than_its_table_declines() {
-        let table = MatmulIndexTable {
-            index: FOUR_SLABS,
-            entries: zeros(&[2], U32),
-            row_groups: None,
-        };
+        let table = four_slabs(zeros(&[2], U32));
 
         let declined = MatmulTensors::indexed(
             &client(),

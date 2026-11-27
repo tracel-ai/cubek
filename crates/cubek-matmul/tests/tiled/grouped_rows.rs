@@ -4,7 +4,7 @@
 use core::num::NonZeroUsize;
 use cubecl::{client::Client, std::tensor::TensorHandle, tile::launch::Decline, zspace::Shape};
 use cubek_matmul::kernels::PlaneShuffleMatmulRoutine;
-use cubek_matmul::kernels::{MatmulIndex, MatmulIndexTable, MatmulRoutine, RowGroups};
+use cubek_matmul::kernels::{MatmulIndexTable, MatmulRoutine, RowGroups};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataVec, ScopeChecker, TestOutcome, ValidationResult};
@@ -83,13 +83,13 @@ impl RoutineProduct for GroupedRows {
                 &groups.iter().map(at).collect::<Vec<_>>(),
             )
         };
-        let table = MatmulIndexTable {
-            index: MatmulIndex::GroupedRows { slabs: SLABS },
+        let table = MatmulIndexTable::GroupedRows {
+            slabs: SLABS,
             entries: column(|group| group.2),
-            row_groups: Some(RowGroups {
+            groups: RowGroups {
                 ends: column(|group| group.1 as u32),
                 max_rows: NonZeroUsize::new(MAX_GROUP_ROWS).expect("row groups hold rows"),
-            }),
+            },
         };
         let (out, bound) = Self::poisoned(client, Shape::from(vec![ROWS, N]), lhs.elem);
         routine.launch_indexed_into(hw, client, lhs, rhs, table, bound, settings)?;
