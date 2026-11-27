@@ -1,4 +1,3 @@
-use crate::kernels::GroupedRows;
 use crate::kernels::tensor::PlainTensor;
 use core::num::NonZeroUsize;
 use std::borrow::Cow;
@@ -70,17 +69,23 @@ pub struct MatmulRoutineProblem {
 pub enum MatmulIndex {
     /// The slab of the rhs the batch contracts against: the rhs is a stack of `slabs` `[k, n]`
     /// slabs along [`EXPERT`], which no level cuts, and an entry past it names no slab, so its
-    /// batch sums nothing.
-    Slab { slabs: usize },
+    /// batch sums nothing. `rows` says how the lhs and the output hold each batch's rows.
+    Slab { slabs: usize, rows: SlabRows },
     /// Where the batch's run of `K` ends, both inputs holding every run end to end: the entry
     /// before it along the batches is where it starts. A run that ends before it starts sums
     /// nothing.
     RunOfK,
-    /// Row groups of a flat, unpadded lhs `[rows, k]`, each against the slab of a stack of `slabs` its
-    /// entry names, written to the same rows of a flat output `[rows, n]`. A second table holds
-    /// where each row group ends, the one before it along the batches being where it starts; rows past a
-    /// group's end read zero and are never written, and no row group is longer than the table's `max_rows`.
-    GroupedRows { slabs: usize },
+}
+
+/// How the lhs and the output of a [`MatmulIndex::Slab`] product hold each batch's rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SlabRows {
+    /// Each batch has rows of its own, `[batches.., rows, k]` and `[batches.., rows, n]`.
+    PerBatch,
+    /// The lhs and the output are flat, `[rows, k]` and `[rows, n]`, and a second table ends each
+    /// batch's group of rows, the end before it being where it starts. Rows past a group's end
+    /// read zero and are never written, and no group is longer than the table's `max_rows`.
+    Grouped,
 }
 
 impl MatmulIndex {
@@ -88,7 +93,7 @@ impl MatmulIndex {
     /// which an entry picks one of.
     pub fn dimension(self) -> Option<(Dimension, usize)> {
         match self {
-            Self::Slab { slabs } | Self::GroupedRows { slabs } => Some((EXPERT, slabs)),
+            Self::Slab { slabs, .. } => Some((EXPERT, slabs)),
             Self::RunOfK => None,
         }
     }
@@ -97,20 +102,26 @@ impl MatmulIndex {
     /// is the dimension the product's rows lie along.
     pub fn placements(self, rows: Dimension) -> MatmulOperands<Option<Indexing>> {
         match self {
-            Self::Slab { .. } => MatmulOperands {
+            Self::Slab {
+                rows: SlabRows::PerBatch,
+                ..
+            } => MatmulOperands {
                 lhs: None,
                 rhs: Some(Indexing::Coordinate(EXPERT)),
                 out: None,
+            },
+            Self::Slab {
+                rows: SlabRows::Grouped,
+                ..
+            } => MatmulOperands {
+                lhs: Some(Indexing::Run(rows)),
+                rhs: Some(Indexing::Coordinate(EXPERT)),
+                out: Some(Indexing::Run(rows)),
             },
             Self::RunOfK => MatmulOperands {
                 lhs: Some(Indexing::Run(K)),
                 rhs: Some(Indexing::Run(K)),
                 out: None,
-            },
-            Self::GroupedRows { .. } => MatmulOperands {
-                lhs: Some(Indexing::Run(rows)),
-                rhs: Some(Indexing::Coordinate(EXPERT)),
-                out: Some(Indexing::Run(rows)),
             },
         }
     }
@@ -524,12 +535,12 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// This problem of flat rows restated as `row_groups` batches of `max_rows` rows, each a row group of
-    /// the lhs and of the output ([`MatmulIndex::GroupedRows`]).
-    pub fn batched_by_row_groups(self, max_rows: NonZeroUsize, row_groups: Vec<usize>) -> Self {
-        let held = row_groups.iter().product();
+    /// This problem of flat rows restated as `batches` of `max_rows` rows, each a group of rows of
+    /// the lhs and of the output ([`SlabRows::Grouped`]).
+    pub fn batched_by_groups(self, max_rows: NonZeroUsize, batches: Vec<usize>) -> Self {
+        let held = batches.iter().product();
         Self {
-            batches: row_groups,
+            batches,
             stated_rows: max_rows.get(),
             batches_held: MatmulOperands {
                 lhs: held,
@@ -549,10 +560,17 @@ impl MatmulRoutineProblem {
         }
     }
 
-    /// The rows a table ends row groups of ([`MatmulIndex::GroupedRows`]), which no level cuts.
-    pub fn grouped_rows(&self) -> Option<GroupedRows> {
-        matches!(self.index, Some(MatmulIndex::GroupedRows { .. }))
-            .then(|| GroupedRows::new(self.dimensions().m))
+    /// The dimension the rows lie along where a table ends groups of them
+    /// ([`SlabRows::Grouped`]), which no level cuts.
+    pub fn grouped_rows(&self) -> Option<Dimension> {
+        matches!(
+            self.index,
+            Some(MatmulIndex::Slab {
+                rows: SlabRows::Grouped,
+                ..
+            })
+        )
+        .then(|| self.dimensions().m)
     }
 
     /// How the table places each operand, none for one that reads no table.
@@ -613,6 +631,34 @@ impl EstimatedProblem for MatmulRoutineProblem {
 /// routines read.
 pub const MATMUL_PACKED_UNREAD: Decline = Decline::Unserved {
     why: "this routine reads float operands; a packed one runs on the packed routines",
+};
+
+/// What a routine whose planes cut the rows declines: grouped rows, which no level cuts.
+pub const MATMUL_GROUPED_ROWS_UNREAD: Decline = Decline::Unserved {
+    why: "this routine's planes cut the rows, which a table ending row groups places whole",
+};
+
+/// What a launch declines whatever the device: a cube's box holding other rows than a row group,
+/// which no level cuts.
+pub const MATMUL_BOX_OTHER_THAN_ROW_GROUP: Decline = Decline::Unserved {
+    why: "a cube's box holds exactly `max_rows` rows, one row group, which no level cuts",
+};
+
+/// What a launch declines whatever the device: grouped rows under a swizzled cube order, which
+/// has no cut rows to put back.
+pub const MATMUL_GROUPED_ROWS_SWIZZLED: Decline = Decline::Unserved {
+    why: "grouped rows are not cut among the cubes, so a swizzled cube order has nothing to permute",
+};
+
+/// What a launch declines whatever the device: grouped rows over an lhs stored in tiles, which a
+/// row group is not placed over.
+pub const MATMUL_GROUPED_ROWS_OVER_TILED_LHS: Decline = Decline::Unserved {
+    why: "grouped rows are read in rows, which an lhs stored in tiles is not",
+};
+
+/// What a launch declines whatever the device: grouped rows written anywhere but a buffer.
+pub const MATMUL_GROUPED_ROWS_BUFFER_ONLY: Decline = Decline::Unserved {
+    why: "grouped rows are written into a buffer, which masks their end; a sink or an accumulating destination cannot",
 };
 
 /// What a routine whose kernel walks no indexed input declines: a product whose inputs read a

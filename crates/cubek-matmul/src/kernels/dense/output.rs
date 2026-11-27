@@ -2,10 +2,8 @@ use crate::kernels::MatmulRoutineProblem;
 use crate::kernels::MatmulTensors;
 use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::ir::ElemType;
-use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::tile::launch::{Destination, DestinationLaunch, Output, OutputArgs};
-use cubecl::tile::{Geometry, Partitioning, Tile, TileTensorLaunch};
+use cubecl::tile::Geometry;
 use cubek_microkernel::matmul::MatmulDestination;
 
 /// An output buffer, in the operands' element: the tensor the launch hands back where it
@@ -63,28 +61,5 @@ impl MatmulOutput for Geometry {
 
     fn element(&self, lhs: &StoredTensor, rhs: &StoredTensor) -> ElemType {
         MatmulTensors::packed_output(lhs, rhs)
-    }
-}
-
-/// An output buffer served where its table places it, so grouped rows stop at each row group's end
-/// ([`MatmulIndex::GroupedRows`](crate::kernels::MatmulIndex::GroupedRows)); an output no table
-/// places is the buffer as it lies.
-pub struct TableStored;
-
-#[cube]
-impl Destination for TableStored {
-    type Arg<E: Numeric> = Output<'static, E>;
-    type Served<E: Numeric> = Tile;
-
-    fn serve<E: Numeric, V: Size>(arg: &mut Self::Arg<E>, partitioning: &Partitioning) -> Tile {
-        arg.tile_mut(partitioning)
-    }
-}
-
-impl DestinationLaunch for TableStored {
-    type Operand = TileTensorLaunch;
-
-    fn arg<E: Numeric>(operand: TileTensorLaunch) -> OutputArgs<'static, E> {
-        OutputArgs::Tensor(operand)
     }
 }

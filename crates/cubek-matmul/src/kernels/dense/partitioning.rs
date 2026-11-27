@@ -1,7 +1,7 @@
-use crate::kernels::GroupedRows;
+use crate::kernels::{MATMUL_BOX_OTHER_THAN_ROW_GROUP, MATMUL_GROUPED_ROWS_SWIZZLED};
 use cubecl::tile::launch::Decline;
 use cubecl::tile::{
-    Dimension, Partitioning, Space, TileSpec,
+    Dimension, Levels, Partitioning, Space, TileSpec,
     space::{ComputeScope, Coverage, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::cube::MatmulCubeSpace;
@@ -36,7 +36,7 @@ pub struct MatmulPartitioning {
     rows_kind: MatmulRowsKind,
     dimensions_kind: MatmulDimensionsKind,
     /// Where a table ends row groups, whose end masks a write.
-    grouped_rows: Option<GroupedRows>,
+    grouped: Option<Dimension>,
 }
 
 impl MatmulPartitioning {
@@ -55,14 +55,14 @@ impl MatmulPartitioning {
             batch_dimensions,
             rows_kind,
             dimensions_kind,
-            grouped_rows: None,
+            grouped: None,
         }
     }
 
-    /// This placement of rows a table ends row groups of.
-    pub fn with_grouped_rows(self, grouped_rows: GroupedRows) -> Self {
+    /// This placement, its rows along `rows` grouped by a table, which no level cuts.
+    pub fn with_grouped(self, rows: Dimension) -> Self {
         Self {
-            grouped_rows: Some(grouped_rows),
+            grouped: Some(rows),
             ..self
         }
     }
@@ -122,7 +122,7 @@ impl MatmulPartitioning {
             MatmulDimensionsKind::Plain => self.dynamic_plain(compiled),
             MatmulDimensionsKind::BlockSplit => {
                 let rows_free = self.rows_kind.dynamic_dimensions().contains(&M)
-                    && self.grouped_rows.is_none()
+                    && self.grouped.is_none()
                     && self.partitioning.space().extent(MB) == 1
                     && !compiled.contains(&MI);
                 rows_free.then_some(MI).into_iter().collect()
@@ -257,12 +257,35 @@ impl MatmulPartitioning {
     /// Whether the tiles overhang the output: a tile the output's edge cuts short, or a row group a
     /// table ends inside it, which a write that cannot be masked would reach past.
     pub fn overhangs_output(&self) -> bool {
-        self.grouped_rows.is_some()
+        self.grouped.is_some()
             || self
                 .dimensions_kind
                 .output_dimensions()
                 .into_iter()
                 .any(|dimension| self.overhangs(dimension))
+    }
+
+    /// Checks that, where a table groups the rows, one cube's box holds a row group: the levels
+    /// `inside` the cubes hold every row of the box, since the stage is sized from the box while
+    /// the planes walk what they hold, and the cubes take the boxes in rows.
+    ///
+    /// # Errors
+    ///
+    /// [`MATMUL_GROUPED_ROWS_SWIZZLED`] and [`MATMUL_BOX_OTHER_THAN_ROW_GROUP`].
+    pub fn check_groups_boxed(&self, inside: &Levels) -> Result<(), Decline> {
+        let Some(rows) = self.grouped else {
+            return Ok(());
+        };
+        if !matches!(self.cube_order().canonicalize(), CubeOrder::RowMajor) {
+            return Err(MATMUL_GROUPED_ROWS_SWIZZLED);
+        }
+        let held = inside.clone().cubes(&[rows]).build()[0]
+            .tile(rows)
+            .expect("a level naming the rows tiles them");
+        match held == self.space().extent(rows) {
+            true => Ok(()),
+            false => Err(MATMUL_BOX_OTHER_THAN_ROW_GROUP),
+        }
     }
 
     /// Checks that the engine masks `out`'s writes exactly where the tiles overhang it, which is
@@ -311,10 +334,7 @@ impl MatmulPartitioning {
             .iter()
             .chain(self.rows_kind.dynamic_dimensions())
             .copied()
-            .filter(|dimension| {
-                !compiled.contains(dimension)
-                    && Some(*dimension) != self.grouped_rows.map(GroupedRows::rows)
-            })
+            .filter(|dimension| !compiled.contains(dimension) && Some(*dimension) != self.grouped)
             .collect()
     }
 

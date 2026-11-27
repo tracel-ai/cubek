@@ -1,5 +1,7 @@
 use crate::kernels::MatmulPartitioning;
-use crate::kernels::{MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem};
+use crate::kernels::{
+    MATMUL_GROUPED_ROWS_BUFFER_ONLY, MATMUL_WHOLE_ROWS_RHS_LAYOUT_UNSUPPORTED, MatmulRoutineProblem,
+};
 use core::num::NonZeroUsize;
 use cubecl::tile::launch::Decline;
 use cubecl::tile::{
@@ -7,8 +9,8 @@ use cubecl::tile::{
     space::{ComputeScope, CubeOrder, PlaneOrder},
 };
 use cubek_microkernel::matmul::{
-    MatmulBlocks, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows, MatmulRowsKind,
-    MatmulWorkItem,
+    MatmulBlocks, MatmulDestination, MatmulLayout, MatmulOperands, MatmulReading, MatmulRows,
+    MatmulRowsKind, MatmulWorkItem,
 };
 use cubek_std::Hardware;
 use cubek_std::config::MatmulConfig;
@@ -89,8 +91,8 @@ impl<'a> MatmulView<'a> {
         {
             return Err(MATMUL_PACKED_BLOCKS_DISAGREE);
         }
-        if let Some(grouped_rows) = problem.grouped_rows() {
-            grouped_rows.check_destination(problem.destination)?;
+        if problem.grouped_rows().is_some() && problem.destination != MatmulDestination::Buffer {
+            return Err(MATMUL_GROUPED_ROWS_BUFFER_ONLY);
         }
         if rows_kind == MatmulRowsKind::Whole {
             if problem.layouts.rhs == MatmulLayout::Strided {
@@ -314,18 +316,20 @@ impl<'a> MatmulView<'a> {
         )
     }
 
-    /// `dimensions` without the rows a table ends row groups of, which no level cuts.
+    /// `dimensions` without the rows a table groups, which no level cuts.
     fn uncut(&self, dimensions: &[Dimension]) -> Vec<Dimension> {
-        match self.problem.grouped_rows() {
-            Some(grouped_rows) => grouped_rows.uncut(dimensions),
-            None => dimensions.to_vec(),
-        }
+        let grouped = self.problem.grouped_rows();
+        dimensions
+            .iter()
+            .copied()
+            .filter(|&dimension| Some(dimension) != grouped)
+            .collect()
     }
 
-    /// `partitioning` marked as placing grouped rows, where a table ends row groups.
+    /// `partitioning` marked as placing grouped rows, where a table groups them.
     fn finished(&self, partitioning: MatmulPartitioning) -> MatmulPartitioning {
         match self.problem.grouped_rows() {
-            Some(grouped_rows) => partitioning.with_grouped_rows(grouped_rows),
+            Some(rows) => partitioning.with_grouped(rows),
             None => partitioning,
         }
     }
@@ -466,8 +470,8 @@ impl RowsReading {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::MatmulIndex;
     use crate::kernels::{MatmulBatching, MatmulShape, OperandKey};
+    use crate::kernels::{MatmulIndex, SlabRows};
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_microkernel::matmul::{MatmulOperands, MatmulRows};
     use cubek_std::matmul_dimensions::{EXPERT, batch_dimension};
@@ -594,7 +598,10 @@ mod tests {
                 rhs: 1,
                 out: 15,
             },
-            index: Some(MatmulIndex::Slab { slabs: 4 }),
+            index: Some(MatmulIndex::Slab {
+                slabs: 4,
+                rows: SlabRows::PerBatch,
+            }),
             ..problem
         }
     }

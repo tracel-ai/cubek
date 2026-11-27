@@ -1,5 +1,5 @@
 use crate::kernels::tensor::{ELEMENT_NOT_ON_DEVICE, PlainTensor};
-use crate::kernels::{MATMUL_ELEMENT_UNVERIFIED, MatmulIndex};
+use crate::kernels::{MATMUL_ELEMENT_UNVERIFIED, MatmulIndex, SlabRows};
 use core::num::NonZeroUsize;
 use cubecl::client::Client;
 use cubecl::ir::{ElemType, FloatKind, IntKind};
@@ -68,18 +68,20 @@ impl MatmulInputs {
 /// A table a product's inputs read one entry of per batch, `u32` entries whose dims are the
 /// product's batches, and how they place the inputs.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per indexed launch, moved into it once and read there"
+)]
 pub enum MatmulIndexTable {
-    /// Each entry names the slab of a stack of `slabs` the batch reads ([`MatmulIndex::Slab`]).
-    Slab { slabs: usize, entries: PlainTensor },
-    /// Each entry is where the batch's run of `K` ends ([`MatmulIndex::RunOfK`]).
-    RunOfK { ends: PlainTensor },
-    /// Each entry names a slab, and `groups` where each batch's row group ends
-    /// ([`MatmulIndex::GroupedRows`]).
-    GroupedRows {
+    /// Each entry names the slab of a stack of `slabs` the batch reads, and `groups`, where the
+    /// table groups the rows, where each batch's rows end ([`MatmulIndex::Slab`]).
+    Slab {
         slabs: usize,
         entries: PlainTensor,
-        groups: Box<RowGroups>,
+        groups: Option<RowGroups>,
     },
+    /// Each entry is where the batch's run of `K` ends ([`MatmulIndex::RunOfK`]).
+    RunOfK { ends: PlainTensor },
 }
 
 /// Where each batch's row group ends, nondecreasing and at most the flat rows, the one before it
@@ -95,35 +97,38 @@ impl MatmulIndexTable {
     /// How the entries place the inputs.
     pub fn index(&self) -> MatmulIndex {
         match self {
-            Self::Slab { slabs, .. } => MatmulIndex::Slab { slabs: *slabs },
+            Self::Slab { slabs, groups, .. } => MatmulIndex::Slab {
+                slabs: *slabs,
+                rows: match groups {
+                    Some(_) => SlabRows::Grouped,
+                    None => SlabRows::PerBatch,
+                },
+            },
             Self::RunOfK { .. } => MatmulIndex::RunOfK,
-            Self::GroupedRows { slabs, .. } => MatmulIndex::GroupedRows { slabs: *slabs },
         }
     }
 
     /// The table read one entry of per batch.
     pub fn entries(&self) -> &PlainTensor {
         match self {
-            Self::Slab { entries, .. } | Self::GroupedRows { entries, .. } => entries,
+            Self::Slab { entries, .. } => entries,
             Self::RunOfK { ends } => ends,
         }
     }
 
-    /// The row groups, under [`MatmulIndex::GroupedRows`].
+    /// The row groups, where the table groups the rows.
     pub fn groups(&self) -> Option<&RowGroups> {
         match self {
-            Self::GroupedRows { groups, .. } => Some(groups.as_ref()),
-            Self::Slab { .. } | Self::RunOfK { .. } => None,
+            Self::Slab { groups, .. } => groups.as_ref(),
+            Self::RunOfK { .. } => None,
         }
     }
 
-    /// The buffer an operand placed by `indexing` reads: the ends for a row group, the
+    /// The buffer an operand placed by `indexing` reads: the ends for a group of rows, the
     /// entries for any other placement.
     pub fn read_by(&self, indexing: &Indexing) -> &PlainTensor {
-        match (self, indexing) {
-            (Self::GroupedRows { groups, .. }, Indexing::Run(rows)) if [M, MI].contains(rows) => {
-                &groups.ends
-            }
+        match (self.groups(), indexing) {
+            (Some(groups), Indexing::Run(rows)) if [M, MI].contains(rows) => &groups.ends,
             _ => self.entries(),
         }
     }

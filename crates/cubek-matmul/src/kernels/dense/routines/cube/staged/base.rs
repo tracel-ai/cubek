@@ -221,9 +221,7 @@ impl<'a> CubeStagedPlacement<'a> {
             cube_order,
             MatmulView::ONE_CUBE_A_BOX,
         );
-        if let Some(grouped_rows) = problem.grouped_rows() {
-            grouped_rows.check_placed(&inside, &partitioning)?;
-        }
+        partitioning.check_groups_boxed(&inside)?;
         // Only a block-split space has `KB` and `KI` to ask about: a float product's has `K`, and
         // masks its reads past it.
         let past_k = || {

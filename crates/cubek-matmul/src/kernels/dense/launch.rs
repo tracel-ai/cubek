@@ -10,11 +10,12 @@ use cubek_std::Hardware;
 
 use crate::kernels::{
     MATMUL_TENSORS_READ_FOR_OTHER_ROWS, MatmulBlueprint, MatmulIndexTable, MatmulOutput,
-    MatmulRoutineProblem, MatmulTensors, TableStored,
+    MatmulRoutineProblem, MatmulTensors,
 };
 use cubecl::tile::{
     Geometry, Launcher, TileTensorLaunch,
-    launch::{DestinationLaunch, SinkLaunch, Unbound},
+    kind::Write,
+    launch::{Buffered, DestinationLaunch, SinkLaunch, Unbound},
 };
 use cubek_std::routine::{Grid, Routine};
 
@@ -99,9 +100,9 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
         }
         let binding = tensors
             .bind(&blueprint, &grid)?
-            .try_map_out(|out| tensors.output_through_table(out))?;
+            .map_out(|out| (out, Write::Replace));
         let extras = self.bind_extras(tensors, &binding.launcher, &blueprint)?;
-        self.dispatch::<TableStored, _>(tensors, binding, extras, blueprint, grid);
+        self.dispatch::<Buffered, _>(tensors, binding, extras, blueprint, grid);
         Ok(())
     }
 
@@ -174,9 +175,9 @@ pub trait MatmulRoutine<M: MatmulMicrokernel, SM = ()>:
     /// `lhs · rhs` on `client`'s device, every batch reading its entry of `table`, written into
     /// `out`, `[batches.., rows, n]`, which the caller allocated as its product lies, prepared for
     /// `hw` at `settings` ([`MatmulTensors::indexed`]). Under
-    /// [`MatmulIndex::GroupedRows`](crate::kernels::MatmulIndex::GroupedRows) the lhs and `out`
-    /// are the flat `[rows, k]` and `[rows, n]`, and every row group must be at most the table's
-    /// `max_rows` rows, or its later output rows are left unwritten.
+    /// [`SlabRows::Grouped`](crate::kernels::SlabRows::Grouped) the lhs and `out` are the flat
+    /// `[rows, k]` and `[rows, n]`, and every row group must be at most the table's `max_rows`
+    /// rows, or its later output rows are left unwritten.
     ///
     /// # Errors
     ///

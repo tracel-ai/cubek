@@ -26,23 +26,6 @@ impl<Out, Lhs, Rhs> MatmulBinding<Out, Lhs, Rhs> {
             out: f(self.out),
         }
     }
-
-    /// [`map_out`](Self::map_out) where the mapping may decline.
-    ///
-    /// # Errors
-    ///
-    /// Why `f` declines.
-    pub fn try_map_out<T>(
-        self,
-        f: impl FnOnce(Out) -> Result<T, Decline>,
-    ) -> Result<MatmulBinding<T, Lhs, Rhs>, Decline> {
-        Ok(MatmulBinding {
-            launcher: self.launcher,
-            lhs: self.lhs,
-            rhs: self.rhs,
-            out: f(self.out)?,
-        })
-    }
 }
 
 /// A packed matrix and the float one it decodes into, bound under one launcher. Not `Debug`:

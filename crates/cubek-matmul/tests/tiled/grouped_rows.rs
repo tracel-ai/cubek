@@ -100,10 +100,10 @@ impl RoutineProduct for GroupedRows {
                 &groups.iter().map(at).collect::<Vec<_>>(),
             )
         };
-        let table = MatmulIndexTable::GroupedRows {
+        let table = MatmulIndexTable::Slab {
             slabs: SLABS,
             entries: column(|group| group.2),
-            groups: Box::new(RowGroups {
+            groups: Some(RowGroups {
                 ends: column(|group| group.1 as u32),
                 max_rows: NonZeroUsize::new(self.max_rows).expect("row groups hold rows"),
             }),
