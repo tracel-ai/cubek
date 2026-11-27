@@ -87,16 +87,6 @@ pub const MATMUL_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
     why: "the microkernel matmul takes f32, f16, bf16 and i32 operands of one element",
 };
 
-/// What a routed or grouped product declines before preparing anything: a float operand stored
-/// in tiles that its routines would read in rows, a slab at a time. That is either operand of a
-/// K-grouped product, the rows or a float stack of an M-grouped one, and a routed product's float
-/// stack; a routed lhs is laid back in rows instead. A packed stack may lie in tiles
-/// ([`PackedTensor::stacked`]).
-pub const MATMUL_SLABS_TAKE_NO_FLOAT_TILES: Decline = Decline::Unserved {
-    why: "the routed and grouped products read float operands in rows, slab by slab; store \
-              them untiled",
-};
-
 /// A table of entries other than `u32`.
 pub const MATMUL_TABLE_NOT_U32: Decline = Decline::Unserved {
     why: "a product reading a table reads u32 entries",
