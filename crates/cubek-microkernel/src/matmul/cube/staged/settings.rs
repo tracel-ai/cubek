@@ -74,6 +74,21 @@ impl CubeStagedMicrokernelSettings {
         ..Self::DEFAULT
     };
 
+    /// [`SPLIT_ALONG_K`](Self::SPLIT_ALONG_K) on two planes along `n`, each tile split by two
+    /// planes along `K`: two tiles a cube, for a problem with a few more output tiles.
+    pub const SPLIT_ALONG_K_ON_TWO_ALONG_N: Self = Self {
+        planes: MatmulPlaneLayout::new(1, 2),
+        planes_along_k: NonZeroUsize::new(2).unwrap(),
+        ..Self::SPLIT_ALONG_K
+    };
+
+    /// [`SPLIT_ALONG_K`](Self::SPLIT_ALONG_K) on a tile one fragment high: the rows a decode step
+    /// holds, which a taller tile would mostly leave masked.
+    pub const SPLIT_ALONG_K_ONE_FRAGMENT_HIGH: Self = Self {
+        plane: PlaneFragmentMicrokernelSettings::grid(1, 4, 1),
+        ..Self::SPLIT_ALONG_K
+    };
+
     /// A box against a packed input, counted in steps of the packed product
     /// ([`BaseRegion`](cubecl::tile::BaseRegion)): `steps` of `M` and `N` on each
     /// plane, on `planes` (along `m` by along `n`), holding its stages in `ring`. A step's box is

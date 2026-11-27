@@ -39,7 +39,7 @@ pub fn cube_staged_conv_kernel<EA: Numeric, EL: Numeric, EO: Float>(
         );
         // Merged partials reach the output through the whole cube, so a plane reads back cells it
         // may not have written.
-        if comptime!(walk.drain == CubeStagedDrain::Merged) {
+        if comptime!(walk.drain != CubeStagedDrain::EachPlane) {
             BiasTile::wait_for_cube(&bias);
         }
         for plane in cube.planes() {

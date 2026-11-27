@@ -18,9 +18,8 @@ mod base {
     use cubecl::tile::{Scratch, StageStorage};
     use cubek_microkernel::matmul::MatmulMicrokernel;
     use cubek_microkernel::matmul::cube::{
-        CubeStagedDelivery, CubeStagedFillingDecline, CubeStagedMicrokernel,
-        CubeStagedMicrokernelSettings, CubeStagedStore, CubeStagedTmaDecline,
-        CubeStagedTmaStoreDecline,
+        CubeStagedDelivery, CubeStagedFillingDecline, CubeStagedMicrokernelSettings,
+        CubeStagedStore, CubeStagedTmaDecline, CubeStagedTmaStoreDecline,
     };
     use cubek_microkernel::matmul::plane::{
         PlaneFragmentInstruction, PlaneFragmentMicrokernel, PlaneFragmentMicrokernelSettings,
@@ -1384,19 +1383,14 @@ mod base {
         ));
     }
 
-    /// The planes meet in shared memory, so a device that cannot add an `f32` there declines,
-    /// whatever instruction it offers.
+    /// The planes meet in slots of shared memory they each replace, so a device that cannot add
+    /// an `f32` there still prepares them.
     #[test]
-    fn declines_without_an_atomic_add_in_shared_memory() {
+    fn a_split_along_k_prepares_without_an_atomic_add_in_shared_memory() {
         let mut hw = offering(devices::strix_halo());
         devices::features(&mut hw).types.shared_atomic.clear();
         let settings = CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K;
-        assert_eq!(
-            CubeStagedMatmulRoutine::prepare(&hw, &problem(), &settings).err(),
-            Some(Decline::Unserved {
-                why: CubeStagedMicrokernel::DECLINE
-            })
-        );
+        assert!(CubeStagedMatmulRoutine::prepare(&hw, &problem(), &settings).is_ok());
     }
 
     /// A fragment cannot add into the accumulator through its own store, so a setting asking for
@@ -1409,24 +1403,40 @@ mod base {
             .expect("the routine runs here");
         assert_eq!(blueprint.microkernel.scratch, Scratch::OneTile);
     }
-    /// Planes split along `K` read their stages as wide as the device reads `f16`; the output is
-    /// copied out of the atomics one element at a time.
+    /// The widths of the lhs, rhs and output `settings` bind for a dense `f16` product of `m`,
+    /// `n` and `k` on `hw`.
+    fn widths(
+        hw: &Hardware,
+        settings: CubeStagedMatmulRoutineSettings,
+        (m, n, k): (usize, usize, usize),
+    ) -> (usize, usize, usize) {
+        let problem = MatmulRoutineProblem::dense(m, n, k, F16);
+        let (blueprint, _) = CubeStagedMatmulRoutine::prepare(hw, &problem, &settings)
+            .expect("the settings prepare here");
+        let widths = blueprint.widths;
+        (widths.lhs, widths.rhs, widths.out)
+    }
+
+    /// The output is copied out of the planes' slots as wide as an unsplit box writes it.
     #[test]
-    fn a_split_along_k_writes_its_output_one_element_at_a_time() {
+    fn a_split_along_k_writes_its_output_as_wide_as_an_unsplit_box() {
+        let hw = offering(devices::strix_halo());
+        let shape = (256, 512, 64);
+        let split = CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K;
+        let unsplit = CubeStagedMatmulRoutineSettings::DEFAULT;
+        assert_eq!(widths(&hw, split, shape).2, widths(&hw, unsplit, shape).2);
+    }
+
+    /// Planes split along `K` read their stages as wide as the device reads `f16`, even where a
+    /// `k` the stages overhang masks the lhs, whose contiguous dimension it is.
+    #[test]
+    fn a_split_along_k_reads_its_inputs_as_wide_as_the_device_reads_f16() {
         let hw = offering(devices::strix_halo());
         let widest = hw.vector_ceiling(F16);
-        let widths = |m, n, k| {
-            let problem = MatmulRoutineProblem::dense(m, n, k, F16);
-            let settings = CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K;
-            let (blueprint, _) = CubeStagedMatmulRoutine::prepare(&hw, &problem, &settings)
-                .expect("the default prepares here");
-            let widths = blueprint.widths;
-            (widths.lhs, widths.rhs, widths.out)
-        };
-        assert_eq!(widths(256, 512, 64), (widest, widest, 1));
-        // A `k` the stages overhang masks the lhs, whose contiguous dimension it is, at a width
-        // that divides it.
-        assert_eq!(widths(256, 512, 72), (widest, widest, 1));
+        let split = CubeStagedMatmulRoutineSettings::SPLIT_ALONG_K;
+        let (lhs, rhs, _) = widths(&hw, split, (256, 512, 64));
+        assert_eq!((lhs, rhs), (widest, widest));
+        assert_eq!(widths(&hw, split, (256, 512, 72)).0, widest);
     }
 
     /// Two NVFP4 inputs the block-scaled instruction reads as stored are estimated like any staged
