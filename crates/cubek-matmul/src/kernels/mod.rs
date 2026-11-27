@@ -3,14 +3,13 @@
 //! reads each operand as it is stored ([`tensor`]).
 //!
 //! There is one product. A product whose inputs read a table, one entry a batch ([`MatmulIndex`]),
-//! is the dense product over those batches, its stack read slab by slab ([`indexed`]).
+//! is the dense product over those batches.
 //!
 //! cubek measures nothing. A caller that does races the settings of the routines it lists, float
 //! ([`MatmulRoutineCandidate`]) and packed ([`MatmulPackedCandidate`]), on a call keyed by
 //! [`MatmulTuneKey`], names a winner by its [`MatmulRoutineSettings`], and hands [`select`] the
 //! plan of the race a product goes to ([`MatmulAutotune`](select::MatmulAutotune)).
 
-pub mod indexed;
 pub mod plan;
 pub mod select;
 pub mod tensor;
