@@ -598,9 +598,10 @@ impl CubeStagedMicrokernel {
     /// instruction's stages keep beside them, or the `window` each contracting plane's fragments
     /// bounce through once the stages are freed, whichever is larger; where its planes merge along
     /// `K`, the accumulator over the box, one sum a cell; and where the TMA engine stores the box,
-    /// the box it is drained into. The accumulator is opened before the walk, so it sits beside
-    /// the stages; so is the box, except beside planes set aside to fill, which open it once the
-    /// walk has freed the ring.
+    /// the box it is drained into. The accumulator is opened once the walk has freed the ring,
+    /// beside the windows, in the stages' bytes. The box is opened before the walk, so it sits
+    /// beside the stages, except beside planes set aside to fill, which open it once the walk has
+    /// freed the ring.
     pub fn shared_memory(
         &self,
         hw: &Hardware,
@@ -642,16 +643,17 @@ impl CubeStagedMicrokernel {
             stage.bytes(hw, self.staged, item.elements, storage, self.plane.orders) + scales,
         );
         // The box planes set aside to fill drain into opens once the walk has freed its stages;
-        // otherwise it sits beside them, as the accumulator does.
+        // otherwise it sits beside them.
         let held = |staged: usize| match self.fill.filling_planes > 0 {
-            true => staged.max(stored) + accumulator,
-            false => staged + accumulator + stored,
+            true => staged.max(stored),
+            false => staged + stored,
         };
-        // The windows open once the walk has freed its stages, and take their bytes
-        // (`CubeStagedWalk::drain_sum`), or open beside them where the stages stay live.
+        // The windows and the accumulator open once the walk has freed its stages, and take
+        // their bytes (`CubeStagedWalk::drain_sum`, `cube_staged_microkernel`), or open beside
+        // them where the stages stay live.
         CubeStagedSharedMemory {
-            windows_in_stages: held(stages.max(windows)),
-            windows_beside_stages: held(stages + windows),
+            windows_in_stages: held(stages.max(windows + accumulator)),
+            windows_beside_stages: held(stages + windows + accumulator),
         }
     }
 

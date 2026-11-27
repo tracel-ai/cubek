@@ -297,7 +297,8 @@ impl CubeStagedWalk {
 /// planes drain into and the whole cube, filling planes too, hands over, a storing destination
 /// bulk-storing it ([`CubeStagedStore::Tma`]), the box taking the ring's bytes beside planes set
 /// aside to fill; or, splitting `K`, one accumulator in shared memory each plane adds its partial
-/// into, atomically, handed over once the cube has synchronized ([`CubeStagedDrain::Merged`]).
+/// into, atomically, handed over once the cube has synchronized ([`CubeStagedDrain::Merged`]),
+/// opened once the walk has freed the ring, in its bytes.
 /// Planes merging along `K` are never stored by the TMA engine.
 #[cube]
 pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
@@ -320,9 +321,10 @@ pub fn cube_staged_microkernel<EA: Numeric, D: ServedDestination>(
             CubeStagedWalk::store_by_tma::<EA, D>(run, a, b, dest, cube, walk, storage);
         }
         (CubeStagedDrain::Merged, _) => {
+            // Opened once the walk has freed its stages, the accumulator takes their bytes.
+            let sum = CubeStagedWalk::sum_planes::<EA>(run, a, b, &c, walk, storage);
             let accumulator = c.smem_accumulation::<EA>();
-            CubeStagedWalk::sum_planes::<EA>(run, a, b, &accumulator.sink, walk, storage)
-                .drained_into(&accumulator.sink);
+            sum.drained_into(&accumulator.sink);
 
             sync_cube();
 
