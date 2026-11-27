@@ -7,7 +7,7 @@ use crate::kernels::{
     RmsNormRoutineCandidate,
 };
 use cubecl::tile::launch::{Decline, SinkLaunchVisitor};
-use cubek_matmul::kernels::tensor::LhsOutput;
+use cubek_matmul::kernels::tensor::StoredTensor;
 
 /// A routine of this kind at one of its settings, as a value: what a fused tail's election hashes,
 /// and what names a candidate ([`RmsNormCandidate::settings`]).
@@ -51,7 +51,7 @@ impl RmsNormCandidate {
     ///
     /// Why the routine cannot write the norm into `out` at its setting — the plane routine, whose
     /// planes no cube holds, never encodes — or why `out` cannot hold it.
-    pub fn launch_into(&self, call: &RmsNormCall, out: LhsOutput) -> Result<(), Decline> {
+    pub fn launch_into(&self, call: &RmsNormCall, out: StoredTensor) -> Result<(), Decline> {
         match self {
             Self::CubeGroups(candidate) => candidate.launch_into(call, out),
             Self::Plane(candidate) => candidate.launch_into(call, out),

@@ -19,21 +19,11 @@ pub const PACKED_ROWS_UNSERVED: Decline = Decline::Unserved {
     why: "a packed output is a product's [M, K] lhs, the producer's rows by their width",
 };
 
-/// A matrix of a producer's rows, allocated by the caller, laid out the way a product reads its
-/// lhs: packed under block scales along each row ([`PackedRows`]), or float in the product's
-/// storage tiles ([`TiledRows`]). It is one type because a family's tuned launch writes either one
-/// into its output the same way: the routine its autotune elected, or its floor.
-#[derive(Debug, Clone)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "one per launch, moved into it once and read there"
-)]
-pub enum LhsOutput {
-    /// A packed `[rows, width]` matrix under one level of block scales along each row.
-    Packed(StoredTensor),
-    /// A float `[rows, width]` matrix stored in tiles.
-    Tiled(PlainTensor),
-}
+/// What a producer declines of an output of 8-bit floats under scales constant along the
+/// contraction: no producer writes one yet.
+pub const SCALED_ROWS_UNSERVED: Decline = Decline::Unserved {
+    why: "no producer writes its rows as 8-bit floats under scales constant along the contraction",
+};
 
 /// A float `[rows, width]` matrix stored in tiles that a producer writes its rows into, as a
 /// product reads an operand stored in tiles: allocated by the caller, and bound over the rows and

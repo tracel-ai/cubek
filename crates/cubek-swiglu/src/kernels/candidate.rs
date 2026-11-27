@@ -8,7 +8,7 @@ use crate::kernels::{
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
 use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch};
-use cubek_matmul::kernels::tensor::{LhsOutput, PlainTensor, StoredTensor};
+use cubek_matmul::kernels::tensor::{PlainTensor, SCALED_ROWS_UNSERVED, StoredRead, StoredTensor};
 use cubek_microkernel::row_store::Encoded;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, PreparedLaunches, Routine};
@@ -126,15 +126,17 @@ where
     }
 
     /// The gate of [`launch`](Self::launch), written into `out` as a product reads its lhs:
-    /// [`launch_packed`](Self::launch_packed) or [`launch_tiled`](Self::launch_tiled).
+    /// [`launch_packed`](Self::launch_packed) for packed words, [`launch_tiled`](Self::launch_tiled)
+    /// for floats.
     ///
     /// # Errors
     ///
     /// Those of the launch `out` names.
-    pub fn launch_into(&self, call: &SwigluCall, out: LhsOutput) -> Result<(), Decline> {
-        match out {
-            LhsOutput::Packed(out) => self.launch_packed(call, out),
-            LhsOutput::Tiled(out) => self.launch_tiled(call, out),
+    pub fn launch_into(&self, call: &SwigluCall, out: StoredTensor) -> Result<(), Decline> {
+        match out.read() {
+            StoredRead::Blocks(_) => self.launch_packed(call, out),
+            StoredRead::Float => self.launch_tiled(call, out.into_values()),
+            StoredRead::ScalesAlong(_) => Err(SCALED_ROWS_UNSERVED),
         }
     }
 
