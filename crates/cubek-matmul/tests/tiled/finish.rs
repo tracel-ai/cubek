@@ -111,8 +111,8 @@ where
     let out = zeros(shape![rows, 32], StridedLayout::RowMajor);
     let tensors = MatmulTensors::writing_into(
         &client,
-        StoredTensor::Plain(PlainTensor::of_handle(lhs)),
-        StoredTensor::Plain(PlainTensor::of_handle(rhs)),
+        StoredTensor::plain(PlainTensor::of_handle(lhs)),
+        StoredTensor::plain(PlainTensor::of_handle(rhs)),
         PlainTensor::of_handle(out),
         R::ROWS_KIND,
     )

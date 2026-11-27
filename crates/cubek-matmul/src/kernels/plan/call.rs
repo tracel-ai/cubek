@@ -106,7 +106,7 @@ impl MatmulCallInput {
     pub fn plain(tensor: PlainTensor) -> Self {
         Self {
             meta: tensor.meta(),
-            tensor: StoredTensor::Plain(tensor),
+            tensor: StoredTensor::plain(tensor),
             framework_dequantize: None,
         }
     }

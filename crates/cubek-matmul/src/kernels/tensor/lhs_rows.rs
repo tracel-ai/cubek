@@ -1,4 +1,4 @@
-use crate::kernels::tensor::{PackedTensor, Placement, PlainTensor};
+use crate::kernels::tensor::{Placement, PlainTensor, StoredTensor};
 use cubecl::ir::ElemType;
 use cubecl::tile::launch::{Bound, Decline, Delivery};
 use cubecl::tile::{Launcher, TileTensorLaunch};
@@ -30,7 +30,7 @@ pub const PACKED_ROWS_UNSERVED: Decline = Decline::Unserved {
 )]
 pub enum LhsOutput {
     /// A packed `[rows, width]` matrix under one level of block scales along each row.
-    Packed(PackedTensor),
+    Packed(StoredTensor),
     /// A float `[rows, width]` matrix stored in tiles.
     Tiled(PlainTensor),
 }
@@ -91,7 +91,7 @@ impl From<&TiledRows> for Placement {
 /// its packed lhs.
 #[derive(Debug, Clone)]
 pub struct PackedRows {
-    packed: PackedTensor,
+    packed: StoredTensor,
     store: RowStore,
 }
 
@@ -104,8 +104,11 @@ impl PackedRows {
     /// [`PACKED_ROWS_UNSERVED`] for an `out` not over `[M, K]` or not `rows` by `width`, and
     /// [`PACKED_STORE_UNSERVED`](cubek_microkernel::row_store::PACKED_STORE_UNSERVED) for a scheme
     /// the store does not write.
-    pub fn new(out: PackedTensor, rows: usize, width: usize) -> Result<Self, Decline> {
-        if out.dimensions() != [M, K] || [out.extent(M), out.extent(K)] != [rows, width] {
+    pub fn new(out: StoredTensor, rows: usize, width: usize) -> Result<Self, Decline> {
+        if out.packing().is_none()
+            || out.dimensions() != [M, K]
+            || [out.matrix_extent(M), out.matrix_extent(K)] != [rows, width]
+        {
             return Err(PACKED_ROWS_UNSERVED);
         }
         let store = RowStore::packed(&out.scheme(), width)?;
@@ -123,7 +126,7 @@ impl PackedRows {
     ///
     /// # Errors
     ///
-    /// As [`PackedTensor::bind`](crate::kernels::tensor::PackedTensor::bind).
+    /// As [`StoredTensor::bind`](crate::kernels::tensor::StoredTensor::bind).
     pub fn bind(&self, launcher: &Launcher, width: usize) -> Result<TileTensorLaunch, Decline> {
         self.packed.bind(
             launcher,
@@ -145,13 +148,13 @@ mod tests {
     use cubek_test_utils::client;
 
     /// A packed NVFP4 matrix over `dimensions`, sixteen rows of sixty-four values along `K`.
-    fn packed(dimensions: [cubecl::tile::Dimension; 2]) -> PackedTensor {
+    fn packed(dimensions: [cubecl::tile::Dimension; 2]) -> StoredTensor {
         let scheme = nvfp4_scheme();
         let u32 = ElemType::UInt(UIntKind::U32);
         let zeros = |shape: [usize; 2]| {
             PlainTensor::of_handle(TensorHandle::zeros(&client(), shape.to_vec(), u32))
         };
-        PackedTensor::new(
+        StoredTensor::new(
             zeros([16, 64 / scheme.num_quants()]),
             // A scale byte a block of sixteen values, four a word.
             zeros([16, 1]),

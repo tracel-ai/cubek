@@ -75,8 +75,8 @@ impl RoutineProduct for Product {
         routine.launch_into(
             hw,
             client,
-            StoredTensor::Plain(PlainTensor::of_handle(lhs)),
-            StoredTensor::Plain(PlainTensor::of_handle(rhs)),
+            StoredTensor::plain(PlainTensor::of_handle(lhs)),
+            StoredTensor::plain(PlainTensor::of_handle(rhs)),
             PlainTensor::of_handle(out.clone()),
             settings,
         )?;

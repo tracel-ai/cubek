@@ -12,7 +12,7 @@ use cubecl::tile::{
 };
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{
-    ELEMENT_NOT_ON_DEVICE, PackedRows, PackedTensor, Placement, PlainTensor, TiledRows,
+    ELEMENT_NOT_ON_DEVICE, PackedRows, Placement, PlainTensor, StoredTensor, TiledRows,
 };
 use cubek_microkernel::rms_norm::{B, D, R, RmsNormOperands};
 use cubek_microkernel::row_store::RowStore;
@@ -423,7 +423,7 @@ impl RmsNormTensors<PackedRows> {
         client: &Client,
         input: PlainTensor,
         weight: PlainTensor,
-        out: PackedTensor,
+        out: StoredTensor,
     ) -> Result<Self, Decline> {
         let admitted = RmsNormInputs::admit(client, &input, &weight, true)?;
         let out = PackedRows::new(out, admitted.rows, admitted.dim)?;

@@ -9,7 +9,7 @@ use crate::kernels::{
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
 use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch};
-use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
+use cubek_matmul::kernels::tensor::{LhsOutput, PlainTensor, StoredTensor};
 use cubek_microkernel::row_store::Encoded;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, PreparedLaunches, Routine};
@@ -125,7 +125,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot encode the norm at this setting, or why `out` cannot hold it.
-    pub fn launch_packed(&self, call: &RmsNormCall, out: PackedTensor) -> Result<(), Decline> {
+    pub fn launch_packed(&self, call: &RmsNormCall, out: StoredTensor) -> Result<(), Decline> {
         let tensors =
             RmsNormTensors::packed(&call.client, call.input.clone(), call.weight.clone(), out)?;
         self.launch_on::<Encoded, _>(call, &tensors, |blueprint, grid| {

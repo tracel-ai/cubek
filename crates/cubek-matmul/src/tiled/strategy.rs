@@ -92,8 +92,8 @@ impl Strategy {
         };
         let hw = Hardware::from_client(client);
         let (lhs, rhs) = (
-            StoredTensor::Plain(PlainTensor::new(lhs, lhs_elem)),
-            StoredTensor::Plain(PlainTensor::new(rhs, rhs_elem)),
+            StoredTensor::plain(PlainTensor::new(lhs, lhs_elem)),
+            StoredTensor::plain(PlainTensor::new(rhs, rhs_elem)),
         );
         let out = PlainTensor::new(out, dtypes.acc_global);
         match self {

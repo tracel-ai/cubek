@@ -16,7 +16,7 @@ use cubecl::zspace::Shape;
 use cubecl::zspace::metadata::Metadata;
 use cubecl_common::{e4m3, ue8m0};
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
-use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
+use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::tiled::storage;
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
@@ -98,7 +98,7 @@ pub(crate) struct PackedSlabsSpec {
 /// each, as a checkpoint stores them whichever dimension the rows are.
 pub(crate) struct PackedSlabs {
     spec: PackedSlabsSpec,
-    tensor: PackedTensor,
+    tensor: StoredTensor,
     host: HostSlabs,
 }
 
@@ -136,7 +136,7 @@ impl PackedSlabs {
         let outer_scales =
             outer_scales(&scheme, rows).map(|scales| upload(client, &[scales.len(), 1], &scales));
         let across = across(spec.operand);
-        let tensor = PackedTensor::new(
+        let tensor = StoredTensor::new(
             PlainTensor::of_handle(quantized.handle),
             PlainTensor::of_handle(scales),
             outer_scales,
@@ -155,12 +155,12 @@ impl PackedSlabs {
     }
 
     /// The matrix whole, its slabs not yet read as such.
-    pub(crate) fn matrix(&self) -> PackedTensor {
+    pub(crate) fn matrix(&self) -> StoredTensor {
         self.tensor.clone()
     }
 
     /// The matrix whole, its words lying as `words` says.
-    pub(crate) fn stored(&self, client: &Client, words: PackedWords) -> PackedTensor {
+    pub(crate) fn stored(&self, client: &Client, words: PackedWords) -> StoredTensor {
         match words {
             PackedWords::InRows => self.matrix(),
             PackedWords::InTiles(words, tile) => self.in_tile_order(client, words, tile),
@@ -169,11 +169,9 @@ impl PackedSlabs {
 
     /// The matrix read as the stack of its slabs.
     pub(crate) fn stack(&self) -> StoredTensor {
-        let stack = self
-            .matrix()
+        self.matrix()
             .stacked(self.spec.slabs, across(self.spec.operand))
-            .expect("whole slabs of whole blocks");
-        StoredTensor::Packed(stack)
+            .expect("whole slabs of whole blocks")
     }
 
     /// The matrix whole, an NVFP4 `[k, rows]` weight, its values and block scales laid in tile
@@ -189,7 +187,7 @@ impl PackedSlabs {
         client: &Client,
         words: TileWords,
         tile: (usize, usize),
-    ) -> PackedTensor {
+    ) -> StoredTensor {
         assert!(
             matches!(self.spec.format, PackedFormat::Nvfp4)
                 && self.spec.operand == MatmulOperand::Rhs,
@@ -213,7 +211,7 @@ impl PackedSlabs {
                 .unwrap_or_else(|err| panic!("the stack lays out in tile order: {err:?}"))
         };
         // The values as the kernel names them, `[n, k/block, block]`, counted in values.
-        let packed = self.tensor.words();
+        let packed = self.tensor.values();
         let row_words = packed.binding.strides[0];
         let values = packed.bound_as(Metadata::new(
             [n, blocks, order.block()],
@@ -246,9 +244,9 @@ impl PackedSlabs {
             .viewed(tile_order::matrix_values(&values.metadata));
         let sized = [(K, k), (N, n)];
         let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("NVFP4 blocks k");
-        let tiles = PackedTensor::read_in_tiles(&hw, sized, operand, &words.meta())
+        let tiles = StoredTensor::read_in_tiles(&hw, sized, operand, &words.meta())
             .expect("a matrix laid in tile order reads in its tiles");
-        PackedTensor::new(
+        StoredTensor::new(
             words,
             scales,
             self.tensor.scales().nth(1).cloned(),

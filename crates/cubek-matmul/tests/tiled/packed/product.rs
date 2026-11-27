@@ -11,7 +11,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::launch::Decline;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::MatmulRoutine;
-use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
+use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
 use cubek_std::matmul_dimensions::{K, N};
@@ -157,32 +157,30 @@ impl PackedProduct {
         };
         match stored {
             Stored::Bf16 => {
-                StoredTensor::Plain(upload(client, &dims, &Self::halves(dims[0] * dims[1])))
+                StoredTensor::plain(upload(client, &dims, &Self::halves(dims[0] * dims[1])))
             }
-            Stored::Packed { format, seed } => StoredTensor::Packed(
-                PackedSlabs::new(client, self.spec(operand, format, seed)).matrix(),
-            ),
+            Stored::Packed { format, seed } => {
+                PackedSlabs::new(client, self.spec(operand, format, seed)).matrix()
+            }
             Stored::PackedViewedTransposed { format, seed } => {
                 let matrix = PackedSlabs::new(client, self.spec(operand, format, seed)).matrix();
-                StoredTensor::Packed(Self::viewed_transposed(client, matrix, self.k))
+                Self::viewed_transposed(client, matrix, self.k)
             }
-            Stored::Fp8Rows { layout } => {
-                StoredTensor::Scaled(Fp8Rows::of(dims).stored(client, layout))
-            }
+            Stored::Fp8Rows { layout } => Fp8Rows::of(dims).stored(client, layout),
         }
     }
 
     /// `matrix`, `[n, k]` packed along `k`, as a framework's transpose restates it: bound as
     /// `[k, n]` under swapped strides, its blocks and words along its first dimension.
-    fn viewed_transposed(client: &Client, matrix: PackedTensor, k: usize) -> PackedTensor {
+    fn viewed_transposed(client: &Client, matrix: StoredTensor, k: usize) -> StoredTensor {
         let mut scheme = matrix.scheme();
         scheme.swap_block_dims(2, 0, 1);
         scheme.store = QuantStore::PackedU32(1);
-        let mut values = matrix.words().transposed().binding;
+        let mut values = matrix.values().transposed().binding;
         values.shape[0] = k;
         let mut scales = matrix.scales().cloned();
         let block_scales = scales.next().expect("block scales").transposed();
-        PackedTensor::of_quantized(client, values, scheme, block_scales, scales.next(), [K, N])
+        StoredTensor::of_quantized(client, values, scheme, block_scales, scales.next(), [K, N])
             .expect("a transposed view of a packed matrix reads as stored")
     }
 

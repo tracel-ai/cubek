@@ -6,7 +6,7 @@ use cubecl::quant::scheme::{QuantScheme, QuantStore};
 use cubecl::zspace::Tiling;
 use cubecl::zspace::metadata::Metadata;
 use cubecl_common::e4m3;
-use cubek_matmul::kernels::tensor::{PlainTensor, ScaledTensor};
+use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{CubeStagedMatmulRoutine, PlaneShuffleMatmulRoutine};
 use cubek_std::matmul_dimensions::{K, M};
 use cubek_test_utils::{ScopeChecker, TestOutcome, ValidationResult};
@@ -37,17 +37,18 @@ impl Fp8Rows {
     }
 
     /// The matrix as a kernel reads it, its values laid as `layout` says.
-    pub(crate) fn stored(&self, client: &Client, layout: Fp8Layout) -> ScaledTensor {
+    pub(crate) fn stored(&self, client: &Client, layout: Fp8Layout) -> StoredTensor {
         let values = match layout {
             Fp8Layout::Rows => upload(client, &[self.rows, self.k], &self.values()),
             Fp8Layout::Tiles => self.tiles(client),
         };
         let scales: Vec<f32> = (0..self.rows).map(Self::scale).collect();
-        ScaledTensor::of_quantized(
+        StoredTensor::of_quantized(
             client,
             values.binding,
             QuantScheme::fp8_per_row().with_store(QuantStore::Native),
             upload(client, &[self.rows, 1], &scales),
+            None,
             [M, K],
         )
         .expect("one scale a row over 8-bit floats")

@@ -17,7 +17,7 @@ use crate::tiled::ByRoutine;
 use crate::tiled::packed::{PackedFormat, PackedProduct, Stored};
 
 /// A packed matrix seen through a transposed view, as a framework hands a tied embedding to the
-/// vocabulary head: [`PackedTensor::of_quantized`](cubek_matmul::kernels::tensor::PackedTensor::of_quantized)
+/// vocabulary head: [`StoredTensor::of_quantized`](cubek_matmul::kernels::tensor::StoredTensor::of_quantized)
 /// reads it as the matrix it views, and the shuffle routines a decode step races answer its
 /// product. It refused the view once, its words not row-major under it, and the framework
 /// dequantized the whole head on every step.

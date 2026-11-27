@@ -1,6 +1,6 @@
 use super::{MatmulCall, MatmulCallInput};
 use crate::kernels::PlaneDequantizeMatmulRoutine;
-use crate::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
+use crate::kernels::tensor::{PlainTensor, StoredRead, StoredTensor};
 use cubecl::tile::launch::Decline;
 use cubek_std::matmul_dimensions::{K, M, N};
 use cubek_std::plan::{Declined, Step};
@@ -40,10 +40,12 @@ impl Decoded {
         call: &MatmulCall,
         input: &MatmulCallInput,
     ) -> Result<MatmulCallInput, Declined> {
-        match &input.tensor {
-            StoredTensor::Plain(_) => Ok(input.clone()),
-            StoredTensor::Scaled(_) => framework_dequantized(input).map_err(|why| why.to_string()),
-            StoredTensor::Packed(packed) => decoded(call, input, packed),
+        match input.tensor.read() {
+            StoredRead::Float => Ok(input.clone()),
+            StoredRead::ScalesAlong(_) => {
+                framework_dequantized(input).map_err(|why| why.to_string())
+            }
+            StoredRead::Blocks(_) => decoded(call, input, &input.tensor),
         }
         .map_err(|why| Declined {
             plan: self.name(),
@@ -71,9 +73,9 @@ impl Step<MatmulCall> for Decoded {
 
 impl Step<MatmulCall> for FrameworkDequantized {
     fn apply(&self, call: &MatmulCall) -> Result<MatmulCall, Declined> {
-        let dequantized = |input: &MatmulCallInput| match &input.tensor {
-            StoredTensor::Plain(_) => Ok(input.clone()),
-            StoredTensor::Scaled(_) | StoredTensor::Packed(_) => framework_dequantized(input)
+        let dequantized = |input: &MatmulCallInput| match input.tensor.read() {
+            StoredRead::Float => Ok(input.clone()),
+            StoredRead::ScalesAlong(_) | StoredRead::Blocks(_) => framework_dequantized(input)
                 .map_err(|why| Declined {
                     plan: self.name(),
                     why: why.to_string(),
@@ -96,12 +98,12 @@ impl Step<MatmulCall> for FrameworkDequantized {
 fn decoded(
     call: &MatmulCall,
     input: &MatmulCallInput,
-    packed: &PackedTensor,
+    packed: &StoredTensor,
 ) -> Result<MatmulCallInput, String> {
     match decode(call, packed) {
         Ok(decoded) => Ok(decoded),
         Err(why) if why.is_broken() => Err(why.to_string()),
-        Err(why) if packed.words().is_tiled() => Err(format!("{TILED_INPUT_UNDECODED}: {why}")),
+        Err(why) if packed.values().is_tiled() => Err(format!("{TILED_INPUT_UNDECODED}: {why}")),
         Err(_) => framework_dequantized(input).map_err(|why| why.to_string()),
     }
 }
@@ -110,7 +112,7 @@ fn decoded(
 ///
 /// The decode names a packed matrix's dimensions `K` and `N`: an `[m, k]` input's rows are its `N`,
 /// and the `[k, rows]` it writes is read back transposed.
-fn decode(call: &MatmulCall, packed: &PackedTensor) -> Result<MatmulCallInput, Decline> {
+fn decode(call: &MatmulCall, packed: &StoredTensor) -> Result<MatmulCallInput, Decline> {
     let matrix = packed.clone().renamed(M, N);
     let laid_along_k = matrix.dimensions()[0] == K;
     let handle = PlaneDequantizeMatmulRoutine.launch_on(

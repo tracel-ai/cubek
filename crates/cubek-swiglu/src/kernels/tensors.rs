@@ -9,7 +9,7 @@ use cubecl::tile::launch::Decline;
 use cubecl::tile::{Launcher, launch::Bound};
 use cubecl::zspace::metadata::Metadata;
 use cubek_matmul::kernels::tensor::{
-    ELEMENT_NOT_ON_DEVICE, PackedRows, PackedTensor, Placement, PlainTensor, TiledRows,
+    ELEMENT_NOT_ON_DEVICE, PackedRows, Placement, PlainTensor, StoredTensor, TiledRows,
 };
 use cubek_microkernel::row_store::RowStore;
 use cubek_microkernel::swiglu::{D, H, R, SwigluOperands};
@@ -170,7 +170,7 @@ impl SwigluTensors<PackedRows> {
     /// # Errors
     ///
     /// As [`SwigluTensors::new`], and what [`PackedRows::new`] declines of `out`.
-    pub fn packed(client: &Client, both: PlainTensor, out: PackedTensor) -> Result<Self, Decline> {
+    pub fn packed(client: &Client, both: PlainTensor, out: StoredTensor) -> Result<Self, Decline> {
         let shape = SwigluInput::admit(client, &both)?;
         let [rows, dim] = rows_and_dim(&shape);
         let out = PackedRows::new(out, rows, dim)?;

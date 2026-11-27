@@ -335,7 +335,7 @@ mod tests {
     /// Zeros of `shape` in `f32`.
     fn zeros(shape: &[usize]) -> StoredTensor {
         let element = ElemType::Float(FloatKind::F32);
-        StoredTensor::Plain(PlainTensor::of_handle(TensorHandle::zeros(
+        StoredTensor::plain(PlainTensor::of_handle(TensorHandle::zeros(
             &client(),
             shape.to_vec(),
             element,

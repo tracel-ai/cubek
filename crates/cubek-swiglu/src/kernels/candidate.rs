@@ -8,7 +8,7 @@ use crate::kernels::{
 use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Write;
 use cubecl::tile::launch::{Buffered, Decline, DestinationLaunch};
-use cubek_matmul::kernels::tensor::{LhsOutput, PackedTensor, PlainTensor};
+use cubek_matmul::kernels::tensor::{LhsOutput, PlainTensor, StoredTensor};
 use cubek_microkernel::row_store::Encoded;
 use cubek_std::Hardware;
 use cubek_std::routine::{Grid, PreparedLaunches, Routine};
@@ -120,7 +120,7 @@ where
     /// # Errors
     ///
     /// Why this device cannot encode the gate at this setting, or why `out` cannot hold it.
-    pub fn launch_packed(&self, call: &SwigluCall, out: PackedTensor) -> Result<(), Decline> {
+    pub fn launch_packed(&self, call: &SwigluCall, out: StoredTensor) -> Result<(), Decline> {
         let tensors = SwigluTensors::packed(&call.client, call.both.clone(), out)?;
         self.launch_on::<Encoded, _>(&tensors, |blueprint, grid| tensors.bind(blueprint, grid))
     }

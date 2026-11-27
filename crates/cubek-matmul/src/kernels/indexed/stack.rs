@@ -2,7 +2,7 @@
 //! products read it.
 
 use crate::kernels::MATMUL_SCALED_BESIDE_FLOAT;
-use crate::kernels::tensor::{PlainTensor, StoredTensor};
+use crate::kernels::tensor::{PlainTensor, StoredRead, StoredTensor};
 use cubecl::client::Client;
 use cubecl::tile::Dimension;
 use cubecl::tile::launch::Decline;
@@ -99,14 +99,12 @@ impl SlabDimension {
     ///
     /// What reading a packed stack slab by slab declines.
     pub fn read_slabs(self, stack: &StoredTensor, slabs: usize) -> Result<StoredTensor, Decline> {
-        match stack {
-            StoredTensor::Packed(packed) => Ok(StoredTensor::Packed(
-                packed.clone().stacked(slabs, self.dimension())?,
-            )),
-            StoredTensor::Scaled(_) => Err(MATMUL_SCALED_BESIDE_FLOAT),
-            StoredTensor::Plain(stack) => {
-                let view = SlabView::new(stack, slabs, self);
-                Ok(StoredTensor::Plain(view.slabs_of(stack)))
+        match stack.read() {
+            StoredRead::Blocks(_) => stack.clone().stacked(slabs, self.dimension()),
+            StoredRead::ScalesAlong(_) => Err(MATMUL_SCALED_BESIDE_FLOAT),
+            StoredRead::Float => {
+                let view = SlabView::new(stack.values(), slabs, self);
+                Ok(StoredTensor::plain(view.slabs_of(stack.values())))
             }
         }
     }

@@ -1,5 +1,5 @@
 use super::kernel::plane_dequantize_kernel;
-use crate::kernels::tensor::{PackedTensor, PlainTensor};
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
     MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED, MatmulBlueprint, MatmulDequantizeBinding, MatmulInputs,
     MatmulPartitioning, MatmulRoutineProblem, MatmulView, PlaneShuffleMatmulRoutineSettings,
@@ -68,25 +68,28 @@ impl PlaneDequantizeMatmulRoutine {
         &self,
         hw: &Hardware,
         client: &Client,
-        packed: PackedTensor,
+        packed: StoredTensor,
         element: ElemType,
         settings: &PlaneShuffleMatmulRoutineSettings,
     ) -> Result<TensorHandle, Decline> {
         if !MatmulInputs::FLOATS.contains(&element) {
             return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
         }
+        let Some(packing) = packed.packing() else {
+            return Err(MATMUL_PACKED_FLOAT_ELEMENT_UNVERIFIED);
+        };
         let problem = &MatmulRoutineProblem::packed(
             1,
-            packed.extent(N),
-            packed.extent(K),
+            packed.matrix_extent(N),
+            packed.matrix_extent(K),
             element,
             MatmulOperands {
-                rhs: Some(packed.packing()),
+                rhs: Some(packing),
                 ..MatmulOperands::all(None)
             },
         );
         let (blueprint, grid) = PlaneDequantizeMatmulRoutine::prepare(hw, problem, settings)?;
-        let lined = packed.packing().operand.lined();
+        let lined = packing.operand.lined();
         // Rows of the dimension the words do not run along, a line of the dimension they do in
         // each.
         let rows = match lined == K {

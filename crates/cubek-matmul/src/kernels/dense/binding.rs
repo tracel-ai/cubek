@@ -1,4 +1,4 @@
-use crate::kernels::tensor::{PackedTensor, PlainTensor};
+use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use cubecl::tile::launch::{Bound, Decline, Delivery};
 use cubecl::tile::{Launcher, TileTensorLaunch};
 use cubek_std::layout::stored::{BlockScales, OuterScale};
@@ -8,7 +8,7 @@ use cubek_std::routine::{ADMITTED_PLAN_RUNS, Breakable};
 /// The operands of one launch, bound under its launcher; `Out` is a buffer's [`Bound`] or a sink's
 /// `Unbound`. A float operand is one [`Bound`]; the dense product binds each input as one tile
 /// however it is stored, a packed one's words under its scales
-/// ([`PackedTensor::bind`](crate::kernels::tensor::PackedTensor::bind)); the NVFP4 product binds
+/// ([`StoredTensor::bind`](crate::kernels::tensor::StoredTensor::bind)); the NVFP4 product binds
 /// its words beside its scales. Not `Debug`: the tile DSL's `Launcher` is not.
 pub struct MatmulBinding<Out, Lhs = Bound, Rhs = Bound> {
     pub launcher: Launcher,
@@ -44,9 +44,9 @@ impl MatmulDequantizeBinding {
     ///
     /// # Errors
     ///
-    /// As [`PackedTensor::bind`].
+    /// As [`StoredTensor::bind`].
     pub fn new(
-        packed: &PackedTensor,
+        packed: &StoredTensor,
         into: &PlainTensor,
         launcher: Launcher,
         width: usize,
@@ -59,8 +59,8 @@ impl MatmulDequantizeBinding {
         };
         let (out, out_dimensions) = packed.restated(
             into,
-            (across, packed.extent(across)),
-            (lined, packed.extent(lined)),
+            (across, packed.matrix_extent(across)),
+            (lined, packed.matrix_extent(lined)),
         );
         let out = launcher
             .arg(out.binding, out.elem)

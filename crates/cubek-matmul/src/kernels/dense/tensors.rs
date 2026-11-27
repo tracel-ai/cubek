@@ -1,7 +1,5 @@
 use super::counters::ZeroedCounters;
-use crate::kernels::tensor::{
-    PACKED_STACK_UNREAD, PackedTensor, PlainTensor, ScaledTensor, StoredRead, StoredTensor,
-};
+use crate::kernels::tensor::{PACKED_STACK_UNREAD, PlainTensor, StoredRead, StoredTensor};
 use crate::kernels::{
     MATMUL_WHOLE_ROWS_WEIGHT_PER_BATCH, MatmulBinding, MatmulBlueprint, MatmulIndex,
     MatmulIndexTable, MatmulInputs, MatmulOutput, MatmulOutputBuffer, MatmulRoutineProblem,
@@ -91,7 +89,7 @@ pub const MATMUL_ELEMENT_UNVERIFIED: Decline = Decline::Unserved {
 /// in tiles that its routines would read in rows, a slab at a time. That is either operand of a
 /// K-grouped product, the rows or a float stack of an M-grouped one, and a routed product's float
 /// stack; a routed lhs is laid back in rows instead. A packed stack may lie in tiles
-/// ([`PackedTensor::stacked`]).
+/// ([`StoredTensor::stacked`]).
 pub const MATMUL_SLABS_TAKE_NO_FLOAT_TILES: Decline = Decline::Unserved {
     why: "the routed and grouped products read float operands in rows, slab by slab; store \
               them untiled",
@@ -212,7 +210,8 @@ impl MatmulTensors {
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Decline> {
         match (lhs, rhs) {
-            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
+            (lhs, rhs) if lhs.read() == StoredRead::Float && rhs.read() == StoredRead::Float => {
+                let (lhs, rhs) = (lhs.into_values(), rhs.into_values());
                 Self::float(client, lhs, rhs, rows_kind)
             }
             (lhs, rhs) => {
@@ -255,7 +254,10 @@ impl MatmulTensors {
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Decline> {
         let (lhs, rhs) = match (lhs, rhs) {
-            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => (lhs, rhs),
+            (lhs, rhs) if lhs.read() == StoredRead::Float && rhs.read() == StoredRead::Float => {
+                let (lhs, rhs) = (lhs.into_values(), rhs.into_values());
+                (lhs, rhs)
+            }
             (lhs, rhs) => return Self::packed_into(client, lhs, rhs, out),
         };
         // The output is checked off the shapes before a launch copies an operand.
@@ -277,8 +279,8 @@ impl MatmulTensors {
         let bound = operands.bound_out(&out);
         Ok(Self {
             client: client.clone(),
-            lhs: StoredTensor::Plain(operands.lhs),
-            rhs: StoredTensor::Plain(operands.rhs),
+            lhs: StoredTensor::plain(operands.lhs),
+            rhs: StoredTensor::plain(operands.rhs),
             out: MatmulOutputBuffer {
                 tensor: None,
                 bound,
@@ -294,7 +296,7 @@ impl MatmulTensors {
     /// float input's element, which the caller allocated as its product lies: a grouped one's slabs
     /// side by side, say. The lhs's batch dims broadcast against the table's. Under
     /// [`MatmulIndex::Slab`] the rhs is the stack: a float one `[slabs, k, n]`, read where it lies;
-    /// a packed one read as its slabs ([`PackedTensor::stacked`]), every row of a batch then held
+    /// a packed one read as its slabs ([`StoredTensor::stacked`]), every row of a batch then held
     /// whole.
     ///
     /// # Errors
@@ -315,12 +317,12 @@ impl MatmulTensors {
         if table.entries.elem != ElemType::UInt(UIntKind::U32) {
             return Err(MATMUL_TABLE_NOT_U32);
         }
-        match rhs {
-            StoredTensor::Plain(rhs) => {
-                Self::indexed_float(client, lhs, rhs, table, out, rows_kind)
+        match rhs.read() {
+            StoredRead::Float => {
+                Self::indexed_float(client, lhs, rhs.into_values(), table, out, rows_kind)
             }
-            StoredTensor::Scaled(_) => Err(MATMUL_SCALED_BESIDE_FLOAT),
-            StoredTensor::Packed(rhs) => Self::indexed_packed(client, lhs, rhs, table, out),
+            StoredRead::ScalesAlong(_) => Err(MATMUL_SCALED_BESIDE_FLOAT),
+            StoredRead::Blocks(_) => Self::indexed_packed(client, lhs, rhs, table, out),
         }
     }
 
@@ -369,7 +371,8 @@ impl MatmulTensors {
         grid: &Grid,
     ) -> Result<MatmulBinding<Bound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         match (&self.lhs, &self.rhs) {
-            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
+            (lhs, rhs) if lhs.read() == StoredRead::Float && rhs.read() == StoredRead::Float => {
+                let (lhs, rhs) = (lhs.values(), rhs.values());
                 self.bind_float(lhs, rhs, blueprint, grid)
             }
             _ => self.bind_packed(blueprint, grid),
@@ -392,7 +395,8 @@ impl MatmulTensors<Geometry> {
         rows_kind: MatmulRowsKind,
     ) -> Result<Self, Decline> {
         match (lhs, rhs) {
-            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
+            (lhs, rhs) if lhs.read() == StoredRead::Float && rhs.read() == StoredRead::Float => {
+                let (lhs, rhs) = (lhs.into_values(), rhs.into_values());
                 Self::float(client, lhs, rhs, rows_kind)
             }
             (lhs, rhs) => Self::packed(client, lhs, rhs),
@@ -412,7 +416,8 @@ impl MatmulTensors<Geometry> {
         grid: &Grid,
     ) -> Result<MatmulBinding<Unbound, TileTensorLaunch, TileTensorLaunch>, Decline> {
         match (&self.lhs, &self.rhs) {
-            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => {
+            (lhs, rhs) if lhs.read() == StoredRead::Float && rhs.read() == StoredRead::Float => {
+                let (lhs, rhs) = (lhs.values(), rhs.values());
                 self.bind_float(lhs, rhs, blueprint, grid)
             }
             _ => self.bind_packed(blueprint, grid),
@@ -487,8 +492,8 @@ impl MatmulTensors {
             .into_parts();
         Ok(Self {
             client: client.clone(),
-            lhs: StoredTensor::Plain(lhs),
-            rhs: StoredTensor::Plain(rhs),
+            lhs: StoredTensor::plain(lhs),
+            rhs: StoredTensor::plain(rhs),
             out,
             rows_kind,
             table: Some(table),
@@ -500,7 +505,7 @@ impl MatmulTensors {
     fn indexed_packed(
         client: &Client,
         lhs: PlainTensor,
-        rhs: PackedTensor,
+        rhs: StoredTensor,
         table: MatmulIndexTable,
         out: PlainTensor,
     ) -> Result<Self, Decline> {
@@ -510,13 +515,13 @@ impl MatmulTensors {
         if rhs.slabs() != Some(slabs) {
             return Err(MATMUL_STACK_NOT_THE_TABLES);
         }
-        let k = rhs.extent(K);
+        let k = rhs.matrix_extent(K);
         let lhs = Self::beside_packed(client, lhs, [M, K], k)?;
-        let out = Self::indexed_output(&lhs, k, rhs.extent(N), &table, out)?;
+        let out = Self::indexed_output(&lhs, k, rhs.matrix_extent(N), &table, out)?;
         Ok(Self {
             client: client.clone(),
-            lhs: StoredTensor::Plain(lhs),
-            rhs: StoredTensor::Packed(rhs),
+            lhs: StoredTensor::plain(lhs),
+            rhs,
             out,
             rows_kind: MatmulRowsKind::Whole,
             table: Some(table),
@@ -599,14 +604,13 @@ impl MatmulTensors {
         k: usize,
         block: Option<usize>,
     ) -> Result<StoredTensor, Decline> {
-        match operand {
-            StoredTensor::Plain(tensor) => {
-                Self::beside_packed(client, tensor, dimensions, k).map(StoredTensor::Plain)
+        match operand.read() {
+            StoredRead::Float => Self::beside_packed(client, operand.into_values(), dimensions, k)
+                .map(StoredTensor::plain),
+            StoredRead::ScalesAlong(_) => {
+                Self::scaled_beside_packed(client, operand, dimensions, k, block)
             }
-            StoredTensor::Scaled(tensor) => {
-                Self::scaled_beside_packed(client, tensor, dimensions, k, block)
-            }
-            StoredTensor::Packed(_) => Ok(operand),
+            StoredRead::Blocks(_) => Ok(operand),
         }
     }
 
@@ -626,16 +630,16 @@ impl MatmulTensors {
     /// Where `dimensions` lacks `K`, against its Assumption.
     fn scaled_beside_packed(
         client: &Client,
-        tensor: ScaledTensor,
+        tensor: StoredTensor,
         dimensions: [Dimension; 2],
         k: usize,
         block: Option<usize>,
     ) -> Result<StoredTensor, Decline> {
-        if !Self::contracts(&tensor.values.logical_shape(), dimensions, k) {
+        if !Self::contracts(&tensor.values().logical_shape(), dimensions, k) {
             return Err(MATMUL_CONTRACTIONS_DISAGREE);
         }
-        let values = tensor.values.readable_in_blocks(client, block);
-        Ok(StoredTensor::Scaled(ScaledTensor { values, ..tensor }))
+        let values = tensor.values().clone().readable_in_blocks(client, block);
+        Ok(tensor.with_values(values))
     }
 
     /// Whether a matrix of `shape`, its last two dims along `dimensions`, contracts `k` deep.
@@ -684,8 +688,8 @@ impl MatmulTensors {
         let tensor = Some(tensor);
         Ok(Self {
             client: client.clone(),
-            lhs: StoredTensor::Plain(operands.lhs),
-            rhs: StoredTensor::Plain(operands.rhs),
+            lhs: StoredTensor::plain(operands.lhs),
+            rhs: StoredTensor::plain(operands.rhs),
             out: MatmulOutputBuffer { tensor, bound },
             rows_kind,
             table: None,
@@ -849,8 +853,8 @@ impl MatmulTensors<Geometry> {
         let out = Geometry::row_major(&operands.sink_shape());
         Ok(Self {
             client: client.clone(),
-            lhs: StoredTensor::Plain(operands.lhs),
-            rhs: StoredTensor::Plain(operands.rhs),
+            lhs: StoredTensor::plain(operands.lhs),
+            rhs: StoredTensor::plain(operands.rhs),
             out,
             rows_kind,
             table: None,
@@ -990,10 +994,13 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// The problem these tensors state, read off them.
     fn state_problem(&self) -> MatmulRoutineProblem {
         match (&self.lhs, &self.rhs) {
-            (StoredTensor::Plain(lhs), StoredTensor::Plain(rhs)) => match &self.table {
-                None => self.out.problem(lhs, rhs),
-                Some(table) => self.indexed_problem(lhs, rhs, table),
-            },
+            (lhs, rhs) if lhs.read() == StoredRead::Float && rhs.read() == StoredRead::Float => {
+                let (lhs, rhs) = (lhs.values(), rhs.values());
+                match &self.table {
+                    None => self.out.problem(lhs, rhs),
+                    Some(table) => self.indexed_problem(lhs, rhs, table),
+                }
+            }
             (lhs, rhs) => {
                 let k = rhs.extent([K, N], K);
                 let packings = MatmulOperands {
@@ -1216,18 +1223,18 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
         let bind = |operand: &StoredTensor,
                     read: StoredRead,
                     dimensions: [Dimension; 2],
-                    width: usize| match (operand, read) {
-            (StoredTensor::Plain(tensor), _) => values(tensor, dimensions, width),
-            (StoredTensor::Scaled(tensor), _) => tensor.under_scales(
+                    width: usize| match read {
+            StoredRead::Float => values(operand.values(), dimensions, width),
+            StoredRead::ScalesAlong(_) => operand.bind_scales_along(
                 &launcher,
                 &blocks,
-                values(&tensor.values, dimensions, width)?,
+                values(operand.values(), dimensions, width)?,
             ),
             // A launch the TMA engine fills binds its packed inputs again through descriptors
             // (`tma_packed_operands`), scales and all, so the launcher states their scales as a
             // reader of fields takes them, which reads them where they lie, in tiles or in
             // rows.
-            (StoredTensor::Packed(tensor), StoredRead::Blocks(planned)) => tensor.bind(
+            StoredRead::Blocks(planned) => operand.bind(
                 &launcher,
                 planned,
                 width,
@@ -1238,7 +1245,6 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 outer_scale,
                 blueprint.microkernel.words_delivery(),
             ),
-            (StoredTensor::Packed(_), _) => unreachable!("a packed tensor is read as blocks"),
         };
         let [lhs_read, rhs_read] = self.planned_reads(blueprint.microkernel.planned_space());
         let lhs = bind(&self.lhs, lhs_read, [M, K], blueprint.widths.lhs)?;
@@ -1259,9 +1265,9 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ///
     /// On a packed input or one under scales: both inputs are float.
     fn plain(&self) -> [&PlainTensor; 2] {
-        [&self.lhs, &self.rhs].map(|operand| match operand {
-            StoredTensor::Plain(tensor) => tensor,
-            StoredTensor::Scaled(_) | StoredTensor::Packed(_) => panic!("both inputs are float"),
+        [&self.lhs, &self.rhs].map(|operand| match operand.read() {
+            StoredRead::Float => operand.values(),
+            StoredRead::ScalesAlong(_) | StoredRead::Blocks(_) => panic!("both inputs are float"),
         })
     }
 
@@ -1352,14 +1358,14 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     /// holds its stage of `stage` and served `widths` wide: a float lhs through a descriptor over
     /// the matrix its blocks split; each packed input's
     /// words through one over the rows or the tiles they are stored in
-    /// ([`PackedTensor::bind_by_tma`]), its scales bound under `launcher` as `scales` says, for
+    /// ([`StoredTensor::bind_by_tma`]), its scales bound under `launcher` as `scales` says, for
     /// the copy engine to keep beside them. What a fill
     /// [`CubeStagedTmaDecline`](cubek_microkernel::matmul::cube::CubeStagedTmaDecline) admits.
     ///
     /// # Errors
     ///
     /// [`Decline::Broken`] on a float rhs, since a packed product's rhs is packed; as
-    /// [`PackedTensor::bind_by_tma`].
+    /// [`StoredTensor::bind_by_tma`].
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn tma_packed_operands(
         &self,
@@ -1373,13 +1379,12 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
     ) -> Result<(TileTensorLaunch, TileTensorLaunch), Decline> {
         // Every packed input landed at the reads its microkernel planned on.
         let [lhs_read, rhs_read] = self.planned_reads(planned);
-        let (StoredTensor::Packed(rhs), StoredRead::Blocks(rhs_planned)) = (&self.rhs, rhs_read)
-        else {
+        let StoredRead::Blocks(rhs_planned) = rhs_read else {
             return Breakable::broken(TMA_FILLS_A_PACKED_RHS);
         };
         // A packed input `operand` across `across`, read as `planned`, its words landing a word a
         // cell.
-        let packed = |tensor: &PackedTensor, planned, operand: MatmulOperand, across, width| {
+        let packed = |tensor: &StoredTensor, planned, operand: MatmulOperand, across, width| {
             let values_dimensions = tile_order::values_dimensions(across);
             let landed = stage.landed_space(operand, orders, &values_dimensions);
             let values_per_word = tensor.scheme().num_quants();
@@ -1400,21 +1405,20 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
                 scales,
             )
         };
-        let lhs = match (&self.lhs, lhs_read) {
-            (StoredTensor::Plain(lhs), _) => {
-                self.tma_float_lhs(lhs, stage, storage, orders, widths.lhs)?
+        let lhs = match lhs_read {
+            StoredRead::Float => {
+                self.tma_float_lhs(self.lhs.values(), stage, storage, orders, widths.lhs)?
             }
-            (StoredTensor::Scaled(lhs), _) => lhs.under_scales(
+            StoredRead::ScalesAlong(_) => self.lhs.bind_scales_along(
                 launcher,
                 &self.blocks(),
-                self.tma_float_lhs(&lhs.values, stage, storage, orders, widths.lhs)?,
+                self.tma_float_lhs(self.lhs.values(), stage, storage, orders, widths.lhs)?,
             )?,
-            (StoredTensor::Packed(lhs), StoredRead::Blocks(planned)) => {
-                packed(lhs, planned, MatmulOperand::Lhs, M, widths.lhs)?
+            StoredRead::Blocks(planned) => {
+                packed(&self.lhs, planned, MatmulOperand::Lhs, M, widths.lhs)?
             }
-            (StoredTensor::Packed(_), _) => unreachable!("a packed tensor is read as blocks"),
         };
-        let rhs = packed(rhs, rhs_planned, MatmulOperand::Rhs, N, widths.rhs)?;
+        let rhs = packed(&self.rhs, rhs_planned, MatmulOperand::Rhs, N, widths.rhs)?;
         Ok((lhs, rhs))
     }
 
@@ -1674,10 +1678,7 @@ struct Operands {
 impl<Out> MatmulTensors<Out> {
     /// [`is_read_for`](Self::is_read_for).
     fn holds_rows_as(&self, rows_kind: MatmulRowsKind) -> bool {
-        let packed = !matches!(
-            (&self.lhs, &self.rhs),
-            (StoredTensor::Plain(_), StoredTensor::Plain(_))
-        );
+        let packed = self.lhs.read() != StoredRead::Float || self.rhs.read() != StoredRead::Float;
         packed || self.rows_kind == rows_kind
     }
 }
@@ -1968,7 +1969,7 @@ mod tests {
         MatmulTensors::indexed(
             &client(),
             zeros(lhs, F32),
-            StoredTensor::Plain(zeros(rhs, F32)),
+            StoredTensor::plain(zeros(rhs, F32)),
             table,
             zeros(&[2, 1, 16], F32),
             MatmulRowsKind::Whole,
@@ -2014,13 +2015,13 @@ mod tests {
     }
 
     /// A packed `[k, n]` rhs of `k = 64` and `n = 16`, in rows of NVFP4 words along `k`.
-    fn nvfp4_rhs_in_rows() -> PackedTensor {
+    fn nvfp4_rhs_in_rows() -> StoredTensor {
         let scheme = crate::kernels::select::packed::nvfp4_scheme();
         let (n, k) = (16, 64);
         let words = zeros(&[n, k / scheme.num_quants()], U32);
         // A scale byte a block of sixteen values, four a word.
         let block_scales = zeros(&[n, k / 16 / 4], U32);
-        PackedTensor::new(
+        StoredTensor::new(
             words,
             block_scales,
             Some(zeros(&[1, 1], U32)),
@@ -2032,13 +2033,14 @@ mod tests {
     }
 
     /// A `[4, 64]` lhs of `e4m3` bytes under one `f32` scale a row.
-    fn fp8_lhs_per_row() -> ScaledTensor {
+    fn fp8_lhs_per_row() -> StoredTensor {
         let (m, k) = (4, 64);
-        ScaledTensor::of_quantized(
+        StoredTensor::of_quantized(
             &client(),
             zeros(&[m, k], ElemType::Float(FloatKind::E4M3)).binding,
             QuantScheme::fp8_per_row().with_store(QuantStore::Native),
             zeros(&[m, 1], F32),
+            None,
             [M, K],
         )
         .expect("one scale a row over 8-bit floats")
@@ -2057,8 +2059,8 @@ mod tests {
     /// stored states the same problem, or the change is made on purpose here.
     #[test]
     fn each_stored_kind_states_its_pinned_problem() {
-        let float_lhs = || StoredTensor::Plain(zeros(&[4, 64], F32));
-        let float_rhs = || StoredTensor::Plain(zeros(&[64, 16], F32));
+        let float_lhs = || StoredTensor::plain(zeros(&[4, 64], F32));
+        let float_rhs = || StoredTensor::plain(zeros(&[64, 16], F32));
         let cases = [
             (
                 "float x float",
@@ -2067,20 +2069,17 @@ mod tests {
             ),
             (
                 "float x nvfp4 rows",
-                stated(float_lhs(), StoredTensor::Packed(nvfp4_rhs_in_rows())),
+                stated(float_lhs(), nvfp4_rhs_in_rows()),
                 r#"MatmulRoutineProblem { batches: [], stated_rows: 4, n: 16, k: 64, elements: MatmulOperands { lhs: Float(F32), rhs: Float(F32), out: Float(F32) }, batches_held: MatmulOperands { lhs: 1, rhs: 1, out: 1 }, elem_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(1)), out: ElemAlignment(Dividing(16)) }, start_bytes: MatmulOperands { lhs: 0, rhs: 0, out: 0 }, layouts: MatmulOperands { lhs: Row, rhs: Col, out: Row }, buffer_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(1)), out: ElemAlignment(Dividing(16)) }, stored_tiles: MatmulOperands { lhs: None, rhs: None, out: None }, destination: Buffer, inputs: MatmulOperands { lhs: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } }, rhs: StoredInput { values: Packed(QuantScheme { value: E2M1, store: PackedU32(0), levels: [Some(BlockScale { size: BlockSize { extents: [Values(16), Values(1), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: UE4M3 }), Some(BlockScale { size: BlockSize { extents: [WholeAxis, WholeAxis, WholeAxis, WholeAxis, WholeAxis], rest: WholeAxis }, dtype: F32 }), None, None] }), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([Some((Dimension(2), 8)), None]), scale: Some(MicroTile([Some((Dimension(2), 16)), None])), scale_read: MicroTile([Some((Dimension(2), 4)), None]) }, tiles: None } }, out: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } } }, index: None } Float"#,
             ),
             (
                 "fp8 per row x nvfp4 rows",
-                stated(
-                    StoredTensor::Scaled(fp8_lhs_per_row()),
-                    StoredTensor::Packed(nvfp4_rhs_in_rows()),
-                ),
+                stated(fp8_lhs_per_row(), nvfp4_rhs_in_rows()),
                 r#"MatmulRoutineProblem { batches: [], stated_rows: 4, n: 16, k: 64, elements: MatmulOperands { lhs: Float(E4M3), rhs: Float(F32), out: Float(F32) }, batches_held: MatmulOperands { lhs: 1, rhs: 1, out: 1 }, elem_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(1)), out: ElemAlignment(Dividing(16)) }, start_bytes: MatmulOperands { lhs: 0, rhs: 0, out: 0 }, layouts: MatmulOperands { lhs: Row, rhs: Col, out: Row }, buffer_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(1)), out: ElemAlignment(Dividing(16)) }, stored_tiles: MatmulOperands { lhs: None, rhs: None, out: None }, destination: Buffer, inputs: MatmulOperands { lhs: StoredInput { values: Elements(Float(E4M3)), element: Float(E4M3), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } }, rhs: StoredInput { values: Packed(QuantScheme { value: E2M1, store: PackedU32(0), levels: [Some(BlockScale { size: BlockSize { extents: [Values(16), Values(1), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: UE4M3 }), Some(BlockScale { size: BlockSize { extents: [WholeAxis, WholeAxis, WholeAxis, WholeAxis, WholeAxis], rest: WholeAxis }, dtype: F32 }), None, None] }), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([Some((Dimension(2), 8)), None]), scale: Some(MicroTile([Some((Dimension(2), 16)), None])), scale_read: MicroTile([Some((Dimension(2), 4)), None]) }, tiles: None } }, out: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } } }, index: None } Quantized(QuantScheme { value: E4M3, store: Native, levels: [Some(BlockScale { size: BlockSize { extents: [WholeAxis, Values(1), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: F32 }), None, None, None] })"#,
             ),
             (
                 "fp8 per row x float",
-                stated(StoredTensor::Scaled(fp8_lhs_per_row()), float_rhs()),
+                stated(fp8_lhs_per_row(), float_rhs()),
                 r#"declined Unserved { why: "8-bit floats under scales are multiplied with a packed input, as one matrix" }"#,
             ),
         ];
@@ -2091,13 +2090,13 @@ mod tests {
 
     /// A packed `[k, n]` rhs of `k = 64` and `n = 16`, in rows of NVFP4 words along `k`, read as a
     /// stack of two slabs along `n`.
-    fn packed_stack_of_two() -> PackedTensor {
+    fn packed_stack_of_two() -> StoredTensor {
         let scheme = crate::kernels::select::packed::nvfp4_scheme();
         let (n, k) = (16, 64);
         let words = zeros(&[n, k / scheme.num_quants()], U32);
         // A scale byte a block of sixteen values, four a word.
         let block_scales = zeros(&[n, k / 16 / 4], U32);
-        PackedTensor::new(
+        StoredTensor::new(
             words,
             block_scales,
             Some(zeros(&[1, 1], U32)),
@@ -2120,7 +2119,7 @@ mod tests {
         let declined = MatmulTensors::indexed(
             &client(),
             zeros(&[2, 1, 64], F32),
-            StoredTensor::Packed(packed_stack_of_two()),
+            packed_stack_of_two(),
             table,
             zeros(&[2, 1, 8], F32),
             MatmulRowsKind::Whole,
@@ -2154,8 +2153,8 @@ mod tests {
     ) -> Option<Decline> {
         MatmulTensors::new(
             &client(),
-            StoredTensor::Plain(zeros(lhs, F32)),
-            StoredTensor::Plain(zeros(rhs, F32)),
+            StoredTensor::plain(zeros(lhs, F32)),
+            StoredTensor::plain(zeros(rhs, F32)),
             rows_kind,
         )
         .err()
@@ -2189,8 +2188,8 @@ mod tests {
 
         let declined = MatmulTensors::writing_into(
             &client(),
-            StoredTensor::Plain(zeros(&[2, 4, 8], F32)),
-            StoredTensor::Plain(zeros(&[8, 16], F32)),
+            StoredTensor::plain(zeros(&[2, 4, 8], F32)),
+            StoredTensor::plain(zeros(&[8, 16], F32)),
             out,
             MatmulRowsKind::Whole,
         )
@@ -2206,8 +2205,8 @@ mod tests {
         let out = zeros(shape, F32).viewed(Metadata::new(shape.to_vec(), strides.to_vec()));
         MatmulTensors::writing_into(
             &client(),
-            StoredTensor::Plain(zeros(&lhs, F32)),
-            StoredTensor::Plain(zeros(&[8, 16], F32)),
+            StoredTensor::plain(zeros(&lhs, F32)),
+            StoredTensor::plain(zeros(&[8, 16], F32)),
             out,
             MatmulRowsKind::Whole,
         )

@@ -32,7 +32,7 @@ use cubecl::std::tensor::TensorHandle;
 use cubecl::tile::kind::Field;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
-use cubek_matmul::kernels::tensor::{PackedTensor, PlainTensor, StoredTensor};
+use cubek_matmul::kernels::tensor::{PlainTensor, StoredTensor};
 use cubek_matmul::kernels::{
     CubeShuffleMatmulRoutine, CubeShuffleMatmulRoutineSettings, LoadingSchedule, MatmulRoutine,
     PlaneShuffleMatmulRoutine,
@@ -141,7 +141,7 @@ impl Host {
 
 /// One copy of the operands on the device.
 struct Device {
-    weight: PackedTensor,
+    weight: StoredTensor,
     x: PlainTensor,
     out: TensorHandle,
 }
@@ -183,7 +183,7 @@ impl Device {
                 out: tensor(client, &vec![0u8; m * n * 2], [m, n], F16),
             };
         }
-        let weight = PackedTensor::new(
+        let weight = StoredTensor::new(
             PlainTensor::of_handle(tensor(client, &words, [n, k / CODES_PER_WORD], WORD)),
             // A byte a block, as a checkpoint stores them: four share a word in memory.
             PlainTensor::of_handle(tensor(
@@ -230,7 +230,7 @@ fn in_tile_order(
     scales: &[u8],
     global: Option<PlainTensor>,
     (n, k): (usize, usize),
-) -> PackedTensor {
+) -> StoredTensor {
     use cubecl::prelude::TensorBinding;
     use cubecl::zspace::metadata::Metadata;
 
@@ -300,8 +300,8 @@ fn in_tile_order(
     let sized = [(K, k), (N, n)];
     let operand = Operand::of_scheme(&scheme, K, [K, N]).expect("one block along k");
     let tiles =
-        PackedTensor::read_in_tiles(hw, sized, operand, &matrix).expect("read in its tiles");
-    PackedTensor::new(
+        StoredTensor::read_in_tiles(hw, sized, operand, &matrix).expect("read in its tiles");
+    StoredTensor::new(
         PlainTensor::new(bound(values.handle, matrix), WORD),
         scales,
         global,
@@ -327,8 +327,8 @@ fn candidates<'a>(hw: &'a Hardware, client: &'a Client) -> Vec<(String, Launch<'
                 .launch_into(
                     hw,
                     client,
-                    StoredTensor::Plain(d.x.clone()),
-                    StoredTensor::Packed(d.weight.clone()),
+                    StoredTensor::plain(d.x.clone()),
+                    d.weight.clone(),
                     d.out(),
                     &settings,
                 )
@@ -346,8 +346,8 @@ fn candidates<'a>(hw: &'a Hardware, client: &'a Client) -> Vec<(String, Launch<'
                 .launch_into(
                     hw,
                     client,
-                    StoredTensor::Plain(d.x.clone()),
-                    StoredTensor::Packed(d.weight.clone()),
+                    StoredTensor::plain(d.x.clone()),
+                    d.weight.clone(),
                     d.out(),
                     &settings,
                 )

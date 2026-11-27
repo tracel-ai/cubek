@@ -4,7 +4,7 @@ use cubecl::ir::{ElemType, UIntKind};
 use cubecl::std::tensor::TensorHandle;
 use cubecl::zspace::Shape;
 use cubek_matmul::kernels::select::packed::nvfp4_scheme;
-use cubek_matmul::kernels::tensor::{PACKED_STACK_UNREAD, PackedTensor, PlainTensor, StoredTensor};
+use cubek_matmul::kernels::tensor::{PACKED_STACK_UNREAD, PlainTensor, StoredTensor};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::layout::stored::Operand;
 use cubek_std::matmul_dimensions::{K, N};
@@ -36,7 +36,7 @@ fn a_packed_tensor_binds_its_parts_not_the_buffer_they_share() {
         ))
     };
     let u32 = ElemType::UInt(UIntKind::U32);
-    let packed = PackedTensor::new(
+    let packed = StoredTensor::new(
         part(0, words, [rows, words / rows], u32),
         part(words * word, scale_words, [rows, scale_words / rows], u32),
         Some(part((words + scale_words) * word, 1, [1, 1], u32)),
@@ -46,7 +46,7 @@ fn a_packed_tensor_binds_its_parts_not_the_buffer_they_share() {
         [(N, rows), (K, k)],
     );
 
-    assert_eq!(StoredTensor::Packed(packed).bytes(), total);
+    assert_eq!(packed.bytes(), total);
 }
 
 /// Slabs along `K` that split a scale block, or a word of block scales, are refused rather than

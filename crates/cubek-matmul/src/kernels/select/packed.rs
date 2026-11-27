@@ -1,7 +1,7 @@
 //! What the selection ([`super::selector::select`]) asks of a packed input: whether the kernels
 //! stream its scheme ([`matmul_supported`]).
 
-use crate::kernels::tensor::ScaledTensor;
+use crate::kernels::tensor::StoredTensor;
 use cubecl::quant::scheme::{BlockScale, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_microkernel::matmul::MatmulOperand;
 use cubek_std::Hardware;
@@ -16,7 +16,7 @@ use cubek_std::layout::stored::Operand;
 /// direction and covering whole `u32`s (see
 /// [`Operand::of_scheme`](cubek_std::layout::stored::Operand::of_scheme)), at any block-scale
 /// dtype, and under a second level constant along the packed direction or not; or fp8 under one
-/// level of scales constant along the reduction ([`ScaledTensor::reads`]). The values must be numbers:
+/// level of scales constant along the reduction ([`StoredTensor::reads`]). The values must be numbers:
 /// an index into a table ([`QuantValue::is_index`]) carries its table beside it, which no packed
 /// input here binds, so its codes would be read as the integers they are stored as.
 ///
@@ -55,7 +55,7 @@ pub fn matmul_supported(_hw: &Hardware, scheme: &QuantScheme, input: MatmulOpera
     let packed = Operand::dimension_of(scheme, dimensions)
         .and_then(|dimension| Operand::of_scheme(scheme, dimension, dimensions))
         .is_some();
-    value && numbers && (packed || ScaledTensor::reads(scheme, dimensions))
+    value && numbers && (packed || StoredTensor::reads_scales_along(scheme, dimensions))
 }
 
 /// Values of `k` one word of an NVFP4 input's scales covers: four one-byte scales, a block each.
