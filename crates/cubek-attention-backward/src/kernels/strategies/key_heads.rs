@@ -2,7 +2,6 @@
 //! keys ([`KeyHeads`]), and the routines it launches for it ([`KeyHeadsBlueprint`]).
 
 use crate::kernels::{AttentionBackwardWalk, CastKeyGradientBlueprint, CastKeyGradientRoutine};
-use cubek_std::routine::Grid;
 
 /// How the key walk's cubes take the heads of a group, which all read the same keys: which
 /// routines a strategy launches for its keys.
@@ -49,13 +48,6 @@ impl<M, SM> KeyHeadsBlueprint<AttentionBackwardWalk<M, SM>> {
         Self::Apart {
             cast: Box::new(CastKeyGradientRoutine.prepare(&sums)),
             sums,
-        }
-    }
-
-    /// The walk's grid: the widest launch of every strategy that has one owned by the keys.
-    pub(crate) fn grid(&self) -> &Grid {
-        match self {
-            Self::Together(walk) | Self::Apart { sums: walk, .. } => &walk.grid,
         }
     }
 }

@@ -3,18 +3,19 @@
 use super::PlaneFragmentAttentionBackwardSharedMemory;
 use super::kernel::plane_fragment_query_gradient_kernel;
 use crate::kernels::{
-    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkStages,
+    AttentionBackwardProblem, AttentionBackwardTensors, AttentionBackwardWalk, WalkCount,
+    WalkSharing, WalkStages,
 };
 use core::num::NonZeroUsize;
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::Decline;
-use cubecl::tile::space::{CubeOrder, PlaneOrder};
+use cubecl::tile::space::{ComputeScope, CubeOrder, PlaneOrder};
 use cubek_microkernel::attention::{B, G, KV, Q, S};
 use cubek_microkernel::attention_backward::query_gradient::plane::{
     PlaneQueryGradientMicrokernel, PlaneQueryGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::{Microkernel, StageRing};
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 
 /// Every plane owns a box of queries of one head and writes their gradient and their dot product
 /// of the output with its gradient, over the keys they see. The launch groups its planes in cubes
@@ -81,6 +82,28 @@ impl PlaneFragmentQueryGradientRoutine {
             grid,
             PlaneFragmentAttentionBackwardSharedMemory { ring, planes },
         ))
+    }
+
+    /// Its planes' walk owned by the queries ([`WalkCount::query_walk`]), each plane staging its
+    /// own keys and values on its ring and reading them alone, beside its windows; its
+    /// microkernel holds the work.
+    pub fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        walk: &PlaneFragmentQueryGradientBlueprint,
+    ) -> KernelEstimate {
+        let microkernel = &walk.microkernel;
+        let count = WalkCount::query_walk(
+            problem,
+            &walk.partitioning,
+            ComputeScope::Plane,
+            microkernel.seq_kv(),
+        )
+        .staged(
+            &walk.shared_memory.ring,
+            WalkSharing::query_walk(1, microkernel.walk_bytes(&problem.work_item())),
+        );
+        walk.estimate(problem, &count)
     }
 
     /// The planes of `walk` writing `tensors`' queries' gradient and their dot products.

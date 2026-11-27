@@ -6,14 +6,15 @@ use crate::kernels::tensor::{PlainTensor, StoredTensor};
 use crate::kernels::{
     CubeShuffleMatmulRoutineSettings, CubeStagedAsyncCopyMatmulRoutineSettings,
     CubeStagedMatmulRoutineSettings, CubeStagedTmaFillerMatmulRoutineSettings,
-    HypercubeLastArrivalMatmulRoutineSettings, ListedFor, MatmulRoutine, MatmulTensors,
-    PlaneShuffleMatmulRoutineSettings,
+    HypercubeLastArrivalMatmulRoutineSettings, ListedFor, MatmulRoutine, MatmulRoutineProblem,
+    MatmulTensors, MatmulTuneKey, PlaneShuffleMatmulRoutineSettings,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubek_microkernel::matmul::MatmulMicrokernel;
 use cubek_microkernel::matmul::cube::CubeShufflePlaneSettings;
 use cubek_std::Hardware;
-use cubek_std::routine::Routine;
+use cubek_std::microkernel::KernelEstimate;
+use cubek_std::routine::{EstimatedProblem, Routine};
 
 /// What a packed setting contracts on: the one thing of it a caller ordering packed candidates
 /// for a key reads.
@@ -64,8 +65,9 @@ impl PackedContraction for HypercubeLastArrivalMatmulRoutineSettings {
 
 /// One routine at one of the settings it lists for a packed input, reading the packed inputs as
 /// stored, on the device it was listed for. A packed routine's launch reads how a packed input is
-/// stored and how its device loads it, which a key does not carry, so no launch is prepared for a
-/// key.
+/// stored and how its device loads it: a key states the first, its scheme, layout, tile words and
+/// strips, and the device the second, so a packed key's launch is prepared from the key on the
+/// device the candidate was listed for ([`estimate`](Self::estimate)).
 #[derive(Debug, Clone)]
 pub struct MatmulPackedCandidate<R: Routine> {
     routine: R,
@@ -77,6 +79,21 @@ impl<R: Routine> MatmulPackedCandidate<R> {
     /// The setting this candidate launches the routine at, which names it.
     pub fn settings(&self) -> &R::Settings {
         &self.settings
+    }
+}
+
+impl<R: Routine<Problem = MatmulRoutineProblem>> MatmulPackedCandidate<R> {
+    /// The estimate of the launch this candidate prepares for the packed problem `key` describes
+    /// ([`MatmulTuneKey::packed_problem`]), its demand the problem's: what a caller that measures
+    /// the routines places the candidate by before timing it. `None` for a float key, a packed
+    /// input no read takes as the key states it, or a problem the routine declines.
+    pub fn estimate(&self, key: &MatmulTuneKey) -> Option<KernelEstimate> {
+        let problem = key.packed_problem(&self.hw)?;
+        let (blueprint, grid) = R::prepare(&self.hw, &problem, &self.settings).ok()?;
+        let mut estimate = KernelEstimate::from(&grid);
+        R::estimate(&problem, &blueprint, &grid, &mut estimate);
+        estimate.demand = Some(problem.demand());
+        Some(estimate)
     }
 }
 

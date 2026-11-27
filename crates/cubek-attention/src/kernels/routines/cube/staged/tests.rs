@@ -23,7 +23,7 @@ mod fragment {
     };
     use cubek_microkernel::attention::{AttentionMicrokernel, CacheLines, D, G, Q, S};
     use cubek_microkernel::matmul::MatmulDim;
-    use cubek_std::microkernel::{StageLayout, StageRing};
+    use cubek_std::microkernel::{KernelEstimate, StageLayout, StageRing};
 
     type Settings = CubeStagedAttentionRoutineSettings;
 
@@ -301,6 +301,46 @@ mod fragment {
             shared(QueryHolder::Stage, 6, 4),
             Err(Decline::SharedMemoryPastDevice { .. })
         ));
+    }
+
+    /// A cube staging its query writes its box of it into shared memory once, beside the keys and
+    /// values, and its planes read their rows of it back on every stage; planes holding it in
+    /// registers move none of it through shared memory.
+    #[test]
+    fn a_staged_query_moves_through_shared_memory_on_every_stage() {
+        let hw = offering_square_mma();
+        let problem = AttentionRoutineProblem::dense((1, 24, 4), (2048, 4096), (256, 256), F16);
+        let staging = |query| {
+            let lead = Settings::DEFAULT;
+            let settings = Settings {
+                microkernel: CubeAttentionMicrokernelSettings {
+                    plane: CubeAttentionPlaneSettings::Fragment(
+                        PlaneFragmentAttentionMicrokernelSettings::fragments(1, 1).querying(query),
+                    ),
+                    heads: NonZeroUsize::MIN,
+                    planes_along_queries: NonZeroUsize::MIN,
+                    ..lead.microkernel
+                },
+                ..lead
+            };
+            let (blueprint, grid) = CubeStagedAttentionRoutine::prepare(&hw, &problem, &settings)
+                .expect("one plane's query fits");
+            let mut estimate = KernelEstimate::from(&grid);
+            CubeStagedAttentionRoutine::estimate(&problem, &blueprint, &grid, &mut estimate);
+            let along_keys = blueprint.microkernel.layout().planes_along_keys as u64;
+            (
+                estimate.staging.expect("the cube sets its staging"),
+                along_keys,
+            )
+        };
+        let (staged, along_keys) = staging(QueryHolder::Stage);
+        let (held, _) = staging(QueryHolder::Registers);
+        let query = staged.reads[0].bytes;
+        assert_eq!(staged.shared_writes - held.shared_writes, query);
+        assert_eq!(
+            staged.shared_reads - held.shared_reads,
+            staged.stages * along_keys * query
+        );
     }
 
     /// An `e4m3` cache beside an `f16` query kept in registers is multiplied on the FP8 instruction

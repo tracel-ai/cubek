@@ -64,6 +64,8 @@ impl SwigluRoutineProblem {
             run_bytes: run * size,
         };
         CubeStaging {
+            shared_reads: 0,
+            shared_writes: 0,
             operations: (Self::OPERATIONS * rows * run) as f64,
             reads: vec![stream(), stream()],
             writes: vec![stream()],

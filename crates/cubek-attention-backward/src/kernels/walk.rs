@@ -1,6 +1,6 @@
 //! One launch of a routine: the microkernel it runs and how it binds.
 
-use crate::kernels::AttentionBackwardProblem;
+use crate::kernels::{AttentionBackwardProblem, WalkCount};
 use cubecl::tile::Partitioning;
 use cubecl::tile::launch::{VectorRequirement, Vectorization};
 use cubecl::tile::layout::ElemAlignment;
@@ -9,7 +9,7 @@ use cubek_microkernel::attention_backward::{
     AttentionBackwardOperand, AttentionBackwardOperands, AttentionBackwardWorkItem,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::Microkernel;
+use cubek_std::microkernel::{ArithmeticInstruction, KernelEstimate, Microkernel, UnitWork};
 use cubek_std::routine::Grid;
 
 /// A microkernel of this kind, as a walk reads it.
@@ -92,6 +92,24 @@ impl<M: AttentionBackwardMicrokernel, SM> AttentionBackwardWalk<M, SM> {
             shared_memory,
         }
     }
+
+    /// The estimate of this launch for `problem`: its grid, the work its microkernel holds in its
+    /// units, and the staging `count` states.
+    pub(crate) fn estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        count: &WalkCount,
+    ) -> KernelEstimate {
+        let mut estimate = KernelEstimate::from(&self.grid);
+        self.microkernel.estimate(
+            &problem.work_item(),
+            &self.partitioning,
+            self.grid.planes(),
+            &mut estimate,
+        );
+        count.count(problem, &mut estimate);
+        estimate
+    }
 }
 
 impl<M, SM> AttentionBackwardWalk<M, SM> {
@@ -119,5 +137,25 @@ impl<M, SM> AttentionBackwardWalk<M, SM> {
             grid: self.grid.clone(),
             shared_memory: (),
         }
+    }
+}
+
+impl AttentionBackwardWalk<()> {
+    /// The estimate of a cast running under this placement for `problem`: its grid, holding none
+    /// of the shared memory the walk it runs under declares, a value a unit at a time on plain
+    /// arithmetic, and the staging `count` states.
+    pub(crate) fn cast_estimate(
+        &self,
+        problem: &AttentionBackwardProblem,
+        count: &WalkCount,
+    ) -> KernelEstimate {
+        let mut estimate = KernelEstimate::from(&self.grid);
+        estimate.cube.shared_memory = 0;
+        estimate.work = Some(UnitWork {
+            instruction: ArithmeticInstruction::Vector,
+            registers: 1,
+        });
+        count.count(problem, &mut estimate);
+        estimate
     }
 }

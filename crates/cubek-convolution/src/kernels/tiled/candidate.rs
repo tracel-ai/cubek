@@ -4,6 +4,7 @@ use crate::kernels::tiled::{
 };
 use cubecl::tile::launch::Decline;
 use cubek_std::Hardware;
+use cubek_std::microkernel::KernelEstimate;
 use cubek_std::routine::RoutineCandidate;
 
 /// One setting the cube staged routine lists, for the device it was listed on: what a caller that
@@ -78,6 +79,13 @@ impl CubeStagedConvCandidate {
         let problem = ConvProblem::from(key);
         let (blueprint, cube_dim) = self.candidate.launch_of(&problem)?;
         Some(CubeStagedConvPrepared::new(&problem, blueprint, cube_dim))
+    }
+
+    /// The estimate of the launch this candidate prepares for the problem `key` describes, its
+    /// demand the problem's, or `None` where the routine declines it: what a caller that measures
+    /// the settings places the candidate by before timing it.
+    pub fn estimate(&self, key: &CubeStagedConvTuneKey) -> Option<KernelEstimate> {
+        self.candidate.estimate(&ConvProblem::from(key))
     }
 }
 

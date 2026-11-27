@@ -43,6 +43,8 @@ impl AttentionStagingCount {
             }
         };
         estimate.staging = Some(CubeStaging {
+            shared_reads: 0,
+            shared_writes: 0,
             operations: 2.0 * (rows * keys * (head + value)) as f64,
             reads: vec![
                 stream(AttentionOperand::Query, rows * head),

@@ -1,7 +1,9 @@
 //! What the hypercube walks share: their decline of a device without atomic adds, their settings,
 //! their blueprint, and how they place their cubes.
 
-use crate::kernels::{AttentionBackwardProblem, AttentionBackwardWalk, WalkStages};
+use crate::kernels::{
+    AttentionBackwardProblem, AttentionBackwardWalk, KeyGradientElement, WalkStages, key_walk_count,
+};
 use cubecl::features::AtomicUsage;
 use cubecl::ir::Type;
 use cubecl::tile::launch::Decline;
@@ -11,7 +13,7 @@ use cubek_microkernel::attention_backward::key_gradient::hypercube::{
     HypercubeKeyGradientMicrokernel, HypercubeKeyGradientMicrokernelSettings,
 };
 use cubek_std::Hardware;
-use cubek_std::microkernel::{Microkernel, StageRing};
+use cubek_std::microkernel::{KernelEstimate, Microkernel, StageRing};
 
 /// What the hypercube routines decline on a device that cannot add `f32` atomically: the query's
 /// gradient is summed across the cubes that own its keys.
@@ -78,4 +80,34 @@ pub(super) fn key_walk(
         grid,
         ring,
     ))
+}
+
+/// The estimate of a hypercube walk for `problem`: its cube microkernel's walk owned by the keys
+/// ([`key_walk_count`]), its gradients `written` as the routine writes them, and each cube's
+/// share of the queries' gradient added into their sum
+/// ([`adding_query_gradient`](crate::kernels::WalkCount::adding_query_gradient)), its planes'
+/// parts met in shared memory once a stage where they split the keys and read the score through
+/// windows. Its microkernel holds the work.
+pub(super) fn key_walk_estimate(
+    problem: &AttentionBackwardProblem,
+    walk: &HypercubeKeyWalkBlueprint,
+    written: KeyGradientElement,
+) -> KernelEstimate {
+    let (item, microkernel) = (problem.work_item(), &walk.microkernel);
+    let mut count = key_walk_count(
+        problem,
+        &walk.partitioning,
+        &microkernel.cube,
+        &walk.shared_memory,
+        written,
+    )
+    .adding_query_gradient();
+    if let Some(sharing) = count.sharing.as_mut() {
+        sharing.window_bytes += microkernel.share_bytes(&item) as u64;
+        if microkernel.meets_in_shared() {
+            sharing.drain_atomics =
+                (microkernel.plane_count() * microkernel.seq_q() * item.head_dim) as u64;
+        }
+    }
+    walk.estimate(problem, &count)
 }

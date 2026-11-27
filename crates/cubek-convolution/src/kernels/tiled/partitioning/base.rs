@@ -171,32 +171,35 @@ impl ConvPartitioning {
     /// contraction and written once, the cells its edge cuts short counted as spent, its stages
     /// held in `ring`.
     pub fn staging(&self, elements: &MatmulOperands<ElemType>, ring: StageRing) -> CubeStaging {
-        let (rows, columns) = (self.block.positions() as u64, self.block.columns as u64);
-        let contracted = self.contracted as u64;
-        let size = |operand| elements.get(operand).size();
-        let stream = |bytes: u64, run: usize| GlobalStream {
-            bytes,
-            run_bytes: run,
+        let boxes = self.boxes();
+        let stream = |operand: MatmulOperand| {
+            let size = elements.get(operand).size();
+            GlobalStream {
+                bytes: boxes.get(operand) * size as u64,
+                run_bytes: self.runs.get(operand) * size,
+            }
         };
         CubeStaging {
-            operations: (2 * rows * columns * contracted) as f64,
-            reads: vec![
-                stream(
-                    rows * contracted * size(MatmulOperand::Lhs) as u64,
-                    self.runs.lhs * size(MatmulOperand::Lhs),
-                ),
-                stream(
-                    columns * contracted * size(MatmulOperand::Rhs) as u64,
-                    self.runs.rhs * size(MatmulOperand::Rhs),
-                ),
-            ],
-            writes: vec![stream(
-                rows * columns * size(MatmulOperand::Out) as u64,
-                self.runs.out * size(MatmulOperand::Out),
-            )],
+            shared_reads: 0,
+            shared_writes: 0,
+            operations: (2 * boxes.lhs * self.block.columns as u64) as f64,
+            reads: vec![stream(MatmulOperand::Lhs), stream(MatmulOperand::Rhs)],
+            writes: vec![stream(MatmulOperand::Out)],
             stages: self.stages() as u64,
             stages_in_flight: ring.stages_in_flight.get() as u32,
             drain_atomics: 0,
+        }
+    }
+
+    /// Values of each operand one cube walks, each read once: its box's positions of the input and
+    /// columns of the rhs over the whole contraction, and its box of the output.
+    pub fn boxes(&self) -> MatmulOperands<u64> {
+        let (rows, columns) = (self.block.positions() as u64, self.block.columns as u64);
+        let contracted = self.contracted as u64;
+        MatmulOperands {
+            lhs: rows * contracted,
+            rhs: columns * contracted,
+            out: rows * columns,
         }
     }
 
