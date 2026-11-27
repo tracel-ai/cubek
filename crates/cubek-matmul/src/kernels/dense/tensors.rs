@@ -1891,6 +1891,7 @@ mod tests {
     use super::*;
     use crate::kernels::MatmulIndex;
     use cubecl::ir::FloatKind;
+    use cubecl::quant::scheme::{QuantScheme, QuantStore};
     use cubecl::tile::layout::ElemAlignment;
     use cubek_std::layout::stored::Operand;
     use cubek_test_utils::client;
@@ -2013,6 +2014,82 @@ mod tests {
         let declined = declined_indexed(&[8], &[4, 8, 16], FOUR_SLABS, U32);
 
         assert_eq!(declined, Some(MATMUL_CONTRACTIONS_DISAGREE));
+    }
+
+    /// A packed `[k, n]` rhs of `k = 64` and `n = 16`, in rows of NVFP4 words along `k`.
+    fn nvfp4_rhs_in_rows() -> PackedTensor {
+        let scheme = crate::kernels::select::packed::nvfp4_scheme();
+        let (n, k) = (16, 64);
+        let words = zeros(&[n, k / scheme.num_quants()], U32);
+        // A scale byte a block of sixteen values, four a word.
+        let block_scales = zeros(&[n, k / 16 / 4], U32);
+        let operand = Operand::of_scheme(&scheme, K, [N, K]).expect("one block along k");
+        PackedTensor::new(
+            words,
+            block_scales,
+            Some(zeros(&[1, 1], U32)),
+            scheme,
+            operand,
+            [(N, n), (K, k)],
+        )
+    }
+
+    /// A `[4, 64]` lhs of `e4m3` bytes under one `f32` scale a row.
+    fn fp8_lhs_per_row() -> ScaledTensor {
+        let (m, k) = (4, 64);
+        ScaledTensor::of_quantized(
+            &client(),
+            zeros(&[m, k], ElemType::Float(FloatKind::E4M3)).binding,
+            QuantScheme::fp8_per_row().with_store(QuantStore::Native),
+            zeros(&[m, 1], F32),
+            [M, K],
+        )
+        .expect("one scale a row over 8-bit floats")
+    }
+
+    /// The problem a product of `lhs` and `rhs` states, holding every row whole, or its decline:
+    /// what decides which routines are admitted and how a tuned one is looked up.
+    fn stated(lhs: StoredTensor, rhs: StoredTensor) -> String {
+        match MatmulTensors::new(&client(), lhs, rhs, MatmulRowsKind::Whole) {
+            Ok(tensors) => format!("{:?} {:?}", tensors.problem(), tensors.lhs().kind()),
+            Err(decline) => format!("declined {decline:?}"),
+        }
+    }
+
+    /// The problems each kind of stored operand states, pinned: a change to how an operand is
+    /// stored states the same problem, or the change is made on purpose here.
+    #[test]
+    fn each_stored_kind_states_its_pinned_problem() {
+        let float_lhs = || StoredTensor::Plain(zeros(&[4, 64], F32));
+        let float_rhs = || StoredTensor::Plain(zeros(&[64, 16], F32));
+        let cases = [
+            (
+                "float x float",
+                stated(float_lhs(), float_rhs()),
+                r#"MatmulRoutineProblem { batches: [], stated_rows: 4, n: 16, k: 64, elements: MatmulOperands { lhs: Float(F32), rhs: Float(F32), out: Float(F32) }, batches_held: MatmulOperands { lhs: 1, rhs: 1, out: 1 }, elem_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(16)), out: ElemAlignment(Dividing(16)) }, start_bytes: MatmulOperands { lhs: 0, rhs: 0, out: 0 }, layouts: MatmulOperands { lhs: Row, rhs: Row, out: Row }, buffer_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(16)), out: ElemAlignment(Dividing(16)) }, stored_tiles: MatmulOperands { lhs: None, rhs: None, out: None }, destination: Buffer, inputs: MatmulOperands { lhs: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } }, rhs: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } }, out: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } } }, index: None } Float"#,
+            ),
+            (
+                "float x nvfp4 rows",
+                stated(float_lhs(), StoredTensor::Packed(nvfp4_rhs_in_rows())),
+                r#"MatmulRoutineProblem { batches: [], stated_rows: 4, n: 16, k: 64, elements: MatmulOperands { lhs: Float(F32), rhs: Float(F32), out: Float(F32) }, batches_held: MatmulOperands { lhs: 1, rhs: 1, out: 1 }, elem_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(1)), out: ElemAlignment(Dividing(16)) }, start_bytes: MatmulOperands { lhs: 0, rhs: 0, out: 0 }, layouts: MatmulOperands { lhs: Row, rhs: Col, out: Row }, buffer_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(1)), out: ElemAlignment(Dividing(16)) }, stored_tiles: MatmulOperands { lhs: None, rhs: None, out: None }, destination: Buffer, inputs: MatmulOperands { lhs: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } }, rhs: StoredInput { values: Packed(QuantScheme { value: E2M1, store: PackedU32(0), levels: [Some(BlockScale { size: BlockSize { extents: [Values(16), Values(1), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: UE4M3 }), Some(BlockScale { size: BlockSize { extents: [WholeAxis, WholeAxis, WholeAxis, WholeAxis, WholeAxis], rest: WholeAxis }, dtype: F32 }), None, None] }), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([Some((Dimension(2), 8)), None]), scale: Some(MicroTile([Some((Dimension(2), 16)), None])), scale_read: MicroTile([Some((Dimension(2), 4)), None]) }, tiles: None } }, out: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } } }, index: None } Float"#,
+            ),
+            (
+                "fp8 per row x nvfp4 rows",
+                stated(
+                    StoredTensor::Scaled(fp8_lhs_per_row()),
+                    StoredTensor::Packed(nvfp4_rhs_in_rows()),
+                ),
+                r#"MatmulRoutineProblem { batches: [], stated_rows: 4, n: 16, k: 64, elements: MatmulOperands { lhs: Float(E4M3), rhs: Float(F32), out: Float(F32) }, batches_held: MatmulOperands { lhs: 1, rhs: 1, out: 1 }, elem_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(1)), out: ElemAlignment(Dividing(16)) }, start_bytes: MatmulOperands { lhs: 0, rhs: 0, out: 0 }, layouts: MatmulOperands { lhs: Row, rhs: Col, out: Row }, buffer_alignments: MatmulOperands { lhs: ElemAlignment(Dividing(64)), rhs: ElemAlignment(Dividing(1)), out: ElemAlignment(Dividing(16)) }, stored_tiles: MatmulOperands { lhs: None, rhs: None, out: None }, destination: Buffer, inputs: MatmulOperands { lhs: StoredInput { values: Elements(Float(E4M3)), element: Float(E4M3), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } }, rhs: StoredInput { values: Packed(QuantScheme { value: E2M1, store: PackedU32(0), levels: [Some(BlockScale { size: BlockSize { extents: [Values(16), Values(1), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: UE4M3 }), Some(BlockScale { size: BlockSize { extents: [WholeAxis, WholeAxis, WholeAxis, WholeAxis, WholeAxis], rest: WholeAxis }, dtype: F32 }), None, None] }), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([Some((Dimension(2), 8)), None]), scale: Some(MicroTile([Some((Dimension(2), 16)), None])), scale_read: MicroTile([Some((Dimension(2), 4)), None]) }, tiles: None } }, out: StoredInput { values: Elements(Float(F32)), element: Float(F32), operand: Operand { reads: OperandReads { read: MicroTile([None, None]), scale: None, scale_read: MicroTile([None, None]) }, tiles: None } } }, index: None } Quantized(QuantScheme { value: E4M3, store: Native, levels: [Some(BlockScale { size: BlockSize { extents: [WholeAxis, Values(1), Values(1), Values(1), Values(1)], rest: Values(1) }, dtype: F32 }), None, None, None] })"#,
+            ),
+            (
+                "fp8 per row x float",
+                stated(StoredTensor::Scaled(fp8_lhs_per_row()), float_rhs()),
+                r#"declined Unserved { why: "8-bit floats under scales are multiplied with a packed input, as one matrix" }"#,
+            ),
+        ];
+        for (case, stated, pinned) in cases {
+            assert_eq!(stated, pinned, "{case}");
+        }
     }
 
     /// A packed `[k, n]` rhs of `k = 64` and `n = 16`, in rows of NVFP4 words along `k`, read as a
