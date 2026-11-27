@@ -41,7 +41,7 @@ impl WalkStages {
         let stage_bytes = self
             .stage
             .iter()
-            .map(|operand| operand.bytes(hw, &StageStorage::Strided))
+            .map(|operand| operand.bytes(hw, &StageStorage::STRIDED))
             .sum();
         let cube = CubeResources {
             plane_width,

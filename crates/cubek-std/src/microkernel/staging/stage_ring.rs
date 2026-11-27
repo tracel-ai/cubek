@@ -92,8 +92,8 @@ impl StageRing {
     /// holds of it.
     ///
     /// The tile DSL holds one stage ahead in registers, so a ring of more than two stages would
-    /// leave the slots past the second idle; and it holds at most [`Prefetch::fits`] registers a
-    /// unit of every operand's stage ([`StagedOperand::most_prefetched`]).
+    /// leave the slots past the second idle. [`Prefetch::fits_registers`] caps the registers per
+    /// unit across the operands' stages ([`StagedOperand::most_prefetched`]).
     pub fn resolve(self, hw: &Hardware, operands: &[StagedOperand], units: usize) -> Self {
         if operands
             .iter()
@@ -105,7 +105,7 @@ impl StageRing {
             .iter()
             .map(|operand| operand.most_prefetched(hw, units))
             .sum();
-        let admitted = self.stages_in_flight.get() <= 2 && Prefetch::fits(held);
+        let admitted = self.stages_in_flight.get() <= 2 && Prefetch::fits_registers(held);
         match (self.prefetch, admitted) {
             (Prefetch::InRegisters, false) => self.in_slots(),
             (Prefetch::InRegisters, true) | (Prefetch::InSlots, _) => self,

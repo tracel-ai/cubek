@@ -15,7 +15,7 @@ use cubecl::tile::space::ComputeScope;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::{
     BaseRegion, Dimension, FragmentSource, Instruction, LaneMap, Levels, MmaOperands, ProductStep,
-    Scratch, ShapedInstruction, Space, StageStorage, StepCost,
+    Scratch, ShapedInstruction, Space, StageOrder, StageStorage, StepCost,
 };
 use cubek_std::layout::BindingOrder;
 use cubek_std::layout::stored::{Operand, OuterScale};
@@ -945,6 +945,7 @@ impl PlaneFragmentMicrokernel {
         let swizzled = StageStorage::Tiled {
             block: Self::over_k(tile, &whole_k),
             chunks: RowChunks::Swizzled,
+            order: StageOrder::AsSource,
         };
         self.read_by(swizzled, Delivery::Tma)
     }

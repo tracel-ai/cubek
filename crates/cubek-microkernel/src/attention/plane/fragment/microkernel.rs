@@ -195,14 +195,14 @@ impl<EA: Float, EV: Float> PlaneFragmentAttention<EA, EV> {
         row_stride: usize,
         rows: usize,
     ) {
-        let window = Tile::scratch::<EA>(walk, comptime!(vec![G, Q, DV]), StageStorage::Strided);
+        let window = Tile::scratch::<EA>(walk, comptime!(vec![G, Q, DV]), StageStorage::STRIDED);
         let rows_window = window.at(plane);
         self.sum_at(plane).drained_into(&rows_window);
 
         let mut max =
-            Tile::scratch::<EA>(walk, comptime!(vec![G, Q]), StageStorage::Strided).at(plane);
+            Tile::scratch::<EA>(walk, comptime!(vec![G, Q]), StageStorage::STRIDED).at(plane);
         let mut sum =
-            Tile::scratch::<EA>(walk, comptime!(vec![G, Q]), StageStorage::Strided).at(plane);
+            Tile::scratch::<EA>(walk, comptime!(vec![G, Q]), StageStorage::STRIDED).at(plane);
 
         self.softmax
             .store_rows(&self.score.at(plane).scores(), &mut max, &mut sum);
@@ -255,8 +255,8 @@ impl StageScore {
     ) -> StageScore {
         match microkernel.score_holder() {
             ScoreHolder::Window => StageScore::new_Window(
-                Tile::scratch::<EA>(walk, comptime!(vec![G, Q, S]), StageStorage::Strided),
-                Tile::scratch::<E>(walk, comptime!(vec![G, Q, S]), StageStorage::Strided),
+                Tile::scratch::<EA>(walk, comptime!(vec![G, Q, S]), StageStorage::STRIDED),
+                Tile::scratch::<E>(walk, comptime!(vec![G, Q, S]), StageStorage::STRIDED),
             ),
             ScoreHolder::Fragments => {
                 let define!(Score) = microkernel.read.score;
@@ -534,7 +534,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
 ) {
     let walk = rows.walk().range(0, steps);
     let decoded = microkernel.decoded_stage();
-    let staged = query_for_planes(query, &walk, microkernel, StageStorage::Strided);
+    let staged = query_for_planes(query, &walk, microkernel, StageStorage::STRIDED);
     if microkernel.query_holder() == QueryHolder::Stage {
         sync_plane();
     }
@@ -558,7 +558,7 @@ pub fn plane_fragment_attention_microkernel<EA: Float, EV: Float>(
         &walk,
         &cache.key,
         &cache.value,
-        StageStorage::Strided,
+        StageStorage::STRIDED,
         in_flight,
         decoded,
     );

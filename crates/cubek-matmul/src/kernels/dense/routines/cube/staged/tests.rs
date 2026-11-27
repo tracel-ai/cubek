@@ -642,7 +642,7 @@ mod base {
                     let held = fetched(stage.extent(M) * stage.extent(K), blueprint.widths.lhs)
                         + fetched(stage.extent(K) * stage.extent(N), blueprint.widths.rhs);
                     assert!(
-                        Prefetch::fits(held),
+                        Prefetch::fits_registers(held),
                         "{settings} on {hw:?}, {problem:?}: {held} registers a unit"
                     );
                 }
@@ -949,7 +949,7 @@ mod base {
             assert!(
                 matches!(
                     &blueprint.shared_memory,
-                    StageStorage::Tiled { block, chunks: held }
+                    StageStorage::Tiled { block, chunks: held, .. }
                         if *held == chunks && block.contains(&(K, depth))
                 ),
                 "{:?}",
@@ -1293,12 +1293,13 @@ mod base {
                 &CubeStagedMatmulRoutineSettings::DEFAULT,
             )
             .expect("the default prepares");
-            let StageStorage::Tiled { block, .. } = blueprint.shared_memory.clone() else {
+            let StageStorage::Tiled { block, order, .. } = blueprint.shared_memory.clone() else {
                 panic!("a matrix instruction stages in tiles");
             };
             let tiled = |chunks| StageStorage::Tiled {
                 block: block.clone(),
                 chunks,
+                order,
             };
             let bytes = |storage: &StageStorage| {
                 blueprint.partitioning.stage().bytes(

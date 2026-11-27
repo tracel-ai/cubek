@@ -67,7 +67,7 @@ impl Hardware {
         Self {
             properties,
             accumulator_as_a: mma.register_layout_a == mma.register_layout_acc
-                && mma.register_duplication_a == mma.register_duplication_acc,
+                && mma.register_copy_count_a == mma.register_copy_count_acc,
             target: Arc::new(target.clone()),
         }
     }

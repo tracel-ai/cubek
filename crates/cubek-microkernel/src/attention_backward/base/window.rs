@@ -24,9 +24,9 @@ impl ScoreWindows {
         #[comptime] dimensions: Vec<Dimension>,
     ) -> ScoreWindows {
         ScoreWindows {
-            scores: Tile::scratch::<EA>(walk, dimensions.clone(), StageStorage::Strided),
-            gradients: Tile::scratch::<EA>(walk, dimensions.clone(), StageStorage::Strided),
-            cast: Tile::scratch::<ES>(walk, dimensions, StageStorage::Strided),
+            scores: Tile::scratch::<EA>(walk, dimensions.clone(), StageStorage::STRIDED),
+            gradients: Tile::scratch::<EA>(walk, dimensions.clone(), StageStorage::STRIDED),
+            cast: Tile::scratch::<ES>(walk, dimensions, StageStorage::STRIDED),
         }
     }
 

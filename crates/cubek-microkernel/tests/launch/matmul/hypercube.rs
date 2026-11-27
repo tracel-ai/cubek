@@ -238,7 +238,7 @@ fn hypercube_staged_kernel<EA: Numeric, EL: Numeric, VO: Size>(
     let portion = partitioning.walk().portion(stages.clone());
     for i in 0..portion.touched() {
         let tile = portion.region(i);
-        let (from, steps) = portion.steps(i);
+        let (from, steps) = portion.nth_steps(i);
         let merge: LastArrival<'_> = slots.last_arrival::<VO>(&partitioning, &portion, i, arrivals);
         hypercube_staged_last_arrival_microkernel::<EA, Tile>(
             tile.over(&stages).range(from, steps),

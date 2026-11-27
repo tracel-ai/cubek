@@ -3,7 +3,7 @@ use crate::kernels::tiled::{ConvProblem, ConvRoles, CubeStagedConvSettings};
 use cubecl::ir::ElemType;
 use cubecl::tile::stage::RowChunks;
 use cubecl::tile::stage::StagedOperands;
-use cubecl::tile::{Dimension, Level, Levels, Partitioning, StageStorage};
+use cubecl::tile::{Dimension, Level, Levels, Partitioning, StageOrder, StageStorage};
 use cubek_microkernel::matmul::plane::{PlaneFragmentInstruction, PlaneFragmentMicrokernel};
 use cubek_microkernel::matmul::{MatmulDim, MatmulOperand, MatmulOperands};
 use cubek_std::Hardware;
@@ -111,6 +111,7 @@ impl ConvTiles {
         StageStorage::Tiled {
             block: partitioning.leaf().extents(),
             chunks: RowChunks::InOrder,
+            order: StageOrder::AsSource,
         }
     }
 
