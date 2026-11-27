@@ -65,8 +65,8 @@ impl MatmulInputs {
     }
 }
 
-/// A table a product's inputs read one entry of per batch, `u32` entries whose dims are the
-/// product's batches, and how they place the inputs.
+/// A table a product's operands read one entry of per batch, `u32` entries whose dims are the
+/// product's batches, and how they place the operands.
 #[derive(Debug, Clone)]
 #[expect(
     clippy::large_enum_variant,

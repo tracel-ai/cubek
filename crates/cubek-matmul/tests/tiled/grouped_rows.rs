@@ -4,8 +4,8 @@
 use core::num::NonZeroUsize;
 use cubecl::{client::Client, std::tensor::TensorHandle, tile::launch::Decline, zspace::Shape};
 use cubek_matmul::kernels::{
-    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulIndexTable, MatmulRoutine,
-    PlaneShuffleMatmulRoutine, RowGroups,
+    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MATMUL_BOX_OTHER_THAN_ROW_GROUP,
+    MatmulIndexTable, MatmulRoutine, PlaneShuffleMatmulRoutine, RowGroups,
 };
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
@@ -23,12 +23,12 @@ const UNCOVERED_ROWS: usize = 7;
 
 /// The row groups over a stack of NVFP4 slabs `k` deep, none longer than `max_rows`.
 #[derive(Debug, Clone)]
-struct GroupedRows {
+struct GroupedRowsProduct {
     k: usize,
     max_rows: usize,
 }
 
-impl GroupedRows {
+impl GroupedRowsProduct {
     /// Each row group's `(rows, slab)`: an empty first one, one ending mid-tile, an empty middle
     /// one, a full one, one on the slab past the stack and an empty sentinel.
     fn sizes(&self) -> [(usize, usize); 6] {
@@ -77,7 +77,7 @@ impl GroupedRows {
     }
 }
 
-impl RoutineProduct for GroupedRows {
+impl RoutineProduct for GroupedRowsProduct {
     fn launch<R, M, SM>(
         &self,
         routine: &R,
@@ -142,7 +142,7 @@ impl RoutineProduct for GroupedRows {
 #[test]
 fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
-    let products = [128, 160].map(|k| GroupedRows { k, max_rows: 4 });
+    let products = [128, 160].map(|k| GroupedRowsProduct { k, max_rows: 4 });
     let settings = PlaneShuffleMatmulRoutine::indexed_packed_settings();
     let client = cubecl::test_device().client();
     let (mut launched, mut refused) = (0, Vec::new());
@@ -152,7 +152,7 @@ fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
             Err(why) => refused.push(why),
         }
     }
-    skip_unless_launched(launched, &refused);
+    settle(launched, &refused, |_| false);
 }
 
 /// A cube holds a row group in one box, so only the products whose `max_rows` is as tall as the
@@ -160,7 +160,7 @@ fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
 #[test]
 fn cube_staged_writes_only_the_rows_of_each_row_group_a_box_holds() {
     let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
-    let products = [16, 32, 64, 128].map(|max_rows| GroupedRows { k: 128, max_rows });
+    let products = [16, 32, 64, 128].map(|max_rows| GroupedRowsProduct { k: 128, max_rows });
     let settings = [CubeStagedMatmulRoutineSettings::PACKED];
     let client = cubecl::test_device().client();
     let (mut launched, mut refused) = (0, Vec::new());
@@ -170,7 +170,9 @@ fn cube_staged_writes_only_the_rows_of_each_row_group_a_box_holds() {
             Err(why) => refused.push(why),
         }
     }
-    skip_unless_launched(launched, &refused);
+    settle(launched, &refused, |why| {
+        *why == MATMUL_BOX_OTHER_THAN_ROW_GROUP
+    });
 }
 
 /// One for a case that launched, its outcome enforced.
@@ -179,13 +181,21 @@ fn enforced(outcome: TestOutcome) -> usize {
     1
 }
 
-/// Where no case launched, a skip, provided every refusal is for what the device lacks.
-fn skip_unless_launched(launched: usize, refused: &[Decline]) {
+/// Checks every refusal is for what the device lacks or one `expected` names, and skips where no
+/// case launched, provided the device refused them all.
+fn settle(launched: usize, refused: &[Decline], expected: fn(&Decline) -> bool) {
+    assert!(
+        refused
+            .iter()
+            .all(|why| refused_by_device(why) || expected(why)),
+        "refused: {refused:?}"
+    );
     if launched == 0 {
-        skip_refused_by_device(refused)
+        skip_refused_by_device(refused);
     }
 }
 
+/// A skip, provided every refusal is for what the device lacks.
 fn skip_refused_by_device(refused: &[Decline]) {
     assert!(
         refused.iter().all(refused_by_device),

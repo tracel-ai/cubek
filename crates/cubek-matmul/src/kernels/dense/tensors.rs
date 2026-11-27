@@ -1617,7 +1617,7 @@ impl<Out: MatmulOutput> MatmulTensors<Out> {
             )
         })?;
         let (batch_dimensions, widths) = (self.batch_dimensions(), blueprint.widths);
-        let lhs_batches = self.batches_of(MatmulOperand::Lhs, self.batch_dimensions());
+        let lhs_batches = self.batches_of(MatmulOperand::Lhs, batch_dimensions.clone());
         let delivery = blueprint.microkernel.delivery();
         let decoded = blueprint.microkernel.decoded_stage();
         let source = |tensor: &PlainTensor, dimensions: &'static [Dimension]| {

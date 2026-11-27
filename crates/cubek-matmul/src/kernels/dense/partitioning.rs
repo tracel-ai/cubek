@@ -60,7 +60,7 @@ impl MatmulPartitioning {
     }
 
     /// This placement, its rows along `rows` grouped by a table, which no level cuts.
-    pub fn with_grouped(self, rows: Dimension) -> Self {
+    pub fn with_grouped_rows(self, rows: Dimension) -> Self {
         Self {
             grouped: Some(rows),
             ..self

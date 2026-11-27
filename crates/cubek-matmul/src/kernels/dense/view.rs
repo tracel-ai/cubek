@@ -175,7 +175,7 @@ impl<'a> MatmulView<'a> {
                 )
             }
         };
-        self.finished(MatmulPartitioning::new(
+        self.with_grouped_rows(MatmulPartitioning::new(
             partitioning,
             cube,
             distributed_batch_dimensions,
@@ -242,7 +242,7 @@ impl<'a> MatmulView<'a> {
                 order.clone(),
             )
             .build();
-        self.finished(MatmulPartitioning::of_launch_planes(
+        self.with_grouped_rows(MatmulPartitioning::of_launch_planes(
             Partitioning::new(self.space(), levels),
             &order,
             distributed_batch_dimensions,
@@ -327,9 +327,9 @@ impl<'a> MatmulView<'a> {
     }
 
     /// `partitioning` marked as placing grouped rows, where a table groups them.
-    fn finished(&self, partitioning: MatmulPartitioning) -> MatmulPartitioning {
+    fn with_grouped_rows(&self, partitioning: MatmulPartitioning) -> MatmulPartitioning {
         match self.problem.grouped_rows() {
-            Some(rows) => partitioning.with_grouped(rows),
+            Some(rows) => partitioning.with_grouped_rows(rows),
             None => partitioning,
         }
     }

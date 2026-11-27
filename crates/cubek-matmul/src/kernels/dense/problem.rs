@@ -461,8 +461,8 @@ impl MatmulRoutineProblem {
 
     /// What each operand asks of a read of it, bound in the order `orders` says: to lie inside a
     /// run its layout aligns; a view starting partway into its buffer, to line up with where it
-    /// starts; and an input a table indexes along its innermost dimension — a run of `K` read
-    /// along a row — to bring one value, which an entry places.
+    /// starts; and an operand a table places along its innermost dimension, to bring one value,
+    /// which an entry places.
     pub fn require_reads(
         &self,
         orders: MatmulOperands<BindingOrder>,
@@ -644,10 +644,10 @@ pub const MATMUL_BOX_OTHER_THAN_ROW_GROUP: Decline = Decline::Unserved {
     why: "a cube's box holds exactly `max_rows` rows, one row group, which no level cuts",
 };
 
-/// What a launch declines whatever the device: grouped rows under a swizzled cube order, which
-/// has no cut rows to put back.
+/// What a launch declines whatever the device: grouped rows under a swizzled cube order, whose
+/// walk takes the cubes in bands of cut rows.
 pub const MATMUL_GROUPED_ROWS_SWIZZLED: Decline = Decline::Unserved {
-    why: "grouped rows are not cut among the cubes, so a swizzled cube order has nothing to permute",
+    why: "a swizzled cube order walks bands of rows the cubes cut, and grouped rows are never cut",
 };
 
 /// What a launch declines whatever the device: grouped rows over an lhs stored in tiles, which a
