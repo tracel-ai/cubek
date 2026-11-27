@@ -3,8 +3,10 @@
 
 use core::num::NonZeroUsize;
 use cubecl::{client::Client, std::tensor::TensorHandle, tile::launch::Decline, zspace::Shape};
-use cubek_matmul::kernels::PlaneShuffleMatmulRoutine;
-use cubek_matmul::kernels::{MatmulIndexTable, MatmulRoutine, RowGroups};
+use cubek_matmul::kernels::{
+    CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MatmulIndexTable, MatmulRoutine,
+    PlaneShuffleMatmulRoutine, RowGroups,
+};
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
 use cubek_test_utils::{HostData, HostDataVec, ScopeChecker, TestOutcome, ValidationResult};
@@ -16,31 +18,38 @@ use crate::tiled::{ByRoutine, RoutineProduct, upload};
 
 const SLABS: usize = 4;
 const N: usize = 96;
-/// The most rows a row group holds.
-const MAX_GROUP_ROWS: usize = 4;
-/// Each row group's `(rows, slab)`: an empty first one, one ending mid-tile, an empty middle one, a
-/// full one, one on the slab past the stack and an empty sentinel; seven more rows no row group
-/// covers.
-const GROUPS: [(usize, usize); 6] = [(0, 0), (3, 1), (0, 2), (4, 2), (2, SLABS), (0, SLABS)];
-const ROWS: usize = 9 + 7;
+/// Rows past the last row group, which none covers.
+const UNCOVERED_ROWS: usize = 7;
 
-/// The row groups over a stack of NVFP4 slabs `k` deep.
+/// The row groups over a stack of NVFP4 slabs `k` deep, none longer than `max_rows`.
 #[derive(Debug, Clone)]
 struct GroupedRows {
     k: usize,
+    max_rows: usize,
 }
 
 impl GroupedRows {
+    /// Each row group's `(rows, slab)`: an empty first one, one ending mid-tile, an empty middle
+    /// one, a full one, one on the slab past the stack and an empty sentinel.
+    fn sizes(&self) -> [(usize, usize); 6] {
+        let max = self.max_rows;
+        [(0, 0), (max - 1, 1), (0, 2), (max, 2), (2, SLABS), (0, SLABS)]
+    }
+
     /// Each row group's `(start, end, slab)`.
     fn groups(&self) -> Vec<(usize, usize, u32)> {
-        let ends = GROUPS.iter().scan(0, |end, &(rows, _)| {
+        let sizes = self.sizes();
+        let ends = sizes.iter().scan(0, |end, &(rows, _)| {
             *end += rows;
             Some(*end)
         });
-        let groups = ends.zip(GROUPS);
-        groups
+        ends.zip(sizes)
             .map(|(end, (rows, slab))| (end - rows, end, slab as u32))
             .collect()
+    }
+
+    fn rows(&self) -> usize {
+        self.sizes().iter().map(|(rows, _)| rows).sum::<usize>() + UNCOVERED_ROWS
     }
 
     fn stack(&self) -> PackedSlabsSpec {
@@ -55,7 +64,7 @@ impl GroupedRows {
     }
 
     fn activation(&self) -> Vec<f16> {
-        (0..ROWS * self.k)
+        (0..self.rows() * self.k)
             .map(|i| f16::from_f32(((i * 7919 + 104_729) % 2003) as f32 / 1001.5 - 1.))
             .collect()
     }
@@ -73,7 +82,8 @@ impl RoutineProduct for GroupedRows {
         R: MatmulRoutine<M, SM>,
         M: MatmulMicrokernel,
     {
-        let lhs = upload(client, &[ROWS, self.k], &self.activation());
+        let rows = self.rows();
+        let lhs = upload(client, &[rows, self.k], &self.activation());
         let rhs = PackedSlabs::new(client, self.stack()).stack();
         let groups = self.groups();
         let column = |at: fn(&(usize, usize, u32)) -> u32| {
@@ -88,10 +98,10 @@ impl RoutineProduct for GroupedRows {
             entries: column(|group| group.2),
             groups: RowGroups {
                 ends: column(|group| group.1 as u32),
-                max_rows: NonZeroUsize::new(MAX_GROUP_ROWS).expect("row groups hold rows"),
+                max_rows: NonZeroUsize::new(self.max_rows).expect("row groups hold rows"),
             },
         };
-        let (out, bound) = Self::poisoned(client, Shape::from(vec![ROWS, N]), lhs.elem);
+        let (out, bound) = Self::poisoned(client, Shape::from(vec![rows, N]), lhs.elem);
         routine.launch_indexed_into(hw, client, lhs, rhs, table, bound, settings)?;
         Ok(out)
     }
@@ -99,7 +109,8 @@ impl RoutineProduct for GroupedRows {
     fn reference(&self) -> HostData {
         let lhs: Vec<f32> = self.activation().iter().map(|half| half.to_f32()).collect();
         let stack = self.stack().dequantized();
-        let mut out = vec![f32::NAN; ROWS * N];
+        let rows = self.rows();
+        let mut out = vec![f32::NAN; rows * N];
         for (start, end, slab) in self.groups() {
             for (row, j) in (start..end).flat_map(|row| (0..N).map(move |j| (row, j))) {
                 let past_stack = slab as usize >= SLABS;
@@ -111,7 +122,7 @@ impl RoutineProduct for GroupedRows {
                     .sum();
             }
         }
-        HostData::row_major(HostDataVec::F32(out), Shape::from(vec![ROWS, N]))
+        HostData::row_major(HostDataVec::F32(out), Shape::from(vec![rows, N]))
     }
 
     fn tolerance(&self) -> f32 {
@@ -124,12 +135,30 @@ impl RoutineProduct for GroupedRows {
 #[test]
 fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
-    let products = [128, 160].map(|k| GroupedRows { k });
+    let products = [128, 160].map(|k| GroupedRows { k, max_rows: 4 });
     let settings = PlaneShuffleMatmulRoutine::indexed_packed_settings();
     let client = cubecl::test_device().client();
     let (mut launched, mut refused) = (0, Vec::new());
     for case in shuffle.at(settings, &products) {
         match shuffle.attempt(&client, &case) {
+            Ok(outcome) => launched += enforced(outcome),
+            Err(why) => refused.push(why),
+        }
+    }
+    skip_unless_launched(launched, &refused);
+}
+
+/// A cube holds a row group in one box, so only the products whose `max_rows` is as tall as the
+/// box launch: at least one must, and each that does writes only the rows of each row group.
+#[test]
+fn cube_staged_writes_only_the_rows_of_each_row_group_a_box_holds() {
+    let staged = ByRoutine::new(CubeStagedMatmulRoutine, Declines::AsItStates);
+    let products = [16, 32, 64, 128].map(|max_rows| GroupedRows { k: 128, max_rows });
+    let settings = [CubeStagedMatmulRoutineSettings::PACKED];
+    let client = cubecl::test_device().client();
+    let (mut launched, mut refused) = (0, Vec::new());
+    for case in staged.at(settings, &products) {
+        match staged.attempt(&client, &case) {
             Ok(outcome) => launched += enforced(outcome),
             Err(why) => refused.push(why),
         }
