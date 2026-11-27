@@ -7,8 +7,10 @@ use cubek_matmul::kernels::{
     CubeStagedMatmulRoutine, CubeStagedMatmulRoutineSettings, MATMUL_BOX_OTHER_THAN_ROW_GROUP,
     MatmulIndexTable, MatmulRoutine, PlaneShuffleMatmulRoutine, RowGroups,
 };
+use cubek_microkernel::matmul::plane::PlaneShuffleMicrokernel;
 use cubek_microkernel::matmul::{MatmulMicrokernel, MatmulOperand};
 use cubek_std::Hardware;
+use cubek_std::microkernel::Microkernel;
 use cubek_test_utils::{HostData, HostDataVec, ScopeChecker, TestOutcome, ValidationResult};
 use half::f16;
 
@@ -138,7 +140,8 @@ impl RoutineProduct for GroupedRowsProduct {
 }
 
 /// Every plane shuffle setting that serves the product writes the rows of each row group and nothing
-/// else; a skip needs every setting refused for what the device lacks.
+/// else. The others refuse only for what the device lacks, a capped launch, which takes no batches,
+/// or no microkernel fitting the shape.
 #[test]
 fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
     let shuffle = ByRoutine::new(PlaneShuffleMatmulRoutine, Declines::AsItStates);
@@ -152,7 +155,13 @@ fn plane_shuffle_settings_write_only_the_rows_of_each_row_group() {
             Err(why) => refused.push(why),
         }
     }
-    settle(launched, &refused, |_| false);
+    settle(launched, &refused, |why| {
+        *why == PlaneShuffleMatmulRoutine::PERSISTENT_BATCHED
+            || *why
+                == (Decline::Unserved {
+                    why: PlaneShuffleMicrokernel::DECLINE,
+                })
+    });
 }
 
 /// A cube holds a row group in one box, so only the products whose `max_rows` is as tall as the
