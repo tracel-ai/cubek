@@ -15,7 +15,9 @@ workspace = true
 
 [features]
 default = ["kernels"]
-kernels = ["std"]
+# `cubecl` and `cubek-std` are not `no_std`. Keep them behind `kernels`, which
+# already requires `std`, so `--no-default-features` can build the scheme API.
+kernels = ["std", "dep:cubek-std", "dep:cubecl"]
 std = []
 
 heavy = []
@@ -23,9 +25,9 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
-cubek-std = { workspace = true }
+cubek-std = { workspace = true, optional = true }
 
-cubecl = { workspace = true, features = ["tile"] }
+cubecl = { workspace = true, optional = true, features = ["tile"] }
 cubecl-common = { workspace = true, features = ["fp8"] }
 
 half.workspace = true
