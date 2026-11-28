@@ -86,7 +86,7 @@ pub enum MatmulKernel {
     /// block-scaled instruction of the GPU takes, only.
     // A strategy written down under the pin's earlier name still reads as this one.
     #[serde(alias = "Nvfp4TensorCores")]
-    BlockStoredTensorCores,
+    BlockScaledTensorCores,
 }
 
 impl MatmulOpStrategy {
@@ -128,7 +128,7 @@ impl MatmulKernel {
         vec![
             Self::UnitRegisters,
             Self::PlaneShuffle,
-            Self::BlockStoredTensorCores,
+            Self::BlockScaledTensorCores,
         ]
     }
 }

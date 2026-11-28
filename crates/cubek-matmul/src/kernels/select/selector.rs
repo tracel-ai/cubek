@@ -73,7 +73,7 @@ fn packed_autotune(problem: &MatmulProblem, hw: &Hardware) -> MatmulAutotune {
 ///
 /// # Errors
 ///
-/// A pin that cannot serve the problem: `BlockStoredTensorCores` but on two NVFP4 inputs its GPU's
+/// A pin that cannot serve the problem: `BlockScaledTensorCores` but on two NVFP4 inputs its GPU's
 /// 4-bit instruction takes. The launch panics on it: a pin is a contract with the caller, not a
 /// preference.
 pub fn select(
@@ -145,7 +145,7 @@ fn float_plan(
         ]))),
         Specific(K::UnitRegisters) => Ok(unit_registers_at_default()),
         Specific(K::PlaneShuffle) => Ok(plane_shuffle()),
-        Specific(K::BlockStoredTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
+        Specific(K::BlockScaledTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
     }
 }
 
@@ -178,10 +178,10 @@ fn packed_plan(
         // Past one row the packed inputs are decoded and run on the tiled routines.
         Heuristic(H::Tile) | Specific(K::UnitRegisters) => decoded(),
         Specific(K::PlaneShuffle) => Ok(packed_plane_shuffle()),
-        Specific(K::BlockStoredTensorCores) if block_scaled_tensor_cores_serve(problem, hw) => {
+        Specific(K::BlockScaledTensorCores) if block_scaled_tensor_cores_serve(problem, hw) => {
             Ok(measured(MatmulAutotune::BlockScaled))
         }
-        Specific(K::BlockStoredTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
+        Specific(K::BlockScaledTensorCores) => Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED),
     }
 }
 
@@ -216,9 +216,9 @@ fn block_scaled_tensor_cores_serve(problem: &MatmulProblem, hw: &Hardware) -> bo
         })
 }
 
-/// `BlockStoredTensorCores` named for a product it does not serve.
+/// `BlockScaledTensorCores` named for a product it does not serve.
 pub const BLOCK_SCALED_TENSOR_CORES_UNSERVED: Decline = Decline::Unserved {
-    why: "BlockStoredTensorCores multiplies two packed inputs, their words along k, on a GPU with a \
+    why: "BlockScaledTensorCores multiplies two packed inputs, their words along k, on a GPU with a \
               block-scaled tensor-core instruction of their format; take autotune or a policy for \
               any other product",
 };

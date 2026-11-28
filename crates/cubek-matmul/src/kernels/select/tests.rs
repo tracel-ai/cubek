@@ -92,7 +92,7 @@ fn float_pin(kernel: K) -> String {
     match kernel {
         K::UnitRegisters => "unit-registers@default".to_string(),
         K::PlaneShuffle => "plane-shuffle".to_string(),
-        K::BlockStoredTensorCores => unreachable!("a float product's selection refuses it"),
+        K::BlockScaledTensorCores => unreachable!("a float product's selection refuses it"),
     }
 }
 
@@ -105,7 +105,7 @@ fn float_rule() -> String {
 fn packed_pin(kernel: K) -> String {
     match kernel {
         K::PlaneShuffle => "plane-shuffle(packed as stored)".to_string(),
-        K::BlockStoredTensorCores => fastest(MatmulAutotune::BlockScaled),
+        K::BlockScaledTensorCores => fastest(MatmulAutotune::BlockScaled),
         K::UnitRegisters => unreachable!("a packed selection runs it on the decoded inputs"),
     }
 }
@@ -298,12 +298,12 @@ fn autotune_names_the_4_bit_kernel_past_a_decode_on_two_nvfp4_inputs() {
 /// [`autotune_names_the_4_bit_kernel_past_a_decode_on_two_nvfp4_inputs`].
 #[test]
 fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_instruction() {
-    let named = Specific(K::BlockStoredTensorCores);
+    let named = Specific(K::BlockScaledTensorCores);
     for rows in [1, 512] {
         let nvfp4 = with_packed_lhs(quantized(rows, nvfp4_along_k()), nvfp4_lhs());
         assert_eq!(
             select(named, &nvfp4, &block_scaled()),
-            Ok(packed_pin(K::BlockStoredTensorCores)),
+            Ok(packed_pin(K::BlockScaledTensorCores)),
             "{rows}"
         );
         assert_eq!(
@@ -326,7 +326,7 @@ fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_
         {
             assert_ne!(
                 select(strategy, &nvfp4, &block_scaled()),
-                Ok(packed_pin(K::BlockStoredTensorCores)),
+                Ok(packed_pin(K::BlockScaledTensorCores)),
                 "{strategy:?}"
             );
         }
@@ -340,7 +340,7 @@ fn the_named_block_scaled_kernel_serves_two_nvfp4_inputs_only_on_a_gpu_with_the_
 /// scales, a window the tile DSL does not read.
 #[test]
 fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads() {
-    let named = Specific(K::BlockStoredTensorCores);
+    let named = Specific(K::BlockScaledTensorCores);
     let hw = devices::offering_block_scaled(devices::h100());
     let scheme = |value, block: u8, scale, store| {
         let dims: &[u8] = match store {
@@ -365,7 +365,7 @@ fn the_named_block_scaled_kernel_serves_each_format_its_instruction_reads() {
     for problem in served {
         assert_eq!(
             select(named, &problem, &hw),
-            Ok(packed_pin(K::BlockStoredTensorCores)),
+            Ok(packed_pin(K::BlockScaledTensorCores)),
             "{problem:?}"
         );
     }
@@ -651,7 +651,7 @@ mod strategy {
                     kernel,
                     MatmulKernel::UnitRegisters
                         | MatmulKernel::PlaneShuffle
-                        | MatmulKernel::BlockStoredTensorCores
+                        | MatmulKernel::BlockScaledTensorCores
                 ),
                 "{kernel:?} is not one of this family's kernels",
             );
@@ -734,7 +734,7 @@ mod float {
         // any row count.
         for m in [1, 2, 512] {
             assert_eq!(
-                select(Specific(K::BlockStoredTensorCores), &float(m, 1)),
+                select(Specific(K::BlockScaledTensorCores), &float(m, 1)),
                 Err(BLOCK_SCALED_TENSOR_CORES_UNSERVED)
             );
         }

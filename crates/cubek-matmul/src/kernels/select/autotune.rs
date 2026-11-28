@@ -11,7 +11,7 @@
 //! A third race, [`MatmulAutotune::BlockScaled`], multiplies two packed inputs as they are stored
 //! on the device's block-scaled instruction of their format: NVFP4's 4-bit by 4-bit, or any other
 //! the device has. Naming
-//! [`BlockStoredTensorCores`](crate::kernels::MatmulKernel::BlockStoredTensorCores) reaches it at
+//! [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores) reaches it at
 //! any rows; a measuring strategy sends a product there past the few-rows bound, where both inputs
 //! already arrive in a format that instruction reads, so taking it rounds nothing. A decode's rows
 //! stay on the few-rows race, bound by the weight's bytes either way.
@@ -35,7 +35,7 @@ pub enum MatmulAutotune {
     /// staged routine reading them as stored and the float routines on them decoded first.
     ManyRows,
     /// Two packed inputs multiplied on a GPU's block-scaled tensor cores, at each of
-    /// [`BlockStoredTensorCores`](crate::kernels::MatmulKernel::BlockStoredTensorCores)'s
+    /// [`BlockScaledTensorCores`](crate::kernels::MatmulKernel::BlockScaledTensorCores)'s
     /// settings: what that pin runs, and nothing else.
     BlockScaled,
 }
