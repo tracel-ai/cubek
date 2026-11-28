@@ -223,8 +223,9 @@ impl Product {
     }
 
     /// Products of at most eight rows, a decode step's, for the routines that hold their rows
-    /// whole: an rhs laid either way, a depth no line wider than one divides, and a model's
-    /// projection in `f16`.
+    /// whole: an rhs laid either way, a depth no line wider than one divides, a model's
+    /// projection in `f16`, and batches of one row against a shared rhs written into rows at a
+    /// stride of one, which merge into rows at the output's batch stride.
     pub(crate) fn few_rows() -> Vec<Self> {
         vec![
             Self::of(F32).m(4).n(24).k(40),
@@ -232,6 +233,12 @@ impl Product {
             Self::of(F32).m(3).n(40).k(41).rhs_along_k(),
             Self::of(F16).m(1).n(256).k(256).rhs_along_k(),
             Self::of(F16).m(8).n(96).k(128),
+            Self::of(F32)
+                .m(1)
+                .n(24)
+                .k(40)
+                .batched(shape![3], shape![1])
+                .out_rows_at_stride_one(),
         ]
     }
 
