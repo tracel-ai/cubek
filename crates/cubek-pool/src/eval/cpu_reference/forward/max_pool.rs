@@ -36,14 +36,13 @@ pub fn run_max_pool<const N: usize>(
                 in_dims,
                 in_coords,
             ) {
-                max_val = f32::max(max_val, input.get_f32(&valid_coords));
+                let val = input.get_f32(&valid_coords);
+                if takes(val, max_val) {
+                    max_val = val;
+                }
             }
         }
-        *out_val = if max_val == f32::NEG_INFINITY {
-            0.0
-        } else {
-            max_val
-        };
+        *out_val = max_val;
     }
     out
 }
@@ -83,7 +82,7 @@ pub fn run_max_pool_with_indices<const N: usize>(
                 in_coords,
             ) {
                 let val = input.get_f32(&valid_coords);
-                if val > max_val {
+                if takes(val, max_val) {
                     max_val = val;
 
                     let spatial_in = &valid_coords[1..N + 1];
@@ -99,13 +98,16 @@ pub fn run_max_pool_with_indices<const N: usize>(
             }
         }
 
-        out[i] = if max_val == f32::NEG_INFINITY {
-            0.0
-        } else {
-            max_val
-        };
+        out[i] = max_val;
         indices[i] = max_idx;
     }
 
     (out, indices)
+}
+
+/// Whether a window's `val` replaces the maximum held so far, as in PyTorch's max pool
+/// (`val > max_val || isnan(val)`): a NaN propagates, and among NaNs the last one's index wins.
+/// The window starts at `-inf`, which a window of padding alone keeps.
+fn takes(val: f32, max_val: f32) -> bool {
+    val > max_val || val.is_nan()
 }

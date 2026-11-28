@@ -7,6 +7,7 @@ use super::{
 };
 use crate::definition::{MaxPoolOptions, PoolError};
 use crate::legacy::accumulator_dtype;
+use cubecl::ir::dialect::math::IsNanOp;
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,
@@ -31,8 +32,16 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrat
     type Config = ();
     type Indices = ViewMut<'static, Vector<i32, N>, Position>;
 
+    /// A float window starts at `-inf`, so a window of padding alone is `-inf` as in PyTorch, not
+    /// the type's lowest finite value; an integer one at its lowest value.
     fn initialize(#[comptime] _config: &Self::Config) -> Self::Accumulator {
-        let val = Vector::new(T::min_value());
+        let elem = elem_type_of::<T>();
+        let lowest = if comptime!(elem.is_float()) {
+            T::cast_from(f32::NEG_INFINITY)
+        } else {
+            T::min_value()
+        };
+        let val = Vector::new(lowest);
         let idx = Vector::zero();
         (val, idx)
     }
@@ -43,9 +52,18 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrat
         index: usize,
         result: Vector<T, N>,
     ) {
+        // As PyTorch's `val > max || isnan(val)`: a NaN takes the slot and keeps it from every
+        // number. An integer holds no NaN.
         let indices = Vector::cast_from(index);
-        accumulator.1 = select_many(result.greater_than(&accumulator.0), indices, accumulator.1);
-        accumulator.0 = max(result, accumulator.0);
+        let elem = elem_type_of::<T>();
+        let nan = if comptime!(elem.is_float()) {
+            nan_lanes(result)
+        } else {
+            Vector::new(false)
+        };
+        let takes = result.greater_than(&accumulator.0).or(nan);
+        accumulator.1 = select_many(takes, indices, accumulator.1);
+        accumulator.0 = select_many(takes, result, accumulator.0);
     }
 
     fn count_position(
@@ -66,6 +84,17 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrat
         output.write(position, accumulator.0);
         output_indices.write(position, accumulator.1);
     }
+}
+
+/// Where `value` is NaN, for any element once it is known to be a float. A `value != value`
+/// compare would say the same, but the WGSL path folds it to `false`.
+#[cube]
+fn nan_lanes<T: Numeric, N: Size>(value: Vector<T, N>) -> Vector<bool, N> {
+    intrinsic!(|scope| {
+        let value = value.read_value(scope);
+        let op = IsNanOp::new(scope.ctx_mut(), value);
+        scope.register_with_result(&op).into()
+    })
 }
 
 pub(crate) fn max_pool2d_with_indices_launch(
