@@ -591,12 +591,6 @@ impl StoredTensor {
         &self.values
     }
 
-    /// This operand with its values bound as `values`: the same values relaid where a reader
-    /// takes them, under the same scales.
-    pub(crate) fn with_values(self, values: PlainTensor) -> Self {
-        Self { values, ..self }
-    }
-
     /// The tensor holding its values, taken out of it.
     pub fn into_values(self) -> PlainTensor {
         self.values
@@ -728,6 +722,10 @@ impl StoredTensor {
     }
 
     /// The matrix's two dimensions, in the order its caller stated them.
+    ///
+    /// # Panics
+    ///
+    /// On float values, which state no matrix of their own.
     pub fn dimensions(&self) -> [Dimension; 2] {
         self.matrix().map(|(dimension, _)| dimension)
     }
@@ -782,7 +780,8 @@ impl StoredTensor {
     ///
     /// # Panics
     ///
-    /// On a dimension the matrix does not have, against its Assumption.
+    /// On a dimension the matrix does not have, against its Assumption, and on float values, which
+    /// state no matrix of their own.
     pub fn matrix_extent(&self, dimension: Dimension) -> usize {
         self.matrix()
             .iter()
@@ -1130,6 +1129,51 @@ impl StoredTensor {
                 .map(|block_scales| Self::under_scales(words, block_scales, outer_scales, outer))
                 .or_broken(ADMITTED_PLAN_RUNS),
         }
+    }
+}
+
+impl StoredTensor {
+    /// `values`, its values bound as a tile, under its scales: one operand the kernel factors them
+    /// out of.
+    ///
+    /// # Assumptions
+    ///
+    /// It is read as 8-bit floats under scales constant along the contraction
+    /// ([`StoredRead::ScalesAlong`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Decline::Broken`] where the tile engine refuses the scales as the routine prepared them.
+    ///
+    /// # Panics
+    ///
+    /// Read otherwise, against its Assumption.
+    pub fn bind_scales_along(
+        &self,
+        launcher: &Launcher,
+        blocks: &MatmulBlocks,
+        values: TileTensorLaunch,
+    ) -> Result<TileTensorLaunch, Decline> {
+        // A dimension no scale groups is one block, the position inside it the whole of it.
+        let StoredRead::ScalesAlong(scaled_along) = self.read() else {
+            panic!("only 8-bit floats under scales constant along the contraction are bound so");
+        };
+        let (position, axis, count) = match scaled_along {
+            Some(dimension) => Self::varying(blocks, dimension),
+            None => (blocked(K).1, PhysicalAxisMap::broadcast(), 1),
+        };
+        let scales = self
+            .block_scale_tensor()
+            .bound_as(Metadata::new([count, 1], ONE_COLUMN_STRIDES));
+        let scales = launcher
+            .arg(scales, self.block_scale_tensor().elem)
+            .gathered(Projection::new(
+                &[position],
+                &[axis, PhysicalAxisMap::broadcast()],
+            ))
+            .build()
+            .or_broken(ADMITTED_PLAN_RUNS)?;
+        Ok(values.scales(scales.arg()))
     }
 }
 
@@ -1779,49 +1823,6 @@ impl StoredTensor {
 }
 
 impl StoredTensor {
-    /// `values`, its values bound as a tile, under its scales: one operand the kernel factors them
-    /// out of.
-    ///
-    /// # Assumptions
-    ///
-    /// It is read as 8-bit floats under scales constant along the contraction
-    /// ([`StoredRead::ScalesAlong`]).
-    ///
-    /// # Errors
-    ///
-    /// [`Decline::Broken`] where the tile engine refuses the scales as the routine prepared them.
-    ///
-    /// # Panics
-    ///
-    /// Read otherwise, against its Assumption.
-    pub fn bind_scales_along(
-        &self,
-        launcher: &Launcher,
-        blocks: &MatmulBlocks,
-        values: TileTensorLaunch,
-    ) -> Result<TileTensorLaunch, Decline> {
-        // A dimension no scale groups is one block, the position inside it the whole of it.
-        let StoredRead::ScalesAlong(scaled_along) = self.read() else {
-            panic!("only 8-bit floats under scales constant along the contraction are bound so");
-        };
-        let (position, axis, count) = match scaled_along {
-            Some(dimension) => Self::varying(blocks, dimension),
-            None => (blocked(K).1, PhysicalAxisMap::broadcast(), 1),
-        };
-        let scales = self
-            .block_scale_tensor()
-            .bound_as(Metadata::new([count, 1], ONE_COLUMN_STRIDES));
-        let scales = launcher
-            .arg(scales, self.block_scale_tensor().elem)
-            .gathered(Projection::new(
-                &[position],
-                &[axis, PhysicalAxisMap::broadcast()],
-            ))
-            .build()
-            .or_broken(ADMITTED_PLAN_RUNS)?;
-        Ok(values.scales(scales.arg()))
-    }
-
     /// The position inside `dimension`'s one block, the axis of scales along it, and how many.
     fn varying(blocks: &MatmulBlocks, dimension: Dimension) -> (Dimension, PhysicalAxisMap, usize) {
         let position = blocked(dimension).1;
@@ -1831,9 +1832,13 @@ impl StoredTensor {
             blocks.extent(dimension),
         )
     }
-}
 
-impl StoredTensor {
+    /// This operand with its values bound as `values`: the same values relaid where a reader
+    /// takes them, under the same scales.
+    pub(crate) fn with_values(self, values: PlainTensor) -> Self {
+        Self { values, ..self }
+    }
+
     /// The matrix its quantized values form.
     ///
     /// # Panics
