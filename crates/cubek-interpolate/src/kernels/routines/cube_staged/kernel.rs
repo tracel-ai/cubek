@@ -24,6 +24,8 @@ pub fn cube_staged_interpolate_kernel<E: Float, F: SeparableFilterFamily>(
     let weights = separable_weights::<E, F>(&partitioning, row, col);
     let output = output.tile_mut(&partitioning);
     for cube in partitioning {
+        // The stage holds this cube's window, which `prepare` sized, rather than the whole input.
+        let input = input.at(&cube);
         let blocks = cube.walk();
         let mut stages =
             Stages::smem_single_at(&blocks, &input, StageStorage::STRIDED, padded, 1usize, None);

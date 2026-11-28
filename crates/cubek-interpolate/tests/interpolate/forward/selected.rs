@@ -64,3 +64,20 @@ fn test_interpolate_kernel_staged_strategy_reads_in_place_when_the_stage_cannot_
         resampling,
     }]);
 }
+
+/// The staged strategy on an input larger than any device's shared memory: each cube stages the
+/// window its own box reads, so the stage stays the size `prepare` budgeted rather than growing
+/// with the batch and the image until the launch is refused.
+#[test]
+fn test_interpolate_kernel_staged_strategy_stages_only_its_cubes_window() {
+    // 16 * 32 * 33 * 4 f32 is 270 KB of input, past every GPU's shared memory.
+    let resampling = Resampling {
+        options: InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(true),
+        input: [16, 32, 33, 4],
+        output: [47, 61],
+    };
+    Forward.check([ForwardCase {
+        strategy: InterpolateStrategy::CubeStaged,
+        resampling,
+    }]);
+}
